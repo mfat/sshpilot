@@ -22,7 +22,7 @@ unset PYTHONPATH
 unset PYTHONHOME
 export PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
 cd "$1"
-exec python3 fresh_ssh_manager.py
+exec python3 sshpilot.py
 EOF
     
     chmod +x /tmp/run_ssh_manager_clean.sh
@@ -30,5 +30,5 @@ EOF
 else
     echo "Using system Python for GTK/PyGObject compatibility..."
     # Run directly with system Python
-    python3 fresh_ssh_manager.py
+    python3 sshpilot.py
 fi 
