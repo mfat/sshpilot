@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=SSH Manager
+Comment=GTK-based SSH client with terminal integration
+Exec=/home/mahdi/GitHub/sshpilot/ssh_manager.py
+Icon=utilities-terminal
+Terminal=false
+Categories=Network;TerminalEmulator;

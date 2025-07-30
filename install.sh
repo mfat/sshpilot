@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# SSH Manager Installation Script
-# This script installs the required system dependencies for SSH Manager
+# SSHPilot Installation Script
+# This script installs the required system dependencies for SSHPilot
 
 set -e
 
-echo "SSH Manager - Installation Script"
-echo "=================================="
+echo "SSHPilot - Installation Script"
+echo "=============================="
 
 # Detect the operating system
 if [ -f /etc/os-release ]; then
@@ -50,7 +50,7 @@ install_dependencies() {
             echo "- python3-paramiko"
             echo "- python3-cryptography"
             echo ""
-            echo "Then run: python3 ssh_manager.py"
+            echo "Then run: python3 sshpilot.py"
             exit 1
             ;;
     esac
@@ -58,8 +58,8 @@ install_dependencies() {
 
 # Function to make the script executable
 make_executable() {
-    echo "Making SSH Manager executable..."
-    chmod +x ssh_manager.py
+    echo "Making SSHPilot executable..."
+    chmod +x sshpilot.py
 }
 
 # Function to create desktop shortcut
@@ -67,13 +67,13 @@ create_desktop_shortcut() {
     echo "Creating desktop shortcut..."
     
     # Create desktop entry
-    cat > ssh-manager.desktop << EOF
+    cat > sshpilot.desktop << EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=SSH Manager
-Comment=GTK-based SSH client with terminal integration
-Exec=$(pwd)/ssh_manager.py
+Name=SSHPilot
+Comment=Modern GTK-based SSH client with terminal integration
+Exec=$(pwd)/sshpilot.py
 Icon=utilities-terminal
 Terminal=false
 Categories=Network;TerminalEmulator;
@@ -81,11 +81,11 @@ EOF
 
     # Install desktop file
     if [ -d "$HOME/.local/share/applications" ]; then
-        cp ssh-manager.desktop "$HOME/.local/share/applications/"
+        cp sshpilot.desktop "$HOME/.local/share/applications/"
         echo "Desktop shortcut created in ~/.local/share/applications/"
     else
         echo "Could not create desktop shortcut. You can run the application with:"
-        echo "python3 ssh_manager.py"
+        echo "python3 sshpilot.py"
     fi
 }
 
@@ -126,12 +126,15 @@ main() {
     echo ""
     echo "Installation completed successfully!"
     echo ""
-    echo "You can now run SSH Manager with:"
-    echo "python3 ssh_manager.py"
+    echo "You can now run SSHPilot with:"
+    echo "python3 sshpilot.py"
     echo ""
-    echo "Or find it in your applications menu as 'SSH Manager'"
+    echo "Or use the launcher script:"
+    echo "./run_ssh_manager.sh"
     echo ""
-    echo "Configuration will be saved to: ~/.ssh_manager_config.json"
+    echo "Or find it in your applications menu as 'SSHPilot'"
+    echo ""
+    echo "Configuration will be saved to: ~/.sshpilot_config.json"
 }
 
 # Run main function
