@@ -15,6 +15,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+
 print("=== PILOT: Initializing SSH Pilot ===")
 
 class SSHConnection:
@@ -152,7 +153,7 @@ class FreshSSHManager:
         self.load_settings()
         
         # Create unique application ID
-        app_id = f"com.example.fresh-ssh-manager-{os.getpid()}"
+        app_id = "io.github.mfat.sshpilot"
         print(f"=== FRESH: Using app ID: {app_id} ===")
         
         # Initialize GTK
@@ -359,6 +360,7 @@ class FreshSSHManager:
         print("=== FRESH: on_activate called! ===")
         
         # Create window
+        
         self.window = Gtk.ApplicationWindow(application=app, title="SSH Pilot")
         self.window.set_default_size(1200, 800)
         self.window.connect('close-request', self.on_window_close_request)
