@@ -23,7 +23,7 @@ A simple GTK-based SSH client.
 
 ## Installation
 
-There is a debian package provided in the [releases](https://github.com/mfat/sshpilot/releases) section
+Currently there is a debian package provided in the [releases](https://github.com/mfat/sshpilot/releases) section
 
 For other distros, use the install script as below:
 
