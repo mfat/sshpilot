@@ -1,9 +1,0 @@
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=SSHPilot
-Comment=Modern GTK-based SSH client with terminal integration
-Exec=/home/mahdi/GitHub/sshpilot/sshpilot.py
-Icon=/home/mahdi/GitHub/sshpilot/sshpilot.png
-Terminal=false
-Categories=Network;TerminalEmulator;
