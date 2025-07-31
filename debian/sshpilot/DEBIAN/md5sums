@@ -1,7 +1,7 @@
-83073a068c75b40b0fd431b558a5acbb  usr/bin/sshpilot
+3c33dbbeeffb6babde86c21b2a65de52  usr/bin/sshpilot
 738ecd9feddac42257612d6ae08d8c15  usr/share/applications/sshpilot.desktop
 fbcfb9e23b745c9f73c1949255a182a9  usr/share/doc/sshpilot/README.md.gz
 456f9bb43ba2ab8cd14cccb80fd37d58  usr/share/doc/sshpilot/changelog.Debian.gz
 62577e869e96c745c1acd2e6c772e427  usr/share/doc/sshpilot/copyright
 23df169dad79040ee128940d1a6da4ad  usr/share/pixmaps/sshpilot.png
-4156bb7726df50df4fcfb24797ed0420  usr/share/sshpilot/ssh_manager.css
+156eb5237b99b0b1efbf04dd26efc03a  usr/share/sshpilot/ssh_manager.css
