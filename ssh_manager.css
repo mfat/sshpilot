@@ -122,8 +122,8 @@ terminal {
 
 /* Scrolled window styling */
 scrolledwindow {
-    border-radius: 6px;
-    border: 1px solid #dee2e6;
+    /* border-radius: 6px; */
+    /* border: 1px solid #dee2e6; */
 }
 
 /* Notebook styling */
@@ -184,4 +184,25 @@ listbox row:selected {
 dialog {
     border-radius: 8px;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+/* Tab close button styling */
+.tab-close-button {
+    min-width: 16px;
+    min-height: 16px;
+    padding: 2px;
+    margin: 0;
+    border-radius: 50%;
+    background: transparent;
+    border: none;
+    opacity: 0.7;
+}
+
+.tab-close-button:hover {
+    opacity: 1.0;
+    background: rgba(0, 0, 0, 0.1);
+}
+
+.tab-close-button:active {
+    background: rgba(0, 0, 0, 0.2);
 }

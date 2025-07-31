@@ -337,7 +337,8 @@ class FreshSSHManager:
     
     def on_context_edit(self, action, parameter):
         """Handle context menu edit action"""
-        print("=== FRESH: Context menu edit ===")
+        print("=== FRESH: Context menu edit clicked ===")
+        popover.popdown()
         if hasattr(self, 'context_menu_connection') and self.context_menu_connection:
             self.show_edit_dialog(self.context_menu_connection)
     
@@ -349,19 +350,10 @@ class FreshSSHManager:
     
     def on_context_delete(self, action, parameter):
         """Handle context menu delete action"""
-        print("=== FRESH: Context menu delete ===")
+        print("=== FRESH: Context menu delete clicked ===")
+        popover.popdown()
         if hasattr(self, 'context_menu_connection') and self.context_menu_connection:
-            conn = self.context_menu_connection
-            
-            # Disconnect if connected
-            if conn.hostname in self.connected_connections:
-                self.disconnect_host(conn.hostname)
-            
-            # Remove from list
-            self.connections.remove(conn)
-            self.save_connections()
-            self.refresh_connection_list()
-            print(f"=== FRESH: Deleted connection via context menu: {conn.name} ===")
+            self.show_delete_confirmation(self.context_menu_connection)
     
     def on_activate(self, app):
         print("=== FRESH: on_activate called! ===")
@@ -438,6 +430,9 @@ class FreshSSHManager:
         self.connection_listbox.set_can_focus(True)
         self.connection_listbox.connect('row-selected', self.on_connection_selected)
         
+        # Enable simple selection mode
+        self.connection_listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        
         # Add right-click context menu
         gesture = Gtk.GestureClick()
         gesture.set_button(3)  # Right mouse button
@@ -471,11 +466,15 @@ class FreshSSHManager:
         button_container.append(primary_box)
         
         add_button = Gtk.Button(label="Add")
+        add_button.set_icon_name("list-add-symbolic")
+        add_button.set_has_frame(True)  # Ensure proper button frame
+        add_button.set_tooltip_text("Add new SSH connection")
         add_button.connect('clicked', self.on_add_connection)
-        add_button.add_css_class("suggested-action")
         primary_box.append(add_button)
         
         self.edit_button = Gtk.Button(label="Edit")
+        self.edit_button.set_icon_name("document-edit-symbolic")
+        self.edit_button.set_tooltip_text("Edit selected connection")
         self.edit_button.connect('clicked', self.on_edit_connection)
         self.edit_button.set_sensitive(False)
         primary_box.append(self.edit_button)
@@ -486,24 +485,37 @@ class FreshSSHManager:
         button_container.append(connection_box)
         
         self.connect_button = Gtk.Button(label="Connect")
+        self.connect_button.set_icon_name("network-transmit-symbolic")
+        self.connect_button.set_tooltip_text("Connect to selected server")
         self.connect_button.connect('clicked', self.on_connect)
         self.connect_button.set_sensitive(False)
         connection_box.append(self.connect_button)
         
         self.disconnect_button = Gtk.Button(label="Disconnect")
+        self.disconnect_button.set_icon_name("network-offline-symbolic")
+        self.disconnect_button.set_tooltip_text("Disconnect from server")
         self.disconnect_button.connect('clicked', self.on_disconnect)
         self.disconnect_button.set_sensitive(False)
         connection_box.append(self.disconnect_button)
         
-        # Destructive actions (Delete)
-        danger_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        button_container.append(danger_box)
+        # Add reorder buttons
+        reorder_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        reorder_box.set_homogeneous(True)
+        button_container.append(reorder_box)
         
-        self.delete_button = Gtk.Button(label="Delete")
-        self.delete_button.connect('clicked', self.on_delete_connection)
-        self.delete_button.set_sensitive(False)
-        self.delete_button.add_css_class("destructive-action")
-        danger_box.append(self.delete_button)
+        self.move_up_button = Gtk.Button(label="Move Up")
+        self.move_up_button.set_icon_name("go-up-symbolic")
+        self.move_up_button.set_tooltip_text("Move connection up")
+        self.move_up_button.connect('clicked', self.on_move_up)
+        self.move_up_button.set_sensitive(False)
+        reorder_box.append(self.move_up_button)
+        
+        self.move_down_button = Gtk.Button(label="Move Down")
+        self.move_down_button.set_icon_name("go-down-symbolic")
+        self.move_down_button.set_tooltip_text("Move connection down")
+        self.move_down_button.connect('clicked', self.on_move_down)
+        self.move_down_button.set_sensitive(False)
+        reorder_box.append(self.move_down_button)
         
         print("=== FRESH: Buttons created ===")
         
@@ -625,16 +637,21 @@ class FreshSSHManager:
         if row and hasattr(row, 'connection'):
             conn = row.connection
             connected = conn.hostname in self.connected_connections
+            index = self.connections.index(conn)
             
             self.connect_button.set_sensitive(not connected)
             self.disconnect_button.set_sensitive(connected)
             self.edit_button.set_sensitive(True)
-            self.delete_button.set_sensitive(True)
+            
+            # Enable/disable move buttons based on position
+            self.move_up_button.set_sensitive(index > 0)
+            self.move_down_button.set_sensitive(index < len(self.connections) - 1)
         else:
             self.connect_button.set_sensitive(False)
             self.disconnect_button.set_sensitive(False)
             self.edit_button.set_sensitive(False)
-            self.delete_button.set_sensitive(False)
+            self.move_up_button.set_sensitive(False)
+            self.move_down_button.set_sensitive(False)
     
     def refresh_connection_list(self):
         """Refresh the connection list display"""
@@ -913,13 +930,26 @@ class FreshSSHManager:
         menu_box.set_margin_top(6)
         menu_box.set_margin_bottom(6)
         
-        # Create menu buttons
-        connect_btn = Gtk.Button(label="Connect")
-        connect_btn.add_css_class("flat")
-        connect_btn.set_halign(Gtk.Align.START)
-        connect_btn.connect('clicked', self.on_context_menu_connect, popover)
-        menu_box.append(connect_btn)
+        # Check connection status
+        is_connected = conn.hostname in self.connected_connections
         
+        # Create menu buttons based on connection status
+        if not is_connected:
+            # Show Connect button only if not connected
+            connect_btn = Gtk.Button(label="Connect")
+            connect_btn.add_css_class("flat") 
+            connect_btn.set_halign(Gtk.Align.START)
+            connect_btn.connect('clicked', self.on_context_menu_connect, popover)
+            menu_box.append(connect_btn)
+        else:
+            # Show Disconnect button only if connected
+            disconnect_btn = Gtk.Button(label="Disconnect")
+            disconnect_btn.add_css_class("flat")
+            disconnect_btn.set_halign(Gtk.Align.START)
+            disconnect_btn.connect('clicked', self.on_context_menu_disconnect, popover)
+            menu_box.append(disconnect_btn)
+        
+        # Always show Edit and Delete
         edit_btn = Gtk.Button(label="Edit...")
         edit_btn.add_css_class("flat")
         edit_btn.set_halign(Gtk.Align.START)
@@ -958,6 +988,14 @@ class FreshSSHManager:
         popover.popdown()
         if hasattr(self, 'context_menu_connection') and self.context_menu_connection:
             self.show_edit_dialog(self.context_menu_connection)
+    
+    def on_context_menu_disconnect(self, button, popover):
+        """Handle context menu disconnect - behaves exactly like disconnect button"""
+        print("=== FRESH: Context menu disconnect clicked ===")
+        popover.popdown()
+        if hasattr(self, 'context_menu_connection') and self.context_menu_connection:
+            conn = self.context_menu_connection
+            self.disconnect_host(conn.hostname)
     
     def on_context_menu_delete(self, button, popover):
         """Handle context menu delete with confirmation"""
@@ -1469,14 +1507,31 @@ Visit our GitHub repository for more information and updates!
         # Enable mouse copy/paste functionality
         self.setup_terminal_mouse_support(terminal)
         
-        # Create tab label
-        label = Gtk.Label(label=conn.name)
+                # Create tab header with close button
+        tab_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        tab_header.set_margin_start(6)
+        tab_header.set_margin_end(3)
+        tab_header.set_margin_top(3)
+        tab_header.set_margin_bottom(3)
+        
+        # Tab label
+        tab_label = Gtk.Label(label=conn.name)
+        tab_label.set_hexpand(True)
+        tab_header.append(tab_label)
+        
+        # Close button
+        close_button = Gtk.Button()
+        close_button.set_icon_name("window-close-symbolic")
+        close_button.add_css_class("tab-close-button")
+        close_button.set_tooltip_text(f"Disconnect from {conn.name}")
+        close_button.connect('clicked', self.on_tab_close_clicked, conn.hostname)
+        tab_header.append(close_button)
         
         # Remove help screen when first connection is made
         self.remove_help_screen()
         
-        # Add to notebook
-        page_num = self.notebook.append_page(terminal, label)
+        # Add to notebook with custom tab header
+        page_num = self.notebook.append_page(terminal, tab_header)
         self.notebook.set_current_page(page_num)
         
         # Store hostname reference
@@ -1486,6 +1541,11 @@ Visit our GitHub repository for more information and updates!
         threading.Thread(target=self.connect_ssh, args=(conn, terminal), daemon=True).start()
         
         print(f"=== FRESH: Terminal tab created for {conn.name} ===")
+    
+    def on_tab_close_clicked(self, button, hostname):
+        """Handle tab close button click - works exactly like disconnect button"""
+        print(f"=== FRESH: Tab close button clicked for {hostname} ===")
+        self.disconnect_host(hostname)
     
     def connect_ssh(self, conn, terminal):
         """Connect to SSH host in background thread"""
@@ -1771,6 +1831,67 @@ expect {{
         print(f"=== FRESH: Application finished with result: {result} ===")
         return result
 
+    def on_move_up(self, button):
+        """Move selected connection up"""
+        row = self.connection_listbox.get_selected_row()
+        if not row or not hasattr(row, 'connection'):
+            return
+        
+        conn = row.connection
+        try:
+            index = self.connections.index(conn)
+            if index > 0:
+                # Swap with previous connection
+                self.connections[index], self.connections[index - 1] = \
+                    self.connections[index - 1], self.connections[index]
+                
+                self.save_connections()
+                self.refresh_connection_list()
+                
+                # Restore selection after refresh
+                for child in self._iter_listbox_children():
+                    if hasattr(child, 'connection') and child.connection == conn:
+                        self.connection_listbox.select_row(child)
+                        break
+                
+                print(f"=== FRESH: Moved {conn.name} up ===")
+        except ValueError:
+            print(f"=== FRESH: Connection {conn.name} not found in list ===")
+
+    def on_move_down(self, button):
+        """Move selected connection down"""
+        row = self.connection_listbox.get_selected_row()
+        if not row or not hasattr(row, 'connection'):
+            return
+        
+        conn = row.connection
+        try:
+            index = self.connections.index(conn)
+            if index < len(self.connections) - 1:
+                # Swap with next connection
+                self.connections[index], self.connections[index + 1] = \
+                    self.connections[index + 1], self.connections[index]
+                
+                self.save_connections()
+                self.refresh_connection_list()
+                
+                # Restore selection after refresh
+                for child in self._iter_listbox_children():
+                    if hasattr(child, 'connection') and child.connection == conn:
+                        self.connection_listbox.select_row(child)
+                        break
+                
+                print(f"=== FRESH: Moved {conn.name} down ===")
+        except ValueError:
+            print(f"=== FRESH: Connection {conn.name} not found in list ===")
+
+    def _iter_listbox_children(self):
+        """Iterator for ListBox children"""
+        child = self.connection_listbox.get_first_child()
+        while child:
+            yield child
+            child = child.get_next_sibling()
+
 class AddConnectionDialog(Gtk.Window):
     """Compact modern dialog for adding connections with passphrase support"""
     
@@ -1794,7 +1915,7 @@ class AddConnectionDialog(Gtk.Window):
         
         # Save button (right side)
         save_btn = Gtk.Button(label="Add")
-        save_btn.add_css_class("suggested-action")
+        save_btn.set_tooltip_text("Add new SSH connection")
         save_btn.connect('clicked', self.on_save_clicked)
         header_bar.pack_end(save_btn)
         
@@ -2038,7 +2159,7 @@ class EditConnectionDialog(Gtk.Window):
         
         # Save button (right side)
         save_btn = Gtk.Button(label="Save")
-        save_btn.add_css_class("suggested-action")
+        save_btn.set_tooltip_text("Save changes")
         save_btn.connect('clicked', self.on_save_clicked)
         header_bar.pack_end(save_btn)
         
@@ -2517,6 +2638,13 @@ class SettingsDialog(Gtk.Window):
         markup = f'<span font_family="{font_family}" size="{font_size * 1000}" background="{bg_color}" foreground="{fg_color}">  Sample Terminal Text  </span>'
         self.preview_label.set_markup(markup)
     
+    def on_context_menu_disconnect(self, button, popover):
+        """Handle context menu disconnect - behaves exactly like disconnect button"""
+        print("=== FRESH: Context menu disconnect clicked ===")
+        popover.popdown()
+        if hasattr(self, 'context_menu_connection') and self.context_menu_connection:
+            conn = self.context_menu_connection
+            self.disconnect_host(conn.hostname)
 
 
 
