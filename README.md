@@ -12,6 +12,13 @@ A simple GTK-based SSH client.
 
 ## Screenshots
 
+<img width="1322" height="959" alt="Screenshot From 2025-08-01 02-12-58" src="https://github.com/user-attachments/assets/a25a8536-1cf6-4692-b429-50e15e6fe052" />
+
+<img width="548" height="609" alt="Screenshot From 2025-08-01 02-15-57" src="https://github.com/user-attachments/assets/9e0bd766-bb12-4e6d-ad00-c11a0bd7ac4f" />
+
+
+<img width="508" height="523" alt="Screenshot From 2025-08-01 02-16-39" src="https://github.com/user-attachments/assets/261875da-c15e-4279-b75b-f7f0cd65875c" />
+
 
 
 ## Installation
