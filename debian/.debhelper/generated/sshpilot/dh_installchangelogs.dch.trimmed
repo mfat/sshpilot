@@ -1,0 +1,9 @@
+sshpilot (1.0.0-1) unstable; urgency=medium
+
+  * Initial release of SSHPilot
+  * Modern GTK4-based SSH client
+  * Features tabbed interface and connection management
+  * Supports both password and SSH key authentication
+  * Includes terminal integration with VTE
+
+ -- SSHPilot Team <contact@sshpilot.org>  Wed, 31 Jul 2024 12:00:00 +0000

@@ -27,19 +27,19 @@ install_dependencies() {
         "Ubuntu"|"Debian GNU/Linux")
             echo "Installing dependencies for Ubuntu/Debian..."
             sudo apt update
-            sudo apt install -y python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-vte-3.91 libgirepository1.0-dev python3-paramiko python3-cryptography
+            sudo apt install -y python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-vte-3.91 gir1.2-secret-1 libgirepository1.0-dev python3-paramiko python3-cryptography
             ;;
         "Fedora")
             echo "Installing dependencies for Fedora..."
-            sudo dnf install -y python3-gobject gtk4 vte291 python3-paramiko python3-cryptography
+            sudo dnf install -y python3-gobject gtk4 vte291 libsecret python3-paramiko python3-cryptography
             ;;
         "Arch Linux")
             echo "Installing dependencies for Arch Linux..."
-            sudo pacman -S --noconfirm python-gobject gtk4 vte3 python-paramiko python-cryptography
+            sudo pacman -S --noconfirm python-gobject gtk4 vte3 libsecret python-paramiko python-cryptography
             ;;
         "openSUSE Tumbleweed"|"openSUSE Leap")
             echo "Installing dependencies for openSUSE..."
-            sudo zypper install -y python3-gobject gtk4 vte3 python3-paramiko python3-cryptography
+            sudo zypper install -y python3-gobject gtk4 vte3 libsecret python3-paramiko python3-cryptography
             ;;
         *)
             echo "Unsupported operating system: $OS"
@@ -47,6 +47,7 @@ install_dependencies() {
             echo "- python3-gobject or python-gobject"
             echo "- gtk4"
             echo "- vte3 or vte291"
+            echo "- libsecret"
             echo "- python3-paramiko"
             echo "- python3-cryptography"
             echo ""
@@ -74,7 +75,7 @@ Type=Application
 Name=SSHPilot
 Comment=Modern GTK-based SSH client with terminal integration
 Exec=$(pwd)/sshpilot.py
-Icon=utilities-terminal
+Icon=$(pwd)/sshpilot.png
 Terminal=false
 Categories=Network;TerminalEmulator;
 EOF

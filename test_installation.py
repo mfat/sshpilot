@@ -34,6 +34,14 @@ def test_imports():
         return False
     
     try:
+        gi.require_version('Secret', '1')
+        from gi.repository import Secret
+        print("✓ libsecret imported successfully")
+    except Exception as e:
+        print(f"✗ Failed to import libsecret: {e}")
+        return False
+    
+    try:
         import paramiko
         print("✓ Paramiko imported successfully")
     except ImportError as e:
@@ -88,32 +96,32 @@ def test_ssh_keys():
         print("⚠ ~/.ssh/ directory not found")
         return True
 
-def test_ssh_manager_import():
-    """Test if SSH Manager can be imported"""
-    print("\nTesting SSH Manager import...")
+def test_sshpilot_import():
+    """Test if SSHPilot can be imported"""
+    print("\nTesting SSHPilot import...")
     
     try:
         # Add current directory to path
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         
-        # Import SSH Manager classes
-        from ssh_manager import SSHManager, SSHConnection
-        print("✓ SSH Manager classes imported successfully")
+        # Import SSHPilot classes
+        from sshpilot import SSHConnection
+        print("✓ SSHPilot classes imported successfully")
         return True
     except Exception as e:
-        print(f"✗ Failed to import SSH Manager: {e}")
+        print(f"✗ Failed to import SSHPilot: {e}")
         return False
 
 def main():
     """Run all tests"""
-    print("SSH Manager - Installation Test")
+    print("SSHPilot - Installation Test")
     print("=" * 40)
     
     tests = [
         test_imports,
         test_ssh_command,
         test_ssh_keys,
-        test_ssh_manager_import
+        test_sshpilot_import
     ]
     
     passed = 0
@@ -127,8 +135,8 @@ def main():
     print(f"Test Results: {passed}/{total} tests passed")
     
     if passed == total:
-        print("✓ All tests passed! SSH Manager is ready to use.")
-        print("\nYou can now run: python3 ssh_manager.py")
+        print("✓ All tests passed! SSHPilot is ready to use.")
+        print("\nYou can now run: python3 sshpilot.py")
     else:
         print("✗ Some tests failed. Please check the installation.")
         print("\nTry running: ./install.sh")

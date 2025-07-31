@@ -6,8 +6,7 @@ SSH Pilot - Completely clean implementation
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
-gi.require_version('Secret', '1')
-from gi.repository import Gtk, Vte, GLib, Gdk, Gio, Pango, Secret
+from gi.repository import Gtk, Vte, GLib, Gdk, Gio, Pango
 import json
 import os
 import threading
@@ -27,116 +26,12 @@ class SSHConnection:
         self.key_passphrase = key_passphrase
         self.name = name or f"{username}@{hostname}"
 
-class SecurePasswordManager:
-    """Secure password storage using GNOME Keyring/libsecret"""
-    
-    def __init__(self):
-        self.schema = Secret.Schema.new(
-            "org.sshpilot.password",
-            Secret.SchemaFlags.NONE,
-            {
-                "hostname": Secret.SchemaAttributeType.STRING,
-                "username": Secret.SchemaAttributeType.STRING,
-                "port": Secret.SchemaAttributeType.STRING,
-                "type": Secret.SchemaAttributeType.STRING,  # "password" or "key_passphrase"
-            }
-        )
-    
-    def store_password(self, hostname, username, port, password, password_type="password"):
-        """Store a password securely in the keyring"""
-        if not password:
-            return False
-            
-        try:
-            label = f"SSHPilot - {username}@{hostname}:{port} ({password_type})"
-            attributes = {
-                "hostname": hostname,
-                "username": username, 
-                "port": str(port),
-                "type": password_type
-            }
-            
-            Secret.password_store_sync(
-                self.schema,
-                attributes,
-                Secret.COLLECTION_DEFAULT,
-                label,
-                password,
-                None
-            )
-            print(f"=== SECURE: Stored {password_type} for {username}@{hostname}:{port} ===")
-            return True
-        except Exception as e:
-            print(f"=== SECURE: Error storing {password_type}: {e} ===")
-            return False
-    
-    def retrieve_password(self, hostname, username, port, password_type="password"):
-        """Retrieve a password from the keyring"""
-        try:
-            attributes = {
-                "hostname": hostname,
-                "username": username,
-                "port": str(port),
-                "type": password_type
-            }
-            
-            password = Secret.password_lookup_sync(
-                self.schema,
-                attributes,
-                None
-            )
-            
-            if password:
-                print(f"=== SECURE: Retrieved {password_type} for {username}@{hostname}:{port} ===")
-            else:
-                print(f"=== SECURE: No {password_type} found for {username}@{hostname}:{port} ===")
-            
-            return password
-        except Exception as e:
-            print(f"=== SECURE: Error retrieving {password_type}: {e} ===")
-            return None
-    
-    def delete_password(self, hostname, username, port, password_type="password"):
-        """Delete a password from the keyring"""
-        try:
-            attributes = {
-                "hostname": hostname,
-                "username": username,
-                "port": str(port),
-                "type": password_type
-            }
-            
-            result = Secret.password_clear_sync(
-                self.schema,
-                attributes,
-                None
-            )
-            
-            if result:
-                print(f"=== SECURE: Deleted {password_type} for {username}@{hostname}:{port} ===")
-            
-            return result
-        except Exception as e:
-            print(f"=== SECURE: Error deleting {password_type}: {e} ===")
-            return False
-    
-    def delete_all_passwords(self, hostname, username, port):
-        """Delete all passwords (both password and key_passphrase) for a connection"""
-        results = []
-        results.append(self.delete_password(hostname, username, port, "password"))
-        results.append(self.delete_password(hostname, username, port, "key_passphrase"))
-        return any(results)
-
 class FreshSSHManager:
     def __init__(self):
         print("=== FRESH: Initializing Fresh SSH Manager ===")
         self.connections = []
         self.connected_connections = {}
-        self.config_file = os.path.expanduser("~/.sshpilot_config.json")
-        
-        # Initialize secure password manager
-        self.password_manager = SecurePasswordManager()
-        print("=== FRESH: Secure password manager initialized ===")
+        self.config_file = os.path.expanduser("~/.fresh_ssh_manager_config.json")
         
         # Settings with defaults
         self.settings = {
@@ -169,42 +64,20 @@ class FreshSSHManager:
         self.notebook = None
         
     def load_connections(self):
-        """Load saved connections from config file (passwords retrieved from keyring)"""
+        """Load saved connections from config file"""
         print("=== FRESH: Loading connections ===")
         if os.path.exists(self.config_file):
             try:
                 with open(self.config_file, 'r') as f:
                     data = json.load(f)
                     for conn_data in data.get('connections', []):
-                        hostname = conn_data['hostname']
-                        username = conn_data['username']
-                        port = conn_data.get('port', 22)
-                        
-                        # Retrieve passwords securely from keyring
-                        password = self.password_manager.retrieve_password(
-                            hostname, username, port, "password"
-                        )
-                        key_passphrase = self.password_manager.retrieve_password(
-                            hostname, username, port, "key_passphrase"
-                        )
-                        
-                        # Handle legacy configs that still have plain text passwords
-                        # (these will be migrated to keyring on next save)
-                        if not password and conn_data.get('password'):
-                            password = conn_data.get('password')
-                            print(f"=== FRESH: Migrating legacy password for {username}@{hostname} ===")
-                        
-                        if not key_passphrase and conn_data.get('key_passphrase'):
-                            key_passphrase = conn_data.get('key_passphrase')
-                            print(f"=== FRESH: Migrating legacy key passphrase for {username}@{hostname} ===")
-                        
                         conn = SSHConnection(
-                            hostname=hostname,
-                            username=username,
-                            port=port,
-                            password=password,
+                            hostname=conn_data['hostname'],
+                            username=conn_data['username'],
+                            port=conn_data.get('port', 22),
+                            password=conn_data.get('password'),
                             key_path=conn_data.get('key_path'),
-                            key_passphrase=key_passphrase,
+                            key_passphrase=conn_data.get('key_passphrase'),
                             name=conn_data.get('name')
                         )
                         self.connections.append(conn)
@@ -213,7 +86,7 @@ class FreshSSHManager:
                 print(f"=== FRESH: Error loading connections: {e} ===")
     
     def save_connections(self):
-        """Save connections to config file (passwords stored securely in keyring)"""
+        """Save connections to config file"""
         print("=== FRESH: Saving connections ===")
         data = {'connections': []}
         for conn in self.connections:
@@ -223,24 +96,12 @@ class FreshSSHManager:
                 'port': conn.port,
                 'name': conn.name
             }
-            
-            # Store SSH key path in config (not sensitive)
+            if conn.password:
+                conn_data['password'] = conn.password
             if conn.key_path:
                 conn_data['key_path'] = conn.key_path
-            
-            # Store passwords securely in keyring (NOT in config file)
-            if conn.password:
-                self.password_manager.store_password(
-                    conn.hostname, conn.username, conn.port, 
-                    conn.password, "password"
-                )
-            
             if conn.key_passphrase:
-                self.password_manager.store_password(
-                    conn.hostname, conn.username, conn.port, 
-                    conn.key_passphrase, "key_passphrase"
-                )
-            
+                conn_data['key_passphrase'] = conn.key_passphrase
             data['connections'].append(conn_data)
         
         try:
@@ -987,9 +848,6 @@ class FreshSSHManager:
             # Disconnect if connected
             if conn.hostname in self.connected_connections:
                 self.disconnect_host(conn.hostname)
-            
-            # Clean up stored passwords from keyring
-            self.password_manager.delete_all_passwords(conn.hostname, conn.username, conn.port)
             
             # Remove from list
             self.connections.remove(conn)
