@@ -8,6 +8,7 @@ A simple GTK-based SSH client.
 - **Tabbed Interface**: Open each connection in a separate tab
 - **Authentication Support**: Both password and SSH key authentication
 - **Auto Key Detection**: Automatically detects SSH keys in `~/.ssh/`
+- **Custom Themes and Fonts for Terminal**: Use your desired style for the terminal
 
 ## Screenshots
 
