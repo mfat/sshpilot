@@ -1,4 +1,4 @@
-# SSH Pilot
+# sshPilot
 
 A simple GTK-based SSH client.
 
