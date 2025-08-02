@@ -2,3 +2,4 @@
 /.history
 /__pycache__
 /.pybuild
+/src/sshpilot_pkg/__pycache__
