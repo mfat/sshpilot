@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=sshPilot
+GenericName=SSH Connection Manager
+Comment=Manage SSH connections with integrated terminal, tunneling, and resource monitoring
+Exec=sshpilot
+Icon=io.github.mfat.sshpilot
+Terminal=false
+Type=Application
+Categories=Network;System;Utility;
+Keywords=ssh;terminal;remote;connection;tunnel;server;
+StartupNotify=true
+StartupWMClass=sshpilot
+MimeType=text/x-ssh-config;

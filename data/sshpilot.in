@@ -1,0 +1,8 @@
+#!/bin/sh
+# Launcher script for sshPilot
+
+# Set up environment
+export PYTHONPATH="@pkgdatadir@:$PYTHONPATH"
+
+# Launch application
+exec @PYTHON@ -m io.github.mfat.sshpilot.main "$@"

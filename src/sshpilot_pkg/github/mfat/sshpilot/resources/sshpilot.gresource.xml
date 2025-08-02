@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/io/github/mfat/sshpilot">
+    <file>ui/main_window.ui</file>
+    <file>ui/connection_dialog.ui</file>
+    <file>ui/preferences.ui</file>
+    <file>ui/welcome.ui</file>
+    <file>ui/key_dialog.ui</file>
+    <file>resources/sshpilot.png</file>
+  </gresource>
+</gresources>

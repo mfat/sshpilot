@@ -1,23 +1,26 @@
 #!/usr/bin/make -f
 
+export DH_VERBOSE = 1
+export PYBUILD_NAME = sshpilot
+
 %:
-	dh $@
+	dh $@ --with python3 --buildsystem=pybuild
+
+override_dh_auto_configure:
+	dh_auto_configure -- --prefix=/usr
 
 override_dh_auto_build:
-	# No build step needed - standalone Python application
+	dh_auto_build
 
 override_dh_auto_install:
-	# Install the main executable
-	install -D -m 755 sshpilot.py $(CURDIR)/debian/sshpilot/usr/bin/sshpilot
-	# Install CSS file
-	install -D -m 644 ssh_manager.css $(CURDIR)/debian/sshpilot/usr/share/sshpilot/ssh_manager.css
-	# Install icon
-	install -D -m 644 sshpilot.png $(CURDIR)/debian/sshpilot/usr/share/pixmaps/sshpilot.png
-	# Install desktop file
-	install -D -m 644 debian/io.github.mfat.sshpilot.desktop $(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop
-
-override_dh_auto_test:
-	# Skip tests for now (can be enabled later)
+	dh_auto_install
+	# Compile GLib schemas
+	glib-compile-schemas debian/sshpilot/usr/share/glib-2.0/schemas/
 
 override_dh_auto_clean:
-	# Nothing to clean
+	dh_auto_clean
+	rm -rf build/
+	rm -rf *.egg-info/
+
+override_dh_python3:
+	dh_python3 --requires=requirements.txt

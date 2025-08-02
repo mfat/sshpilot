@@ -1,0 +1,5 @@
+[console_scripts]
+sshpilot = io.github.mfat.sshpilot.main:main
+
+[gui_scripts]
+sshpilot-gui = io.github.mfat.sshpilot.main:main

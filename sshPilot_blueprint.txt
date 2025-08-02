@@ -1,0 +1,827 @@
+# sshPilot Blueprint
+
+## Project Overview
+- **Name**: sshPilot
+- **Package Name**: io.github.mfat.sshpilot
+- **Developer**: mFat (email: newmfat@gmail.com)
+- **Website**: https://github.com/mfat/sshpilot
+- **Description**: A desktop SSH connection manager with a GUI, integrated VTE terminal, tabbed interface, secure password storage, SSH tunneling, key management, resource monitoring, and X11 forwarding.
+- **Key Features**:
+  - GUI built with libadwaita, following GNOME Human Interface Guidelines (HIG).
+  - Tabbed interface with close button per tab (same as disconnect action).
+  - Left pane for saved connections with symbolic computer icon, nickname, and optional hostname/IP.
+  - Double-click to connect or activate existing tab.
+  - Context menu and buttons for add, remove, edit, connect, disconnect, and new tab for connected hosts.
+  - Secure password storage using secretstorage (system keyring).
+  - Support for password and key-based authentication with ssh-agent integration.
+  - For key-based alothentication allow user to browse and select keyfile
+  - Load/save connections in standard ~/.ssh/config format.
+  - Auto-detect SSH keys in ~/.ssh/.
+  - Reorder connections via drag-and-drop or move up/down buttons.
+  - Terminal themes and font customization.
+  - Split view for side-by-side tabs.
+  - Keyboard shortcuts: Ctrl+L (toggle list focus), Ctrl+N (new connection), Enter (connect preselected item).
+  - Help message and keyboard shortcuts on startup.
+  - Automatic terminal focus on connection.
+  - Full debugging output with logging.
+  - SSH tunneling: local, remote, and dynamic (similar to Termius).
+  - SSH key creation and adding to remote hosts.
+  - Resource usage monitoring (disk, RAM, CPU, bandwidth) with graphical charts.
+  - X11 forwarding support.
+  - Packaging for Flatpak, DEB, and RPM.
+  - GitHub Action for DEB and RPM builds.
+- **Icon**: sshpilot.png
+- **License**: GPL-3.0
+- **Version**: 1.0.0
+- **Date**: August 01, 2025
+
+## Project Structure
+```
+sshPilot/
+├── src/
+│   ├── io.github.mfat.sshpilot/
+│   │   ├── __init__.py
+│   │   ├── main.py
+│   │   ├── window.py
+│   │   ├── connection_manager.py
+│   │   ├── terminal.py
+│   │   ├── config.py
+│   │   ├── resource_monitor.py
+│   │   ├── key_manager.py
+│   │   ├── ui/
+│   │   │   ├── main_window.ui
+│   │   │   ├── connection_dialog.ui
+│   │   │   ├── preferences.ui
+│   │   │   ├── welcome.ui
+│   │   │   ├── resource_view.ui
+│   │   │   ├── key_dialog.ui
+│   │   └── resources/
+│   │       ├── sshpilot.gresource.xml
+│   │       ├── sshpilot.png
+│   ├── data/
+│   │   ├── io.github.mfat.sshpilot.desktop
+│   │   ├── io.github.mfat.sshpilot.appdata.xml
+│   │   ├── io.github.mfat.sshpilot.json
+│   ├── debian/
+│   │   ├── changelog
+│   │   ├── control
+│   │   ├── copyright
+│   │   ├── rules
+│   ├── tests/
+│   │   ├── test_connection.py
+│   │   ├── test_ui.py
+│   │   ├── test_resource_monitor.py
+│   │   ├── test_key_manager.py
+├── docs/
+│   ├── user_manual.md
+│   ├── developer_guide.md
+├── .github/
+│   ├── workflows/
+│   │   ├── build-packages.yml
+├── requirements.txt
+├── sshPilot.spec
+├── setup.py
+├── meson.build
+├── README.md
+├── LICENSE
+```
+
+## Requirements (requirements.txt)
+```
+# Required dependencies for sshPilot
+python>=3.10
+pygobject>=3.42
+libadwaita>=1.2
+vte>=0.70
+# For SSH functionality
+paramiko>=3.4
+# For configuration parsing
+pyyaml>=6.0
+# For secure password storage
+secretstorage>=3.3
+# For debugging
+python-logging>=0.4
+# For SSH key handling
+cryptography>=42.0
+# For resource monitoring charts
+matplotlib>=3.8
+```
+
+## GitHub Action (.github/workflows/build-packages.yml)
+```
+name: Build DEB and RPM Packages
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ published ]
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y debhelper devscripts python3-all python3-stdeb
+          pip install -r requirements.txt
+
+      - name: Build DEB package
+        run: |
+          python3 setup.py --command-packages=stdeb.command bdist_deb
+          mkdir -p dist
+          mv deb_dist/*.deb dist/
+
+      - name: Upload DEB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-package
+          path: dist/*.deb
+
+  build-rpm:
+    runs-on: fedora-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          sudo dnf install -y rpm-build python3-devel python3-setuptools
+          pip install -r requirements.txt
+
+      - name: Build RPM package
+        run: |
+          python3 setup.py bdist_rpm
+          mkdir -p dist
+          mv dist/*.rpm dist/
+
+      - name: Upload RPM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-package
+          path: dist/*.rpm
+```
+
+## Implementation Details
+
+### Main Application (main.py)
+```
+import gi
+gi.require_version('Adw', '1')
+from gi.repository import Adw, Gtk, Gio
+from .window import MainWindow
+
+class SshPilotApplication(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id='io.github.mfat.sshpilot',
+                        flags=Gio.ApplicationFlags.FLAGS_NONE)
+        self.create_action('quit', self.quit, ['<primary>q'])
+        self.create_action('new-connection', self.on_new_connection, ['<primary>n'])
+        self.create_action('toggle-list', self.on_toggle_list, ['<primary>l'])
+        self.create_action('new-key', self.on_new_key, ['<primary><shift>k'])
+        self.create_action('show-resources', self.on_show_resources, ['<primary>r'])
+
+    def do_activate(self):
+        win = self.props.active_window
+        if not win:
+            win = MainWindow(application=self)
+        win.present()
+
+    def on_new_connection(self, *args):
+        self.props.active_window.show_connection_dialog()
+
+    def on_toggle_list(self, *args):
+        self.props.active_window.toggle_list_focus()
+
+    def on_new_key(self, *args):
+        self.props.active_window.show_key_dialog()
+
+    def on_show_resources(self, *args):
+        self.props.active_window.show_resource_view()
+
+def main():
+    app = SshPilotApplication()
+    return app.run(sys.argv)
+```
+
+### Main Window (window.py)
+```
+class MainWindow(Adw.ApplicationWindow):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.connection_manager = ConnectionManager()
+        self.key_manager = KeyManager()
+        self.resource_monitor = ResourceMonitor()
+        self.setup_ui()
+        self.setup_connections()
+        self.show_welcome()
+
+    def setup_ui(self):
+        self.tab_view = Adw.TabView()
+        self.list_box = Gtk.ListBox()
+        self.split_view = Adw.OverlaySplitView(content=self.tab_view, sidebar=self.list_box)
+        self.set_content(self.split_view)
+        self.list_box.connect('row-activated', self.on_row_activated)
+        self.list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.list_box.set_sort_func(self.sort_connections)
+        self.list_box.set_drag_source(Gdk.ContentFormats.new_for_gtype(ConnectionRow))
+        self.list_box.set_drop_target(Gdk.ContentFormats.new_for_gtype(ConnectionRow))
+        self.setup_context_menu()
+
+    def setup_connections(self):
+        connections = self.connection_manager.get_connections()
+        for conn in connections:
+            row = ConnectionRow(conn)
+            self.list_box.append(row)
+        if connections:
+            self.list_box.select_row(self.list_box.get_row_at_index(0))
+
+    def on_row_activated(self, list_box, row):
+        connection = row.connection
+        if connection.is_connected:
+            self.activate_tab(connection)
+        else:
+            self.connect_to_host(connection)
+
+    def show_welcome(self):
+        welcome = WelcomePage()
+        self.tab_view.append(welcome)
+
+    def show_key_dialog(self):
+        dialog = KeyDialog(self)
+        dialog.present()
+
+    def show_resource_view(self):
+        connection = self.list_box.get_selected_row().connection
+        resource_view = ResourceView(self.resource_monitor, connection)
+        self.tab_view.append(resource_view)
+
+    def setup_context_menu(self):
+        menu = Gio.Menu()
+        menu.append("Connect", "win.connect")
+        menu.append("Disconnect", "win.disconnect")
+        menu.append("Edit", "win.edit-connection")
+        menu.append("Delete", "win.delete-connection")
+        menu.append("New Tab", "win.new-tab")
+        menu.append("Show Resources", "win.show-resources")
+        menu.append("Create Key", "win.new-key")
+        self.list_box.set_context_menu(menu)
+```
+
+### Connection Manager (connection_manager.py)
+```
+import secretstorage
+import paramiko
+import os
+from gi.repository import GObject
+
+class ConnectionManager(GObject.Object):
+    __gsignals__ = {
+        'connection-added': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
+        'connection-removed': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
+    }
+
+    def __init__(self):
+        super().__init__()
+        self.bus = secretstorage.dbus_init()
+        self.collection = secretstorage.get_default_collection(self.bus)
+        self.ssh_config = paramiko.SSHConfig()
+        self.connections = []
+        self.load_ssh_config()
+        self.ssh_agent = self.init_ssh_agent()
+        self.load_ssh_keys()
+
+    def load_ssh_config(self):
+        config_path = os.path.expanduser('~/.ssh/config')
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                self.ssh_config.parse(f)
+            self.connections = [self.parse_host(host) for host in self.ssh_config.get_hostnames()]
+
+    def parse_host(self, host):
+        host_data = self.ssh_config.lookup(host)
+        return {
+            'host': host_data.get('hostname', host),
+            'username': host_data.get('user'),
+            'keyfile': host_data.get('identityfile'),
+            'nickname': host,
+            'tunnel_type': host_data.get('tunnel_type'),  # local, remote, dynamic
+            'tunnel_port': host_data.get('tunnel_port'),
+            'x11_forwarding': host_data.get('forwardx11', 'no') == 'yes',
+        }
+
+    def store_password(self, host, username, password):
+        attributes = {'application': 'sshPilot', 'host': host, 'username': username}
+        self.collection.create_item(f'sshPilot: {host}', attributes, password.encode())
+
+    def get_password(self, host, username):
+        attributes = {'application': 'sshPilot', 'host': host, 'username': username}
+        items = self.collection.search_items(attributes)
+        for item in items:
+            return item.get_secret().decode()
+        return None
+
+    def save_connection(self, host_data):
+        with open(os.path.expanduser('~/.ssh/config'), 'a') as f:
+            f.write(f"\nHost {host_data['nickname']}\n")
+            f.write(f"    HostName {host_data['host']}\n")
+            f.write(f"    User {host_data['username']}\n")
+            if host_data.get('keyfile'):
+                f.write(f"    IdentityFile {host_data['keyfile']}\n")
+            if host_data.get('tunnel_type'):
+                f.write(f"    {host_data['tunnel_type'].capitalize()}Forward {host_data['tunnel_port']}\n")
+            if host_data.get('x11_forwarding'):
+                f.write(f"    ForwardX11 yes\n")
+        if host_data.get('password'):
+            self.store_password(host_data['host'], host_data['username'], host_data['password'])
+        self.connections.append(host_data)
+        self.emit('connection-added', host_data)
+
+    def connect(self, host_data):
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        password = self.get_password(host_data['host'], host_data['username'])
+        connect_kwargs = {
+            'hostname': host_data['host'],
+            'username': host_data['username'],
+            'password': password,
+            'key_filename': host_data.get('keyfile'),
+        }
+        if host_data.get('x11_forwarding'):
+            connect_kwargs['allow_agent'] = True
+        client.connect(**connect_kwargs)
+        if host_data.get('tunnel_type') == 'local':
+            client.get_transport().request_port_forward('', host_data['tunnel_port'])
+        elif host_data.get('tunnel_type') == 'remote':
+            client.get_transport().request_port_forward('', host_data['tunnel_port'], host_data['host'])
+        elif host_data.get('tunnel_type') == 'dynamic':
+            client.get_transport().request_dynamic_forward(host_data['tunnel_port'])
+        return client
+
+    def load_ssh_keys(self):
+        ssh_dir = os.path.expanduser('~/.ssh')
+        keys = [os.path.join(ssh_dir, f) for f in os.listdir(ssh_dir) if f.endswith('.pub')]
+        return [k[:-4] for k in keys]  # Remove .pub extension
+```
+
+### Terminal (terminal.py)
+```
+class TerminalWidget(Gtk.Box):
+    def __init__(self, connection):
+        super().__init__()
+        self.vte = Vte.Terminal()
+        self.connection = connection
+        self.apply_theme()
+        self.vte.connect('child-exited', self.on_disconnect)
+        self.pack_start(self.vte, True, True, 0)
+
+    def apply_theme(self, theme=None):
+        profile = self.connection.config.get_terminal_profile()
+        self.vte.set_colors(
+            foreground=profile['foreground'],
+            background=profile['background'],
+        )
+        self.vte.set_font(Pango.FontDescription.from_string(profile['font']))
+
+    def connect(self):
+        client = self.connection.manager.connect(self.connection.data)
+        transport = client.get_transport()
+        channel = transport.open_session()
+        if self.connection.data.get('x11_forwarding'):
+            channel.request_x11()
+        pty = channel.get_pty()
+        self.vte.spawn_async(
+            Vte.PtyFlags.DEFAULT,
+            os.environ['HOME'],
+            ['/bin/bash'],
+            ['DISPLAY=:0'] if self.connection.data.get('x11_forwarding') else None,
+            GLib.SpawnFlags.DEFAULT,
+            None, None, -1, None,
+            self.on_spawn, channel
+        )
+        self.vte.grab_focus()
+
+    def on_disconnect(self, terminal, status):
+        self.connection.is_connected = False
+        self.emit('disconnected')
+```
+
+### Configuration (config.py)
+```
+from gi.repository import Gio
+
+class Config(GObject.Object):
+    def __init__(self):
+        super().__init__()
+        self.settings = Gio.Settings.new('io.github.mfat.sshpilot')
+        self.terminal_themes = self.load_themes()
+
+    def load_themes(self):
+        return self.settings.get_value('terminal-themes').unpack()
+
+    def save_theme(self, name, colors, font):
+        themes = self.terminal_themes
+        themes[name] = {'foreground': colors[0], 'background': colors[1], 'font': font}
+        self.settings.set_value('terminal-themes', GLib.Variant('a{sv}', themes))
+
+    def get_terminal_profile(self):
+        return {
+            'foreground': self.settings.get_string('terminal-foreground'),
+            'background': self.settings.get_string('terminal-background'),
+            'font': self.settings.get_string('terminal-font'),
+        }
+```
+
+### Resource Monitor (resource_monitor.py)
+```
+import paramiko
+import matplotlib.pyplot as plt
+from gi.repository import Gtk, Adw
+
+class ResourceMonitor:
+    def __init__(self):
+        self.data = {'cpu': [], 'ram': [], 'disk': [], 'bandwidth': []}
+
+    def fetch_resources(self, connection):
+        client = connection.manager.connect(connection.data)
+        commands = {
+            'cpu': "top -bn1 | head -n3",
+            'ram': "free -m",
+            'disk': "df -h /",
+            'bandwidth': "iftop -t -s 1"
+        }
+        results = {}
+        for key, cmd in commands.items():
+            stdin, stdout, stderr = client.exec_command(cmd)
+            results[key] = stdout.read().decode()
+        client.close()
+        return self.parse_resources(results)
+
+    def parse_resources(self, results):
+        # Simplified parsing (implement detailed parsing based on command output)
+        parsed = {
+            'cpu': float(results['cpu'].split('\n')[2].split()[1]),  # %CPU from top
+            'ram': float(results['ram'].split('\n')[1].split()[2]),  # Used RAM in MB
+            'disk': float(results['disk'].split('\n')[1].split()[4].rstrip('%')),  # % Disk usage
+            'bandwidth': float(results['bandwidth'].split('Total')[1].split()[0])  # Mbps
+        }
+        for key, value in parsed.items():
+            self.data[key].append(value)
+            if len(self.data[key]) > 60:  # Keep last 60 seconds
+                self.data[key].pop(0)
+        return parsed
+
+class ResourceView(Gtk.Box):
+    def __init__(self, monitor, connection):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self.monitor = monitor
+        self.connection = connection
+        self.setup_charts()
+
+    def setup_charts(self):
+        fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(8, 6))
+        self.cpu_plot, = ax1.plot([], [], label='CPU (%)')
+        self.ram_plot, = ax2.plot([], [], label='RAM (MB)')
+        self.disk_plot, = ax3.plot([], [], label='Disk (%)')
+        self.bandwidth_plot, = ax4.plot([], [], label='Bandwidth (Mbps)')
+        for ax in (ax1, ax2, ax3, ax4):
+            ax.legend()
+        self.canvas = FigureCanvas(fig)
+        self.append(self.canvas)
+        GLib.timeout_add_seconds(1, self.update_charts)
+
+    def update_charts(self):
+        data = self.monitor.fetch_resources(self.connection)
+        x = range(len(self.monitor.data['cpu']))
+        self.cpu_plot.set_data(x, self.monitor.data['cpu'])
+        self.ram_plot.set_data(x, self.monitor.data['ram'])
+        self.disk_plot.set_data(x, self.monitor.data['disk'])
+        self.bandwidth_plot.set_data(x, self.monitor.data['bandwidth'])
+        self.canvas.draw()
+        return True
+```
+
+### Key Manager (key_manager.py)
+```
+import os
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.backends import default_backend
+import paramiko
+
+class KeyManager:
+    def __init__(self):
+        self.ssh_dir = os.path.expanduser('~/.ssh')
+
+    def generate_key(self, key_name, passphrase=None):
+        key = rsa.generate_private_key(
+            public_exponent=65537,
+            key_size=2048,
+            backend=default_backend()
+        )
+        key_path = os.path.join(self.ssh_dir, key_name)
+        with open(key_path, 'wb') as f:
+            f.write(key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.BestAvailableEncryption(passphrase.encode()) if passphrase else serialization.NoEncryption()
+            ))
+        pub_key = key.public_key().public_bytes(
+            encoding=serialization.Encoding.OpenSSH,
+            format=serialization.PublicFormat.OpenSSH
+        )
+        with open(f"{key_path}.pub", 'wb') as f:
+            f.write(pub_key)
+        os.chmod(key_path, 0o600)
+        return key_path
+
+    def add_key_to_host(self, connection, key_path):
+        client = connection.manager.connect(connection.data)
+        pub_key_path = f"{key_path}.pub"
+        with open(pub_key_path, 'r') as f:
+            pub_key = f.read().strip()
+        stdin, stdout, stderr = client.exec_command(f"mkdir -p ~/.ssh && echo '{pub_key}' >> ~/.ssh/authorized_keys")
+        stdin.close()
+        client.close()
+```
+
+### UI Files
+- **main_window.ui**: Defines layout with sidebar (Gtk.ListBox), tabs (Adw.TabView), toolbar, and context menus.
+- **connection_dialog.ui**: Form for adding/editing connections (host, username, keyfile, password, tunnel type, tunnel port, X11 forwarding).
+- **preferences.ui**: Settings for themes, fonts, hostname visibility.
+- **welcome.ui**: Startup help with shortcuts (Ctrl+N, Ctrl+L, Ctrl+Shift+K, Ctrl+R, Enter).
+- **resource_view.ui**: Layout for resource usage charts (CPU, RAM, disk, bandwidth).
+- **key_dialog.ui**: Form for creating SSH keys (key name, passphrase).
+
+## Packaging Files
+
+### Flatpak (data/io.github.mfat.sshpilot.json)
+```
+{
+    "app-id": "io.github.mfat.sshpilot",
+    "runtime": "org.gnome.Platform",
+    "runtime-version": "46",
+    "sdk": "org.gnome.Sdk",
+    "command": "sshPilot",
+    "finish-args": [
+        "--share=network",
+        "--share=ipc",
+        "--socket=wayland",
+        "--socket=fallback-x11",
+        "--socket=x11",
+        "--device=dri",
+        "--filesystem=home",
+        "--talk-name=org.freedesktop.secrets"
+    ],
+    "modules": [
+        {
+            "name": "sshPilot",
+            "buildsystem": "meson",
+            "sources": [
+                {
+                    "type": "git",
+                    "url": "https://github.com/mfat/sshpilot.git",
+                    "tag": "v1.0.0"
+                }
+            ]
+        }
+    ]
+}
+```
+
+### DEB (debian/control)
+```
+Source: sshPilot
+Section: net
+Priority: optional
+Maintainer: mFat <newmfat@gmail.com>
+Build-Depends: debhelper (>= 13), python3 (>= 3.10), python3-all
+Standards-Version: 4.6.2
+Homepage: https://github.com/mfat/sshpilot
+
+Package: sshPilot
+Architecture: all
+Depends: python3 (>= 3.10), libadwaita-1-0 (>= 1.2), gir1.2-vte-2.91 (>= 0.70), python3-matplotlib (>= 3.8), ${misc:Depends}
+Description: SSH connection manager with integrated terminal
+ sshPilot is a GUI application for managing SSH connections with a tabbed interface, tunneling, key management, and resource monitoring.
+```
+
+### DEB (debian/changelog)
+```
+sshPilot (1.0.0-1) unstable; urgency=medium
+
+  * Initial release.
+
+ -- mFat <newmfat@gmail.com>  Fri, 01 Aug 2025 08:00:00 +0000
+```
+
+### DEB (debian/copyright)
+```
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: sshPilot
+Upstream-Contact: mFat <newmfat@gmail.com>
+Source: https://github.com/mfat/sshpilot
+
+Files: *
+Copyright: 2025 mFat <newmfat@gmail.com>
+License: GPL-3.0
+```
+
+### DEB (debian/rules)
+```
+#!/usr/bin/make -f
+%:
+	dh $@ --with python3
+```
+
+### RPM (sshPilot.spec)
+```
+Name:           sshPilot
+Version:        1.0.0
+Release:        1%{?dist}
+Summary:        SSH connection manager with integrated terminal
+License:        GPL-3.0
+URL:            https://github.com/mfat/sshpilot
+Source0:        %{name}-%{version}.tar.gz
+Requires:       python3 >= 3.10, libadwaita >= 1.2, vte >= 0.70, python3-matplotlib >= 3.8
+
+%description
+sshPilot is a GUI application for managing SSH connections with a tabbed interface, tunneling, key management, and resource monitoring.
+
+%prep
+%setup -q
+
+%build
+python3 setup.py build
+
+%install
+python3 setup.py install --root=%{buildroot}
+
+%files
+%license LICENSE
+%doc README.md
+%{_bindir}/sshPilot
+%{python3_sitelib}/io.github.mfat.sshpilot/
+
+%changelog
+* Fri Aug 01 2025 mFat <newmfat@gmail.com> - 1.0.0-1
+- Initial release
+```
+
+### Desktop File (data/io.github.mfat.sshpilot.desktop)
+```
+[Desktop Entry]
+Name=sshPilot
+Exec=sshPilot
+Type=Application
+Icon=io.github.mfat.sshpilot
+Comment=SSH connection manager with integrated terminal
+Categories=Network;Utility;
+Keywords=ssh;terminal;remote;tunnel;
+```
+
+### AppData (data/io.github.mfat.sshpilot.appdata.xml)
+```
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.mfat.sshpilot</id>
+  <name>sshPilot</name>
+  <summary>SSH connection manager with integrated terminal</summary>
+  <description>
+    <p>sshPilot is a user-friendly application for managing SSH connections with a tabbed interface, supporting tunneling, key management, resource monitoring, and X11 forwarding.</p>
+  </description>
+  <url type="homepage">https://github.com/mfat/sshpilot</url>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0</project_license>
+  <developer_name>mFat</developer_name>
+  <update_contact>newmfat@gmail.com</update_contact>
+  <icon type="stock">io.github.mfat.sshpilot</icon>
+</component>
+```
+
+## Build System (meson.build)
+```
+project('sshPilot', 'c',
+  version: '1.0.0',
+  license: 'GPL-3.0',
+  default_options: ['warning_level=3'])
+
+python = import('python')
+py_installation = python.find_installation('python3')
+
+dependencies = [
+  dependency('python3', version: '>=3.10'),
+  dependency('libadwaita-1', version: '>=1.2'),
+  dependency('vte-2.91', version: '>=0.70'),
+  dependency('x11'),
+]
+
+install_subdir('src/io.github.mfat.sshpilot', install_dir: py_installation.get_install_dir())
+
+data_dir = join_paths(get_option('prefix'), 'share')
+install_data('data/io.github.mfat.sshpilot.desktop', install_dir: join_paths(data_dir, 'applications'))
+install_data('data/io.github.mfat.sshpilot.appdata.xml', install_dir: join_paths(data_dir, 'metainfo'))
+install_data('src/io.github.mfat.sshpilot/resources/sshpilot.png', install_dir: join_paths(data_dir, 'icons/hicolor/256x256/apps'), rename: 'io.github.mfat.sshpilot.png')
+
+meson.add_install_script('meson_post_install.py')
+```
+
+## Setup Script (setup.py)
+```
+from setuptools import setup, find_packages
+
+setup(
+    name='sshPilot',
+    version='1.0.0',
+    packages=find_packages(),
+    install_requires=[
+        'pygobject>=3.42',
+        'paramiko>=3.4',
+        'pyyaml>=6.0',
+        'secretstorage>=3.3',
+        'cryptography>=42.0',
+        'matplotlib>=3.8',
+    ],
+    entry_points={
+        'console_scripts': [
+            'sshPilot = io.github.mfat.sshpilot.main:main',
+        ],
+    },
+    data_files=[
+        ('share/applications', ['data/io.github.mfat.sshpilot.desktop']),
+        ('share/metainfo', ['data/io.github.mfat.sshpilot.appdata.xml']),
+        ('share/icons/hicolor/256x256/apps', ['src/io.github.mfat.sshpilot/resources/sshpilot.png']),
+    ],
+    author='mFat',
+    author_email='newmfat@gmail.com',
+    description='SSH connection manager with integrated terminal, tunneling, key management, and resource monitoring',
+    url='https://github.com/mfat/sshpilot',
+    license='GPL-3.0',
+)
+```
+
+## Documentation Plan
+- **User Manual (docs/user_manual.md)**:
+  - Installation instructions (Flatpak, DEB, RPM).
+  - Usage guide: Adding connections, using tabs, split view, themes, tunnels, key management, resource monitoring.
+  - Keyboard shortcuts: Ctrl+N (new connection), Ctrl+L (toggle list focus), Ctrl+Shift+K (new key), Ctrl+R (show resources), Enter (connect selected).
+  - Troubleshooting tips.
+- **Developer Guide (docs/developer_guide.md)**:
+  - Project architecture (UI/logic separation).
+  - Extending functionality (new features, plugins).
+  - Debugging setup (logging, debug mode).
+  - Building and packaging instructions.
+- **API Docs**: Generated using Sphinx for Python code.
+
+## Debugging
+- Use Python logging module with file rotation.
+- Debug mode toggle in preferences.
+- Log levels: DEBUG, INFO, WARNING, ERROR.
+- Example logging setup in main.py:
+```
+import logging
+from logging.handlers import RotatingFileHandler
+
+logging.basicConfig(
+    level=logging.DEBUG if os.environ.get('SSHPILOT_DEBUG') else logging.INFO,
+    handlers=[
+        RotatingFileHandler('~/.local/share/sshPilot/sshPilot.log', maxBytes=1e6, backupCount=5),
+        logging.StreamHandler()
+    ]
+)
+```
+
+## GNOME Integration
+- Adwaita widgets and styling.
+- Dark/light theme support.
+- Proper desktop integration (icon, AppData, desktop file).
+- Follow GNOME HIG for layout and interactions.
+
+## Additional Notes
+- **Secure Storage**: Passwords stored in system keyring (e.g., GNOME Keyring, KDE Wallet) via secretstorage, never in plain text.
+- **SSH Config**: Connections saved in ~/.ssh/config, passwords stored separately in keyring.
+- **SSH Tunneling**: Supports local (-L), remote (-R), and dynamic (-D) forwarding, configurable in connection dialog.
+- **SSH Key Management**: Generate RSA keys with optional passphrase and add to remote hosts' authorized_keys.
+- **Resource Monitoring**: Fetches CPU, RAM, disk, and bandwidth usage via SSH commands, displayed in real-time matplotlib charts.
+- **X11 Forwarding**: Enabled via checkbox in connection dialog, sets up X11 channel in terminal.
+- **Packaging**: Flatpak for sandboxing (includes X11 socket), DEB and RPM for native integration.
+- **GitHub Action**: Automates DEB and RPM builds on push, pull request, or release.
+- **Maintainability**: Logic (connection_manager, config, resource_monitor, key_manager) and UI (window, terminal) fully separated.
+- **Extensibility**: Signal-based architecture for easy feature additions.
+- **Icon**: sshpilot.png installed as io.github.mfat.sshpilot.png.
