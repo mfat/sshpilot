@@ -162,113 +162,61 @@
                     <property name="hscrollbar-policy">never</property>
                     <child>
                       <object class="AdwPreferencesGroup">
-                        <!-- Local Port Forwarding -->
                         <child>
                           <object class="AdwPreferencesGroup">
-                            <property name="title" translatable="yes">Local Port Forwarding</property>
+                            <property name="title" translatable="yes">Port Forwarding Rules</property>
+                            <property name="description" translatable="yes">Add, edit, or remove port forwarding rules for this connection</property>
+                            
+                            <!-- Port Forwarding Rules Container -->
+                            <child>
+                              <object class="GtkBox" id="port_forwarding_rules_container">
+                                <property name="orientation">vertical</property>
+                                <property name="margin-top">6</property>
+                                <property name="margin-bottom">6</property>
+                                <property name="margin-start">12</property>
+                                <property name="margin-end">12</property>
+                                <style>
+                                  <class name="card"/>
+                                </style>
+                              </object>
+                            </child>
                             
                             <child>
-                              <object class="AdwSwitchRow" id="local_forward_enabled">
-                                <property name="title" translatable="yes">Enable Local Port Forwarding</property>
+                              <object class="AdwActionRow">
+                                <property name="title" translatable="yes">Add a port forwarding rule to get started</property>
+                                <property name="subtitle" translatable="yes">Click the + button below to add a new rule</property>
+                                <property name="activatable">false</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        
+                        <child>
+                          <object class="AdwPreferencesGroup">
+                            <property name="title" translatable="yes">About Port Forwarding</property>
+                            <property name="description" translatable="yes">Port forwarding allows you to securely tunnel network connections between your local machine and the remote server.</property>
+                            
+                            <child>
+                              <object class="AdwActionRow">
+                                <property name="title" translatable="yes">Local Port Forwarding</property>
                                 <property name="subtitle" translatable="yes">Forward a local port to a remote destination</property>
+                                <property name="activatable">false</property>
                               </object>
                             </child>
                             
                             <child>
-                              <object class="AdwEntryRow" id="local_listen_addr">
-                                <property name="title" translatable="yes">Listen Address</property>
-                                <property name="text">localhost</property>
-                              </object>
-                            </child>
-                            
-                            <child>
-                              <object class="AdwEntryRow" id="local_listen_port">
-                                <property name="title" translatable="yes">Listen Port</property>
-                                <property name="text">8080</property>
-                              </object>
-                            </child>
-                            
-                            <child>
-                              <object class="AdwEntryRow" id="local_dest_addr">
-                                <property name="title" translatable="yes">Remote Address</property>
-                                <property name="text">localhost</property>
-                              </object>
-                            </child>
-                            
-                            <child>
-                              <object class="AdwEntryRow" id="local_dest_port">
-                                <property name="title" translatable="yes">Remote Port</property>
-                                <property name="text">80</property>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                        
-                        <!-- Remote Port Forwarding -->
-                        <child>
-                          <object class="AdwPreferencesGroup">
-                            <property name="title" translatable="yes">Remote Port Forwarding</property>
-                            
-                            <child>
-                              <object class="AdwSwitchRow" id="remote_forward_enabled">
-                                <property name="title" translatable="yes">Enable Remote Port Forwarding</property>
+                              <object class="AdwActionRow">
+                                <property name="title" translatable="yes">Remote Port Forwarding</property>
                                 <property name="subtitle" translatable="yes">Forward a remote port to a local destination</property>
+                                <property name="activatable">false</property>
                               </object>
                             </child>
                             
                             <child>
-                              <object class="AdwEntryRow" id="remote_listen_addr">
-                                <property name="title" translatable="yes">Remote Listen Address</property>
-                                <property name="text">localhost</property>
-                              </object>
-                            </child>
-                            
-                            <child>
-                              <object class="AdwEntryRow" id="remote_listen_port">
-                                <property name="title" translatable="yes">Remote Listen Port</property>
-                                <property name="text">8080</property>
-                              </object>
-                            </child>
-                            
-                            <child>
-                              <object class="AdwEntryRow" id="remote_dest_addr">
-                                <property name="title" translatable="yes">Local Address</property>
-                                <property name="text">localhost</property>
-                              </object>
-                            </child>
-                            
-                            <child>
-                              <object class="AdwEntryRow" id="remote_dest_port">
-                                <property name="title" translatable="yes">Local Port</property>
-                                <property name="text">80</property>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                        
-                        <!-- Dynamic Port Forwarding -->
-                        <child>
-                          <object class="AdwPreferencesGroup">
-                            <property name="title" translatable="yes">Dynamic Port Forwarding</property>
-                            
-                            <child>
-                              <object class="AdwSwitchRow" id="dynamic_forward_enabled">
-                                <property name="title" translatable="yes">Enable Dynamic Port Forwarding</property>
+                              <object class="AdwActionRow">
+                                <property name="title" translatable="yes">Dynamic Port Forwarding</property>
                                 <property name="subtitle" translatable="yes">Create a SOCKS proxy for dynamic forwarding</property>
-                              </object>
-                            </child>
-                            
-                            <child>
-                              <object class="AdwEntryRow" id="dynamic_listen_addr">
-                                <property name="title" translatable="yes">Listen Address</property>
-                                <property name="text">localhost</property>
-                              </object>
-                            </child>
-                            
-                            <child>
-                              <object class="AdwEntryRow" id="dynamic_listen_port">
-                                <property name="title" translatable="yes">Listen Port</property>
-                                <property name="text">1080</property>
+                                <property name="activatable">false</property>
                               </object>
                             </child>
                           </object>

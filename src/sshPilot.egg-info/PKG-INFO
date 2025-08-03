@@ -1,4 +1,4 @@
-Metadata-Version: 2.2
+Metadata-Version: 2.4
 Name: sshPilot
 Version: 1.0.0
 Summary: SSH connection manager with integrated terminal, tunneling, key management, and resource monitoring
@@ -30,20 +30,21 @@ Requires-Python: >=3.10
 Description-Content-Type: text/markdown
 License-File: LICENSE
 Requires-Dist: pygobject>=3.42
-Requires-Dist: paramiko>=3.4
+Requires-Dist: asyncssh>=2.14.0
 Requires-Dist: pyyaml>=6.0
 Requires-Dist: secretstorage>=3.3
 Requires-Dist: cryptography>=42.0
 Requires-Dist: matplotlib>=3.8
+Requires-Dist: asyncio>=3.4.3
 Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0; extra == "dev"
 Requires-Dist: black>=23.0; extra == "dev"
 Requires-Dist: flake8>=6.0; extra == "dev"
 Requires-Dist: mypy>=1.0; extra == "dev"
-Requires-Dist: pytest-cov>=4.0; extra == "dev"
-Requires-Dist: pytest>=7.0; extra == "dev"
 Provides-Extra: docs
-Requires-Dist: sphinx-rtd-theme>=1.2; extra == "docs"
 Requires-Dist: sphinx>=6.0; extra == "docs"
+Requires-Dist: sphinx-rtd-theme>=1.2; extra == "docs"
 Dynamic: author
 Dynamic: author-email
 Dynamic: classifier
@@ -52,6 +53,7 @@ Dynamic: description-content-type
 Dynamic: home-page
 Dynamic: keywords
 Dynamic: license
+Dynamic: license-file
 Dynamic: platform
 Dynamic: project-url
 Dynamic: provides-extra

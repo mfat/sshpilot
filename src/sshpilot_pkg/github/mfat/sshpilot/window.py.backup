@@ -83,14 +83,52 @@ class ConnectionRow(Gtk.ListBoxRow):
     def update_display(self):
         """Update the display with current connection data"""
         # Update the labels with current connection data
-        if hasattr(self.connection, 'nickname') and hasattr(self, 'nickname_label'):
-            self.nickname_label.set_markup(f"<b>{self.connection.nickname}</b>")
-        
-        if hasattr(self.connection, 'username') and hasattr(self.connection, 'host') and hasattr(self, 'host_label'):
-            port_text = f":{self.connection.port}" if hasattr(self.connection, 'port') and self.connection.port != 22 else ""
-            self.host_label.set_text(f"{self.connection.username}@{self.connection.host}{port_text}")
-        
+        self.nickname_label.set_markup(f"<b>{self.connection.nickname}</b>")
+        self.host_label.set_text(f"{self.connection.username}@{self.connection.host}:{self.connection.port}")
         self.update_status()
+
+        # Get authentication data
+        auth_method = self.auth_method_row.get_selected()
+        keyfile = ''
+        password = ''
+        key_passphrase = ''
+        
+        if auth_method == 0:  # Key-based
+            selected_key_idx = self.keyfile_row.get_selected()
+            if selected_key_idx >= 0:
+                model = self.keyfile_row.get_model()
+                selected_key_name = model.get_string(selected_key_idx)
+                
+                # Don't use browse option as keyfile
+                if selected_key_name != 'Browse for key file...':
+                    # Get full path from mapping
+                    keyfile = self.key_paths.get(selected_key_name, '')
+            key_passphrase = self.key_passphrase_row.get_text().strip()
+        elif auth_method == 1:  # Password
+            password = self.password_row.get_text().strip()
+        
+        # Create connection data
+        connection_data = {
+            'nickname': nickname,
+            'host': host,
+            'username': username,
+            'port': port,
+            'keyfile': keyfile,
+            'password': password,
+            'key_passphrase': key_passphrase,
+            'auth_method': auth_method,
+            'x11_forwarding': self.x11_row.get_active(),
+            
+            # Port forwarding settings
+            'port_forwarding_enabled': port_forwarding_enabled,
+            'forwarding_rules': forwarding_rules,
+            'tunnel_type': tunnel_type,
+            'tunnel_port': tunnel_port
+        }
+        
+        # Emit signal with connection data
+        self.emit('connection-saved', connection_data)
+        self.close()
 
     def show_error(self, message):
         """Show error message"""
@@ -642,10 +680,10 @@ class MainWindow(Adw.ApplicationWindow):
 
     def setup_signals(self):
         """Connect to manager signals"""
-        # Connection manager signals - use connect_after to avoid conflict with GObject.connect
-        self.connection_manager.connect_after('connection-added', self.on_connection_added)
-        self.connection_manager.connect_after('connection-removed', self.on_connection_removed)
-        self.connection_manager.connect_after('connection-status-changed', self.on_connection_status_changed)
+        # Connection manager signals
+        self.connection_manager.connect('connection-added', self.on_connection_added)
+        self.connection_manager.connect('connection-removed', self.on_connection_removed)
+        self.connection_manager.connect('connection-status-changed', self.on_connection_status_changed)
         
         # Config signals
         self.config.connect('setting-changed', self.on_setting_changed)
@@ -738,7 +776,6 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Connect signals
         terminal.connect('connection-established', self.on_terminal_connected)
-        terminal.connect('connection-failed', lambda w, e: logger.error(f"Connection failed: {e}"))
         terminal.connect('connection-lost', self.on_terminal_disconnected)
         terminal.connect('title-changed', self.on_terminal_title_changed)
         
@@ -750,17 +787,14 @@ class MainWindow(Adw.ApplicationWindow):
         # Store reference
         self.active_terminals[connection] = terminal
         
+        # Start SSH connection
+        terminal.connect_ssh()
+        
         # Switch to tab view when first connection is made
         self.show_tab_view()
         
         # Activate the new tab
         self.tab_view.set_selected_page(page)
-        
-        # Connect to the SSH server
-        if not terminal._connect_ssh():
-            logger.error("Failed to establish SSH connection")
-            self.tab_view.close_page(page)
-            del self.active_terminals[connection]
 
     def disconnect_from_host(self, connection: Connection):
         """Disconnect from SSH host"""
@@ -858,13 +892,10 @@ class MainWindow(Adw.ApplicationWindow):
         """Handle tab close request"""
         child = page.get_child()
         
-        # Find corresponding connection and clean up
+        # Find corresponding connection and disconnect
         for connection, terminal in list(self.active_terminals.items()):
             if terminal == child:
-                # Close the terminal connection if the method exists
-                if hasattr(terminal, 'close_connection'):
-                    terminal.close_connection()
-                # Remove from active terminals
+                terminal.disconnect()
                 del self.active_terminals[connection]
                 break
         
@@ -1039,19 +1070,7 @@ class MainWindow(Adw.ApplicationWindow):
         try:
             # Disconnect all active terminals
             for connection, terminal in list(self.active_terminals.items()):
-                # Close the terminal connection properly
-                if hasattr(terminal, 'close_connection'):
-                    terminal.close_connection()
-                
-                # Find and close the tab containing this terminal
-                for i in range(self.tab_view.get_n_pages()):
-                    page = self.tab_view.get_nth_page(i)
-                    if page.get_child() == terminal:
-                        self.tab_view.close_page(page)
-                        break
-            
-            # Clear the active terminals dictionary
-            self.active_terminals.clear()
+                terminal.disconnect()
             
             # Save window geometry before closing
             width = self.get_default_size()[0]
@@ -1065,7 +1084,7 @@ class MainWindow(Adw.ApplicationWindow):
             logger.info("Application cleanup completed")
             
         except Exception as e:
-            logger.error(f"Error during window close cleanup: {e}", exc_info=True)
+            logger.error(f"Error during window close cleanup: {e}")
 
     def on_connection_saved(self, dialog, connection_data):
         """Handle connection saved from dialog"""

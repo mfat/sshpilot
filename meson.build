@@ -59,7 +59,7 @@ conf.set('pkgdatadir', pkgdatadir)
 conf.set('project_id', project_id)
 
 # Install Python package
-install_subdir('src/io.github.mfat.sshpilot',
+install_subdir('src/sshpilot_pkg',
   install_dir: pythondir,
   strip_directory: false
 )
@@ -74,7 +74,7 @@ install_data('data/io.github.mfat.sshpilot.appdata.xml',
 )
 
 # Install icon
-install_data('src/io.github.mfat.sshpilot/resources/sshpilot.png',
+install_data('src/sshpilot_pkg/github/mfat/sshpilot/resources/sshpilot.png',
   install_dir: datadir / 'icons' / 'hicolor' / '256x256' / 'apps',
   rename: project_id + '.png'
 )
@@ -101,10 +101,11 @@ launcher = configure_file(
 
 # Compile GLib resources
 gnome.compile_resources(project_id,
-  'src/io.github.mfat.sshpilot/resources/sshpilot.gresource.xml',
+  'src/sshpilot_pkg/github/mfat/sshpilot/resources/sshpilot.gresource.xml',
   gresource_bundle: true,
   install: true,
   install_dir: pkgdatadir,
+  source_dir: 'src/sshpilot_pkg/github/mfat/sshpilot'
 )
 
 # Post-install script

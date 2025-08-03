@@ -54,11 +54,12 @@ setup(
     python_requires='>=3.10',
     install_requires=[
         'pygobject>=3.42',
-        'paramiko>=3.4',
+        'asyncssh>=2.14.0',
         'pyyaml>=6.0',
         'secretstorage>=3.3',
         'cryptography>=42.0',
         'matplotlib>=3.8',
+        'asyncio>=3.4.3',
     ],
     
     # Optional dependencies

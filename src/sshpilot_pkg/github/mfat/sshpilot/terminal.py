@@ -1,81 +1,177 @@
 """
 Terminal Widget for sshPilot
-Integrated VTE terminal with SSH connection handling
+Integrated VTE terminal with SSH connection handling using system SSH client
 """
 
 import os
+import sys
 import logging
-import threading
-from typing import Optional
-
-import gi
-gi.require_version('Vte', '3.91')
-gi.require_version('Pango', '1.0')
-
-from gi.repository import Gtk, Vte, Pango, GLib, GObject, Gdk, Gio
-import paramiko
+import subprocess
+from gi.repository import Gtk, GObject, GLib, Vte, Pango, Gdk, Gio
 
 logger = logging.getLogger(__name__)
 
 class TerminalWidget(Gtk.Box):
-    """VTE terminal widget with SSH integration"""
+    """A terminal widget that uses VTE for display and system SSH client for connections"""
+    __gtype_name__ = 'TerminalWidget'
     
+    # Signals
     __gsignals__ = {
         'connection-established': (GObject.SignalFlags.RUN_FIRST, None, ()),
+        'connection-failed': (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         'connection-lost': (GObject.SignalFlags.RUN_FIRST, None, ()),
         'title-changed': (GObject.SignalFlags.RUN_FIRST, None, (str,)),
     }
     
-    def __init__(self, connection=None, config=None, connection_manager=None):
+    def __init__(self, connection, config, connection_manager):
+        # Initialize as a vertical Gtk.Box
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         
+        # Store references
         self.connection = connection
         self.config = config
         self.connection_manager = connection_manager
-        self.ssh_client = None
-        self.ssh_channel = None
-        self.is_connected = False
         
-        # Create VTE terminal
-        self.vte = Vte.Terminal()
-        self.setup_terminal()
+        # Initialize process
+        self.process = None
+        self.is_connected = False
+        self.watch_id = 0
         
         # Create scrolled window for terminal
         self.scrolled_window = Gtk.ScrolledWindow()
         self.scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        self.scrolled_window.set_child(self.vte)
         
-        # Set expansion properties for proper sizing
+        # Set up the terminal
+        self.vte = Vte.Terminal()
+        self.setup_terminal()
+        
+        # Add terminal to scrolled window and to the box
+        self.scrolled_window.set_child(self.vte)
+        self.append(self.scrolled_window)
+        
+        # Set expansion properties
         self.scrolled_window.set_hexpand(True)
         self.scrolled_window.set_vexpand(True)
         self.vte.set_hexpand(True)
         self.vte.set_vexpand(True)
         
-        # Set expansion for the container widget itself
-        self.set_hexpand(True)
-        self.set_vexpand(True)
-        
-        # Add terminal to box
-        self.append(self.scrolled_window)
-        
-        # Connect signals
+        # Connect terminal signals
         self.vte.connect('child-exited', self.on_child_exited)
         self.vte.connect('window-title-changed', self.on_title_changed)
-        self.vte.connect('bell', self.on_bell)
         
-        # Apply theme and settings
-        self.apply_theme()
+        # Connection will be established by the window when added to the UI
         
         logger.debug("Terminal widget initialized")
-
+    
+    def _connect_ssh(self):
+        """Establish SSH connection using system SSH client"""
+        try:
+            # Build SSH command
+            ssh_cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"]
+            
+            # Add connection parameters
+            if hasattr(self.connection, 'port') and self.connection.port:
+                ssh_cmd.extend(["-p", str(self.connection.port)])
+                
+            if hasattr(self.connection, 'username') and self.connection.username:
+                ssh_cmd.extend(["-l", self.connection.username])
+                
+            # Add host
+            ssh_cmd.append(self.connection.host)
+            
+            # Set up environment variables - keep as a list of "KEY=VALUE" strings
+            env = [
+                f"TERM={os.environ.get('TERM', 'xterm-256color')}",
+                f"COLORTERM={os.environ.get('COLORTERM', 'truecolor')}"
+            ]
+            
+            # Spawn the SSH process in the VTE terminal
+            # Note: env parameter expects a list of "KEY=VALUE" strings, not a dictionary
+            # spawn_sync returns (success, pid) tuple
+            success, pid = self.vte.spawn_sync(
+                Vte.PtyFlags.DEFAULT,  # Use default PTY flags
+                None,  # Working directory
+                ssh_cmd,
+                env,  # Environment variables as list of "KEY=VALUE" strings
+                GLib.SpawnFlags.DEFAULT,  # Spawn flags
+                None,  # Child setup function
+                None,  # User data
+                None   # Cancellable
+            )
+            
+            if success and pid > 0:
+                self.is_connected = True
+                self.emit('connection-established')
+                logger.info(f"SSH connection established to {self.connection.host}")
+                return True
+            else:
+                raise Exception("Failed to spawn SSH process")
+                
+        except Exception as e:
+            error_msg = f"Failed to establish SSH connection: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            self.emit('connection-failed', error_msg)
+            return False
+        
     def setup_terminal(self):
-        """Configure terminal settings"""
-        # Set terminal properties
-        self.vte.set_scrollback_lines(10000)
-        self.vte.set_scroll_on_output(True)
-        self.vte.set_scroll_on_keystroke(True)
-        self.vte.set_mouse_autohide(True)
-        self.vte.set_allow_hyperlink(True)
+        """Initialize the VTE terminal with appropriate settings."""
+        logger.info("Setting up terminal...")
+        
+        try:
+            # Set terminal font
+            font_desc = Pango.FontDescription()
+            font_desc.set_family("Monospace")
+            font_desc.set_size(10 * Pango.SCALE)
+            self.vte.set_font(font_desc)
+            
+            # Set terminal colors (solarized dark theme)
+            self.vte.set_color_foreground(Gdk.RGBA(0.8314, 0.9569, 0.4078, 1.0))  # Light green text
+            self.vte.set_color_background(Gdk.RGBA(0.0275, 0.2118, 0.2588, 1.0))  # Dark blue background
+            
+            # Set cursor shape and blink mode
+            self.vte.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)
+            self.vte.set_cursor_shape(Vte.CursorShape.BLOCK)
+            
+            # Set scrollback lines
+            self.vte.set_scrollback_lines(10000)
+            
+            # Set word char exceptions (for double-click selection)
+            try:
+                # Try the newer API first (VTE 0.60+)
+                self.vte.set_word_char_exceptions("@-./_~")
+            except AttributeError:
+                try:
+                    # Fall back to the older API
+                    self.vte.set_word_char_options("@-./_~")
+                except Exception as e:
+                    logger.debug(f"Could not set word char options: {e}")
+            
+            # Set cursor and selection colors (using compatible methods)
+            try:
+                # Try to set cursor color if available
+                if hasattr(self.vte, 'set_cursor_foreground_color'):
+                    self.vte.set_cursor_foreground_color(Gdk.RGBA(1, 1, 1, 1))  # White cursor
+                
+                # Try to set selection color if available
+                if hasattr(self.vte, 'set_color_highlight'):
+                    self.vte.set_color_highlight(Gdk.RGBA(0.3, 0.3, 0.3, 1))  # Dark gray highlight
+            except Exception as e:
+                logger.debug(f"Could not set terminal colors: {e}")
+            
+            # Enable mouse reporting if available
+            if hasattr(self.vte, 'set_mouse_autohide'):
+                self.vte.set_mouse_autohide(True)
+            
+            # Enable bold text
+            self.vte.set_allow_bold(True)
+            
+            # Show the terminal
+            self.vte.show()
+            logger.info("Terminal setup complete")
+            
+        except Exception as e:
+            logger.error(f"Error in setup_terminal: {e}", exc_info=True)
+            raise
         
         # Enable right-click context menu
         self.vte.set_context_menu_model(self.create_context_menu())
@@ -90,221 +186,120 @@ class TerminalWidget(Gtk.Box):
         menu.append("Reset and Clear", "terminal.reset-clear")
         
         return menu
-
-    def apply_theme(self, theme_name=None):
-        """Apply terminal theme and font settings"""
-        try:
-            if self.config:
-                # If no theme specified, get the saved color scheme
-                if theme_name is None:
-                    theme_name = self.config.get_setting('terminal-color-scheme', 'default')
-                profile = self.config.get_terminal_profile(theme_name)
-            else:
-                # Default theme
-                profile = {
-                    'foreground': '#FFFFFF',
-                    'background': '#000000',
-                    'font': 'Monospace 12',
-                    'cursor_color': '#FFFFFF',
-                    'highlight_background': '#4A90E2',
-                    'highlight_foreground': '#FFFFFF',
-                }
             
-            # Set colors
-            fg_color = Gdk.RGBA()
-            fg_color.parse(profile['foreground'])
-            
-            bg_color = Gdk.RGBA()
-            bg_color.parse(profile['background'])
-            
-            cursor_color = Gdk.RGBA()
-            cursor_color.parse(profile.get('cursor_color', profile['foreground']))
-            
-            highlight_bg = Gdk.RGBA()
-            highlight_bg.parse(profile.get('highlight_background', '#4A90E2'))
-            
-            highlight_fg = Gdk.RGBA()
-            highlight_fg.parse(profile.get('highlight_foreground', profile['foreground']))
-            
-            # Apply colors to terminal
-            self.vte.set_colors(fg_color, bg_color, None)
-            self.vte.set_color_cursor(cursor_color)
-            self.vte.set_color_highlight(highlight_bg)
-            self.vte.set_color_highlight_foreground(highlight_fg)
-            
-            # Set font
-            font_desc = Pango.FontDescription.from_string(profile['font'])
-            self.vte.set_font(font_desc)
-            
-            logger.debug(f"Applied terminal theme: {theme_name or 'default'}")
-            
-        except Exception as e:
-            logger.error(f"Failed to apply terminal theme: {e}")
-
-    def connect_ssh(self):
-        """Connect to SSH host"""
-        if not self.connection:
-            logger.error("No connection configured")
-            return False
+    def _cleanup_pty(self):
+        """Clean up PTY file descriptors"""
+        if self._pty_master is not None:
+            os.close(self._pty_master)
+            self._pty_master = None
+        if self._pty_slave is not None:
+            os.close(self._pty_slave)
+            self._pty_slave = None
+    
+    async def _forward_stdin(self):
+        """Forward data from the PTY master to the SSH session"""
+        while self.is_connected and hasattr(self, '_pty_master') and self._pty_master is not None:
+            try:
+                data = os.read(self._pty_master, 65536)
+                if not data:
+                    break
+                    
+                if self.ssh_session and hasattr(self.ssh_session, 'stdin') and self.ssh_session.stdin:
+                    self.ssh_session.stdin.write(data)
+                    await self.ssh_session.stdin.drain()
+                    
+            except (ConnectionError, OSError) as e:
+                if self.is_connected:  # Only log if we didn't expect this
+                    logger.error(f"Error forwarding stdin: {e}")
+                break
+            except Exception as e:
+                if self.is_connected:  # Only log if we didn't expect this
+                    logger.error(f"Unexpected error in stdin forwarding: {e}")
+                break
+    
+    async def _forward_stdout(self):
+        """Forward data from the SSH session to the PTY master"""
+        while self.is_connected and hasattr(self, '_pty_master') and self._pty_master is not None:
+            try:
+                if not self.ssh_session or not hasattr(self.ssh_session, 'stdout'):
+                    break
+                    
+                data = await self.ssh_session.stdout.read(65536)
+                if not data:
+                    break
+                    
+                os.write(self._pty_master, data)
+                
+            except (ConnectionError, OSError) as e:
+                if self.is_connected:  # Only log if we didn't expect this
+                    logger.error(f"Error forwarding stdout: {e}")
+                break
+            except Exception as e:
+                if self.is_connected:  # Only log if we didn't expect this
+                    logger.error(f"Unexpected error in stdout forwarding: {e}")
+                break
+    
+    def _on_terminal_resize(self, widget, width, height):
+        """Handle terminal resize events"""
+        # VTE handles PTY resizing automatically when using spawn_sync
+        pass
+    
+    def _on_connection_established(self):
+        """Called when SSH connection is established"""
+        self.is_connected = True
+        self.emit('connection-established')
         
-        try:
-            # Connect in a separate thread to avoid blocking UI
-            thread = threading.Thread(target=self._connect_ssh_thread)
-            thread.daemon = True
-            thread.start()
+    def on_child_exited(self, widget, status):
+        """Called when the child process exits"""
+        if self.is_connected:
+            self.is_connected = False
+            logger.info(f"SSH session ended with status {status}")
+            self.emit('connection-lost')
+    
+    def _on_terminal_input(self, widget, text, size):
+        """Handle input from the terminal (handled automatically by VTE)"""
+        pass
             
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to start SSH connection: {e}")
-            return False
-
-    def _connect_ssh_thread(self):
-        """SSH connection thread - simplified approach"""
-        try:
-            # Test SSH connection first
-            self.ssh_client = self.connection_manager.connect_ssh(self.connection)
-            
-            if not self.ssh_client:
-                GLib.idle_add(self._on_connection_failed, "Failed to establish SSH connection")
-                return
-            
-            # Connection successful - disconnect the test connection
-            self.ssh_client.close()
-            self.ssh_client = None
-            
-            # Set up terminal with direct SSH command
-            GLib.idle_add(self._setup_ssh_terminal)
-            
-        except Exception as e:
-            logger.error(f"SSH connection failed: {e}")
-            GLib.idle_add(self._on_connection_failed, str(e))
-
-    def _setup_ssh_terminal(self):
-        """Set up terminal with direct SSH command (called from main thread)"""
-        try:
-            # Build SSH command
-            ssh_cmd = ['ssh']
-            
-            # Add key file if specified
-            if hasattr(self.connection, 'keyfile') and self.connection.keyfile:
-                ssh_cmd.extend(['-i', self.connection.keyfile])
-            
-            # Add X11 forwarding if enabled
-            if hasattr(self.connection, 'x11_forwarding') and self.connection.x11_forwarding:
-                ssh_cmd.append('-X')
-            
-            # Add host and user
-            ssh_cmd.append(f"{self.connection.username}@{self.connection.host}")
-            
-            # Add port if not default
-            if self.connection.port != 22:
-                ssh_cmd.extend(['-p', str(self.connection.port)])
-            
-            logger.debug(f"SSH command: {' '.join(ssh_cmd)}")
-            
-            # Spawn SSH process in terminal
-            self.vte.spawn_async(
-                Vte.PtyFlags.DEFAULT,
-                os.environ.get('HOME', '/'),
-                ssh_cmd,
-                None,
-                GLib.SpawnFlags.DEFAULT,
-                None, None,
-                -1,  # Use default PTY
-                None,
-                self._on_spawn_complete,
-                None
+    def _on_terminal_resize(self, widget, width, height):
+        """Handle terminal resize events"""
+        # Update the SSH session if it exists
+        if self.ssh_session and hasattr(self.ssh_session, 'change_terminal_size'):
+            asyncio.create_task(
+                self.ssh_session.change_terminal_size(
+                    height, width, 0, 0
+                )
             )
-            
-            self.is_connected = True
-            self.emit('connection-established')
-            
-            # Focus terminal
-            self.vte.grab_focus()
-            
-            logger.info(f"SSH terminal connected to {self.connection}")
-            
-        except Exception as e:
-            logger.error(f"Failed to setup SSH terminal: {e}")
-            self._on_connection_failed(str(e))
-
-
-
-    def _on_spawn_complete(self, terminal, pid, error, user_data):
-        """Called when terminal spawn is complete"""
-        if error:
-            logger.error(f"Terminal spawn failed: {error}")
-        else:
-            logger.debug(f"Terminal spawned with PID: {pid}")
-
+    
+    def _on_ssh_disconnected(self, exc):
+        """Called when SSH connection is lost"""
+        if self.is_connected:
+            self.is_connected = False
+            if exc:
+                logger.error(f"SSH connection lost: {exc}")
+            GLib.idle_add(lambda: self.emit('connection-lost'))
+    
+    def close_connection(self):
+        """Close the SSH connection"""
+        if self.is_connected:
+            self.is_connected = False
+            # VTE will handle the process termination when the widget is destroyed
+            self.emit('connection-lost')
+    
     def _on_connection_failed(self, error_message):
         """Handle connection failure (called from main thread)"""
         logger.error(f"Connection failed: {error_message}")
         
         # Show error in terminal
-        self.vte.feed(f"Connection failed: {error_message}\r\n".encode())
-        self.vte.feed("Press Ctrl+Shift+N to create a new connection.\r\n".encode())
+        error_msg = f"\r\n\x1b[31mConnection failed: {error_message}\x1b[0m\r\n"
+        self.vte.feed(error_msg.encode('utf-8'))
         
         self.is_connected = False
-
-    def _on_connection_lost(self):
-        """Handle connection loss (called from main thread)"""
-        logger.info("SSH connection lost")
         
-        self.is_connected = False
-        self.emit('connection-lost')
+        # Clean up PTY
+        self._cleanup_pty()
         
-        # Show message in terminal
-        self.vte.feed("\r\n[Connection lost]\r\n".encode())
-
-    def spawn_local_shell(self):
-        """Spawn a local shell instead of SSH"""
-        try:
-            self.vte.spawn_async(
-                Vte.PtyFlags.DEFAULT,
-                os.environ.get('HOME', '/'),
-                [os.environ.get('SHELL', '/bin/bash')],
-                None,
-                GLib.SpawnFlags.DEFAULT,
-                None, None,
-                -1,
-                None,
-                self._on_local_spawn_complete,
-                None
-            )
-            
-            # Focus terminal
-            self.vte.grab_focus()
-            
-            logger.debug("Local shell spawned")
-            
-        except Exception as e:
-            logger.error(f"Failed to spawn local shell: {e}")
-
-    def _on_local_spawn_complete(self, terminal, pid, error, user_data):
-        """Called when local shell spawn is complete"""
-        if error:
-            logger.error(f"Local shell spawn failed: {error}")
-        else:
-            logger.debug(f"Local shell spawned with PID: {pid}")
-
-    def disconnect(self):
-        """Disconnect from SSH"""
-        try:
-            self.is_connected = False
-            
-            if hasattr(self, 'ssh_client') and self.ssh_client:
-                self.ssh_client.close()
-                self.ssh_client = None
-            
-            if self.connection:
-                self.connection_manager.disconnect(self.connection)
-            
-            logger.info("Terminal disconnected")
-            
-        except Exception as e:
-            logger.error(f"Failed to disconnect terminal: {e}")
+        # Notify UI
+        self.emit('connection-failed', error_message)
 
     def on_child_exited(self, terminal, status):
         """Handle terminal child process exit"""

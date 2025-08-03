@@ -6,6 +6,7 @@
     <file>ui/preferences.ui</file>
     <file>ui/welcome.ui</file>
     <file>ui/key_dialog.ui</file>
+    <file>ui/port_forwarding_rules.ui</file>
     <file>resources/sshpilot.png</file>
   </gresource>
 </gresources>

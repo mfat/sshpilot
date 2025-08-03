@@ -17,10 +17,89 @@ gi.require_version('Vte', '3.91')
 from gi.repository import Adw, Gtk, Gio, GLib
 
 # Register resources before importing any UI modules
-resource = Gio.Resource.load(
-    os.path.join(os.path.dirname(__file__), 'resources', 'sshpilot.gresource')
-)
-Gio.resources_register(resource)
+def load_resources():
+    # Try to load resources from the installed location first
+    installed_path = '/usr/share/io.github.mfat.sshpilot/io.github.mfat.sshpilot.gresource'
+    if os.path.exists(installed_path):
+        try:
+            resource = Gio.Resource.load(installed_path)
+            Gio.resources_register(resource)
+            print(f"Loaded resources from installed location: {installed_path}")
+            return True
+        except GLib.Error as e:
+            print(f"Failed to load resources from {installed_path}: {e}")
+    
+    # Get the absolute path to the current file
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Try to find the project root by looking for the .git directory or other marker
+    def find_project_root(start_path):
+        path = os.path.abspath(start_path)
+        while True:
+            if os.path.exists(os.path.join(path, '.git')) or \
+               os.path.exists(os.path.join(path, 'meson.build')):
+                return path
+            parent = os.path.dirname(path)
+            if parent == path:  # Reached root directory
+                return None
+            path = parent
+    
+    project_root = find_project_root(current_dir)
+    
+    # Define possible resource locations
+    possible_paths = []
+    
+    # Add paths relative to the project root if found
+    if project_root:
+        possible_paths.extend([
+            # Compiled resource in build directory
+            os.path.join(project_root, '_build', 'io.github.mfat.sshpilot.gresource'),
+            # Source resource in the package
+            os.path.join(project_root, 'src', 'sshpilot_pkg', 'github', 'mfat', 'sshpilot', 'resources', 'sshpilot.gresource'),
+        ])
+    
+    # Add absolute paths that might exist, with the user-specified path first
+    possible_paths.extend([
+        # User-specified location (highest priority)
+        '/home/mahdi/GitHub/sshpilot/src/sshpilot_pkg/github/mfat/sshpilot/resources/sshpilot.gresource',
+        # Development build location
+        '/home/mahdi/GitHub/sshpilot/_build/io.github.mfat.sshpilot.gresource',
+        # Flatpak/alternative location
+        '/app/share/io.github.mfat.sshpilot/io.github.mfat.sshpilot.gresource'
+    ])
+    
+    # Make paths unique while preserving order
+    seen = set()
+    possible_paths = [p for p in possible_paths if not (p in seen or seen.add(p))]
+    
+    print("Project root:", project_root)
+    print("Searching for GResource file in:")
+    for path in possible_paths:
+        exists = os.path.exists(path)
+        print(f"- {path} (exists: {exists}")
+        if exists:
+            try:
+                size = os.path.getsize(path)
+                print(f"  Size: {size} bytes")
+            except Exception as e:
+                print(f"  Error getting size: {e}")
+    
+    for path in possible_paths:
+        if os.path.exists(path):
+            try:
+                resource = Gio.Resource.load(path)
+                Gio.resources_register(resource)
+                print(f"Loaded resources from development location: {path}")
+                return True
+            except GLib.Error as e:
+                print(f"Failed to load resources from {path}: {e}")
+    
+    print("ERROR: Could not find or load the GResource bundle in any known location")
+    return False
+
+if not load_resources():
+    print("Available files in project root:", os.listdir(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))))
+    sys.exit(1)
 
 from .window import MainWindow
 
