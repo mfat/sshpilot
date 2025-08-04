@@ -54,7 +54,6 @@ setup(
     python_requires='>=3.10',
     install_requires=[
         'pygobject>=3.42',
-        'asyncssh>=2.14.0',
         'pyyaml>=6.0',
         'secretstorage>=3.3',
         'cryptography>=42.0',

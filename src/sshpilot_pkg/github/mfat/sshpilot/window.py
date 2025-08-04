@@ -756,11 +756,42 @@ class MainWindow(Adw.ApplicationWindow):
         # Activate the new tab
         self.tab_view.set_selected_page(page)
         
-        # Connect to the SSH server
-        if not terminal._connect_ssh():
-            logger.error("Failed to establish SSH connection")
-            self.tab_view.close_page(page)
-            del self.active_terminals[connection]
+        # Force set colors after the terminal is added to the UI
+        def _set_terminal_colors():
+            try:
+                # Set colors using RGBA
+                fg = Gdk.RGBA()
+                fg.parse('rgb(0,0,0)')  # Black
+                
+                bg = Gdk.RGBA()
+                bg.parse('rgb(255,255,255)')  # White
+                
+                # Set colors using both methods for maximum compatibility
+                terminal.vte.set_color_foreground(fg)
+                terminal.vte.set_color_background(bg)
+                terminal.vte.set_colors(fg, bg, None)
+                
+                # Force a redraw
+                terminal.vte.queue_draw()
+                
+                # Connect to the SSH server after setting colors
+                if not terminal._connect_ssh():
+                    logger.error("Failed to establish SSH connection")
+                    self.tab_view.close_page(page)
+                    if connection in self.active_terminals:
+                        del self.active_terminals[connection]
+                        
+            except Exception as e:
+                logger.error(f"Error setting terminal colors: {e}")
+                # Still try to connect even if color setting fails
+                if not terminal._connect_ssh():
+                    logger.error("Failed to establish SSH connection")
+                    self.tab_view.close_page(page)
+                    if connection in self.active_terminals:
+                        del self.active_terminals[connection]
+        
+        # Schedule the color setting to run after the terminal is fully initialized
+        GLib.idle_add(_set_terminal_colors)
 
     def disconnect_from_host(self, connection: Connection):
         """Disconnect from SSH host"""

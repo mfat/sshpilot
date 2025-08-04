@@ -30,7 +30,6 @@ Requires-Python: >=3.10
 Description-Content-Type: text/markdown
 License-File: LICENSE
 Requires-Dist: pygobject>=3.42
-Requires-Dist: asyncssh>=2.14.0
 Requires-Dist: pyyaml>=6.0
 Requires-Dist: secretstorage>=3.3
 Requires-Dist: cryptography>=42.0

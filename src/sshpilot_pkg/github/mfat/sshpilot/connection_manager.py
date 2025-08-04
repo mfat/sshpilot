@@ -8,10 +8,12 @@ import asyncio
 import logging
 import configparser
 import getpass
-from typing import Dict, List, Optional, Any, Tuple
+import subprocess
+import shlex
+import signal
+from typing import Dict, List, Optional, Any, Tuple, Union
 
 import secretstorage
-import asyncssh
 from gi.repository import GObject, GLib
 
 # Set up asyncio event loop for GTK integration
@@ -67,22 +69,49 @@ class Connection:
         return f"{self.nickname} ({self.username}@{self.host})"
         
     async def connect(self):
-        """Establish the SSH connection"""
-        kwargs = {
-            'host': self.host,
-            'port': self.port,
-            'username': self.username,
-            'known_hosts': None,  # Disable known hosts check for now
-            'client_keys': [self.keyfile] if self.keyfile and os.path.exists(self.keyfile) else None,
-            'passphrase': self.key_passphrase if self.keyfile and os.path.exists(self.keyfile) else None,
-            'password': self.password if self.auth_method == 1 else None,
-            'preferred_auth': ['publickey', 'password'] if self.auth_method == 1 else ['publickey'],
-        }
-        
+        """Establish the SSH connection using system SSH client"""
         try:
-            self.connection = await asyncssh.connect(**{k: v for k, v in kwargs.items() if v is not None})
-            self.is_connected = True
-            return True
+            # Build SSH command
+            ssh_cmd = ['ssh']
+            
+            # Add key file if specified
+            if self.keyfile and os.path.exists(self.keyfile):
+                ssh_cmd.extend(['-i', self.keyfile])
+                if self.key_passphrase:
+                    # Note: For passphrase-protected keys, you might need to use ssh-agent
+                    # or expect script in a real implementation
+                    logger.warning("Passphrase-protected keys may require additional setup")
+            
+            # Add host and port
+            if self.port != 22:
+                ssh_cmd.extend(['-p', str(self.port)])
+                
+            # Add username if specified
+            ssh_cmd.append(f"{self.username}@{self.host}" if self.username else self.host)
+            
+            # For non-interactive checks, just run a simple command
+            test_cmd = ssh_cmd + ["echo", "Connection successful"]
+            
+            # Run the command
+            process = await asyncio.create_subprocess_exec(
+                *test_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            # Wait for the process to complete
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode == 0:
+                self.is_connected = True
+                # Store the base SSH command for later use
+                self.ssh_cmd = ssh_cmd
+                return True
+            else:
+                logger.error(f"SSH connection failed: {stderr.decode().strip()}")
+                self.is_connected = False
+                return False
+                
         except Exception as e:
             logger.error(f"Failed to connect to {self}: {e}")
             self.is_connected = False
@@ -98,14 +127,29 @@ class Connection:
         # Close all listeners
         for listener in self.listeners:
             listener.close()
-            
-        # Close the connection
-        if self.connection and self.is_connected:
-            self.connection.close()
-            await self.connection.wait_closed()
-            
+        
+        # Clean up any running processes
+        if hasattr(self, 'process') and self.process:
+            try:
+                # Try to terminate gracefully first
+                self.process.terminate()
+                try:
+                    # Wait a bit for the process to terminate
+                    await asyncio.wait_for(self.process.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    # Force kill if it doesn't terminate
+                    self.process.kill()
+                    await self.process.wait()
+            except ProcessLookupError:
+                # Process already terminated
+                pass
+            except Exception as e:
+                logger.error(f"Error terminating SSH process: {e}")
+            finally:
+                self.process = None
+        
         self.is_connected = False
-        self.forwarders.clear()
+        logger.info(f"Disconnected from {self}")
         self.listeners.clear()
         
     async def setup_forwarding(self):
@@ -160,169 +204,87 @@ class Connection:
             writer.close()
             
     async def start_dynamic_forwarding(self, listen_addr: str, listen_port: int):
-        """Start dynamic port forwarding (SOCKS proxy)"""
-        if not self.connection:
-            return
-            
-        logger.info(f"Starting dynamic forwarding on {listen_addr}:{listen_port}")
-        
-        # Create a SOCKS5 proxy server
-        async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-            try:
-                # Handle SOCKS5 handshake
-                version = await reader.readexactly(1)
-                if version != b'\x05':
-                    writer.close()
-                    return
-                    
-                # Authentication methods
-                nmethods = (await reader.readexactly(1))[0]
-                methods = await reader.readexactly(nmethods)
-                
-                # We only support no authentication (0x00)
-                if 0x00 not in methods:
-                    writer.write(b'\x05\xff')  # No acceptable methods
-                    await writer.drain()
-                    writer.close()
-                    return
-                    
-                # Accept no authentication
-                writer.write(b'\x05\x00')
-                await writer.drain()
-                
-                # Get connection request
-                version, cmd, rsv, addr_type = await reader.readexactly(4)
-                
-                if cmd != 1:  # Only support CONNECT
-                    writer.write(b'\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00')
-                    await writer.drain()
-                    writer.close()
-                    return
-                
-                # Parse destination address
-                if addr_type == 1:  # IPv4
-                    addr = await reader.readexactly(4)
-                    dest_addr = '.'.join(str(b) for b in addr)
-                elif addr_type == 3:  # Domain name
-                    addr_len = (await reader.readexactly(1))[0]
-                    dest_addr = (await reader.readexactly(addr_len)).decode('ascii')
-                else:  # IPv6 or unsupported
-                    writer.write(b'\x05\x08\x00\x01\x00\x00\x00\x00\x00\x00')
-                    await writer.drain()
-                    writer.close()
-                    return
-                
-                # Get destination port
-                dest_port = int.from_bytes(await reader.readexactly(2), 'big')
-                
-                # Connect to the remote host through the SSH connection
-                try:
-                    ssh_reader, ssh_writer = await asyncio.wait_for(
-                        self.connection.open_connection(dest_addr, dest_port),
-                        timeout=30.0
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to connect to {dest_addr}:{dest_port}: {e}")
-                    writer.write(b'\x05\x04\x00\x01\x00\x00\x00\x00\x00\x00')  # Host unreachable
-                    await writer.drain()
-                    writer.close()
-                    return
-                
-                # Send success response (using the original address/port for BND.ADDR and BND.PORT)
-                writer.write(b'\x05\x00\x00\x01' + b'\x00\x00\x00\x00\x00\x00')
-                await writer.drain()
-                
-                # Forward data between client and SSH connection
-                await asyncio.gather(
-                    self._forward_data(reader, ssh_writer, "client -> ssh"),
-                    self._forward_data(ssh_reader, writer, "ssh -> client")
-                )
-                
-            except (ConnectionError, asyncio.IncompleteReadError):
-                pass  # Connection closed
-            except Exception as e:
-                logger.error(f"Error in SOCKS proxy: {e}")
-            finally:
-                writer.close()
-                if 'ssh_writer' in locals():
-                    ssh_writer.close()
-                    await ssh_writer.wait_closed()
-        
-        # Start the SOCKS server
-        server = await asyncio.start_server(
-            handle_client,
-            host=listen_addr,
-            port=listen_port,
-            reuse_address=True
-        )
-        
-        # Store the server so it can be closed later
-        self.listeners.append(server)
-        
-        # Run the server in the background
-        task = asyncio.create_task(server.serve_forever())
-        self.forwarders.append(task)
-        
-    async def start_local_forwarding(self, listen_addr: str, listen_port: int, remote_host: str, remote_port: int):
-        """Start local port forwarding"""
-        async def forward_connection(local_reader: asyncio.StreamReader, local_writer: asyncio.StreamWriter):
-            try:
-                remote_reader, remote_writer = await asyncio.wait_for(
-                    self.connection.open_connection(remote_host, remote_port),
-                    timeout=30.0
-                )
-                
-                await asyncio.gather(
-                    self._forward_data(local_reader, remote_writer, "local -> remote"),
-                    self._forward_data(remote_reader, local_writer, "remote -> local")
-                )
-                
-            except (ConnectionError, asyncio.TimeoutError) as e:
-                logger.error(f"Local forwarding error: {e}")
-            finally:
-                local_writer.close()
-                if 'remote_writer' in locals():
-                    remote_writer.close()
-        
-        server = await asyncio.start_server(
-            forward_connection,
-            host=listen_addr,
-            port=listen_port,
-            reuse_address=True
-        )
-        
-        self.listeners.append(server)
-        task = asyncio.create_task(server.serve_forever())
-        self.forwarders.append(task)
-        
-    async def start_remote_forwarding(self, listen_addr: str, listen_port: int, remote_host: str, remote_port: int):
-        """Start remote port forwarding"""
-        async def forward_connection(remote_reader: asyncio.StreamReader, remote_writer: asyncio.StreamWriter):
-            try:
-                local_reader, local_writer = await asyncio.open_connection(remote_host, remote_port)
-                
-                await asyncio.gather(
-                    self._forward_data(remote_reader, local_writer, "remote -> local"),
-                    self._forward_data(local_reader, remote_writer, "local -> remote")
-                )
-                
-            except (ConnectionError, asyncio.TimeoutError) as e:
-                logger.error(f"Remote forwarding error: {e}")
-            finally:
-                remote_writer.close()
-                if 'local_writer' in locals():
-                    local_writer.close()
-        
-        # For remote forwarding, we need to set up a listener on the remote server
+        """Start dynamic port forwarding (SOCKS proxy) using system SSH client"""
         try:
-            server = await self.connection.forward_remote_port(
-                '', listen_port,  # Listen on all interfaces on the remote
-                remote_host, remote_port
+            # Build the SSH command for dynamic port forwarding (SOCKS proxy)
+            ssh_cmd = self.ssh_cmd + [
+                '-N',  # No remote command
+                '-D', f"{listen_addr}:{listen_port}"  # Dynamic port forwarding (SOCKS)
+            ]
+            
+            # Start the SSH process
+            self.process = await asyncio.create_subprocess_exec(
+                *ssh_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
-            self.listeners.append(server)
-            logger.info(f"Remote forwarding set up: remote:{listen_port} -> {remote_host}:{remote_port}")
+            
+            # Check if the process started successfully
+            if self.process.returncode is not None and self.process.returncode != 0:
+                stderr = await self.process.stderr.read()
+                raise Exception(f"SSH dynamic port forwarding failed: {stderr.decode().strip()}")
+            
+            logger.info(f"Dynamic port forwarding (SOCKS) started on {listen_addr}:{listen_port}")
+            
+            # Store the forwarding rule
+            self.forwarding_rules.append({
+                'type': 'dynamic',
+                'listen_addr': listen_addr,
+                'listen_port': listen_port,
+                'process': self.process
+            })
+            
+            # Wait for the process to complete
+            await self.process.wait()
+            
         except Exception as e:
-            logger.error(f"Failed to set up remote forwarding: {e}")
+            logger.error(f"Dynamic port forwarding failed: {e}")
+            if hasattr(self, 'process') and self.process:
+                self.process.terminate()
+                await self.process.wait()
+            raise
+
+    async def start_local_forwarding(self, listen_addr: str, listen_port: int, remote_host: str, remote_port: int):
+        """Start local port forwarding using system SSH client"""
+        try:
+            # Build the SSH command for local port forwarding
+            ssh_cmd = self.ssh_cmd + [
+                '-N',  # No remote command
+                '-L', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"
+            ]
+            
+            # Start the SSH process
+            self.process = await asyncio.create_subprocess_exec(
+                *ssh_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            # Check if the process started successfully
+            if self.process.returncode is not None and self.process.returncode != 0:
+                stderr = await self.process.stderr.read()
+                raise Exception(f"SSH port forwarding failed: {stderr.decode().strip()}")
+            
+            logger.info(f"Local forwarding started: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
+            
+            # Store the forwarding rule
+            self.forwarding_rules.append({
+                'type': 'local',
+                'listen_addr': listen_addr,
+                'listen_port': listen_port,
+                'remote_host': remote_host,
+                'remote_port': remote_port,
+                'process': self.process
+            })
+            
+            # Wait for the process to complete
+            await self.process.wait()
+            
+        except Exception as e:
+            logger.error(f"Local forwarding failed: {e}")
+            if hasattr(self, 'process') and self.process:
+                self.process.terminate()
+                await self.process.wait()
             raise
 
 class ConnectionManager(GObject.Object):
