@@ -206,42 +206,111 @@ class Connection:
     async def start_dynamic_forwarding(self, listen_addr: str, listen_port: int):
         """Start dynamic port forwarding (SOCKS proxy) using system SSH client"""
         try:
-            # Build the SSH command for dynamic port forwarding (SOCKS proxy)
-            ssh_cmd = self.ssh_cmd + [
+            logger.debug(f"Starting dynamic port forwarding setup for {self.host} on {listen_addr}:{listen_port}")
+            
+            # Build the complete SSH command for dynamic port forwarding
+            ssh_cmd = ['ssh', '-v']  # Add verbose flag for debugging
+            
+            # Add key file if specified
+            if self.keyfile and os.path.exists(self.keyfile):
+                logger.debug(f"Using SSH key: {self.keyfile}")
+                ssh_cmd.extend(['-i', self.keyfile])
+                if self.key_passphrase:
+                    logger.debug("Key has a passphrase")
+            else:
+                logger.debug("No SSH key specified or key not found")
+                
+            # Add host and port
+            if self.port != 22:
+                logger.debug(f"Using custom SSH port: {self.port}")
+                ssh_cmd.extend(['-p', str(self.port)])
+                
+            # Add dynamic port forwarding option
+            forward_spec = f"{listen_addr}:{listen_port}"
+            logger.debug(f"Setting up dynamic forwarding to: {forward_spec}")
+            
+            ssh_cmd.extend([
                 '-N',  # No remote command
-                '-D', f"{listen_addr}:{listen_port}"  # Dynamic port forwarding (SOCKS)
-            ]
+                '-D', forward_spec,  # Dynamic port forwarding (SOCKS)
+                '-f',  # Run in background
+                '-o', 'ExitOnForwardFailure=yes',  # Exit if forwarding fails
+                '-o', 'ServerAliveInterval=30',    # Keep connection alive
+                '-o', 'ServerAliveCountMax=3'      # Max missed keepalives before disconnect
+            ])
+            
+            # Add username and host
+            target = f"{self.username}@{self.host}" if self.username else self.host
+            ssh_cmd.append(target)
+            
+            # Log the full command (without sensitive data)
+            logger.debug(f"SSH command: {' '.join(ssh_cmd[:10])}...")
             
             # Start the SSH process
+            logger.info(f"Starting dynamic port forwarding with command: {' '.join(ssh_cmd)}")
             self.process = await asyncio.create_subprocess_exec(
                 *ssh_cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             
-            # Check if the process started successfully
-            if self.process.returncode is not None and self.process.returncode != 0:
-                stderr = await self.process.stderr.read()
-                raise Exception(f"SSH dynamic port forwarding failed: {stderr.decode().strip()}")
+            # Wait a bit to catch any immediate errors
+            try:
+                stdout, stderr = await asyncio.wait_for(self.process.communicate(), timeout=5.0)
+                if stdout:
+                    logger.debug(f"SSH stdout: {stdout.decode().strip()}")
+                if stderr:
+                    logger.debug(f"SSH stderr: {stderr.decode().strip()}")
+                    
+                if self.process.returncode != 0:
+                    error_msg = stderr.decode().strip() if stderr else "Unknown error"
+                    logger.error(f"SSH dynamic port forwarding failed with code {self.process.returncode}: {error_msg}")
+                    raise Exception(f"SSH dynamic port forwarding failed: {error_msg}")
+                else:
+                    logger.info("SSH process started successfully")
+            except asyncio.TimeoutError:
+                # If we get here, the process is still running which is good
+                logger.debug("SSH process is running in background")
+                
+                # Check if the port is actually listening
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.settimeout(1)
+                        result = s.connect_ex((listen_addr, int(listen_port)))
+                        if result == 0:
+                            logger.info(f"Successfully verified port {listen_port} is listening")
+                        else:
+                            logger.warning(f"Port {listen_port} is not listening (connect result: {result})")
+                except Exception as e:
+                    logger.warning(f"Could not verify if port is listening: {e}")
             
             logger.info(f"Dynamic port forwarding (SOCKS) started on {listen_addr}:{listen_port}")
             
             # Store the forwarding rule
-            self.forwarding_rules.append({
+            rule = {
                 'type': 'dynamic',
                 'listen_addr': listen_addr,
                 'listen_port': listen_port,
-                'process': self.process
-            })
+                'process': self.process,
+                'start_time': time.time()
+            }
+            self.forwarding_rules.append(rule)
+            logger.debug(f"Added forwarding rule: {rule}")
             
-            # Wait for the process to complete
-            await self.process.wait()
+            # Log all forwarding rules for debugging
+            logger.debug(f"Current forwarding rules: {self.forwarding_rules}")
+            
+            return True
             
         except Exception as e:
-            logger.error(f"Dynamic port forwarding failed: {e}")
+            logger.error(f"Dynamic port forwarding failed: {e}", exc_info=True)
             if hasattr(self, 'process') and self.process:
-                self.process.terminate()
-                await self.process.wait()
+                try:
+                    logger.debug("Terminating SSH process due to error")
+                    self.process.terminate()
+                    await asyncio.wait_for(self.process.wait(), timeout=2.0)
+                except (ProcessLookupError, asyncio.TimeoutError) as e:
+                    logger.debug(f"Error terminating process: {e}")
+                    pass
             raise
 
     async def start_local_forwarding(self, listen_addr: str, listen_port: int, remote_host: str, remote_port: int):
@@ -385,6 +454,24 @@ class ConnectionManager(GObject.Object):
                 'private_key': config.get('identityfile'),
                 'forwarding_rules': []
             }
+            
+            # Handle dynamic port forwarding if specified
+            if 'dynamicforward' in config:
+                # Format is usually "[bind_address:]port"
+                dynamic_spec = config['dynamicforward']
+                if ':' in dynamic_spec:
+                    bind_addr, port_str = dynamic_spec.rsplit(':', 1)
+                    listen_port = int(port_str)
+                else:
+                    bind_addr = '127.0.0.1'  # Default bind address
+                    listen_port = int(dynamic_spec)
+                
+                parsed['forwarding_rules'].append({
+                    'type': 'dynamic',
+                    'listen_addr': bind_addr,
+                    'listen_port': listen_port,
+                    'enabled': True
+                })
             
             # Handle proxy settings if any
             if 'proxycommand' in config:

@@ -132,22 +132,47 @@ class SshPilotApplication(Adw.Application):
         log_dir = os.path.expanduser('~/.local/share/sshPilot')
         os.makedirs(log_dir, exist_ok=True)
         
-        # Set log level based on environment variable
-        log_level = logging.DEBUG if os.environ.get('SSHPILOT_DEBUG') else logging.INFO
+        # Set log level to DEBUG to capture all messages
+        log_level = logging.DEBUG
         
-        # Configure logging with file rotation
-        logging.basicConfig(
-            level=log_level,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                RotatingFileHandler(
-                    os.path.join(log_dir, 'sshpilot.log'),
-                    maxBytes=1024*1024,  # 1MB
-                    backupCount=5
-                ),
-                logging.StreamHandler()
-            ]
+        # Create a more detailed formatter
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
         )
+        
+        # Clear any existing handlers
+        logging.getLogger().handlers.clear()
+        
+        # File handler with rotation
+        file_handler = RotatingFileHandler(
+            os.path.join(log_dir, 'sshpilot.log'),
+            maxBytes=10*1024*1024,  # 10MB
+            backupCount=5,
+            encoding='utf-8'
+        )
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(formatter)
+        
+        # Console handler
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(log_level)
+        console_handler.setFormatter(formatter)
+        
+        # Add handlers to root logger
+        root_logger = logging.getLogger()
+        root_logger.setLevel(log_level)
+        root_logger.addHandler(file_handler)
+        root_logger.addHandler(console_handler)
+        
+        # Set specific log levels for verbose modules
+        logging.getLogger('asyncio').setLevel(logging.INFO)
+        logging.getLogger('gi').setLevel(logging.WARNING)
+        logging.getLogger('PIL').setLevel(logging.WARNING)
+        
+        # Enable debug logging for our modules
+        logging.getLogger('sshpilot').setLevel(logging.DEBUG)
+        logging.getLogger(__name__).setLevel(logging.DEBUG)
 
     def create_action(self, name, callback, shortcuts=None):
         """Create a GAction with optional keyboard shortcuts"""

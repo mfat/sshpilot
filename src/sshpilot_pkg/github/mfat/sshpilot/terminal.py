@@ -123,21 +123,39 @@ class TerminalWidget(Gtk.Box):
         """Set up terminal with direct SSH command (called from main thread)"""
         try:
             # Build SSH command
-            ssh_cmd = ['ssh']
+            ssh_cmd = ['ssh', '-v']  # Add verbose flag for debugging
             
-            # Add key file if specified
-            if hasattr(self.connection, 'keyfile') and self.connection.keyfile:
+            # Add key file if specified and valid
+            if hasattr(self.connection, 'keyfile') and self.connection.keyfile and \
+               os.path.isfile(self.connection.keyfile) and \
+               not self.connection.keyfile.startswith('Select key file'):
                 ssh_cmd.extend(['-i', self.connection.keyfile])
+                logger.debug(f"Using SSH key: {self.connection.keyfile}")
+            else:
+                logger.debug("No valid SSH key specified, using default")
             
             # Add X11 forwarding if enabled
             if hasattr(self.connection, 'x11_forwarding') and self.connection.x11_forwarding:
                 ssh_cmd.append('-X')
             
+            # Add dynamic port forwarding if configured in forwarding rules
+            if hasattr(self.connection, 'forwarding_rules'):
+                for rule in self.connection.forwarding_rules:
+                    if rule.get('type') == 'dynamic' and rule.get('enabled', True):
+                        try:
+                            listen_addr = rule.get('listen_addr', '127.0.0.1')
+                            listen_port = rule.get('listen_port')
+                            if listen_port:
+                                ssh_cmd.extend(['-D', f"{listen_addr}:{listen_port}"])
+                                logger.debug(f"Added dynamic port forwarding: {listen_addr}:{listen_port}")
+                        except Exception as e:
+                            logger.error(f"Failed to set up dynamic forwarding: {e}")
+            
             # Add host and user
-            ssh_cmd.append(f"{self.connection.username}@{self.connection.host}")
+            ssh_cmd.append(f"{self.connection.username}@{self.connection.host}" if hasattr(self.connection, 'username') and self.connection.username else self.connection.host)
             
             # Add port if not default
-            if self.connection.port != 22:
+            if hasattr(self.connection, 'port') and self.connection.port != 22:
                 ssh_cmd.extend(['-p', str(self.connection.port)])
             
             logger.debug(f"SSH command: {' '.join(ssh_cmd)}")
@@ -499,7 +517,7 @@ class TerminalWidget(Gtk.Box):
                 logger.error(f"SSH connection lost: {exc}")
             GLib.idle_add(lambda: self.emit('connection-lost'))
     
-    def close_connection(self):
+    def disconnect(self):
         """Close the SSH connection"""
         if self.is_connected:
             self.is_connected = False
