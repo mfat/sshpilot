@@ -1034,6 +1034,10 @@ class MainWindow(Adw.ApplicationWindow):
                 terminal.disconnect()
             # Now, tell the tab view to finish closing the page.
             tab_view.close_page_finish(page, True)
+            
+            # Check if this was the last tab and show welcome screen if needed
+            if tab_view.get_n_pages() == 0:
+                self.show_welcome_view()
         else:
             # User cancelled, so we reject the close request.
             # This is the critical step that makes the close button work again.
@@ -1052,7 +1056,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_tab_detached(self, tab_view, page, position):
         """Handle tab detached"""
-        pass
+        # Show welcome view if no more tabs are left
+        if tab_view.get_n_pages() == 0:
+            self.show_welcome_view()
 
     def on_terminal_connected(self, terminal):
         """Handle terminal connection established"""
