@@ -124,7 +124,29 @@ class SshPilotApplication(Adw.Application):
         self.create_action('preferences', self.on_preferences, ['<primary>comma'])
         self.create_action('about', self.on_about)
         
+        # Connect to signals
+        self.connect('shutdown', self.on_shutdown)
+        self.connect('activate', self.on_activate)
+        
+        # Initialize window reference
+        self.window = None
+        
         logging.info("sshPilot application initialized")
+    
+    def on_activate(self, app):
+        """Handle application activation"""
+        # Create a new window if one doesn't exist
+        if not self.window or not self.window.get_visible():
+            from .window import MainWindow
+            self.window = MainWindow(application=app)
+            self.window.present()
+        
+    def on_shutdown(self, app):
+        """Clean up all resources when application is shutting down"""
+        logging.info("Application shutdown initiated, cleaning up...")
+        from .terminal import process_manager
+        process_manager.cleanup_all()
+        logging.info("Cleanup completed")
 
     def setup_logging(self):
         """Set up logging configuration"""
@@ -239,7 +261,7 @@ class SshPilotApplication(Adw.Application):
 def main():
     """Main entry point"""
     app = SshPilotApplication()
-    return app.run(sys.argv)
+    return app.run(None)  # Pass None to use default command line arguments
 
 if __name__ == '__main__':
     main()

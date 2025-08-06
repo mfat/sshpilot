@@ -431,6 +431,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.activate_action.connect('activate', self.on_activate_connection)
         self.add_action(self.activate_action)
         
+        # Connect to close request signal
+        self.connect('close-request', self.on_close_request)
+        
         # Start with welcome view (tab view setup already shows welcome initially)
         
         logger.info("Main window initialized")
@@ -886,24 +889,33 @@ class MainWindow(Adw.ApplicationWindow):
             self.connection_manager.remove_connection(connection)
 
     def on_tab_close(self, tab_view, page):
-        """Handle tab close request"""
-        child = page.get_child()
+        """Handle tab close"""
+        if hasattr(page, 'get_child'):
+            child = page.get_child()
+            if hasattr(child, 'disconnect'):
+                # Get the connection associated with this terminal
+                for connection, terminal in list(self.active_terminals.items()):
+                    if terminal == child:
+                        # Disconnect the terminal
+                        child.disconnect()
+                        # Remove from active terminals
+                        if connection in self.active_terminals:
+                            del self.active_terminals[connection]
+                        break
         
-        # Find corresponding connection and clean up
-        for connection, terminal in list(self.active_terminals.items()):
-            if terminal == child:
-                # Close the terminal connection if the method exists
-                if hasattr(terminal, 'close_connection'):
-                    terminal.close_connection()
-                # Remove from active terminals
-                del self.active_terminals[connection]
-                break
+        # Close the tab page
+        tab_view.close_page(page)
         
-        # Show welcome view if no tabs left after closing
-        if tab_view.get_n_pages() == 1:
-            GLib.idle_add(self.show_welcome_view)
-        
-        return False  # Allow close
+        # Update the UI based on the number of remaining tabs
+        GLib.idle_add(self._update_ui_after_tab_close)
+    
+    def _update_ui_after_tab_close(self):
+        """Update the UI after a tab has been closed"""
+        # Show welcome view if no more tabs, otherwise show tab view
+        if self.tab_view.get_n_pages() == 0:
+            self.show_welcome_view()
+        else:
+            self.show_tab_view()
 
     def on_tab_attached(self, tab_view, page, position):
         """Handle tab attached"""
@@ -982,29 +994,29 @@ class MainWindow(Adw.ApplicationWindow):
 
     def simple_close_handler(self, window):
         """Handle window close - distinguish between tab close and window close"""
-        logger.info("🔴 WINDOW CLOSE HANDLER CALLED")
+        logger.info("")
         
         try:
             # Check if we have any tabs open
             n_pages = self.tab_view.get_n_pages()
-            logger.info(f"🔴 Number of tabs: {n_pages}")
+            logger.info(f" Number of tabs: {n_pages}")
             
             # If we have tabs, close all tabs first and then quit
             if n_pages > 0:
-                logger.info("🔴 CLOSING ALL TABS FIRST")
+                logger.info(" CLOSING ALL TABS FIRST")
                 # Close all tabs
                 while self.tab_view.get_n_pages() > 0:
                     page = self.tab_view.get_nth_page(0)
                     self.tab_view.close_page(page)
             
             # Now quit the application
-            logger.info("🔴 QUITTING APPLICATION")
+            logger.info(" QUITTING APPLICATION")
             app = self.get_application()
             if app:
                 app.quit()
                 
         except Exception as e:
-            logger.error(f"🔴 ERROR IN WINDOW CLOSE: {e}")
+            logger.error(f" ERROR IN WINDOW CLOSE: {e}")
             # Force quit even if there's an error
             app = self.get_application()
             if app:
@@ -1024,9 +1036,36 @@ class MainWindow(Adw.ApplicationWindow):
     
     def do_close_request(self):
         """Handle window close request - show warning if active connections exist"""
-        # Use the same logic as the quit check
-        return not self.check_active_connections_before_quit()
-    
+        if self.check_active_connections_before_quit():
+            return self.cleanup_and_close()
+        return False
+        
+    def on_close_request(self, window):
+        """Handle window close request"""
+        # Disconnect all active terminals
+        for terminal in list(self.active_terminals.values()):
+            if hasattr(terminal, 'disconnect'):
+                terminal.disconnect()
+        
+        # Clear active terminals
+        self.active_terminals.clear()
+        
+        # Close all tabs
+        if hasattr(self, 'tab_view'):
+            for i in range(self.tab_view.get_n_pages() - 1, -1, -1):
+                page = self.tab_view.get_nth_page(i)
+                if page and hasattr(page, 'get_child'):
+                    child = page.get_child()
+                    if hasattr(child, 'disconnect'):
+                        child.disconnect()
+            
+            # Clear all pages
+            while self.tab_view.get_n_pages() > 0:
+                self.tab_view.close_page(self.tab_view.get_nth_page(0))
+        
+        # Continue with normal close
+        return self.do_close_request()
+
     def show_quit_confirmation_dialog(self):
         """Show confirmation dialog when quitting with active connections"""
         active_count = len(self.active_terminals)

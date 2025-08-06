@@ -6,10 +6,119 @@ Integrated VTE terminal with SSH connection handling using system SSH client
 import os
 import sys
 import logging
+import signal
+import time
+import json
+import re
+import gi
 import threading
+import weakref
+import subprocess
+from datetime import datetime
+
+gi.require_version('Gtk', '4.0')
+gi.require_version('Vte', '3.91')
+
 from gi.repository import Gtk, GObject, GLib, Vte, Pango, Gdk, Gio
 
 logger = logging.getLogger(__name__)
+
+class SSHProcessManager:
+    """Manages SSH processes and ensures proper cleanup"""
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance.processes = {}
+            cls._instance.terminals = weakref.WeakSet()
+            cls._instance.lock = threading.Lock()
+            cls._instance.cleanup_thread = None
+            cls._instance._start_cleanup_thread()
+        return cls._instance
+    
+    def _start_cleanup_thread(self):
+        """Start background cleanup thread"""
+        if self.cleanup_thread is None or not self.cleanup_thread.is_alive():
+            self.cleanup_thread = threading.Thread(target=self._cleanup_loop, daemon=True)
+            self.cleanup_thread.start()
+            logger.debug("Started SSH cleanup thread")
+    
+    def _cleanup_loop(self):
+        """Background cleanup loop"""
+        while True:
+            try:
+                time.sleep(30)
+                self._cleanup_orphaned_processes()
+            except Exception as e:
+                logger.error(f"Error in cleanup loop: {e}")
+    
+    def _cleanup_orphaned_processes(self):
+        """Clean up processes not tracked by active terminals"""
+        with self.lock:
+            active_pids = set()
+            for terminal in list(self.terminals):
+                try:
+                    pid = terminal._get_terminal_pid()
+                    if pid:
+                        active_pids.add(pid)
+                except Exception as e:
+                    logger.error(f"Error getting PID from terminal: {e}")
+            
+            for pid in list(self.processes.keys()):
+                if pid not in active_pids:
+                    self._terminate_process_by_pid(pid)
+    
+    def _terminate_process_by_pid(self, pid):
+        """Terminate a process by PID"""
+        try:
+            pgid = os.getpgid(pid)
+            os.killpg(pgid, signal.SIGTERM)
+            time.sleep(1)
+            try:
+                os.kill(pid, 0)
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        except (ProcessLookupError, OSError) as e:
+            logger.debug(f"Process {pid} cleanup: {e}")
+        finally:
+            with self.lock:
+                if pid in self.processes:
+                    del self.processes[pid]
+    
+    def register_terminal(self, terminal):
+        """Register a terminal for tracking"""
+        self.terminals.add(terminal)
+        logger.debug(f"Registered terminal {id(terminal)}")
+    
+    def cleanup_all(self):
+        """Clean up all managed processes"""
+        logger.info("Cleaning up all SSH processes...")
+        with self.lock:
+            # Make a copy of PIDs to avoid modifying the dict during iteration
+            pids = list(self.processes.keys())
+            for pid in pids:
+                self._terminate_process_by_pid(pid)
+            
+            # Clear all tracked processes
+            self.processes.clear()
+            
+            # Clean up any remaining terminals
+            for terminal in list(self.terminals):
+                try:
+                    if hasattr(terminal, 'disconnect'):
+                        terminal.disconnect()
+                except Exception as e:
+                    logger.error(f"Error cleaning up terminal {id(terminal)}: {e}")
+            
+            # Clear terminal references
+            self.terminals.clear()
+            
+        logger.info("SSH process cleanup completed")
+
+# Global process manager instance
+process_manager = SSHProcessManager()
 
 class TerminalWidget(Gtk.Box):
     """A terminal widget that uses VTE for display and system SSH client for connections"""
@@ -32,11 +141,20 @@ class TerminalWidget(Gtk.Box):
         self.config = config
         self.connection_manager = connection_manager
         
-        # Initialize process
+        # Process tracking
         self.process = None
+        self.process_pid = None
+        self.process_pgid = None
         self.is_connected = False
         self.watch_id = 0
         self.ssh_client = None
+        self.session_id = str(id(self))  # Unique ID for this session
+        
+        # Register with process manager
+        process_manager.register_terminal(self)
+        
+        # Connect to destroy signal for cleanup
+        self.connect('destroy', self._on_destroy)
         
         # Create scrolled window for terminal
         self.scrolled_window = Gtk.ScrolledWindow()
@@ -173,19 +291,33 @@ class TerminalWidget(Gtk.Box):
             
             logger.debug(f"SSH command: {' '.join(ssh_cmd)}")
             
-            # Spawn SSH process in terminal
+            # Create a new PTY for the terminal
+            pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
+            
+            # Start the SSH process using VTE's spawn_async with our PTY
             self.vte.spawn_async(
                 Vte.PtyFlags.DEFAULT,
                 os.environ.get('HOME', '/'),
                 ssh_cmd,
-                None,
+                None,  # Environment (use default)
                 GLib.SpawnFlags.DEFAULT,
-                None, None,
-                -1,  # Use default PTY
-                None,
+                None,  # Child setup function
+                None,  # Child setup data
+                -1,    # Timeout (-1 = default)
+                None,  # Cancellable
                 self._on_spawn_complete,
-                None
+                None   # User data
             )
+            
+            # Store the PTY for later cleanup
+            self.pty = pty
+            
+            # Mark as connected
+            self.is_connected = True
+            self.emit('connection-established')
+            
+            # Focus the terminal
+            self.vte.grab_focus()
             
             self.is_connected = True
             self.emit('connection-established')
@@ -207,8 +339,32 @@ class TerminalWidget(Gtk.Box):
         if error:
             logger.error(f"Terminal spawn failed: {error}")
             self._on_connection_failed(str(error))
-        else:
-            logger.debug(f"Terminal spawned with PID: {pid}")
+            return
+            
+        logger.debug(f"Terminal spawned with PID: {pid}")
+        self.process_pid = pid
+        
+        try:
+            # Get and store process group ID
+            self.process_pgid = os.getpgid(pid)
+            logger.debug(f"Process group ID: {self.process_pgid}")
+            
+            # Store process info for cleanup
+            with process_manager.lock:
+                process_manager.processes[pid] = {
+                    'terminal': weakref.ref(self),
+                    'start_time': datetime.now(),
+                    'command': 'ssh',
+                    'pgid': self.process_pgid
+                }
+            
+            self.is_connected = True
+            self.emit('connection-established')
+            self.vte.grab_focus()
+            
+        except Exception as e:
+            logger.error(f"Error in spawn complete: {e}")
+            self._on_connection_failed(str(e))
     
     def _on_connection_failed(self, error_message):
         """Handle connection failure (called from main thread)"""
@@ -530,28 +686,223 @@ class TerminalWidget(Gtk.Box):
                 logger.error(f"SSH connection lost: {exc}")
             GLib.idle_add(lambda: self.emit('connection-lost'))
     
+    def _setup_process_group(self, spawn_data):
+        """Setup function called after fork but before exec"""
+        # Create new process group for the child process
+        os.setpgrp()
+        
+    def _get_terminal_pid(self):
+        """Get the PID of the terminal's child process"""
+        # First try the stored PID
+        if self.process_pid:
+            try:
+                # Verify the process still exists
+                os.kill(self.process_pid, 0)
+                return self.process_pid
+            except (ProcessLookupError, OSError):
+                pass
+        
+        # Fall back to getting from PTY
+        try:
+            pty = self.vte.get_pty()
+            if pty:
+                pid = pty.get_child_pid()
+                if pid:
+                    self.process_pid = pid
+                    return pid
+        except Exception as e:
+            logger.error(f"Error getting terminal PID: {e}")
+        
+        return None
+        
+    def _on_destroy(self, widget):
+        """Handle widget destruction"""
+        logger.debug(f"Terminal widget {self.session_id} being destroyed")
+        self.disconnect()
+
+    def _terminate_process_tree(self, pid):
+        """Terminate a process and all its children"""
+        try:
+            # First try to get the process group
+            try:
+                pgid = os.getpgid(pid)
+                logger.debug(f"Terminating process group {pgid}")
+                os.killpg(pgid, signal.SIGTERM)
+                
+                # Give processes a moment to shut down
+                time.sleep(0.5)
+                
+                # Check if any processes are still running
+                try:
+                    os.killpg(pgid, 0)  # Check if process group exists
+                    logger.debug(f"Process group {pgid} still running, sending SIGKILL")
+                    os.killpg(pgid, signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    pass  # Process group already gone
+                    
+            except ProcessLookupError:
+                logger.debug(f"Process {pid} already terminated")
+                return
+                
+            # Wait for process to terminate
+            try:
+                os.waitpid(pid, os.WNOHANG)
+            except (ChildProcessError, OSError):
+                pass
+                
+        except Exception as e:
+            logger.error(f"Error terminating process {pid}: {e}")
+    
+    def _cleanup_process(self, pid):
+        """Clean up a process by PID"""
+        if not pid:
+            return False
+            
+        try:
+            # Try to get process info from manager first
+            pgid = None
+            with process_manager.lock:
+                if pid in process_manager.processes:
+                    pgid = process_manager.processes[pid].get('pgid')
+            
+            # Fall back to getting PGID from system
+            if not pgid:
+                try:
+                    pgid = os.getpgid(pid)
+                except ProcessLookupError:
+                    logger.debug(f"Process {pid} already terminated")
+                    return True
+            
+            # First try a clean termination
+            try:
+                os.kill(pid, signal.SIGTERM)
+                logger.debug(f"Sent SIGTERM to process {pid} (PGID: {pgid})")
+                
+                # Wait for clean termination
+                for _ in range(5):  # Wait up to 0.5 seconds
+                    try:
+                        os.kill(pid, 0)
+                        time.sleep(0.1)
+                    except ProcessLookupError:
+                        logger.debug(f"Process {pid} terminated cleanly")
+                        return True
+                
+                # If still running, force kill
+                try:
+                    os.kill(pid, 0)  # Check if still exists
+                    logger.debug(f"Process {pid} still running, sending SIGKILL")
+                    if pgid:
+                        try:
+                            os.killpg(pgid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    os.kill(pid, signal.SIGKILL)
+                    return True
+                except ProcessLookupError:
+                    return True
+                    
+            except ProcessLookupError:
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error terminating process {pid}: {e}")
+            return False
+    
     def disconnect(self):
-        """Close the SSH connection"""
-        if self.is_connected:
-            self.is_connected = False
-            # VTE will handle the process termination when the widget is destroyed
+        """Close the SSH connection and clean up resources"""
+        if not self.is_connected:
+            return
+            
+        logger.debug(f"Disconnecting SSH session {self.session_id}...")
+        self.is_connected = False
+        
+        try:
+            # Try to get the terminal's child PID
+            pid = self._get_terminal_pid()
+            
+            # Collect all PIDs that need to be cleaned up
+            pids_to_clean = set()
+            
+            # Add the main process PID if available
+            if pid:
+                pids_to_clean.add(pid)
+            
+            # Add the process group ID if available
+            if hasattr(self, 'process_pgid') and self.process_pgid:
+                pids_to_clean.add(self.process_pgid)
+            
+            # Add any PIDs from the process manager
+            with process_manager.lock:
+                for proc_pid, proc_info in list(process_manager.processes.items()):
+                    if proc_info.get('terminal')() is self:
+                        pids_to_clean.add(proc_pid)
+                        if 'pgid' in proc_info:
+                            pids_to_clean.add(proc_info['pgid'])
+            
+            # Clean up all collected PIDs
+            for cleanup_pid in pids_to_clean:
+                if cleanup_pid:
+                    self._cleanup_process(cleanup_pid)
+            
+            # Clean up PTY if it exists
+            if hasattr(self, 'pty') and self.pty:
+                try:
+                    self.pty.close()
+                except Exception as e:
+                    logger.error(f"Error closing PTY: {e}")
+                finally:
+                    self.pty = None
+            
+            # Clean up from process manager
+            with process_manager.lock:
+                for proc_pid in list(process_manager.processes.keys()):
+                    proc_info = process_manager.processes[proc_pid]
+                    if proc_info.get('terminal')() is self:
+                        del process_manager.processes[proc_pid]
+            
+            # Reset the terminal
+            try:
+                self.vte.reset(True, True)
+            except Exception as e:
+                logger.error(f"Error resetting terminal: {e}")
+            
+            logger.debug(f"Cleaned up {len(pids_to_clean)} processes for session {self.session_id}")
+            
+        except Exception as e:
+            logger.error(f"Error during disconnect: {e}")
+        finally:
+            # Clean up references
+            self.process_pid = None
+            self.process_pgid = None
+            
+            # Ensure we always emit the connection-lost signal
             self.emit('connection-lost')
+            logger.debug(f"SSH session {self.session_id} disconnected")
     
     def _on_connection_failed(self, error_message):
         """Handle connection failure (called from main thread)"""
         logger.error(f"Connection failed: {error_message}")
         
-        # Show error in terminal
-        error_msg = f"\r\n\x1b[31mConnection failed: {error_message}\x1b[0m\r\n"
-        self.vte.feed(error_msg.encode('utf-8'))
-        
-        self.is_connected = False
-        
-        # Clean up PTY
-        self._cleanup_pty()
-        
-        # Notify UI
-        self.emit('connection-failed', error_message)
+        try:
+            # Show error in terminal
+            error_msg = f"\r\n\x1b[31mConnection failed: {error_message}\x1b[0m\r\n"
+            self.vte.feed(error_msg.encode('utf-8'))
+            
+            self.is_connected = False
+            
+            # Clean up PTY if it exists
+            if hasattr(self, 'pty') and self.pty:
+                self.pty.close()
+                del self.pty
+            
+            # Reset terminal
+            self.vte.reset(True, True)
+            
+            # Notify UI
+            self.emit('connection-failed', error_message)
+            
+        except Exception as e:
+            logger.error(f"Error in _on_connection_failed: {e}")
 
     def on_child_exited(self, terminal, status):
         """Handle terminal child process exit"""
