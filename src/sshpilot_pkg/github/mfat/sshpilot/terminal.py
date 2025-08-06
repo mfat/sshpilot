@@ -153,8 +153,12 @@ class TerminalWidget(Gtk.Box):
         # Register with process manager
         process_manager.register_terminal(self)
         
-        # Connect to destroy signal for cleanup
+        # Connect to signals
         self.connect('destroy', self._on_destroy)
+        
+        # Connect to connection manager signals using GObject.GObject.connect directly
+        self._connection_updated_handler = GObject.GObject.connect(connection_manager, 'connection-updated', self._on_connection_updated_signal)
+        logger.debug("Connected to connection-updated signal")
         
         # Create scrolled window for terminal
         self.scrolled_window = Gtk.ScrolledWindow()
@@ -203,6 +207,11 @@ class TerminalWidget(Gtk.Box):
         if not self.connection:
             logger.error("No connection configured")
             return False
+            
+        # Ensure VTE terminal is properly initialized
+        if not hasattr(self, 'vte') or self.vte is None:
+            logger.error("VTE terminal not initialized")
+            return False
         
         try:
             # Connect in a separate thread to avoid blocking UI
@@ -214,6 +223,7 @@ class TerminalWidget(Gtk.Box):
             
         except Exception as e:
             logger.error(f"Failed to start SSH connection: {e}")
+            GLib.idle_add(self._on_connection_failed, str(e))
             return False
     
     def _connect_ssh_thread(self):
@@ -281,6 +291,16 @@ class TerminalWidget(Gtk.Box):
                             logger.debug(f"Added local port forwarding: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
                         except Exception as e:
                             logger.error(f"Failed to set up local forwarding: {e}")
+                            
+                    # Handle remote port forwarding
+                    elif rule_type == 'remote' and listen_port and 'remote_host' in rule and 'remote_port' in rule:
+                        try:
+                            remote_host = rule.get('remote_host', 'localhost')
+                            remote_port = rule.get('remote_port')
+                            ssh_cmd.extend(['-R', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"])
+                            logger.debug(f"Added remote port forwarding: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
+                        except Exception as e:
+                            logger.error(f"Failed to set up remote forwarding: {e}")
             
             # Add host and user
             ssh_cmd.append(f"{self.connection.username}@{self.connection.host}" if hasattr(self.connection, 'username') and self.connection.username else self.connection.host)
@@ -652,10 +672,39 @@ class TerminalWidget(Gtk.Box):
     # PTY forwarding is now handled automatically by VTE
     # No need for manual PTY management in this implementation
     
+    def reconnect(self):
+        """Reconnect the terminal with updated connection settings"""
+        logger.info("Reconnecting terminal with updated settings...")
+        was_connected = self.is_connected
+        
+        # Disconnect if currently connected
+        if was_connected:
+            self.disconnect()
+        
+        # Reconnect after a short delay to allow disconnection to complete
+        def _reconnect():
+            if self._connect_ssh():
+                logger.info("Terminal reconnected with updated settings")
+            else:
+                logger.error("Failed to reconnect terminal with updated settings")
+        
+        GLib.timeout_add(500, _reconnect)  # 500ms delay before reconnecting
+    
+    def _on_connection_updated_signal(self, _, connection):
+        """Signal handler for connection-updated signal"""
+        self._on_connection_updated(connection)
+        
+    def _on_connection_updated(self, connection):
+        """Called when connection settings are updated"""
+        if connection == self.connection:
+            logger.info(f"Connection settings updated, reconnecting terminal...")
+            self.reconnect()
+    
     def _on_connection_established(self):
         """Called when SSH connection is established"""
         self.is_connected = True
         self.emit('connection-established')
+        logger.info(f"SSH connection established to {self.connection}")
         
     def on_child_exited(self, widget, status):
         """Called when the child process exits"""
@@ -718,6 +767,16 @@ class TerminalWidget(Gtk.Box):
     def _on_destroy(self, widget):
         """Handle widget destruction"""
         logger.debug(f"Terminal widget {self.session_id} being destroyed")
+        
+        # Disconnect from connection manager signals
+        if hasattr(self, '_connection_updated_handler') and hasattr(self.connection_manager, 'disconnect'):
+            try:
+                self.connection_manager.disconnect(self._connection_updated_handler)
+                logger.debug("Disconnected from connection manager signals")
+            except Exception as e:
+                logger.error(f"Error disconnecting from connection manager: {e}")
+        
+        # Disconnect the terminal
         self.disconnect()
 
     def _terminate_process_tree(self, pid):

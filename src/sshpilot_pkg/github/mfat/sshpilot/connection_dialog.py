@@ -804,6 +804,12 @@ class ConnectionDialog(Adw.Window):
             'forwarding_rules': forwarding_rules
         }
         
+        # Update the connection object with new data if editing
+        if self.is_editing and self.connection:
+            self.connection.data.update(connection_data)
+            # Explicitly update forwarding rules to ensure they're fresh
+            self.connection.forwarding_rules = forwarding_rules
+            
         # Emit signal with connection data
         self.emit('connection-saved', connection_data)
         self.destroy()
