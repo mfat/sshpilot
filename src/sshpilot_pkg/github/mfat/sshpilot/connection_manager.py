@@ -424,8 +424,13 @@ class ConnectionManager(GObject.Object):
                             current_host = value
                             current_config = {'host': value}
                         else:
-                            # Add to current config
-                            current_config[key] = value
+                            # Handle multiple values for the same key (like multiple LocalForward rules)
+                            if key in current_config and key in ['localforward', 'remoteforward', 'dynamicforward']:
+                                if not isinstance(current_config[key], list):
+                                    current_config[key] = [current_config[key]]
+                                current_config[key].append(value)
+                            else:
+                                current_config[key] = value
             
             # Add the last host
             if current_host and current_config:
@@ -455,23 +460,63 @@ class ConnectionManager(GObject.Object):
                 'forwarding_rules': []
             }
             
-            # Handle dynamic port forwarding if specified
-            if 'dynamicforward' in config:
-                # Format is usually "[bind_address:]port"
-                dynamic_spec = config['dynamicforward']
-                if ':' in dynamic_spec:
-                    bind_addr, port_str = dynamic_spec.rsplit(':', 1)
-                    listen_port = int(port_str)
-                else:
-                    bind_addr = '127.0.0.1'  # Default bind address
-                    listen_port = int(dynamic_spec)
-                
-                parsed['forwarding_rules'].append({
-                    'type': 'dynamic',
-                    'listen_addr': bind_addr,
-                    'listen_port': listen_port,
-                    'enabled': True
-                })
+            # Handle port forwarding rules
+            for forward_type in ['localforward', 'remoteforward', 'dynamicforward']:
+                if forward_type not in config:
+                    continue
+                    
+                forward_specs = config[forward_type]
+                if not isinstance(forward_specs, list):
+                    forward_specs = [forward_specs]
+                    
+                for forward_spec in forward_specs:
+                    if forward_type == 'dynamicforward':
+                        # Format is usually "[bind_address:]port"
+                        if ':' in forward_spec:
+                            bind_addr, port_str = forward_spec.rsplit(':', 1)
+                            listen_port = int(port_str)
+                        else:
+                            bind_addr = '127.0.0.1'  # Default bind address
+                            listen_port = int(forward_spec)
+                        
+                        parsed['forwarding_rules'].append({
+                            'type': 'dynamic',
+                            'listen_addr': bind_addr,
+                            'listen_port': listen_port,
+                            'enabled': True
+                        })
+                    else:
+                        # Handle LocalForward and RemoteForward
+                        # Format is "[bind_address:]port host:hostport"
+                        parts = forward_spec.split()
+                        if len(parts) == 2:
+                            listen_spec, dest_spec = parts
+                            
+                            # Parse listen address and port
+                            if ':' in listen_spec:
+                                bind_addr, port_str = listen_spec.rsplit(':', 1)
+                                listen_port = int(port_str)
+                            else:
+                                bind_addr = '127.0.0.1'  # Default bind address
+                                listen_port = int(listen_spec)
+                            
+                            # Parse destination host and port
+                            if ':' in dest_spec:
+                                remote_host, remote_port = dest_spec.split(':')
+                                remote_port = int(remote_port)
+                            else:
+                                remote_host = dest_spec
+                                remote_port = 22  # Default SSH port
+                            
+                            rule_type = 'local' if forward_type == 'localforward' else 'remote'
+                            parsed['forwarding_rules'].append({
+                                'type': rule_type,
+                                'listen_addr': bind_addr,
+                                'listen_port': listen_port,
+                                'remote_host': remote_host,
+                                'remote_port': remote_port,
+                                'enabled': True
+                            })
             
             # Handle proxy settings if any
             if 'proxycommand' in config:

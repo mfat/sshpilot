@@ -138,18 +138,31 @@ class TerminalWidget(Gtk.Box):
             if hasattr(self.connection, 'x11_forwarding') and self.connection.x11_forwarding:
                 ssh_cmd.append('-X')
             
-            # Add dynamic port forwarding if configured in forwarding rules
+            # Add port forwarding rules
             if hasattr(self.connection, 'forwarding_rules'):
                 for rule in self.connection.forwarding_rules:
-                    if rule.get('type') == 'dynamic' and rule.get('enabled', True):
+                    if not rule.get('enabled', True):
+                        continue
+                        
+                    rule_type = rule.get('type')
+                    listen_addr = rule.get('listen_addr', '127.0.0.1')
+                    listen_port = rule.get('listen_port')
+                    
+                    if rule_type == 'dynamic' and listen_port:
                         try:
-                            listen_addr = rule.get('listen_addr', '127.0.0.1')
-                            listen_port = rule.get('listen_port')
-                            if listen_port:
-                                ssh_cmd.extend(['-D', f"{listen_addr}:{listen_port}"])
-                                logger.debug(f"Added dynamic port forwarding: {listen_addr}:{listen_port}")
+                            ssh_cmd.extend(['-D', f"{listen_addr}:{listen_port}"])
+                            logger.debug(f"Added dynamic port forwarding: {listen_addr}:{listen_port}")
                         except Exception as e:
                             logger.error(f"Failed to set up dynamic forwarding: {e}")
+                            
+                    elif rule_type == 'local' and listen_port and 'remote_host' in rule and 'remote_port' in rule:
+                        try:
+                            remote_host = rule.get('remote_host', 'localhost')
+                            remote_port = rule.get('remote_port')
+                            ssh_cmd.extend(['-L', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"])
+                            logger.debug(f"Added local port forwarding: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
+                        except Exception as e:
+                            logger.error(f"Failed to set up local forwarding: {e}")
             
             # Add host and user
             ssh_cmd.append(f"{self.connection.username}@{self.connection.host}" if hasattr(self.connection, 'username') and self.connection.username else self.connection.host)
