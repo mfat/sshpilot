@@ -1179,28 +1179,12 @@ class MainWindow(Adw.ApplicationWindow):
         
     def on_close_request(self, window):
         """Handle window close request"""
-        # Disconnect all active terminals
-        for terminal in list(self.active_terminals.values()):
-            if hasattr(terminal, 'disconnect'):
-                terminal.disconnect()
-        
-        # Clear active terminals
-        self.active_terminals.clear()
-        
-        # Close all tabs
-        if hasattr(self, 'tab_view'):
-            for i in range(self.tab_view.get_n_pages() - 1, -1, -1):
-                page = self.tab_view.get_nth_page(i)
-                if page and hasattr(page, 'get_child'):
-                    child = page.get_child()
-                    if hasattr(child, 'disconnect'):
-                        child.disconnect()
+        # If there are active connections, show warning dialog
+        if self.active_terminals:
+            self.show_quit_confirmation_dialog()
+            return True  # Don't close yet, let the dialog handle it
             
-            # Clear all pages
-            while self.tab_view.get_n_pages() > 0:
-                self.tab_view.close_page(self.tab_view.get_nth_page(0))
-        
-        # Continue with normal close
+        # No active connections, proceed with normal close
         return self.do_close_request()
 
     def show_quit_confirmation_dialog(self):
@@ -1231,48 +1215,133 @@ class MainWindow(Adw.ApplicationWindow):
     def on_quit_confirmation_response(self, dialog, response):
         """Handle quit confirmation dialog response"""
         if response == 'quit':
-            self.cleanup_and_close()
-            # Always quit the application (this works for both window close and app quit)
-            app = self.get_application()
-            if app:
-                # Call super().quit() directly to avoid recursion
-                super(type(app), app).quit()
-            else:
-                # Fallback: force close the window
-                self.close()
+            # First, close the dialog to free up UI (use close() for Adw.AlertDialog)
+            dialog.close()
+            
+            # Schedule cleanup and quit on the main loop to ensure proper shutdown
+            def _cleanup_and_quit():
+                try:
+                    logger.info("Starting cleanup before quit...")
+                    
+                    # 1. First, disconnect all terminals
+                    for connection, terminal in list(self.active_terminals.items()):
+                        try:
+                            logger.debug(f"Disconnecting terminal for {connection.nickname}")
+                            if hasattr(terminal, 'disconnect'):
+                                terminal.disconnect()
+                            if hasattr(terminal, 'close_connection'):
+                                terminal.close_connection()
+                        except Exception as e:
+                            logger.error(f"Error disconnecting terminal {connection.nickname}: {e}", exc_info=True)
+                    
+                    # 2. Clear active terminals
+                    self.active_terminals.clear()
+                    
+                    # 3. Force cleanup of all processes via process manager
+                    try:
+                        from sshpilot.terminal import process_manager
+                        process_manager.cleanup_all()
+                    except Exception as e:
+                        logger.error(f"Error in process manager cleanup: {e}", exc_info=True)
+                    
+                    # 4. Close all tabs
+                    while self.tab_view.get_n_pages() > 0:
+                        try:
+                            page = self.tab_view.get_nth_page(0)
+                            if page is not None:
+                                self.tab_view.close_page(page)
+                        except Exception as e:
+                            logger.error(f"Error closing tab: {e}", exc_info=True)
+                            break
+                    
+                    # 5. Force garbage collection
+                    import gc
+                    gc.collect()
+                    
+                    # 6. Close window and quit application
+                    logger.info("Cleanup complete, quitting application...")
+                    self.close()
+                    
+                    app = self.get_application()
+                    if app:
+                        # Use GLib to ensure we're on the main thread
+                        def _quit():
+                            app.quit()
+                            return False
+                        from gi.repository import GLib
+                        GLib.idle_add(_quit)
+                    
+                except Exception as e:
+                    logger.critical(f"Critical error during shutdown: {e}", exc_info=True)
+                    # Try to force quit if we get here
+                    import os
+                    import signal
+                    os.kill(os.getpid(), signal.SIGKILL)
+                
+                return False  # Remove this source from the main loop
+            
+            # Schedule the cleanup on the main loop with high priority
+            from gi.repository import GLib
+            GLib.idle_add(_cleanup_and_quit, priority=GLib.PRIORITY_HIGH)
     
     def cleanup_and_close(self):
         """Perform cleanup before closing"""
         try:
-            # Disconnect all active terminals
-            for connection, terminal in list(self.active_terminals.items()):
-                # Close the terminal connection properly
-                if hasattr(terminal, 'close_connection'):
-                    terminal.close_connection()
-                
-                # Find and close the tab containing this terminal
-                for i in range(self.tab_view.get_n_pages()):
-                    page = self.tab_view.get_nth_page(i)
-                    if page.get_child() == terminal:
+            logger.info("Starting application cleanup...")
+            
+            # Create a copy of active_terminals to avoid modification during iteration
+            terminals_to_close = list(self.active_terminals.items())
+            
+            # First, disconnect all terminals to properly close SSH connections
+            for connection, terminal in terminals_to_close:
+                try:
+                    logger.debug(f"Disconnecting terminal for {connection.nickname}")
+                    # Call disconnect() to properly clean up SSH processes
+                    if hasattr(terminal, 'disconnect'):
+                        terminal.disconnect()
+                    # Also call close_connection if it exists
+                    if hasattr(terminal, 'close_connection'):
+                        terminal.close_connection()
+                except Exception as e:
+                    logger.error(f"Error disconnecting terminal {connection.nickname}: {e}", exc_info=True)
+            
+            # Close all tabs
+            while self.tab_view.get_n_pages() > 0:
+                try:
+                    page = self.tab_view.get_nth_page(0)
+                    if page is not None:
                         self.tab_view.close_page(page)
-                        break
+                except Exception as e:
+                    logger.error(f"Error closing tab: {e}", exc_info=True)
+                    break  # Prevent infinite loop if we can't close a tab
             
             # Clear the active terminals dictionary
             self.active_terminals.clear()
             
+            # Force garbage collection to ensure all terminal widgets are destroyed
+            import gc
+            gc.collect()
+            
             # Save window geometry before closing
-            width = self.get_default_size()[0]
-            height = self.get_default_size()[1]
             try:
-                sidebar_width = self.split_view.get_sidebar_width()
-            except AttributeError:
-                sidebar_width = 250  # default width
-            self.config.save_window_geometry(width, height, sidebar_width)
+                width = self.get_default_size()[0]
+                height = self.get_default_size()[1]
+                sidebar_width = self.split_view.get_sidebar_width() if hasattr(self, 'split_view') else 250
+                self.config.save_window_geometry(width, height, sidebar_width)
+            except Exception as e:
+                logger.error(f"Error saving window geometry: {e}", exc_info=True)
             
             logger.info("Application cleanup completed")
             
         except Exception as e:
             logger.error(f"Error during window close cleanup: {e}", exc_info=True)
+            
+        # Ensure we clean up any remaining processes through the process manager
+        try:
+            from sshpilot.terminal import process_manager
+            process_manager.cleanup_all()
+        except Exception as e:
+            logger.error(f"Error during process manager cleanup: {e}", exc_info=True)
 
     def _cleanup_connection(self, connection, terminal):
         """Clean up connection resources without closing the tab"""
