@@ -13,6 +13,8 @@ gi.require_version('Adw', '1')
 
 from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango
 
+from gettext import gettext as _
+
 from .connection_manager import ConnectionManager, Connection
 from .terminal import TerminalWidget
 from .config import Config
@@ -1143,6 +1145,7 @@ class MainWindow(Adw.ApplicationWindow):
             if dialog.is_editing:
                 # Update existing connection
                 old_connection = dialog.connection
+                is_connected = old_connection in self.active_terminals
                 
                 if self.connection_manager.update_connection(old_connection, connection_data):
                     # Update connection attributes
@@ -1162,6 +1165,10 @@ class MainWindow(Adw.ApplicationWindow):
                         row.update_display()
                     
                     logger.info(f"Updated connection: {old_connection.nickname}")
+                    
+                    # If the connection is active, ask if user wants to reconnect
+                    if is_connected:
+                        self._prompt_reconnect(old_connection)
                 else:
                     logger.error("Failed to update connection in SSH config")
                 
@@ -1180,3 +1187,42 @@ class MainWindow(Adw.ApplicationWindow):
             error_dialog.add_response('ok', 'OK')
             error_dialog.set_default_response('ok')
             error_dialog.present()
+            
+    def _prompt_reconnect(self, connection):
+        """Show a dialog asking if user wants to reconnect with new settings"""
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text=_("Settings Changed"),
+            secondary_text=_("The connection settings have been updated.\n"
+                           "Would you like to reconnect with the new settings?"),
+        )
+        
+        dialog.connect("response", self._on_reconnect_response, connection)
+        dialog.present()
+    
+    def _on_reconnect_response(self, dialog, response_id, connection):
+        """Handle response from reconnect prompt"""
+        dialog.destroy()
+        
+        if response_id == Gtk.ResponseType.YES and connection in self.active_terminals:
+            # Disconnect and reconnect with new settings
+            terminal = self.active_terminals[connection]
+            # Disconnect first
+            terminal.disconnect()
+            # Reconnect after a short delay to allow disconnection to complete
+            GLib.timeout_add(500, self._reconnect_terminal, connection)
+    
+    def _reconnect_terminal(self, connection):
+        """Reconnect a terminal with updated connection settings"""
+        if connection in self.active_terminals:
+            terminal = self.active_terminals[connection]
+            # Reconnect with new settings
+            if not terminal._connect_ssh():
+                logger.error("Failed to reconnect with new settings")
+                # Remove from active terminals if reconnection fails
+                if connection in self.active_terminals:
+                    del self.active_terminals[connection]
+        return False  # Don't repeat the timeout
