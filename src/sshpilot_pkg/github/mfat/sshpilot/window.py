@@ -246,6 +246,22 @@ class PreferencesWindow(Adw.PreferencesWindow):
             interface_page.set_title("Interface")
             interface_page.set_icon_name("applications-graphics-symbolic")
             
+            # Behavior group
+            behavior_group = Adw.PreferencesGroup()
+            behavior_group.set_title("Behavior")
+            
+            # Confirm before disconnecting
+            self.confirm_disconnect_switch = Adw.SwitchRow()
+            self.confirm_disconnect_switch.set_title("Confirm before disconnecting")
+            self.confirm_disconnect_switch.set_subtitle("Show a confirmation dialog when disconnecting from a host")
+            self.confirm_disconnect_switch.set_active(
+                self.config.get_setting('confirm-disconnect', True)
+            )
+            self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
+            behavior_group.add(self.confirm_disconnect_switch)
+            
+            interface_page.add(behavior_group)
+            
             # Appearance group
             interface_appearance_group = Adw.PreferencesGroup()
             interface_appearance_group.set_title("Appearance")
@@ -391,6 +407,12 @@ class PreferencesWindow(Adw.PreferencesWindow):
         
         # Apply to all active terminals using config key
         self.apply_color_scheme_to_terminals(config_key)
+        
+    def on_confirm_disconnect_changed(self, switch, *args):
+        """Handle confirm disconnect setting change"""
+        confirm = switch.get_active()
+        logger.info(f"Confirm before disconnect setting changed to: {confirm}")
+        self.config.set_setting('confirm-disconnect', confirm)
     
     def apply_color_scheme_to_terminals(self, scheme_key):
         """Apply color scheme to all active terminal widgets"""
@@ -705,7 +727,7 @@ class MainWindow(Adw.ApplicationWindow):
         about.set_license_type(Gtk.License.GPL_3_0)
         about.set_website('https://github.com/mfat/sshpilot')
         about.set_issue_url('https://github.com/mfat/sshpilot/issues')
-        about.set_copyright('© 2025 mFat')
+        about.set_copyright(' 2025 mFat')
         about.set_developers(['mFat <newmfat@gmail.com>'])
         about.set_comments('SSH connection manager with integrated terminal')
         
@@ -798,9 +820,37 @@ class MainWindow(Adw.ApplicationWindow):
         # Schedule the color setting to run after the terminal is fully initialized
         GLib.idle_add(_set_terminal_colors)
 
+    def _on_disconnect_confirmed(self, dialog, response_id, connection):
+        """Handle response from disconnect confirmation dialog"""
+        dialog.destroy()
+        if response_id == 'disconnect' and connection in self.active_terminals:
+            terminal = self.active_terminals[connection]
+            terminal.disconnect()
+    
     def disconnect_from_host(self, connection: Connection):
         """Disconnect from SSH host"""
-        if connection in self.active_terminals:
+        if connection not in self.active_terminals:
+            return
+            
+        # Check if confirmation is required
+        confirm_disconnect = self.config.get_setting('confirm-disconnect', True)
+        
+        if confirm_disconnect:
+            # Show confirmation dialog
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Disconnect from {}").format(connection.nickname or connection.host),
+                body=_("Are you sure you want to disconnect from this host?")
+            )
+            dialog.add_response('cancel', _("Cancel"))
+            dialog.add_response('disconnect', _("Disconnect"))
+            dialog.set_response_appearance('disconnect', Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response('cancel')
+            dialog.connect('response', self._on_disconnect_confirmed, connection)
+            dialog.present()
+        else:
+            # Disconnect immediately without confirmation
             terminal = self.active_terminals[connection]
             terminal.disconnect()
 
@@ -890,8 +940,15 @@ class MainWindow(Adw.ApplicationWindow):
             # Remove connection
             self.connection_manager.remove_connection(connection)
 
-    def on_tab_close(self, tab_view, page):
-        """Handle tab close"""
+    def _on_tab_close_confirmed(self, dialog, response_id, tab_view, page):
+        """Handle response from tab close confirmation dialog"""
+        dialog.destroy()
+        if response_id == 'close':
+            self._close_tab(tab_view, page)
+        # If cancelled, do nothing - the tab remains open
+    
+    def _close_tab(self, tab_view, page):
+        """Close the tab and clean up resources"""
         if hasattr(page, 'get_child'):
             child = page.get_child()
             if hasattr(child, 'disconnect'):
@@ -911,14 +968,84 @@ class MainWindow(Adw.ApplicationWindow):
         # Update the UI based on the number of remaining tabs
         GLib.idle_add(self._update_ui_after_tab_close)
     
-    def _update_ui_after_tab_close(self):
-        """Update the UI after a tab has been closed"""
-        # Show welcome view if no more tabs, otherwise show tab view
-        if self.tab_view.get_n_pages() == 0:
-            self.show_welcome_view()
+    def on_tab_close(self, tab_view, page):
+        """Handle tab close - THE KEY FIX: Never call close_page ourselves"""
+        # Get the connection for this tab
+        connection = None
+        terminal = None
+        if hasattr(page, 'get_child'):
+            child = page.get_child()
+            if hasattr(child, 'disconnect'):
+                for conn, term in list(self.active_terminals.items()):
+                    if term == child:
+                        connection = conn
+                        terminal = term
+                        break
+        
+        if not connection:
+            # For non-terminal tabs, allow immediate close
+            return False  # Allow the default close behavior
+        
+        # Check if confirmation is required
+        confirm_disconnect = self.config.get_setting('confirm-disconnect', True)
+        
+        if confirm_disconnect:
+            # Store tab view and page as instance variables
+            self._pending_close_tab_view = tab_view
+            self._pending_close_page = page
+            self._pending_close_connection = connection
+            self._pending_close_terminal = terminal
+            
+            # Show confirmation dialog
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Close connection to {}").format(connection.nickname or connection.host),
+                body=_("Are you sure you want to close this connection?")
+            )
+            dialog.add_response('cancel', _("Cancel"))
+            dialog.add_response('close', _("Close"))
+            dialog.set_response_appearance('close', Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response('cancel')
+            
+            # Connect to response signal before showing the dialog
+            dialog.connect('response', self._on_tab_close_response)
+            dialog.present()
+            
+            # Prevent the default close behavior while we show confirmation
+            return True
         else:
-            self.show_tab_view()
+            # If no confirmation is needed, just allow the default close behavior.
+            # The default handler will close the page, which in turn triggers the
+            # terminal disconnection via the page's 'unmap' or 'destroy' signal.
+            return False
 
+    def _on_tab_close_response(self, dialog, response_id):
+        """Handle the response from the close confirmation dialog."""
+        # Retrieve the pending tab info
+        tab_view = self._pending_close_tab_view
+        page = self._pending_close_page
+        terminal = self._pending_close_terminal
+
+        if response_id == 'close':
+            # User confirmed, disconnect the terminal. The tab will be removed
+            # by the AdwTabView once we finish the close operation.
+            if terminal and hasattr(terminal, 'disconnect'):
+                terminal.disconnect()
+            # Now, tell the tab view to finish closing the page.
+            tab_view.close_page_finish(page, True)
+        else:
+            # User cancelled, so we reject the close request.
+            # This is the critical step that makes the close button work again.
+            tab_view.close_page_finish(page, False)
+
+        dialog.destroy()
+        # Clear pending state to avoid memory leaks
+        self._pending_close_tab_view = None
+        self._pending_close_page = None
+        self._pending_close_connection = None
+        self._pending_close_terminal = None
+    
     def on_tab_attached(self, tab_view, page, position):
         """Handle tab attached"""
         pass
@@ -1022,10 +1149,12 @@ class MainWindow(Adw.ApplicationWindow):
             # Force quit even if there's an error
             app = self.get_application()
             if app:
-                app.quit()
-        
-        return False  # Allow close
-
+                # Call super().quit() directly to avoid recursion
+                super(type(app), app).quit()
+            else:
+                # Fallback: force close the window
+                self.close()
+    
     def check_active_connections_before_quit(self):
         """Check for active connections before quitting - returns True if safe to quit"""
         if self.active_terminals:
@@ -1139,6 +1268,47 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as e:
             logger.error(f"Error during window close cleanup: {e}", exc_info=True)
 
+    def _cleanup_connection(self, connection, terminal):
+        """Clean up connection resources without closing the tab"""
+        try:
+            # Disconnect the terminal
+            if terminal and hasattr(terminal, 'disconnect'):
+                terminal.disconnect()
+            
+            # Remove from active terminals
+            if connection and connection in self.active_terminals:
+                del self.active_terminals[connection]
+            
+            # Update UI after cleanup
+            GLib.idle_add(self._update_ui_after_tab_close)
+            
+            logger.info(f"Cleaned up connection: {connection.nickname}")
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up connection: {e}")
+    
+    def _update_ui_after_tab_close(self):
+        """Update the UI after a tab has been closed"""
+        # Show welcome view if no more tabs, otherwise show tab view
+        if self.tab_view.get_n_pages() == 0:
+            self.welcome_view.set_visible(True)
+            self.tab_view.set_visible(False)
+            self.header_bar.remove(self.tab_switcher)
+            self.header_bar.set_title_widget(None)
+            self.header_bar.set_title_widget(self.header_title)
+        else:
+            self.welcome_view.set_visible(False)
+            self.tab_view.set_visible(True)
+            # Update tab titles in case they've changed
+            self._update_tab_titles()
+    
+    def _update_tab_titles(self):
+        """Update tab titles"""
+        for page in self.tab_view.get_pages():
+            child = page.get_child()
+            if hasattr(child, 'connection'):
+                page.set_title(child.connection.nickname)
+    
     def on_connection_saved(self, dialog, connection_data):
         """Handle connection saved from dialog"""
         try:
