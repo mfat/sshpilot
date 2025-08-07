@@ -450,6 +450,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.active_terminals = {}
         self.connections = []
         self._is_quitting = False  # Flag to prevent multiple quit attempts
+        self._is_controlled_reconnect = False  # Flag to track controlled reconnection
         
         # Initialize managers
         self.connection_manager = ConnectionManager()
@@ -1080,7 +1081,19 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_terminal_connected(self, terminal):
         """Handle terminal connection established"""
-        logger.info(f"Terminal connected: {terminal.connection}")
+        if terminal.connection in self.connection_rows:
+            self.connection_rows[terminal.connection].update_status()
+        
+        # Only log if this is not a controlled reconnect
+        if not getattr(self, '_is_controlled_reconnect', False):
+            logger.info(f"Terminal connected: {terminal.connection.nickname} ({terminal.connection.username}@{terminal.connection.host}")
+        else:
+            logger.debug(f"Terminal reconnected after settings update: {terminal.connection.nickname}")
+        
+        # Update connection row status
+        if terminal.connection in self.connection_rows:
+            row = self.connection_rows[terminal.connection]
+            row.update_status()
 
     def on_terminal_disconnected(self, terminal):
         """Handle terminal connection lost"""
@@ -1391,30 +1404,38 @@ class MainWindow(Adw.ApplicationWindow):
                 old_connection = dialog.connection
                 is_connected = old_connection in self.active_terminals
                 
-                if self.connection_manager.update_connection(old_connection, connection_data):
-                    # Update connection attributes
-                    old_connection.nickname = connection_data['nickname']
-                    old_connection.host = connection_data['host']
-                    old_connection.username = connection_data['username']
-                    old_connection.port = connection_data['port']
-                    old_connection.keyfile = connection_data['keyfile']
-                    old_connection.password = connection_data['password']
-                    old_connection.key_passphrase = connection_data['key_passphrase']
-                    old_connection.auth_method = connection_data['auth_method']
-                    old_connection.x11_forwarding = connection_data['x11_forwarding']
-                    
-                    # Update UI
-                    if old_connection in self.connection_rows:
-                        row = self.connection_rows[old_connection]
-                        row.update_display()
-                    
-                    logger.info(f"Updated connection: {old_connection.nickname}")
-                    
-                    # If the connection is active, ask if user wants to reconnect
-                    if is_connected:
-                        self._prompt_reconnect(old_connection)
-                else:
+                # Store the current terminal instance if connected
+                terminal = self.active_terminals.get(old_connection) if is_connected else None
+                
+                # Update connection in manager first
+                if not self.connection_manager.update_connection(old_connection, connection_data):
                     logger.error("Failed to update connection in SSH config")
+                    return
+                
+                # Update connection attributes
+                old_connection.nickname = connection_data['nickname']
+                old_connection.host = connection_data['host']
+                old_connection.username = connection_data['username']
+                old_connection.port = connection_data['port']
+                old_connection.keyfile = connection_data['keyfile']
+                old_connection.password = connection_data['password']
+                old_connection.key_passphrase = connection_data['key_passphrase']
+                old_connection.auth_method = connection_data['auth_method']
+                old_connection.x11_forwarding = connection_data['x11_forwarding']
+                old_connection.forwarding_rules = connection_data.get('forwarding_rules', [])
+                
+                # Update UI
+                if old_connection in self.connection_rows:
+                    row = self.connection_rows[old_connection]
+                    row.update_display()
+                
+                logger.info(f"Updated connection: {old_connection.nickname}")
+                
+                # If the connection is active, ask if user wants to reconnect
+                if is_connected and terminal is not None:
+                    # Store the terminal in the connection for later use
+                    old_connection._terminal_instance = terminal
+                    self._prompt_reconnect(old_connection)
                 
             else:
                 # Create new connection
@@ -1427,11 +1448,16 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as e:
             logger.error(f"Failed to save connection: {e}")
             # Show error dialog
-            error_dialog = Adw.MessageDialog.new(self, 'Error', f'Failed to save connection: {e}')
-            error_dialog.add_response('ok', 'OK')
-            error_dialog.set_default_response('ok')
+            error_dialog = Gtk.MessageDialog(
+                transient_for=self,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text=_("Failed to save connection"),
+                secondary_text=str(e)
+            )
             error_dialog.present()
-            
+    
     def _prompt_reconnect(self, connection):
         """Show a dialog asking if user wants to reconnect with new settings"""
         dialog = Gtk.MessageDialog(
@@ -1441,9 +1467,8 @@ class MainWindow(Adw.ApplicationWindow):
             buttons=Gtk.ButtonsType.YES_NO,
             text=_("Settings Changed"),
             secondary_text=_("The connection settings have been updated.\n"
-                           "Would you like to reconnect with the new settings?"),
+                           "Would you like to reconnect with the new settings?")
         )
-        
         dialog.connect("response", self._on_reconnect_response, connection)
         dialog.present()
     
@@ -1451,22 +1476,109 @@ class MainWindow(Adw.ApplicationWindow):
         """Handle response from reconnect prompt"""
         dialog.destroy()
         
-        if response_id == Gtk.ResponseType.YES and connection in self.active_terminals:
-            # Disconnect and reconnect with new settings
-            terminal = self.active_terminals[connection]
+        # Only proceed if user clicked Yes and the connection is still active
+        if response_id != Gtk.ResponseType.YES or connection not in self.active_terminals:
+            # Clean up the stored terminal instance if it exists
+            if hasattr(connection, '_terminal_instance'):
+                delattr(connection, '_terminal_instance')
+            return
+            
+        # Get the terminal instance either from active_terminals or the stored instance
+        terminal = self.active_terminals.get(connection) or getattr(connection, '_terminal_instance', None)
+        if not terminal:
+            logger.warning("No terminal instance found for reconnection")
+            return
+            
+        # Set controlled reconnect flag
+        self._is_controlled_reconnect = True
+        
+        try:
             # Disconnect first
+            logger.debug("Disconnecting terminal before reconnection")
             terminal.disconnect()
+            
+            # Store the connection temporarily in active_terminals if not present
+            if connection not in self.active_terminals:
+                self.active_terminals[connection] = terminal
+            
             # Reconnect after a short delay to allow disconnection to complete
             GLib.timeout_add(500, self._reconnect_terminal, connection)
+            
+        except Exception as e:
+            logger.error(f"Error during reconnection: {e}")
+            # Remove from active terminals if reconnection fails
+            if connection in self.active_terminals:
+                del self.active_terminals[connection]
+                
+            # Show error to user
+            error_dialog = Gtk.MessageDialog(
+                transient_for=self,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text=_("Reconnection Failed"),
+                secondary_text=_("Failed to reconnect with the new settings. Please try connecting again manually.")
+            )
+            error_dialog.present()
+            
+        finally:
+            # Clean up the stored terminal instance
+            if hasattr(connection, '_terminal_instance'):
+                delattr(connection, '_terminal_instance')
+                
+            # Reset the flag after a delay to ensure it's not set during normal operations
+            GLib.timeout_add(1000, self._reset_controlled_reconnect)
+    
+    def _reset_controlled_reconnect(self):
+        """Reset the controlled reconnect flag"""
+        self._is_controlled_reconnect = False
     
     def _reconnect_terminal(self, connection):
         """Reconnect a terminal with updated connection settings"""
-        if connection in self.active_terminals:
-            terminal = self.active_terminals[connection]
+        if connection not in self.active_terminals:
+            logger.warning(f"Connection {connection.nickname} not found in active terminals")
+            return False  # Don't repeat the timeout
+            
+        terminal = self.active_terminals[connection]
+        
+        try:
+            logger.debug(f"Attempting to reconnect terminal for {connection.nickname}")
+            
             # Reconnect with new settings
             if not terminal._connect_ssh():
                 logger.error("Failed to reconnect with new settings")
-                # Remove from active terminals if reconnection fails
-                if connection in self.active_terminals:
-                    del self.active_terminals[connection]
+                # Show error to user
+                GLib.idle_add(self._show_reconnect_error, connection)
+                return False
+                
+            logger.info(f"Successfully reconnected terminal for {connection.nickname}")
+            
+        except Exception as e:
+            logger.error(f"Error reconnecting terminal: {e}", exc_info=True)
+            GLib.idle_add(self._show_reconnect_error, connection, str(e))
+            
         return False  # Don't repeat the timeout
+        
+    def _show_reconnect_error(self, connection, error_message=None):
+        """Show an error message when reconnection fails"""
+        # Remove from active terminals if reconnection fails
+        if connection in self.active_terminals:
+            del self.active_terminals[connection]
+            
+        # Update UI to show disconnected state
+        if connection in self.connection_rows:
+            self.connection_rows[connection].update_status()
+        
+        # Show error dialog
+        error_dialog = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK,
+            text=_("Reconnection Failed"),
+            secondary_text=error_message or _("Failed to reconnect with the new settings. Please try connecting again manually.")
+        )
+        error_dialog.present()
+        
+        # Clean up the dialog when closed
+        error_dialog.connect("response", lambda d, r: d.destroy())

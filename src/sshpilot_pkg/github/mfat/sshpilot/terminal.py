@@ -602,10 +602,15 @@ class TerminalWidget(Gtk.Box):
         self._on_connection_updated(connection)
         
     def _on_connection_updated(self, connection):
-        """Called when connection settings are updated"""
+        """Called when connection settings are updated
+        
+        Note: We don't automatically reconnect here to prevent infinite loops.
+        The main window will handle the reconnection flow after user confirmation.
+        """
         if connection == self.connection:
-            logger.info(f"Connection settings updated, reconnecting terminal...")
-            self.reconnect()
+            logger.info("Connection settings updated, waiting for user confirmation to reconnect...")
+            # Just update our connection reference, don't reconnect automatically
+            self.connection = connection
     
     def _on_connection_established(self):
         """Called when SSH connection is established"""
