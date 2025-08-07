@@ -251,7 +251,23 @@ class TerminalWidget(Gtk.Box):
         """Set up terminal with direct SSH command (called from main thread)"""
         try:
             # Build SSH command
-            ssh_cmd = ['ssh', '-v']  # Add verbose flag for debugging
+            ssh_cmd = ['ssh']
+            
+            # Only add verbose flag if explicitly enabled in config
+            try:
+                # Try dict-style access first
+                if hasattr(self.config, 'get') and callable(getattr(self.config, 'get')):
+                    verbose = self.config.get('debug.ssh_verbose', False)
+                else:
+                    # Fall back to attribute access
+                    verbose = getattr(self.config, 'debug.ssh_verbose', False)
+                
+                if verbose:
+                    ssh_cmd.append('-v')
+                    logger.debug("SSH verbose logging enabled")
+            except Exception as e:
+                logger.warning(f"Could not check SSH verbose setting: {e}")
+                # Default to non-verbose on error
             
             # Add key file if specified and valid
             if hasattr(self.connection, 'keyfile') and self.connection.keyfile and \
