@@ -326,7 +326,7 @@ class ConnectionDialog(Adw.Window):
         
         # Enable toggle for local port forwarding
         self.local_forwarding_enabled = Adw.SwitchRow()
-        self.local_forwarding_enabled.set_title(_("Enable Local Port Forwarding"))
+        self.local_forwarding_enabled.set_title(_("Local Port Forwarding"))
         self.local_forwarding_enabled.set_subtitle(_("Forward a local port to a remote host"))
         local_forwarding_group.add(self.local_forwarding_enabled)
         
@@ -376,7 +376,7 @@ class ConnectionDialog(Adw.Window):
         
         # Enable toggle for remote port forwarding
         self.remote_forwarding_enabled = Adw.SwitchRow()
-        self.remote_forwarding_enabled.set_title(_("Enable Remote Port Forwarding"))
+        self.remote_forwarding_enabled.set_title(_("Remote Port Forwarding"))
         self.remote_forwarding_enabled.set_subtitle(_("Forward a remote port to a local host"))
         remote_forwarding_group.add(self.remote_forwarding_enabled)
         
@@ -426,7 +426,7 @@ class ConnectionDialog(Adw.Window):
         
         # Enable toggle for dynamic port forwarding
         self.dynamic_forwarding_enabled = Adw.SwitchRow()
-        self.dynamic_forwarding_enabled.set_title(_("Enable Dynamic Port Forwarding"))
+        self.dynamic_forwarding_enabled.set_title(_("Dynamic Port Forwarding"))
         self.dynamic_forwarding_enabled.set_subtitle(_("Create a SOCKS proxy on local port"))
         dynamic_forwarding_group.add(self.dynamic_forwarding_enabled)
         
