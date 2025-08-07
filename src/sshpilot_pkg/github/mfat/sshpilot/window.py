@@ -75,12 +75,38 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     def update_status(self):
         """Update connection status display"""
-        if self.connection.is_connected:
-            self.status_icon.set_from_icon_name('network-idle-symbolic')
-            self.status_icon.set_tooltip_text('Connected')
-        else:
-            self.status_icon.set_from_icon_name('network-offline-symbolic')
-            self.status_icon.set_tooltip_text('Disconnected')
+        try:
+            # Check if there's an active terminal for this connection
+            window = self.get_root()
+            has_active_terminal = False
+            
+            if hasattr(window, 'active_terminals') and self.connection in window.active_terminals:
+                terminal = window.active_terminals[self.connection]
+                # Check if the terminal is still valid and connected
+                if terminal and hasattr(terminal, 'is_connected'):
+                    has_active_terminal = terminal.is_connected
+            
+            # Update the connection's is_connected status
+            self.connection.is_connected = has_active_terminal
+            
+            # Log the status update for debugging
+            logger.debug(f"Updating status for {self.connection.nickname}: is_connected={has_active_terminal}")
+            
+            # Update the UI based on the connection status
+            if has_active_terminal:
+                self.status_icon.set_from_icon_name('network-idle-symbolic')
+                self.status_icon.set_tooltip_text(f'Connected to {getattr(self.connection, "hname", "") or self.connection.host}')
+                logger.debug(f"Set status icon to connected for {self.connection.nickname}")
+            else:
+                self.status_icon.set_from_icon_name('network-offline-symbolic')
+                self.status_icon.set_tooltip_text('Disconnected')
+                logger.debug(f"Set status icon to disconnected for {getattr(self.connection, 'nickname', 'connection')}")
+                
+            # Force a redraw to ensure the icon updates
+            self.status_icon.queue_draw()
+            
+        except Exception as e:
+            logger.error(f"Error updating status for {getattr(self.connection, 'nickname', 'connection')}: {e}")
     
     def update_display(self):
         """Update the display with current connection data"""
@@ -1081,8 +1107,14 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_terminal_connected(self, terminal):
         """Handle terminal connection established"""
+        # Update the connection's is_connected status
+        terminal.connection.is_connected = True
+        
+        # Update connection row status
         if terminal.connection in self.connection_rows:
-            self.connection_rows[terminal.connection].update_status()
+            row = self.connection_rows[terminal.connection]
+            row.update_status()
+            row.queue_draw()  # Force redraw
         
         # Only log if this is not a controlled reconnect
         if not getattr(self, '_is_controlled_reconnect', False):
@@ -1090,19 +1122,24 @@ class MainWindow(Adw.ApplicationWindow):
         else:
             logger.debug(f"Terminal reconnected after settings update: {terminal.connection.nickname}")
         
-        # Update connection row status
-        if terminal.connection in self.connection_rows:
-            row = self.connection_rows[terminal.connection]
-            row.update_status()
+        # Update the connection status in the connection manager
+        GLib.idle_add(self.connection_manager.update_connection_status, terminal.connection, True)
 
     def on_terminal_disconnected(self, terminal):
         """Handle terminal connection lost"""
-        logger.info(f"Terminal disconnected: {terminal.connection}")
+        # Update the connection's is_connected status
+        terminal.connection.is_connected = False
         
         # Update connection row status
         if terminal.connection in self.connection_rows:
             row = self.connection_rows[terminal.connection]
             row.update_status()
+            row.queue_draw()  # Force redraw
+            
+        logger.info(f"Terminal disconnected: {terminal.connection}")
+        
+        # Update the connection status in the connection manager
+        GLib.idle_add(self.connection_manager.update_connection_status, terminal.connection, False)
 
     def on_terminal_title_changed(self, terminal, title):
         """Handle terminal title change"""
@@ -1136,9 +1173,15 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_connection_status_changed(self, manager, connection, is_connected):
         """Handle connection status change"""
+        logger.debug(f"Connection status changed: {connection.nickname} - {'Connected' if is_connected else 'Disconnected'}")
         if connection in self.connection_rows:
             row = self.connection_rows[connection]
+            # Force update the connection's is_connected state
+            connection.is_connected = is_connected
+            # Update the row's status
             row.update_status()
+            # Force a redraw of the row
+            row.queue_draw()
 
     def on_setting_changed(self, config, key, value):
         """Handle configuration setting change"""
@@ -1426,7 +1469,13 @@ class MainWindow(Adw.ApplicationWindow):
                 
                 # Update UI
                 if old_connection in self.connection_rows:
+                    # Get the row before potentially modifying the dictionary
                     row = self.connection_rows[old_connection]
+                    # Remove the old connection from the dictionary
+                    del self.connection_rows[old_connection]
+                    # Add it back with the updated connection object
+                    self.connection_rows[old_connection] = row
+                    # Update the display
                     row.update_display()
                 
                 logger.info(f"Updated connection: {old_connection.nickname}")

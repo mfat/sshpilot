@@ -629,11 +629,32 @@ class TerminalWidget(Gtk.Box):
             self.connection = connection
     
     def _on_connection_established(self):
-        """Called when SSH connection is established"""
+        """Handle successful SSH connection"""
+        logger.info(f"SSH connection to {self.connection.host} established")
         self.is_connected = True
-        self.emit('connection-established')
-        logger.info(f"SSH connection established to {self.connection}")
         
+        # Update connection status in the connection manager
+        self.connection.is_connected = True
+        self.connection_manager.emit('connection-status-changed', self.connection, True)
+        
+        self.emit('connection-established')
+        
+        # Apply theme after connection is established
+        self.apply_theme()
+        
+    def _on_connection_lost(self):
+        """Handle SSH connection loss"""
+        if self.is_connected:
+            logger.info(f"SSH connection to {self.connection.host} lost")
+            self.is_connected = False
+            
+            # Update connection status in the connection manager
+            if hasattr(self, 'connection') and self.connection:
+                self.connection.is_connected = False
+                self.connection_manager.emit('connection-status-changed', self.connection, False)
+            
+            self.emit('connection-lost')
+    
     def on_child_exited(self, widget, status):
         """Called when the child process exits"""
         if self.is_connected:
@@ -801,7 +822,14 @@ class TerminalWidget(Gtk.Box):
             return
             
         logger.debug(f"Disconnecting SSH session {self.session_id}...")
+        was_connected = self.is_connected
         self.is_connected = False
+        
+        # Update connection status in the connection manager if we were connected
+        if was_connected and hasattr(self, 'connection') and self.connection:
+            self.connection.is_connected = False
+            if hasattr(self, 'connection_manager') and self.connection_manager:
+                GLib.idle_add(self.connection_manager.emit, 'connection-status-changed', self.connection, False)
         
         try:
             # Try to get the terminal's child PID

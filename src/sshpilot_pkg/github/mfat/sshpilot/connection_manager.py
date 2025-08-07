@@ -119,38 +119,49 @@ class Connection:
             
     async def disconnect(self):
         """Close the SSH connection and clean up"""
-        # Cancel all forwarding tasks
-        for task in self.forwarders:
-            if not task.done():
-                task.cancel()
-        
-        # Close all listeners
-        for listener in self.listeners:
-            listener.close()
-        
-        # Clean up any running processes
-        if hasattr(self, 'process') and self.process:
-            try:
-                # Try to terminate gracefully first
-                self.process.terminate()
+        if not self.is_connected:
+            return
+            
+        try:
+            # Cancel all forwarding tasks
+            for task in self.forwarders:
+                if not task.done():
+                    task.cancel()
+            
+            # Close all listeners
+            for listener in self.listeners:
+                listener.close()
+            
+            # Clean up any running processes
+            if hasattr(self, 'process') and self.process:
                 try:
-                    # Wait a bit for the process to terminate
-                    await asyncio.wait_for(self.process.wait(), timeout=2.0)
-                except asyncio.TimeoutError:
-                    # Force kill if it doesn't terminate
-                    self.process.kill()
-                    await self.process.wait()
-            except ProcessLookupError:
-                # Process already terminated
-                pass
-            except Exception as e:
-                logger.error(f"Error terminating SSH process: {e}")
-            finally:
-                self.process = None
-        
-        self.is_connected = False
-        logger.info(f"Disconnected from {self}")
-        self.listeners.clear()
+                    # Try to terminate gracefully first
+                    self.process.terminate()
+                    try:
+                        # Wait a bit for the process to terminate
+                        await asyncio.wait_for(self.process.wait(), timeout=2.0)
+                    except asyncio.TimeoutError:
+                        # Force kill if it doesn't terminate
+                        self.process.kill()
+                        await self.process.wait()
+                except ProcessLookupError:
+                    # Process already terminated
+                    pass
+                except Exception as e:
+                    logger.error(f"Error terminating SSH process: {e}")
+                finally:
+                    self.process = None
+            
+            logger.info(f"Disconnected from {self}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error during disconnect: {e}")
+            return False
+        finally:
+            # Always ensure is_connected is set to False
+            self.is_connected = False
+            self.listeners.clear()
         
     async def setup_forwarding(self):
         """Set up all forwarding rules"""
@@ -807,8 +818,9 @@ class ConnectionManager(GObject.Object):
             task = asyncio.create_task(keepalive())
             self.active_connections[connection.host] = task
             
-            # Emit status change
-            self.emit('connection-status-changed', connection, True)
+            # Update the connection state and emit status change
+            connection.is_connected = True
+            GLib.idle_add(self.emit, 'connection-status-changed', connection, True)
             logger.info(f"Connected to {connection}")
             
             return True
@@ -837,8 +849,9 @@ class ConnectionManager(GObject.Object):
             if hasattr(connection, 'connection') and connection.connection and connection.is_connected:
                 await connection.disconnect()
             
-            # Emit status change signal
-            self.emit('connection-status-changed', connection, False)
+            # Update the connection state and emit status change signal
+            connection.is_connected = False
+            GLib.idle_add(self.emit, 'connection-status-changed', connection, False)
             logger.info(f"Disconnected from {connection}")
             
         except Exception as e:
