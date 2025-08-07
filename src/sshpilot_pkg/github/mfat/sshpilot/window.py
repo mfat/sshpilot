@@ -1154,7 +1154,7 @@ class MainWindow(Adw.ApplicationWindow):
         """Handle window size change"""
         width = self.get_default_size()[0]
         height = self.get_default_size()[1]
-        sidebar_width = self.split_view.get_sidebar_width()
+        sidebar_width = self.split_view.get_max_sidebar_width()
         
         self.config.save_window_geometry(width, height, sidebar_width)
 
