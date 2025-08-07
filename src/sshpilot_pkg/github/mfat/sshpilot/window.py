@@ -225,16 +225,23 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.color_scheme_row.set_model(color_schemes)
             
             # Set current color scheme from config
-            current_scheme_key = self.config.get_setting('terminal-color-scheme', 'default')
-            reverse_mapping = self.get_reverse_theme_mapping()
+            current_scheme_key = self.config.get_setting('terminal.theme', 'default')
+            
+            # Get the display name for the current scheme key
+            theme_mapping = self.get_theme_name_mapping()
+            reverse_mapping = {v: k for k, v in theme_mapping.items()}
             current_scheme_display = reverse_mapping.get(current_scheme_key, 'Default')
             
+            # Find the index of the current scheme in the dropdown
             scheme_names = ["Default", "Solarized Dark", "Solarized Light", "Monokai", "Dracula", "Nord"]
             try:
                 current_index = scheme_names.index(current_scheme_display)
                 self.color_scheme_row.set_selected(current_index)
             except ValueError:
-                self.color_scheme_row.set_selected(0)  # Default to first option
+                # If the saved scheme isn't found, default to the first option
+                self.color_scheme_row.set_selected(0)
+                # Also update the config to use the default value
+                self.config.set_setting('terminal.theme', 'default')
             
             self.color_scheme_row.connect('notify::selected', self.on_color_scheme_changed)
             
@@ -276,7 +283,12 @@ class PreferencesWindow(Adw.PreferencesWindow):
             themes.append("Light")
             themes.append("Dark")
             self.theme_row.set_model(themes)
-            self.theme_row.set_selected(0)  # Default to follow system
+            
+            # Load saved theme preference
+            saved_theme = self.config.get_setting('app-theme', 'default')
+            theme_mapping = {'default': 0, 'light': 1, 'dark': 2}
+            self.theme_row.set_selected(theme_mapping.get(saved_theme, 0))
+            
             self.theme_row.connect('notify::selected', self.on_theme_changed)
             
             interface_appearance_group.add(self.theme_row)
@@ -367,12 +379,13 @@ class PreferencesWindow(Adw.PreferencesWindow):
         
         if selected == 0:  # Follow System
             style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+            self.config.set_setting('app-theme', 'default')
         elif selected == 1:  # Light
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
+            self.config.set_setting('app-theme', 'light')
         elif selected == 2:  # Dark
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
-        
-        # TODO: Save theme preference to config
+            self.config.set_setting('app-theme', 'dark')
     
     def get_theme_name_mapping(self):
         """Get mapping between display names and config keys"""
@@ -402,9 +415,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
         theme_mapping = self.get_theme_name_mapping()
         config_key = theme_mapping.get(selected_scheme, "default")
         
-        # Save to config using the correct key
-        self.config.set_setting('terminal-theme', config_key)
-        self.config.set_setting('terminal-color-scheme', config_key)  # For backward compatibility
+        # Save to config using the consistent key
+        self.config.set_setting('terminal.theme', config_key)
         
         # Apply to all active terminals
         self.apply_color_scheme_to_terminals(config_key)
@@ -851,6 +863,8 @@ class MainWindow(Adw.ApplicationWindow):
             dialog.add_response('disconnect', _("Disconnect"))
             dialog.set_response_appearance('disconnect', Adw.ResponseAppearance.DESTRUCTIVE)
             dialog.set_default_response('cancel')
+            dialog.set_close_response('cancel')
+            
             dialog.connect('response', self._on_disconnect_confirmed, connection)
             dialog.present()
         else:
@@ -1164,7 +1178,7 @@ class MainWindow(Adw.ApplicationWindow):
         # No active connections, safe to quit
         self._do_quit()
         return True  # Safe to quit
-    
+
     def on_close_request(self, window):
         """Handle window close request - MAIN ENTRY POINT"""
         if self._is_quitting:

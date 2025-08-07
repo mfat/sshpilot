@@ -332,20 +332,14 @@ class TerminalWidget(Gtk.Box):
             # Store the PTY for later cleanup
             self.pty = pty
             
-            # Mark as connected
-            self.is_connected = True
-            self.emit('connection-established')
-            
-            # Focus the terminal
-            self.vte.grab_focus()
-            
+            # Mark as connected and emit signal
             self.is_connected = True
             self.emit('connection-established')
             
             # Apply theme after connection is established
             self.apply_theme()
             
-            # Focus terminal
+            # Focus the terminal
             self.vte.grab_focus()
             
             logger.info(f"SSH terminal connected to {self.connection}")
@@ -378,9 +372,12 @@ class TerminalWidget(Gtk.Box):
                     'pgid': self.process_pgid
                 }
             
-            self.is_connected = True
-            self.emit('connection-established')
+            # Connection is already marked as connected in _setup_ssh_terminal
+            # Just grab focus here
             self.vte.grab_focus()
+            
+            # Apply theme to ensure it's set correctly after spawn
+            self.apply_theme()
             
         except Exception as e:
             logger.error(f"Error in spawn complete: {e}")
@@ -409,7 +406,7 @@ class TerminalWidget(Gtk.Box):
         try:
             if theme_name is None and self.config:
                 # Get the saved theme from config
-                theme_name = self.config.get_setting('terminal-theme', 'default')
+                theme_name = self.config.get_setting('terminal.theme', 'default')
                 
             # Get the theme profile from config
             if self.config:
@@ -591,8 +588,12 @@ class TerminalWidget(Gtk.Box):
         def _reconnect():
             if self._connect_ssh():
                 logger.info("Terminal reconnected with updated settings")
+                # Ensure theme is applied after reconnection
+                self.apply_theme()
+                return True
             else:
                 logger.error("Failed to reconnect terminal with updated settings")
+                return False
         
         GLib.timeout_add(500, _reconnect)  # 500ms delay before reconnecting
     
