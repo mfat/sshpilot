@@ -401,115 +401,21 @@ class TerminalWidget(Gtk.Box):
         self.emit('connection-failed', error_message)
         
     def apply_theme(self, theme_name=None):
-        """Apply a color theme to the terminal.
+        """Apply terminal theme and font settings
         
         Args:
-            theme_name (str, optional): Name of the theme to apply. If None, uses the default theme.
+            theme_name (str, optional): Name of the theme to apply. If None, uses the saved theme.
         """
-        if theme_name is None:
-            theme_name = self.config.get_setting('terminal-color-scheme', 'default')
-            
-        # Define color schemes
-        schemes = {
-            'default': {
-                'foreground': Gdk.RGBA(0, 0, 0, 1),  # Black text
-                'background': Gdk.RGBA(1, 1, 1, 1),  # White background
-                'palette': [
-                    Gdk.RGBA(0, 0, 0, 1),        # Black
-                    Gdk.RGBA(1, 0, 0, 1),        # Red
-                    Gdk.RGBA(0, 1, 0, 1),        # Green
-                    Gdk.RGBA(1, 1, 0, 1),        # Yellow
-                    Gdk.RGBA(0, 0, 1, 1),        # Blue
-                    Gdk.RGBA(1, 0, 1, 1),        # Magenta
-                    Gdk.RGBA(0, 1, 1, 1),        # Cyan
-                    Gdk.RGBA(1, 1, 1, 1),        # White
-                    Gdk.RGBA(0.5, 0.5, 0.5, 1),  # Bright Black (Gray)
-                    Gdk.RGBA(1, 0.5, 0.5, 1),    # Bright Red
-                    Gdk.RGBA(0.5, 1, 0.5, 1),    # Bright Green
-                    Gdk.RGBA(1, 1, 0.5, 1),      # Bright Yellow
-                    Gdk.RGBA(0.5, 0.5, 1, 1),    # Bright Blue
-                    Gdk.RGBA(1, 0.5, 1, 1),      # Bright Magenta
-                    Gdk.RGBA(0.5, 1, 1, 1),      # Bright Cyan
-                    Gdk.RGBA(1, 1, 1, 1)         # Bright White
-                ]
-            },
-            'solarized-dark': {
-                'foreground': Gdk.RGBA(0.8314, 0.9137, 0.9098, 1),  # Base0
-                'background': Gdk.RGBA(0.0, 0.1686, 0.2118, 1),     # Base03
-                'palette': [
-                    Gdk.RGBA(0.0, 0.1686, 0.2118, 1),     # Base03
-                    Gdk.RGBA(0.8627, 0.1961, 0.1843, 1),  # Red
-                    Gdk.RGBA(0.5216, 0.6, 0.0, 1),        # Green
-                    Gdk.RGBA(0.7098, 0.5373, 0.0, 1),     # Yellow
-                    Gdk.RGBA(0.1490, 0.5451, 0.8235, 1),  # Blue
-                    Gdk.RGBA(0.8275, 0.2118, 0.5098, 1),  # Magenta
-                    Gdk.RGBA(0.1647, 0.6314, 0.5961, 1),  # Cyan
-                    Gdk.RGBA(0.5137, 0.5804, 0.5882, 1),  # Base01
-                    Gdk.RGBA(0.3451, 0.4314, 0.4588, 1),  # Base02
-                    Gdk.RGBA(0.7961, 0.2941, 0.0863, 1),  # Orange
-                    Gdk.RGBA(0.0, 0.6, 0.5216, 1),        # Base01 Green
-                    Gdk.RGBA(0.7098, 0.5373, 0.0, 1),     # Base01 Yellow
-                    Gdk.RGBA(0.1490, 0.5451, 0.8235, 1),  # Base01 Blue
-                    Gdk.RGBA(0.8275, 0.2118, 0.5098, 1),  # Base01 Magenta
-                    Gdk.RGBA(0.1647, 0.6314, 0.5961, 1),  # Base01 Cyan
-                    Gdk.RGBA(0.9333, 0.9098, 0.8353, 1)   # Base2
-                ]
-            },
-            'solarized-light': {
-                'foreground': Gdk.RGBA(0.0, 0.1686, 0.2118, 1),     # Base03
-                'background': Gdk.RGBA(0.9882, 0.9647, 0.8902, 1),  # Base3
-                'palette': [
-                    Gdk.RGBA(0.0, 0.1686, 0.2118, 1),     # Base03
-                    Gdk.RGBA(0.8627, 0.1961, 0.1843, 1),  # Red
-                    Gdk.RGBA(0.5216, 0.6, 0.0, 1),        # Green
-                    Gdk.RGBA(0.7098, 0.5373, 0.0, 1),     # Yellow
-                    Gdk.RGBA(0.1490, 0.5451, 0.8235, 1),  # Blue
-                    Gdk.RGBA(0.8275, 0.2118, 0.5098, 1),  # Magenta
-                    Gdk.RGBA(0.1647, 0.6314, 0.5961, 1),  # Cyan
-                    Gdk.RGBA(0.5137, 0.5804, 0.5882, 1),  # Base01
-                    Gdk.RGBA(0.0, 0.1686, 0.2118, 1),     # Base03 (for bright black)
-                    Gdk.RGBA(0.7961, 0.2941, 0.0863, 1),  # Orange
-                    Gdk.RGBA(0.0, 0.6, 0.5216, 1),        # Base01 Green
-                    Gdk.RGBA(0.7098, 0.5373, 0.0, 1),     # Base01 Yellow
-                    Gdk.RGBA(0.1490, 0.5451, 0.8235, 1),  # Base01 Blue
-                    Gdk.RGBA(0.8275, 0.2118, 0.5098, 1),  # Base01 Magenta
-                    Gdk.RGBA(0.1647, 0.6314, 0.5961, 1),  # Base01 Cyan
-                    Gdk.RGBA(0.0, 0.0, 0.0, 1)            # Black
-                ]
-            }
-            # Add more themes as needed
-        }
-        
-        # Get the theme or fall back to default
-        theme = schemes.get(theme_name.lower().replace(' ', '-'), schemes['default'])
-        
-        # Apply the theme
         try:
-            self.vte.set_color_foreground(theme['foreground'])
-            self.vte.set_color_background(theme['background'])
-            self.vte.set_colors(
-                theme['foreground'],
-                theme['background'],
-                theme['palette']
-            )
-            logger.info(f"Applied theme: {theme_name}")
-        except Exception as e:
-            logger.error(f"Failed to apply theme {theme_name}: {e}")
-            # Fall back to default theme
-            if theme_name != 'default':
-                self.apply_theme('default')
-    
-    
-    def apply_theme(self, theme_name=None):
-        """Apply terminal theme and font settings"""
-        try:
+            if theme_name is None and self.config:
+                # Get the saved theme from config
+                theme_name = self.config.get_setting('terminal-theme', 'default')
+                
+            # Get the theme profile from config
             if self.config:
-                # If no theme specified, get the saved color scheme
-                if theme_name is None:
-                    theme_name = self.config.get_setting('terminal-color-scheme', 'default')
                 profile = self.config.get_terminal_profile(theme_name)
             else:
-                # Default theme
+                # Fallback default theme
                 profile = {
                     'foreground': '#000000',  # Black text
                     'background': '#FFFFFF',  # White background

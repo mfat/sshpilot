@@ -403,9 +403,10 @@ class PreferencesWindow(Adw.PreferencesWindow):
         config_key = theme_mapping.get(selected_scheme, "default")
         
         # Save to config using the correct key
-        self.config.set_setting('terminal-color-scheme', config_key)
+        self.config.set_setting('terminal-theme', config_key)
+        self.config.set_setting('terminal-color-scheme', config_key)  # For backward compatibility
         
-        # Apply to all active terminals using config key
+        # Apply to all active terminals
         self.apply_color_scheme_to_terminals(config_key)
         
     def on_confirm_disconnect_changed(self, switch, *args):
