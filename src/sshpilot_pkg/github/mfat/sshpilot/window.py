@@ -864,6 +864,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.edit_button.set_sensitive(False)
         self.edit_button.connect('clicked', self.on_edit_connection_clicked)
         toolbar.append(self.edit_button)
+
+        # Copy key to server button (ssh-copy-id)
+        self.copy_key_button = Gtk.Button.new_from_icon_name('dialog-password-symbolic')
+        self.copy_key_button.set_tooltip_text('Copy public key to server for passwordless login')
+        self.copy_key_button.set_sensitive(False)
+        self.copy_key_button.connect('clicked', self.on_copy_key_to_server_clicked)
+        toolbar.append(self.copy_key_button)
         
         # Delete button
         self.delete_button = Gtk.Button.new_from_icon_name('user-trash-symbolic')
@@ -1357,6 +1364,8 @@ class MainWindow(Adw.ApplicationWindow):
         """Handle connection list selection change"""
         has_selection = row is not None
         self.edit_button.set_sensitive(has_selection)
+        if hasattr(self, 'copy_key_button'):
+            self.copy_key_button.set_sensitive(has_selection)
         self.delete_button.set_sensitive(has_selection)
 
     def on_add_connection_clicked(self, button):
@@ -1368,6 +1377,94 @@ class MainWindow(Adw.ApplicationWindow):
         selected_row = self.connection_list.get_selected_row()
         if selected_row:
             self.show_connection_dialog(selected_row.connection)
+
+    def on_copy_key_to_server_clicked(self, button):
+        """Copy selected SSH public key to selected server using ssh-copy-id"""
+        try:
+            selected_row = self.connection_list.get_selected_row()
+            if not selected_row:
+                return
+            connection = getattr(selected_row, 'connection', None)
+            if not connection:
+                return
+
+            # Discover keys
+            keys = self.key_manager.discover_keys() if hasattr(self, 'key_manager') else []
+            if not keys:
+                # Offer to generate a key first
+                dlg = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_('No SSH keys found'),
+                    body=_('You have no SSH keys in ~/.ssh. Generate a new key pair now?')
+                )
+                dlg.add_response('cancel', _('Cancel'))
+                dlg.add_response('generate', _('Generate SSH Key'))
+                dlg.set_default_response('generate')
+                dlg.set_close_response('cancel')
+
+                def _resp(d, response):
+                    d.close()
+                    if response == 'generate':
+                        self.show_key_dialog()
+                dlg.connect('response', _resp)
+                dlg.present()
+                return
+
+            # Picker dialog for available keys
+            picker = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_('Select SSH key to copy'),
+                body=_('Choose which public key to add to the server using ssh-copy-id')
+            )
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            names = [os.path.basename(k.path) for k in keys]
+            dropdown = Gtk.DropDown.new_from_strings(names)
+            dropdown.set_selected(0)
+            box.append(dropdown)
+            picker.set_extra_child(box)
+            picker.add_response('cancel', _('Cancel'))
+            picker.add_response('copy', _('Copy Key'))
+            picker.set_default_response('copy')
+            picker.set_close_response('cancel')
+
+            def _on_pick(d, response):
+                d.close()
+                if response != 'copy':
+                    return
+                idx = dropdown.get_selected()
+                if idx < 0 or idx >= len(keys):
+                    return
+                ssh_key = keys[idx]
+                ok = self.key_manager.copy_key_to_host(ssh_key, connection)
+                if ok:
+                    msg = Adw.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        heading=_('Success'),
+                        body=_('Public key copied to {}@{}').format(connection.username, connection.host)
+                    )
+                    msg.add_response('ok', _('OK'))
+                    msg.set_default_response('ok')
+                    msg.set_close_response('ok')
+                    msg.present()
+                else:
+                    msg = Adw.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        heading=_('Error'),
+                        body=_('Failed to copy the public key. Check logs for details.')
+                    )
+                    msg.add_response('ok', _('OK'))
+                    msg.set_default_response('ok')
+                    msg.set_close_response('ok')
+                    msg.present()
+
+            picker.connect('response', _on_pick)
+            picker.present()
+        except Exception as e:
+            logger.error(f'Copy key to server failed: {e}')
 
     def on_delete_connection_clicked(self, button):
         """Handle delete connection button click"""
