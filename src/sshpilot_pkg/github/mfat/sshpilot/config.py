@@ -27,6 +27,9 @@ class Config(GObject.Object):
             self.settings = Gio.Settings.new('io.github.mfat.sshpilot')
             self.use_gsettings = True
             logger.info("Using GSettings for configuration")
+            # Always prepare JSON config as a fallback store for keys not in schema
+            self.config_file = os.path.expanduser('~/.config/sshpilot/config.json')
+            self.config_data = self.load_json_config()
         except Exception as e:
             logger.warning(f"GSettings not available, using JSON config: {e}")
             self.settings = None
@@ -94,6 +97,8 @@ class Config(GObject.Object):
                 'keepalive_interval': 60,
                 'compression': True,
                 'auto_add_host_keys': True,
+                'verbosity': 0,
+                'debug_enabled': False,
             },
             'security': {
                 'store_passwords': True,
@@ -224,10 +229,19 @@ class Config(GObject.Object):
             if self.use_gsettings:
                 # Convert key format for GSettings
                 gsettings_key = key.replace('.', '-')
+                # If key exists in schema, use it
                 if self.settings.list_keys().__contains__(gsettings_key):
                     return self.settings.get_value(gsettings_key).unpack()
-                else:
-                    return default
+                # Fallback to JSON store for keys outside schema
+                # Navigate nested dictionary
+                keys = key.split('.')
+                value = self.config_data
+                for k in keys:
+                    if isinstance(value, dict) and k in value:
+                        value = value[k]
+                    else:
+                        return default
+                return value
             else:
                 # Navigate nested dictionary
                 keys = key.split('.')
@@ -249,9 +263,20 @@ class Config(GObject.Object):
                 # Convert key format for GSettings
                 gsettings_key = key.replace('.', '-')
                 if self.settings.list_keys().__contains__(gsettings_key):
+                    # Attempt to set as string value by default
                     self.settings.set_value(gsettings_key, GLib.Variant.new_string(str(value)))
+                else:
+                    # Fallback to JSON store when key not present in schema
+                    keys = key.split('.')
+                    current = self.config_data
+                    for k in keys[:-1]:
+                        if k not in current or not isinstance(current[k], dict):
+                            current[k] = {}
+                        current = current[k]
+                    current[keys[-1]] = value
+                    self.save_json_config()
             else:
-                # Navigate nested dictionary and set value
+                # Navigate nested dictionary and set value (pure JSON mode)
                 keys = key.split('.')
                 current = self.config_data
                 for k in keys[:-1]:
@@ -259,8 +284,6 @@ class Config(GObject.Object):
                         current[k] = {}
                     current = current[k]
                 current[keys[-1]] = value
-                
-                # Save to file
                 self.save_json_config()
             
             # Emit signal
@@ -342,9 +365,13 @@ class Config(GObject.Object):
         """Get SSH configuration"""
         return {
             'connection_timeout': self.get_setting('ssh.connection_timeout', 30),
+            'connection_attempts': self.get_setting('ssh.connection_attempts', 1),
             'keepalive_interval': self.get_setting('ssh.keepalive_interval', 60),
+            'keepalive_count_max': self.get_setting('ssh.keepalive_count_max', 3),
             'compression': self.get_setting('ssh.compression', True),
             'auto_add_host_keys': self.get_setting('ssh.auto_add_host_keys', True),
+            'verbosity': self.get_setting('ssh.verbosity', 0),
+            'debug_enabled': self.get_setting('ssh.debug_enabled', False),
         }
 
     def get_security_config(self) -> Dict[str, Any]:

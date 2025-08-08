@@ -403,6 +403,18 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.compression_row.set_active(bool(self.config.get_setting('ssh.compression', True)))
             advanced_group.add(self.compression_row)
 
+            # SSH verbosity (-v levels)
+            self.verbosity_row = Adw.SpinRow.new_with_range(0, 3, 1)
+            self.verbosity_row.set_title("SSH Verbosity (-v)")
+            self.verbosity_row.set_value(int(self.config.get_setting('ssh.verbosity', 0)))
+            advanced_group.add(self.verbosity_row)
+
+            # Debug logging toggle
+            self.debug_enabled_row = Adw.SwitchRow()
+            self.debug_enabled_row.set_title("Enable SSH Debug Logging")
+            self.debug_enabled_row.set_active(bool(self.config.get_setting('ssh.debug_enabled', False)))
+            advanced_group.add(self.debug_enabled_row)
+
             advanced_page.add(advanced_group)
 
             # Add pages to the preferences window
@@ -418,6 +430,9 @@ class PreferencesWindow(Adw.PreferencesWindow):
         """Persist settings when the preferences window closes"""
         try:
             self.save_advanced_ssh_settings()
+            # Ensure preferences are flushed to disk
+            if hasattr(self.config, 'save_json_config'):
+                self.config.save_json_config()
         except Exception:
             pass
         return False  # allow close
@@ -507,6 +522,10 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 self.config.set_setting('ssh.batch_mode', bool(self.batch_mode_row.get_active()))
             if hasattr(self, 'compression_row'):
                 self.config.set_setting('ssh.compression', bool(self.compression_row.get_active()))
+            if hasattr(self, 'verbosity_row'):
+                self.config.set_setting('ssh.verbosity', int(self.verbosity_row.get_value()))
+            if hasattr(self, 'debug_enabled_row'):
+                self.config.set_setting('ssh.debug_enabled', bool(self.debug_enabled_row.get_active()))
         except Exception as e:
             logger.error(f"Failed to save advanced SSH settings: {e}")
     

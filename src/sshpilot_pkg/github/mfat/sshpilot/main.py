@@ -187,14 +187,21 @@ class SshPilotApplication(Adw.Application):
         root_logger.addHandler(file_handler)
         root_logger.addHandler(console_handler)
         
-        # Set specific log levels for verbose modules
-        logging.getLogger('asyncio').setLevel(logging.INFO)
-        logging.getLogger('gi').setLevel(logging.WARNING)
-        logging.getLogger('PIL').setLevel(logging.WARNING)
+        # Set specific log levels for noisy modules, but allow runtime override via config
+        try:
+            from .config import Config
+            cfg = Config()
+            verbose = bool(cfg.get_setting('ssh.debug_enabled', False))
+        except Exception:
+            verbose = False
+        logging.getLogger('asyncio').setLevel(logging.DEBUG if verbose else logging.INFO)
+        logging.getLogger('gi').setLevel(logging.INFO if verbose else logging.WARNING)
+        logging.getLogger('PIL').setLevel(logging.INFO if verbose else logging.WARNING)
         
-        # Enable debug logging for our modules
-        logging.getLogger('sshpilot').setLevel(logging.DEBUG)
-        logging.getLogger(__name__).setLevel(logging.DEBUG)
+        # App module logging: DEBUG if debug_enabled, else INFO
+        app_level = logging.DEBUG if verbose else logging.INFO
+        logging.getLogger('sshpilot').setLevel(app_level)
+        logging.getLogger(__name__).setLevel(app_level)
 
     def create_action(self, name, callback, shortcuts=None):
         """Create a GAction with optional keyboard shortcuts"""
