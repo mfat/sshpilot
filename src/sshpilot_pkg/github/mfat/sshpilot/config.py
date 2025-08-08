@@ -220,6 +220,63 @@ class Config(GObject.Object):
                     '#4C566A', '#BF616A', '#A3BE8C', '#EBCB8B',
                     '#81A1C1', '#B48EAD', '#8FBCBB', '#ECEFF4'
                 ]
+            },
+            # Additional popular themes
+            'gruvbox_dark': {
+                'name': 'Gruvbox Dark',
+                'foreground': '#EBDBB2',
+                'background': '#282828',
+                'cursor_color': '#EBDBB2',
+                'highlight_background': '#3C3836',
+                'highlight_foreground': '#EBDBB2',
+                'palette': [
+                    '#282828', '#CC241D', '#98971A', '#D79921',
+                    '#458588', '#B16286', '#689D6A', '#A89984',
+                    '#928374', '#FB4934', '#B8BB26', '#FABD2F',
+                    '#83A598', '#D3869B', '#8EC07C', '#EBDBB2'
+                ]
+            },
+            'one_dark': {
+                'name': 'One Dark',
+                'foreground': '#ABB2BF',
+                'background': '#282C34',
+                'cursor_color': '#528BFF',
+                'highlight_background': '#3E4451',
+                'highlight_foreground': '#ABB2BF',
+                'palette': [
+                    '#282C34', '#E06C75', '#98C379', '#E5C07B',
+                    '#61AFEF', '#C678DD', '#56B6C2', '#ABB2BF',
+                    '#5C6370', '#E06C75', '#98C379', '#E5C07B',
+                    '#61AFEF', '#C678DD', '#56B6C2', '#FFFFFF'
+                ]
+            },
+            'tomorrow_night': {
+                'name': 'Tomorrow Night',
+                'foreground': '#C5C8C6',
+                'background': '#1D1F21',
+                'cursor_color': '#AEAFAD',
+                'highlight_background': '#373B41',
+                'highlight_foreground': '#C5C8C6',
+                'palette': [
+                    '#1D1F21', '#CC6666', '#B5BD68', '#F0C674',
+                    '#81A2BE', '#B294BB', '#8ABEB7', '#C5C8C6',
+                    '#969896', '#CC6666', '#B5BD68', '#F0C674',
+                    '#81A2BE', '#B294BB', '#8ABEB7', '#FFFFFF'
+                ]
+            },
+            'material_dark': {
+                'name': 'Material Dark',
+                'foreground': '#EEFFFF',
+                'background': '#263238',
+                'cursor_color': '#FFCC00',
+                'highlight_background': '#314549',
+                'highlight_foreground': '#EEFFFF',
+                'palette': [
+                    '#000000', '#FF5370', '#C3E88D', '#FFCB6B',
+                    '#82AAFF', '#C792EA', '#89DDFF', '#EEFFFF',
+                    '#546E7A', '#FF5370', '#C3E88D', '#FFCB6B',
+                    '#82AAFF', '#C792EA', '#89DDFF', '#FFFFFF'
+                ]
             }
         }
 
@@ -334,7 +391,7 @@ class Config(GObject.Object):
 
     def remove_custom_theme(self, name: str):
         """Remove a custom theme"""
-        if name in self.terminal_themes and name not in ['default', 'dark', 'light', 'solarized_dark', 'solarized_light']:
+        if name in self.terminal_themes and name not in ['default', 'dark', 'light', 'solarized_dark', 'solarized_light', 'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark', 'tomorrow_night', 'material_dark']:
             del self.terminal_themes[name]
             
             # Remove from config
@@ -414,10 +471,8 @@ class Config(GObject.Object):
                 config_data = self.config_data.copy()
             
             # Add custom themes
-            config_data['custom_themes'] = {
-                name: theme for name, theme in self.terminal_themes.items()
-                if name not in ['default', 'dark', 'light', 'solarized_dark', 'solarized_light']
-            }
+            builtin = ['default', 'dark', 'light', 'solarized_dark', 'solarized_light', 'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark', 'tomorrow_night', 'material_dark']
+            config_data['custom_themes'] = {name: theme for name, theme in self.terminal_themes.items() if name not in builtin}
             
             with open(file_path, 'w') as f:
                 json.dump(config_data, f, indent=2)

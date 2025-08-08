@@ -266,6 +266,10 @@ class PreferencesWindow(Adw.PreferencesWindow):
             color_schemes.append("Monokai")
             color_schemes.append("Dracula")
             color_schemes.append("Nord")
+            color_schemes.append("Gruvbox Dark")
+            color_schemes.append("One Dark")
+            color_schemes.append("Tomorrow Night")
+            color_schemes.append("Material Dark")
             self.color_scheme_row.set_model(color_schemes)
             
             # Set current color scheme from config
@@ -277,7 +281,11 @@ class PreferencesWindow(Adw.PreferencesWindow):
             current_scheme_display = reverse_mapping.get(current_scheme_key, 'Default')
             
             # Find the index of the current scheme in the dropdown
-            scheme_names = ["Default", "Solarized Dark", "Solarized Light", "Monokai", "Dracula", "Nord"]
+            scheme_names = [
+                "Default", "Solarized Dark", "Solarized Light",
+                "Monokai", "Dracula", "Nord",
+                "Gruvbox Dark", "One Dark", "Tomorrow Night", "Material Dark"
+            ]
             try:
                 current_index = scheme_names.index(current_scheme_display)
                 self.color_scheme_row.set_selected(current_index)
@@ -552,7 +560,11 @@ class PreferencesWindow(Adw.PreferencesWindow):
             "Solarized Light": "solarized_light",
             "Monokai": "monokai",
             "Dracula": "dracula",
-            "Nord": "nord"
+            "Nord": "nord",
+            "Gruvbox Dark": "gruvbox_dark",
+            "One Dark": "one_dark",
+            "Tomorrow Night": "tomorrow_night",
+            "Material Dark": "material_dark",
         }
     
     def get_reverse_theme_mapping(self):
@@ -563,7 +575,11 @@ class PreferencesWindow(Adw.PreferencesWindow):
     def on_color_scheme_changed(self, combo_row, param):
         """Handle terminal color scheme change"""
         selected = combo_row.get_selected()
-        scheme_names = ["Default", "Solarized Dark", "Solarized Light", "Monokai", "Dracula", "Nord"]
+        scheme_names = [
+            "Default", "Solarized Dark", "Solarized Light",
+            "Monokai", "Dracula", "Nord",
+            "Gruvbox Dark", "One Dark", "Tomorrow Night", "Material Dark"
+        ]
         selected_scheme = scheme_names[selected] if selected < len(scheme_names) else "Default"
         
         logger.info(f"Terminal color scheme changed to: {selected_scheme}")
