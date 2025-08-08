@@ -528,7 +528,6 @@ class TerminalWidget(Gtk.Box):
         # Show error in terminal
         try:
             self.vte.feed(f"\r\n\x1b[31mConnection failed: {error_message}\x1b[0m\r\n".encode('utf-8'))
-            self.vte.feed("Press Ctrl+Shift+N to create a new connection.\r\n".encode('utf-8'))
         except Exception as e:
             logger.error(f"Error displaying connection error: {e}")
         
@@ -542,7 +541,6 @@ class TerminalWidget(Gtk.Box):
             self.apply_theme()
             # Render error
             self.vte.feed(("\r\n\x1b[31m" + str(message) + "\x1b[0m\r\n").encode('utf-8'))
-            self.vte.feed("Press Ctrl+Shift+N to create a new connection.\r\n".encode('utf-8'))
         except Exception as e:
             logger.error(f"Error showing preflight error: {e}")
         finally:
