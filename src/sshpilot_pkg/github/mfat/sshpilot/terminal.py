@@ -730,11 +730,26 @@ class TerminalWidget(Gtk.Box):
     def create_context_menu(self):
         """Create right-click context menu"""
         menu = Gio.Menu()
-        menu.append("Copy", "terminal.copy")
-        menu.append("Paste", "terminal.paste")
-        menu.append("Select All", "terminal.select-all")
-        menu.append("Reset", "terminal.reset")
-        menu.append("Reset and Clear", "terminal.reset-clear")
+        # Add actions
+        menu.append("Copy", "app.terminal-copy")
+        menu.append("Paste", "app.terminal-paste")
+        menu.append("Select All", "app.terminal-select-all")
+        
+        # Install actions on the widget's application
+        app = Gtk.Application.get_default()
+        if app:
+            # Copy
+            copy_action = Gio.SimpleAction.new("terminal-copy", None)
+            copy_action.connect("activate", lambda a, p: self.copy_text())
+            app.add_action(copy_action)
+            # Paste
+            paste_action = Gio.SimpleAction.new("terminal-paste", None)
+            paste_action.connect("activate", lambda a, p: self.paste_text())
+            app.add_action(paste_action)
+            # Select All
+            sel_action = Gio.SimpleAction.new("terminal-select-all", None)
+            sel_action.connect("activate", lambda a, p: self.select_all())
+            app.add_action(sel_action)
         
         return menu
             
