@@ -517,6 +517,15 @@ class MainWindow(Adw.ApplicationWindow):
         # Connect window state signals
         self.connect('notify::default-width', self.on_window_size_changed)
         self.connect('notify::default-height', self.on_window_size_changed)
+        
+    def on_window_size_changed(self, window, param):
+        """Handle window size changes and save the new dimensions"""
+        width = self.get_default_width()
+        height = self.get_default_height()
+        logger.debug(f"Window size changed to: {width}x{height}")
+        
+        # Save the new window geometry
+        self.config.set_window_geometry(width, height)
 
     def setup_ui(self):
         """Set up the user interface"""
@@ -1118,12 +1127,9 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Only log if this is not a controlled reconnect
         if not getattr(self, '_is_controlled_reconnect', False):
-            logger.info(f"Terminal connected: {terminal.connection.nickname} ({terminal.connection.username}@{terminal.connection.host}")
+            logger.info(f"Terminal connected: {terminal.connection.nickname} ({terminal.connection.username}@{terminal.connection.host})")
         else:
             logger.debug(f"Terminal reconnected after settings update: {terminal.connection.nickname}")
-        
-        # Update the connection status in the connection manager
-        GLib.idle_add(self.connection_manager.update_connection_status, terminal.connection, True)
 
     def on_terminal_disconnected(self, terminal):
         """Handle terminal connection lost"""
@@ -1136,22 +1142,46 @@ class MainWindow(Adw.ApplicationWindow):
             row.update_status()
             row.queue_draw()  # Force redraw
             
-        logger.info(f"Terminal disconnected: {terminal.connection}")
+        logger.info(f"Terminal disconnected: {terminal.connection.nickname} ({terminal.connection.username}@{terminal.connection.host})")
         
-        # Update the connection status in the connection manager
-        GLib.idle_add(self.connection_manager.update_connection_status, terminal.connection, False)
-
+        # Clean up any reconnection state
+        if hasattr(self, '_is_controlled_reconnect'):
+            self._is_controlled_reconnect = False
+            
+    def on_connection_added(self, manager, connection):
+        """Handle new connection added to the connection manager"""
+        logger.info(f"New connection added: {connection.nickname}")
+        self.add_connection_row(connection)
+        
     def on_terminal_title_changed(self, terminal, title):
         """Handle terminal title change"""
-        # Update tab title
+        # Update the tab title with the new terminal title
         page = self.tab_view.get_page(terminal)
         if page:
-            # Use connection nickname with title suffix if available
-            base_title = terminal.connection.nickname
             if title and title != terminal.connection.nickname:
-                page.set_title(f"{base_title} - {title}")
+                page.set_title(f"{terminal.connection.nickname} - {title}")
             else:
-                page.set_title(base_title)
+                page.set_title(terminal.connection.nickname)
+                
+    def on_connection_removed(self, manager, connection):
+        """Handle connection removed from the connection manager"""
+        logger.info(f"Connection removed: {connection.nickname}")
+        
+        # Remove from UI if it exists
+        if connection in self.connection_rows:
+            row = self.connection_rows[connection]
+            self.connection_list.remove(row)
+            del self.connection_rows[connection]
+        
+        # Close terminal if it's open
+        if connection in self.active_terminals:
+            terminal = self.active_terminals[connection]
+            page = self.tab_view.get_page(terminal)
+            if page:
+                self.tab_view.close_page(page)
+            del self.active_terminals[connection]
+
+
 
     def on_connection_added(self, manager, connection):
         """Handle new connection added"""
@@ -1488,8 +1518,14 @@ class MainWindow(Adw.ApplicationWindow):
                 
             else:
                 # Create new connection
-                if self.connection_manager.save_connection(connection_data):
-                    # Connection will be added to UI automatically via 'connection-added' signal
+                connection = Connection(connection_data)
+                # Add the new connection to the manager's connections list
+                self.connection_manager.connections.append(connection)
+                
+                # Save the connection to SSH config and emit the connection-added signal
+                if self.connection_manager.update_connection(connection, connection_data):
+                    # Manually add the connection to the UI since we're not using the signal
+                    self.add_connection_row(connection)
                     logger.info(f"Created new connection: {connection_data['nickname']}")
                 else:
                     logger.error("Failed to save connection to SSH config")

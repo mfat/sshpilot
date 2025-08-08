@@ -53,11 +53,10 @@ class Connection:
         self.host = data.get('host', '')
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
-        self.keyfile = data.get('keyfile', '')
+        # previously: self.keyfile = data.get('keyfile', '')
+        self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
-        self.auth_method = data.get('auth_method', 0)  # 0=key-based, 1=password
-        self.x11_forwarding = data.get('x11_forwarding', False)
         
         # Port forwarding rules
         self.forwarding_rules = data.get('forwarding_rules', [])
@@ -467,7 +466,8 @@ class ConnectionManager(GObject.Object):
                 'host': config.get('hostname', host),
                 'port': int(config.get('port', 22)),
                 'username': config.get('user', getpass.getuser()),
-                'private_key': config.get('identityfile'),
+                # previously: 'private_key': config.get('identityfile'),
+                'keyfile': os.path.expanduser(config.get('identityfile')) if config.get('identityfile') else None,
                 'forwarding_rules': []
             }
             
@@ -618,29 +618,39 @@ class ConnectionManager(GObject.Object):
     def format_ssh_config_entry(self, data: Dict[str, Any]) -> str:
         """Format connection data as SSH config entry"""
         lines = [f"Host {data['nickname']}"]
-        lines.append(f"    HostName {data['host']}")
-        lines.append(f"    User {data['username']}")
         
-        if data.get('port', 22) != 22:
-            lines.append(f"    Port {data['port']}")
+        # Add basic connection info
+        lines.append(f"    HostName {data.get('host', '')}")
+        lines.append(f"    User {data.get('username', '')}")
         
-        if data.get('private_key'):
-            lines.append(f"    IdentityFile {data['private_key']}")
+        # Add port if specified and not default
+        port = data.get('port')
+        if port and port != 22:  # Only add port if it's not the default 22
+            lines.append(f"    Port {port}")
         
-        # Add port forwarding rules
+        # Add keyfile if specified and not a placeholder
+        keyfile = data.get('keyfile') or data.get('private_key')
+        if keyfile and keyfile.strip() and not keyfile.strip().lower().startswith('select key file'):
+            # Ensure the keyfile path is properly quoted if it contains spaces
+            if ' ' in keyfile and not (keyfile.startswith('"') and keyfile.endswith('"')):
+                keyfile = f'"{keyfile}"'
+            lines.append(f"    IdentityFile {keyfile}")
+        
+        # Add X11 forwarding if enabled
+        if data.get('x11_forwarding', False):
+            lines.append("    ForwardX11 yes")
+        
+        # Add port forwarding rules if any
         for rule in data.get('forwarding_rules', []):
-            if not rule.get('enabled', True):
-                continue
-                
-            listen_spec = f"{rule['listen_addr']}:{rule['listen_port']}"
+            listen_spec = f"{rule.get('listen_addr', '')}:{rule.get('listen_port', '')}"
             
-            if rule['type'] == 'local':
-                dest_spec = f"{rule['remote_host']}:{rule['remote_port']}"
+            if rule.get('type') == 'local':
+                dest_spec = f"{rule.get('remote_host', '')}:{rule.get('remote_port', '')}"
                 lines.append(f"    LocalForward {listen_spec} {dest_spec}")
-            elif rule['type'] == 'remote':
-                dest_spec = f"{rule['remote_host']}:{rule['remote_port']}"
+            elif rule.get('type') == 'remote':
+                dest_spec = f"{rule.get('remote_host', '')}:{rule.get('remote_port', '')}"
                 lines.append(f"    RemoteForward {listen_spec} {dest_spec}")
-            elif rule['type'] == 'dynamic':
+            elif rule.get('type') == 'dynamic':
                 lines.append(f"    DynamicForward {listen_spec}")
         
         return '\n'.join(lines)

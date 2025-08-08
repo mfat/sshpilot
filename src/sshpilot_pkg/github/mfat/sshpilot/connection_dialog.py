@@ -80,8 +80,22 @@ class ConnectionDialog(Adw.Window):
             self.auth_method_row.set_selected(auth_method)
             self.on_auth_method_changed(self.auth_method_row, None)  # Update UI state
             
-            if hasattr(self.connection, 'keyfile') and self.connection.keyfile:
-                self.keyfile_row.set_subtitle(self.connection.keyfile)
+            # Get keyfile path from either keyfile or private_key attribute
+            keyfile = getattr(self.connection, 'keyfile', None) or getattr(self.connection, 'private_key', None)
+            if keyfile:
+                # Normalize the keyfile path and ensure it's a string
+                keyfile_path = str(keyfile).strip()
+                
+                # Update the connection's keyfile attribute if it comes from private_key
+                if not getattr(self.connection, 'keyfile', None) and hasattr(self.connection, 'private_key'):
+                    self.connection.keyfile = keyfile_path
+                
+                # Only update the UI if we have a valid path
+                if keyfile_path and keyfile_path.lower() not in ['select key file or leave empty for auto-detection', '']:
+                    logger.debug(f"Setting keyfile path in UI: {keyfile_path}")
+                    self.keyfile_row.set_subtitle(keyfile_path)
+                else:
+                    logger.debug(f"Skipping invalid keyfile path: {keyfile_path}")
             
             if hasattr(self.connection, 'password') and self.connection.password:
                 self.password_row.set_text(self.connection.password)
