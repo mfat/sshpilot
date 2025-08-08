@@ -126,6 +126,8 @@ class SshPilotApplication(Adw.Application):
         # Tab navigation accelerators
         self.create_action('tab-next', self.on_tab_next, ['<alt>Right'])
         self.create_action('tab-prev', self.on_tab_prev, ['<alt>Left'])
+        # Close tab accelerator
+        self.create_action('tab-close', self.on_tab_close, ['<primary>w'])
         
         # Connect to signals
         self.connect('shutdown', self.on_shutdown)
@@ -279,6 +281,19 @@ class SshPilotApplication(Adw.Application):
         win = self.props.active_window
         if win and hasattr(win, '_select_tab_relative'):
             win._select_tab_relative(-1)
+
+    def on_tab_close(self, action, param):
+        """Close the currently selected tab"""
+        win = self.props.active_window
+        if not win:
+            return
+        try:
+            page = win.tab_view.get_selected_page()
+            if page:
+                # Trigger the normal close flow (will prompt if enabled)
+                win.tab_view.close_page(page)
+        except Exception:
+            pass
 
 def main():
     """Main entry point"""
