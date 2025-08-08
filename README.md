@@ -12,6 +12,7 @@ SSH connection manager with integrated terminal, tunneling, key management and s
 ## Features
 
 - Load/save standard .ssh/config entries (it loads you current configuration)
+- Tabbed interface
 - Full support for Local, Remote and Dynamic port forwarding 
 - Intuitive, minimal UI with keyboard navigation and shortcuts 
 -- Press ctrl+L to quickly switch between hosts), close tabs with ctrl+w and move between tabs with alt+right/left arrow
