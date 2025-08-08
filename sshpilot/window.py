@@ -1685,11 +1685,14 @@ class MainWindow(Adw.ApplicationWindow):
                 if response != 'choose':
                     return
                 # Choose local files
-                file_chooser = Gtk.FileChooserNative(
+                file_chooser = Gtk.FileChooserDialog(
                     title=_('Select files to upload'),
-                    transient_for=self,
-                    action=Gtk.FileChooserAction.OPEN
+                    action=Gtk.FileChooserAction.OPEN,
                 )
+                file_chooser.set_transient_for(self)
+                file_chooser.set_modal(True)
+                file_chooser.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
+                file_chooser.add_button(_('Open'), Gtk.ResponseType.ACCEPT)
                 file_chooser.set_select_multiple(True)
                 file_chooser.connect('response', lambda fc, resp: self._on_files_chosen(fc, resp, connection))
                 file_chooser.show()
