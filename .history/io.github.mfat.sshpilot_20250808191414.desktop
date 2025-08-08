@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=sshPilot
+GenericName=SSH Connection Manager
+Comment=SSH connection manager with integrated terminal, tunneling, keys, and monitoring
+Exec=python3 /home/mahdi/GitHub/sshpilot/run.py
+Icon=sshpilot.png
+Terminal=false
+Categories=Network;System;Utility;
+StartupNotify=true
+StartupWMClass=io.github.mfat.sshpilot
+

@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.6"/>
+  <requires lib="libadwaita" version="1.2"/>
+  
+  <template class="WelcomePage" parent="GtkBox">
+    <property name="orientation">vertical</property>
+    <property name="spacing">24</property>
+    <property name="valign">center</property>
+    <property name="halign">center</property>
+    <property name="margin-start">48</property>
+    <property name="margin-end">48</property>
+    <property name="margin-top">48</property>
+    <property name="margin-bottom">48</property>
+    
+    <!-- Welcome Icon -->
+    <child>
+      <object class="GtkImage">
+        <property name="icon-name">org.gnome.Settings-network-workgroup-symbolic</property>
+        <property name="icon-size">large</property>
+        <property name="pixel-size">64</property>
+      </object>
+    </child>
+    
+    <!-- Welcome Title -->
+    <child>
+      <object class="GtkLabel">
+        <property name="label">&lt;span size="x-large"&gt;&lt;b&gt;Welcome to sshPilot&lt;/b&gt;&lt;/span&gt;</property>
+        <property name="use-markup">true</property>
+        <property name="halign">center</property>
+      </object>
+    </child>
+    
+    <!-- Welcome Message -->
+    <child>
+      <object class="GtkLabel">
+        <property name="label">Manage your SSH connections with ease</property>
+        <property name="halign">center</property>
+        <style>
+          <class name="dim-label"/>
+        </style>
+      </object>
+    </child>
+    
+    <!-- Shortcuts Box -->
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">8</property>
+        <property name="halign">center</property>
+        
+        <child>
+          <object class="GtkLabel">
+            <property name="label">&lt;b&gt;Keyboard Shortcuts&lt;/b&gt;</property>
+            <property name="use-markup">true</property>
+          </object>
+        </child>
+        
+        <!-- Shortcut entries -->
+        <child>
+          <object class="GtkLabel">
+            <property name="label">New Connection: Ctrl+N</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="label">Toggle List Focus: Ctrl+L</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="label">New SSH Key: Ctrl+Shift+K</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="label">Show Resources: Ctrl+R</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="label">Preferences: Ctrl+,</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="label">Next Tab: Alt+Right</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="label">Previous Tab: Alt+Left</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="label">Close Tab: Ctrl+W</property>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>
