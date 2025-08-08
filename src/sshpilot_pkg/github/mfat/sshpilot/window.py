@@ -1401,7 +1401,12 @@ class MainWindow(Adw.ApplicationWindow):
             return False  # Already quitting, allow close
             
         # Check for active connections
-        if self.active_terminals:
+        # Filter only truly connected terminals
+        actually_connected = {
+            conn: term for conn, term in self.active_terminals.items()
+            if getattr(term, 'is_connected', False)
+        }
+        if actually_connected:
             self.show_quit_confirmation_dialog()
             return True  # Prevent close, let dialog handle it
         
@@ -1410,8 +1415,13 @@ class MainWindow(Adw.ApplicationWindow):
 
     def show_quit_confirmation_dialog(self):
         """Show confirmation dialog when quitting with active connections"""
-        active_count = len(self.active_terminals)
-        connection_names = [conn.nickname for conn in self.active_terminals.keys()]
+        # Only count terminals that are actually connected
+        connected_items = [
+            (conn, term) for conn, term in self.active_terminals.items()
+            if getattr(term, 'is_connected', False)
+        ]
+        active_count = len(connected_items)
+        connection_names = [conn.nickname for conn, _ in connected_items]
         
         if active_count == 1:
             message = f"You have 1 active SSH connection to '{connection_names[0]}'."
