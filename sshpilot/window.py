@@ -1131,6 +1131,19 @@ class MainWindow(Adw.ApplicationWindow):
 
     def show_welcome_view(self):
         """Show the welcome/help view when no connections are active"""
+        # Remove terminal background styling so welcome uses app theme colors
+        if hasattr(self.content_stack, 'remove_css_class'):
+            try:
+                self.content_stack.remove_css_class('terminal-bg')
+            except Exception:
+                pass
+        # Ensure welcome fills the pane
+        if hasattr(self, 'welcome_view'):
+            try:
+                self.welcome_view.set_hexpand(True)
+                self.welcome_view.set_vexpand(True)
+            except Exception:
+                pass
         self.content_stack.set_visible_child_name("welcome")
         logger.info("Showing welcome view")
 
@@ -1154,6 +1167,12 @@ class MainWindow(Adw.ApplicationWindow):
     
     def show_tab_view(self):
         """Show the tab view when connections are active"""
+        # Re-apply terminal background when switching back to tabs
+        if hasattr(self.content_stack, 'add_css_class'):
+            try:
+                self.content_stack.add_css_class('terminal-bg')
+            except Exception:
+                pass
         self.content_stack.set_visible_child_name("tabs")
         logger.info("Showing tab view")
 
