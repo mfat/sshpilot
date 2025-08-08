@@ -44,6 +44,23 @@ class ConnectionDialog(Adw.Window):
         
         self.setup_ui()
         self.load_connection_data()
+        
+        # Add ESC key to cancel/close the dialog
+        try:
+            key_ctrl = Gtk.EventControllerKey()
+            if hasattr(key_ctrl, 'set_propagation_phase'):
+                key_ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+            def _on_key_pressed(ctrl, keyval, keycode, state):
+                if keyval == Gdk.KEY_Escape:
+                    self.on_cancel_clicked(None)
+                    return True
+                return False
+
+            key_ctrl.connect('key-pressed', _on_key_pressed)
+            self.add_controller(key_ctrl)
+        except Exception:
+            pass
     
     def on_auth_method_changed(self, combo_row, param):
         """Handle authentication method change"""

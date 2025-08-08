@@ -1023,8 +1023,120 @@ class MainWindow(Adw.ApplicationWindow):
 
     def show_key_dialog(self):
         """Show SSH key generation dialog"""
-        # TODO: Implement key dialog
-        logger.info("Show key generation dialog")
+        try:
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Generate SSH Key Pair"),
+                body=_("We will create a private key and its matching public key (.pub). Choose how to generate the key pair:")
+            )
+            dialog.add_response('cancel', _("Cancel"))
+            dialog.add_response('builtin', _("Generate (Built-in)"))
+            dialog.add_response('ssh-keygen', _("Generate (ssh-keygen)"))
+            dialog.set_default_response('builtin')
+            dialog.set_close_response('cancel')
+
+            def _on_resp(dlg, response):
+                dlg.close()
+                if response in ('builtin', 'ssh-keygen'):
+                    self._present_key_generator(response)
+
+            dialog.connect('response', _on_resp)
+            dialog.present()
+        except Exception as e:
+            logger.error(f"Failed to show key dialog: {e}")
+
+    def _present_key_generator(self, method: str):
+        """Present a minimal key generation UI and generate the key."""
+        try:
+            # Simple inline generator dialog
+            gen = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("New SSH Key Pair"),
+                body=_("Enter a file name and choose a key type. We will generate both private and public keys.")
+            )
+            # Inputs
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            name_row = Adw.EntryRow(title=_("Key name"))
+            name_row.set_text("id_ed25519")
+            # Use a simple DropDown so both options are clearly visible
+            type_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            type_label = Gtk.Label(label=_("Key type"))
+            type_label.set_halign(Gtk.Align.START)
+            type_label.set_hexpand(True)
+            key_type_dropdown = Gtk.DropDown.new_from_strings(["ed25519", "rsa"])
+            key_type_dropdown.set_selected(0)
+            type_box.append(type_label)
+            type_box.append(key_type_dropdown)
+            box.append(name_row)
+            box.append(type_box)
+            gen.set_extra_child(box)
+            gen.add_response('cancel', _("Cancel"))
+            gen.add_response('generate', _("Generate"))
+            gen.set_default_response('generate')
+            gen.set_close_response('cancel')
+
+            def _on_gen(dlg, response):
+                dlg.close()
+                if response != 'generate':
+                    return
+                key_name = name_row.get_text().strip() or 'id_ed25519'
+                key_type = ['ed25519', 'rsa'][key_type_dropdown.get_selected()]
+                try:
+                    if method == 'ssh-keygen':
+                        ssh_key = self.key_manager.generate_key_with_ssh_keygen(
+                            key_name=key_name,
+                            key_type=key_type,
+                            key_size=4096 if key_type == 'rsa' else 0,
+                            comment=f"{os.getenv('USER')}@{os.uname().nodename}"
+                        )
+                    else:
+                        ssh_key = self.key_manager.generate_key(
+                            key_name=key_name,
+                            key_type=key_type,
+                            key_size=4096 if key_type == 'rsa' else 0,
+                            comment=f"{os.getenv('USER')}@{os.uname().nodename}"
+                        )
+                    if ssh_key:
+                        dlg = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Success"),
+                            body=_("SSH key pair generated:\nPrivate: {}\nPublic: {}.pub").format(ssh_key.path, ssh_key.path)
+                        )
+                        dlg.add_response('ok', _("OK"))
+                        dlg.set_default_response('ok')
+                        dlg.set_close_response('ok')
+                        dlg.present()
+                    else:
+                        dlg = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Error"),
+                            body=_("Failed to generate SSH key pair")
+                        )
+                        dlg.add_response('ok', _("OK"))
+                        dlg.set_default_response('ok')
+                        dlg.set_close_response('ok')
+                        dlg.present()
+                except Exception as e:
+                    logger.error(f"Key generation failed: {e}")
+                    dlg = Adw.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        heading=_("Error"),
+                        body=str(e)
+                    )
+                    dlg.add_response('ok', _("OK"))
+                    dlg.set_default_response('ok')
+                    dlg.set_close_response('ok')
+                    dlg.present()
+
+            gen.connect('response', _on_gen)
+            gen.present()
+        except Exception as e:
+            logger.error(f"Failed to present key generator: {e}")
 
     def show_preferences(self):
         """Show preferences dialog"""
