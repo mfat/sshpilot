@@ -726,6 +726,9 @@ class TerminalWidget(Gtk.Box):
         
         # Enable right-click context menu
         self.vte.set_context_menu_model(self.create_context_menu())
+        
+        # Install standard Linux terminal shortcuts (Ctrl+Shift+C/V/A)
+        self._install_shortcuts()
 
     def create_context_menu(self):
         """Create right-click context menu"""
@@ -739,19 +742,71 @@ class TerminalWidget(Gtk.Box):
         app = Gtk.Application.get_default()
         if app:
             # Copy
-            copy_action = Gio.SimpleAction.new("terminal-copy", None)
-            copy_action.connect("activate", lambda a, p: self.copy_text())
-            app.add_action(copy_action)
+            if app.lookup_action("terminal-copy") is None:
+                copy_action = Gio.SimpleAction.new("terminal-copy", None)
+                copy_action.connect("activate", lambda a, p: self.copy_text())
+                app.add_action(copy_action)
             # Paste
-            paste_action = Gio.SimpleAction.new("terminal-paste", None)
-            paste_action.connect("activate", lambda a, p: self.paste_text())
-            app.add_action(paste_action)
+            if app.lookup_action("terminal-paste") is None:
+                paste_action = Gio.SimpleAction.new("terminal-paste", None)
+                paste_action.connect("activate", lambda a, p: self.paste_text())
+                app.add_action(paste_action)
             # Select All
-            sel_action = Gio.SimpleAction.new("terminal-select-all", None)
-            sel_action.connect("activate", lambda a, p: self.select_all())
-            app.add_action(sel_action)
+            if app.lookup_action("terminal-select-all") is None:
+                sel_action = Gio.SimpleAction.new("terminal-select-all", None)
+                sel_action.connect("activate", lambda a, p: self.select_all())
+                app.add_action(sel_action)
+            # Standard accelerators
+            try:
+                app.set_accels_for_action("app.terminal-copy", ["<Primary><Shift>c"]) 
+                app.set_accels_for_action("app.terminal-paste", ["<Primary><Shift>v"]) 
+                app.set_accels_for_action("app.terminal-select-all", ["<Primary><Shift>a"]) 
+            except Exception:
+                pass
         
         return menu
+
+    def _install_shortcuts(self):
+        """Install local shortcuts on the VTE widget for copy/paste/select-all"""
+        try:
+            controller = Gtk.ShortcutController()
+            controller.set_scope(Gtk.ShortcutScope.LOCAL)
+            
+            def _cb_copy(widget, *args):
+                try:
+                    self.copy_text()
+                except Exception:
+                    pass
+                return True
+            def _cb_paste(widget, *args):
+                try:
+                    self.paste_text()
+                except Exception:
+                    pass
+                return True
+            def _cb_select_all(widget, *args):
+                try:
+                    self.select_all()
+                except Exception:
+                    pass
+                return True
+            
+            controller.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string("<Primary><Shift>c"),
+                Gtk.CallbackAction.new(_cb_copy)
+            ))
+            controller.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string("<Primary><Shift>v"),
+                Gtk.CallbackAction.new(_cb_paste)
+            ))
+            controller.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string("<Primary><Shift>a"),
+                Gtk.CallbackAction.new(_cb_select_all)
+            ))
+            
+            self.vte.add_controller(controller)
+        except Exception as e:
+            logger.debug(f"Failed to install shortcuts: {e}")
             
     # PTY forwarding is now handled automatically by VTE
     # No need for manual PTY management in this implementation

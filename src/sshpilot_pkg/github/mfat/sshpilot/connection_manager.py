@@ -444,11 +444,21 @@ class ConnectionManager(GObject.Object):
         self.loop = asyncio.get_event_loop()
         self.active_connections: Dict[str, asyncio.Task] = {}
         
-        # Initialize SSH config
+        # Load SSH config immediately for fast UI
         self.load_ssh_config()
-        self.load_ssh_keys()
+
+        # Defer slower operations to idle to avoid blocking startup
+        GLib.idle_add(self._post_init_slow_path)
+
+    def _post_init_slow_path(self):
+        """Run slower initialization steps after UI is responsive."""
+        try:
+            # Key scan
+            self.load_ssh_keys()
+        except Exception as e:
+            logger.debug(f"SSH key scan skipped/failed: {e}")
         
-        # Initialize secure storage
+        # Initialize secure storage (can be slow)
         try:
             self.bus = secretstorage.dbus_init()
             self.collection = secretstorage.get_default_collection(self.bus)
@@ -456,6 +466,7 @@ class ConnectionManager(GObject.Object):
         except Exception as e:
             logger.warning(f"Failed to initialize secure storage: {e}")
             self.collection = None
+        return False  # run once
         
     def load_ssh_config(self):
         """Load connections from SSH config file"""
