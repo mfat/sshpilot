@@ -59,6 +59,8 @@ class Connection:
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
+        # X11 forwarding preference
+        self.x11_forwarding = bool(data.get('x11_forwarding', False))
         
         # Port forwarding rules
         self.forwarding_rules = data.get('forwarding_rules', [])
@@ -575,6 +577,12 @@ class ConnectionManager(GObject.Object):
                 'keyfile': os.path.expanduser(config.get('identityfile')) if config.get('identityfile') else None,
                 'forwarding_rules': []
             }
+            # Map ForwardX11 yes/no → x11_forwarding boolean
+            try:
+                fwd_x11 = str(config.get('forwardx11', 'no')).strip().lower()
+                parsed['x11_forwarding'] = fwd_x11 in ('yes', 'true', '1', 'on')
+            except Exception:
+                parsed['x11_forwarding'] = False
             
             # Handle port forwarding rules
             for forward_type in ['localforward', 'remoteforward', 'dynamicforward']:
