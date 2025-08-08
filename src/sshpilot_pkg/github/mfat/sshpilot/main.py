@@ -123,6 +123,9 @@ class SshPilotApplication(Adw.Application):
         self.create_action('show-resources', self.on_show_resources, ['<primary>r'])
         self.create_action('preferences', self.on_preferences, ['<primary>comma'])
         self.create_action('about', self.on_about)
+        # Tab navigation accelerators
+        self.create_action('tab-next', self.on_tab_next, ['<alt>Right'])
+        self.create_action('tab-prev', self.on_tab_prev, ['<alt>Left'])
         
         # Connect to signals
         self.connect('shutdown', self.on_shutdown)
@@ -264,6 +267,18 @@ class SshPilotApplication(Adw.Application):
         logging.debug("About dialog action triggered")
         if self.props.active_window:
             self.props.active_window.show_about_dialog()
+
+    def on_tab_next(self, action, param):
+        """Switch to next tab"""
+        win = self.props.active_window
+        if win and hasattr(win, '_select_tab_relative'):
+            win._select_tab_relative(1)
+
+    def on_tab_prev(self, action, param):
+        """Switch to previous tab"""
+        win = self.props.active_window
+        if win and hasattr(win, '_select_tab_relative'):
+            win._select_tab_relative(-1)
 
 def main():
     """Main entry point"""

@@ -669,6 +669,39 @@ class MainWindow(Adw.ApplicationWindow):
         # Connect window state signals
         self.connect('notify::default-width', self.on_window_size_changed)
         self.connect('notify::default-height', self.on_window_size_changed)
+
+        # Global shortcuts for tab navigation: Alt+Right / Alt+Left
+        try:
+            nav = Gtk.ShortcutController()
+            nav.set_scope(Gtk.ShortcutScope.GLOBAL)
+            if hasattr(nav, 'set_propagation_phase'):
+                nav.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
+
+            def _cb_next(widget, *args):
+                try:
+                    self._select_tab_relative(1)
+                except Exception:
+                    pass
+                return True
+
+            def _cb_prev(widget, *args):
+                try:
+                    self._select_tab_relative(-1)
+                except Exception:
+                    pass
+                return True
+
+            nav.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string('<Alt>Right'),
+                Gtk.CallbackAction.new(_cb_next)
+            ))
+            nav.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string('<Alt>Left'),
+                Gtk.CallbackAction.new(_cb_prev)
+            ))
+            self.add_controller(nav)
+        except Exception:
+            pass
         
     def on_window_size_changed(self, window, param):
         """Handle window size changes and save the new dimensions"""
@@ -988,6 +1021,32 @@ class MainWindow(Adw.ApplicationWindow):
         else:
             # Focus connection list
             self.connection_list.grab_focus()
+
+    def _select_tab_relative(self, delta: int):
+        """Select tab relative to current index, wrapping around."""
+        try:
+            n = self.tab_view.get_n_pages()
+            if n <= 0:
+                return
+            current = self.tab_view.get_selected_page()
+            # If no current selection, pick first
+            if not current:
+                page = self.tab_view.get_nth_page(0)
+                if page:
+                    self.tab_view.set_selected_page(page)
+                return
+            # Find current index
+            idx = 0
+            for i in range(n):
+                if self.tab_view.get_nth_page(i) == current:
+                    idx = i
+                    break
+            new_index = (idx + delta) % n
+            page = self.tab_view.get_nth_page(new_index)
+            if page:
+                self.tab_view.set_selected_page(page)
+        except Exception:
+            pass
 
     def connect_to_host(self, connection: Connection):
         """Connect to SSH host and create terminal tab"""
