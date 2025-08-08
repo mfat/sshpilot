@@ -9,7 +9,7 @@ SSH connection manager with integrated terminal, tunneling, key management and s
 
 
 
-Features
+## Features
 
 - Load/save standard .ssh/config entries (it loads you current configuration)
 - Full support for Local, Remote and Dynamic port forwarding 
@@ -21,6 +21,17 @@ Features
 - Light/Dark themes
 - Customizable terminal font and color schemes
 - Free software (GPL v3 license)
+
+## Installation 
+
+The app is currently distributed as a debian package (see releases) and can be installed on recent versions of Debian (testing/unstable) and ubuntu. Debian bookworm is not supported due to older libadwaita version.
+
+Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
+
+You can also run the app from source. Install the modules listed in requirements.txt and a fairly recent version of GNOME and it should run.
+
+A Flatpak and an RPM version are also planned for future.
+
 
 
 Runtime dependencies
