@@ -1245,28 +1245,21 @@ class MainWindow(Adw.ApplicationWindow):
         about.set_version('1.0.0')
         about.set_comments('SSH connection manager with integrated terminal')
         about.set_website('https://github.com/mfat/sshpilot')
-        # Gtk.AboutDialog in GTK4 has no set_issue_url; include issue link in website label
-        about.set_website_label('Project homepage (issues linked there)')
+        about.set_issue_url('https://github.com/mfat/sshpilot/issues')
         about.set_license_type(Gtk.License.GPL_3_0)
         about.set_authors(['mFat <newmfat@gmail.com>'])
         
-        # Attempt to load logo from GResource; fall back to local files
+        # Attempt to load logo from GResource first, then fallback to file in project root
         logo_texture = None
-        # 1) From GResource bundle
-        for resource_path in (
-            '/io/github/mfat/sshpilot/sshpilot.png',
-        ):
-            try:
-                logo_texture = Gdk.Texture.new_from_resource(resource_path)
-                if logo_texture:
-                    break
-            except Exception:
-                logo_texture = None
-        # 2) From project-local files
+        try:
+            logo_texture = Gdk.Texture.new_from_resource('/io/github/mfat/sshpilot/sshpilot.png')
+        except Exception:
+            pass
+        
         if logo_texture is None:
-            candidate_files = []
-            # repo root (user added io.github.mfat.sshpilot.png)
+            # Fallback: user-provided file at repository root
             try:
+                # Resolve repository root
                 path = os.path.abspath(os.path.dirname(__file__))
                 repo_root = path
                 while True:
@@ -1276,28 +1269,18 @@ class MainWindow(Adw.ApplicationWindow):
                     if parent == repo_root:
                         break
                     repo_root = parent
-                candidate_files.extend([
-                    os.path.join(repo_root, 'io.github.mfat.sshpilot.png'),
-                    os.path.join(repo_root, 'sshpilot.png'),
-                ])
-                # package resources folder (when running from source)
-                candidate_files.append(os.path.join(os.path.dirname(__file__), 'resources', 'sshpilot.png'))
+                png_path = os.path.join(repo_root, 'io.github.mfat.sshpilot.png')
+                if os.path.exists(png_path):
+                    logo_texture = Gdk.Texture.new_from_filename(png_path)
             except Exception:
-                pass
-            for png_path in candidate_files:
-                try:
-                    if os.path.exists(png_path):
-                        logo_texture = Gdk.Texture.new_from_filename(png_path)
-                        if logo_texture:
-                            break
-                except Exception:
-                    logo_texture = None
-        # Apply if loaded
-        if logo_texture is not None:
-            try:
+                logo_texture = None
+        
+        try:
+            if logo_texture is not None:
+                # Gtk.AboutDialog.set_logo expects a Gdk.Paintable in GTK4
                 about.set_logo(logo_texture)
-            except Exception:
-                pass
+        except Exception:
+            pass
         
         about.present()
 
