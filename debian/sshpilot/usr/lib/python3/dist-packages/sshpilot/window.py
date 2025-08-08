@@ -13,6 +13,9 @@ gi.require_version('Adw', '1')
 
 from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango
 
+# Feature detection for libadwaita versions across distros
+HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
+
 from gettext import gettext as _
 
 from .connection_manager import ConnectionManager, Connection
@@ -233,7 +236,7 @@ class WelcomePage(Gtk.Box):
         self.set_margin_bottom(48)
         
         # Welcome icon
-        icon = Gtk.Image.new_from_icon_name('network-server-symbolic')
+        icon = Gtk.Image.new_from_icon_name('org.gnome.Settings-network-workgroup-symbolic')
         icon.set_icon_size(Gtk.IconSize.LARGE)
         icon.set_pixel_size(64)
         self.append(icon)
@@ -246,7 +249,7 @@ class WelcomePage(Gtk.Box):
         
         # Welcome message
         message = Gtk.Label()
-        message.set_text('Manage your SSH connections with ease')
+        message.set_text('Select a host from the list to connect')
         message.set_halign(Gtk.Align.CENTER)
         message.add_css_class('dim-label')
         self.append(message)
@@ -261,9 +264,11 @@ class WelcomePage(Gtk.Box):
         
         shortcuts = [
             ('Ctrl+N', 'New Connection'),
-            ('Ctrl+L', 'Toggle Connection List'),
-            ('Ctrl+Shift+K', 'Generate SSH Key'),
-            ('Enter', 'Connect to Selected Host'),
+            ('Ctrl+L', 'Focus connection list to select server'),
+            ('Ctrl+Shift+K', 'New SSH Key'),
+            ('Alt+Right', 'Next Tab'),
+            ('Alt+Left', 'Previous Tab'),
+            ('Ctrl+W', 'Close Tab'),
         ]
         
         for shortcut, description in shortcuts:
@@ -813,12 +818,22 @@ class MainWindow(Adw.ApplicationWindow):
         # Add header bar to main container
         main_box.append(self.header_bar)
         
-        # Create main layout
-        self.split_view = Adw.OverlaySplitView()
-        self.split_view.set_sidebar_width_fraction(0.25)
-        self.split_view.set_min_sidebar_width(200)
-        self.split_view.set_max_sidebar_width(400)
-        self.split_view.set_vexpand(True)
+        # Create main layout (fallback if OverlaySplitView is unavailable)
+        if HAS_OVERLAY_SPLIT:
+            self.split_view = Adw.OverlaySplitView()
+            try:
+                self.split_view.set_sidebar_width_fraction(0.25)
+                self.split_view.set_min_sidebar_width(200)
+                self.split_view.set_max_sidebar_width(400)
+            except Exception:
+                pass
+            self.split_view.set_vexpand(True)
+            self._split_variant = 'overlay'
+        else:
+            self.split_view = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
+            self.split_view.set_wide_handle(True)
+            self.split_view.set_vexpand(True)
+            self._split_variant = 'paned'
         
         # Create sidebar
         self.setup_sidebar()
@@ -831,6 +846,48 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Set as window content
         self.set_content(main_box)
+
+    def _set_sidebar_widget(self, widget: Gtk.Widget) -> None:
+        if HAS_OVERLAY_SPLIT:
+            try:
+                self.split_view.set_sidebar(widget)
+                return
+            except Exception:
+                pass
+        # Fallback for Gtk.Paned
+        try:
+            self.split_view.set_start_child(widget)
+        except Exception:
+            pass
+
+    def _set_content_widget(self, widget: Gtk.Widget) -> None:
+        if HAS_OVERLAY_SPLIT:
+            try:
+                self.split_view.set_content(widget)
+                return
+            except Exception:
+                pass
+        # Fallback for Gtk.Paned
+        try:
+            self.split_view.set_end_child(widget)
+        except Exception:
+            pass
+
+    def _get_sidebar_width(self) -> int:
+        try:
+            if HAS_OVERLAY_SPLIT and hasattr(self.split_view, 'get_max_sidebar_width'):
+                return int(self.split_view.get_max_sidebar_width())
+        except Exception:
+            pass
+        # Fallback: attempt to read allocation of the first child when using Paned
+        try:
+            sidebar = self.split_view.get_start_child()
+            if sidebar is not None:
+                alloc = sidebar.get_allocation()
+                return int(alloc.width)
+        except Exception:
+            pass
+        return 0
 
     def setup_sidebar(self):
         """Set up the sidebar with connection list"""
@@ -974,7 +1031,7 @@ class MainWindow(Adw.ApplicationWindow):
         
         sidebar_box.append(toolbar)
         
-        self.split_view.set_sidebar(sidebar_box)
+        self._set_sidebar_widget(sidebar_box)
 
     def setup_content_area(self):
         """Set up the main content area with stack for tabs and welcome view"""
@@ -1018,7 +1075,7 @@ class MainWindow(Adw.ApplicationWindow):
         # Start with welcome view visible
         self.content_stack.set_visible_child_name("welcome")
         
-        self.split_view.set_content(self.content_stack)
+        self._set_content_widget(self.content_stack)
 
     def setup_connection_list_dnd(self):
         """Set up drag and drop for connection list reordering"""
@@ -2064,7 +2121,7 @@ class MainWindow(Adw.ApplicationWindow):
         """Handle window size change"""
         width = self.get_default_size()[0]
         height = self.get_default_size()[1]
-        sidebar_width = self.split_view.get_max_sidebar_width()
+        sidebar_width = self._get_sidebar_width()
         
         self.config.save_window_geometry(width, height, sidebar_width)
 

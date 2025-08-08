@@ -22,20 +22,25 @@ class Config(GObject.Object):
     def __init__(self):
         super().__init__()
         
-        # Try to use GSettings if schema is available
+        # Try to use GSettings ONLY if schema is installed; otherwise use JSON
+        self.settings = None
+        self.use_gsettings = False
         try:
-            self.settings = Gio.Settings.new('io.github.mfat.sshpilot')
-            self.use_gsettings = True
-            logger.info("Using GSettings for configuration")
-            # Always prepare JSON config as a fallback store for keys not in schema
-            self.config_file = os.path.expanduser('~/.config/sshpilot/config.json')
-            self.config_data = self.load_json_config()
+            schema_id = 'io.github.mfat.sshpilot'
+            source = Gio.SettingsSchemaSource.get_default()
+            schema = source.lookup(schema_id, True) if source else None
+            if schema is not None:
+                self.settings = Gio.Settings.new_full(schema, None, None)
+                self.use_gsettings = True
+                logger.info("Using GSettings for configuration")
+            else:
+                logger.info("GSettings schema not found; using JSON config")
         except Exception as e:
-            logger.warning(f"GSettings not available, using JSON config: {e}")
-            self.settings = None
-            self.use_gsettings = False
-            self.config_file = os.path.expanduser('~/.config/sshpilot/config.json')
-            self.config_data = self.load_json_config()
+            logger.warning(f"GSettings unavailable; using JSON config: {e}")
+
+        # JSON config is used either as primary or as fallback store
+        self.config_file = os.path.expanduser('~/.config/sshpilot/config.json')
+        self.config_data = self.load_json_config()
         
         # Load built-in themes
         self.terminal_themes = self.load_builtin_themes()
