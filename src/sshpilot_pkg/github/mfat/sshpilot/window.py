@@ -53,11 +53,11 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.nickname_label.set_halign(Gtk.Align.START)
         info_box.append(self.nickname_label)
         
-        # Host info label
+        # Host info label (may be hidden based on user setting)
         self.host_label = Gtk.Label()
-        self.host_label.set_text(f"{connection.username}@{connection.host}")
         self.host_label.set_halign(Gtk.Align.START)
         self.host_label.add_css_class('dim-label')
+        self._apply_host_label_text()
         info_box.append(self.host_label)
         
         box.append(info_box)
@@ -72,6 +72,21 @@ class ConnectionRow(Gtk.ListBoxRow):
         
         # Update status
         self.update_status()
+
+    def _apply_host_label_text(self):
+        try:
+            window = self.get_root()
+            hide = bool(getattr(window, '_hide_hosts', False)) if window else False
+        except Exception:
+            hide = False
+        if hide:
+            self.host_label.set_text('••••••••••')
+        else:
+            self.host_label.set_text(f"{self.connection.username}@{self.connection.host}")
+
+    def apply_hide_hosts(self, hide: bool):
+        """Called by window when hide/show toggles."""
+        self._apply_host_label_text()
 
     def update_status(self):
         """Update connection status display"""
@@ -602,6 +617,11 @@ class MainWindow(Adw.ApplicationWindow):
         # UI state
         self.active_terminals = {}  # connection -> terminal_widget
         self.connection_rows = {}   # connection -> row_widget
+        # Hide hosts toggle state
+        try:
+            self._hide_hosts = bool(self.config.get_setting('ui.hide_hosts', False))
+        except Exception:
+            self._hide_hosts = False
         
         # Set up window
         self.setup_window()
@@ -701,6 +721,36 @@ class MainWindow(Adw.ApplicationWindow):
         add_button.set_tooltip_text('Add Connection (Ctrl+N)')
         add_button.connect('clicked', self.on_add_connection_clicked)
         header.append(add_button)
+
+        # Hide/Show hostnames button (eye icon)
+        def _update_eye_icon(btn):
+            try:
+                icon = 'view-conceal-symbolic' if self._hide_hosts else 'view-reveal-symbolic'
+                btn.set_icon_name(icon)
+                btn.set_tooltip_text('Show hostnames' if self._hide_hosts else 'Hide hostnames')
+            except Exception:
+                pass
+
+        hide_button = Gtk.Button.new_from_icon_name('view-reveal-symbolic')
+        _update_eye_icon(hide_button)
+        def _on_toggle_hide(btn):
+            try:
+                self._hide_hosts = not self._hide_hosts
+                # Persist setting
+                try:
+                    self.config.set_setting('ui.hide_hosts', self._hide_hosts)
+                except Exception:
+                    pass
+                # Update all rows
+                for row in self.connection_rows.values():
+                    if hasattr(row, 'apply_hide_hosts'):
+                        row.apply_hide_hosts(self._hide_hosts)
+                # Update icon/tooltip
+                _update_eye_icon(btn)
+            except Exception:
+                pass
+        hide_button.connect('clicked', _on_toggle_hide)
+        header.append(hide_button)
         
         sidebar_box.append(header)
         
@@ -856,6 +906,9 @@ class MainWindow(Adw.ApplicationWindow):
         row = ConnectionRow(connection)
         self.connection_list.append(row)
         self.connection_rows[connection] = row
+        # Apply current hide-hosts setting to new row
+        if hasattr(row, 'apply_hide_hosts'):
+            row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
 
     def show_welcome_view(self):
         """Show the welcome/help view when no connections are active"""
