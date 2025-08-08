@@ -1336,35 +1336,34 @@ class MainWindow(Adw.ApplicationWindow):
             self._do_quit()
             return
         
-        # Show progress dialog
-        self._show_cleanup_progress(len(connections_to_disconnect))
-        
-        # Disconnect all terminals synchronously (no threading)
+        # Show progress dialog and perform cleanup on idle so the dialog is visible immediately
         total = len(connections_to_disconnect)
-        for i, (connection, terminal) in enumerate(connections_to_disconnect):
-            try:
-                logger.debug(f"Disconnecting {connection.nickname} ({i+1}/{total})")
-                self._disconnect_terminal_safely(terminal)
-                
-                # Update progress
-                self._update_cleanup_progress(i + 1, total)
-                
-                # Small delay to prevent overwhelming the system
-                # In GTK4, we don't have events_pending() - use GLib.idle_add instead
-                GLib.idle_add(lambda: None)
-                GLib.MainContext.default().iteration(False)
-                    
-            except Exception as e:
-                logger.error(f"Error disconnecting {connection.nickname}: {e}")
-        
-        # Clear active terminals
-        self.active_terminals.clear()
-        
-        # Close progress dialog and quit
-        self._hide_cleanup_progress()
-        
-        # Small delay before final quit
-        GLib.timeout_add(100, self._do_quit)
+        self._show_cleanup_progress(total)
+        # Schedule cleanup to run after the dialog has a chance to render
+        GLib.idle_add(self._perform_cleanup_and_quit, connections_to_disconnect, priority=GLib.PRIORITY_DEFAULT_IDLE)
+
+    def _perform_cleanup_and_quit(self, connections_to_disconnect):
+        """Disconnect terminals with UI progress, then quit. Runs on idle."""
+        try:
+            total = len(connections_to_disconnect)
+            for index, (connection, terminal) in enumerate(connections_to_disconnect, start=1):
+                try:
+                    logger.debug(f"Disconnecting {connection.nickname} ({index}/{total})")
+                    self._disconnect_terminal_safely(terminal)
+                finally:
+                    # Update progress even if a disconnect fails
+                    self._update_cleanup_progress(index, total)
+                    # Yield to main loop to keep UI responsive
+                    GLib.MainContext.default().iteration(False)
+        except Exception as e:
+            logger.error(f"Cleanup during quit encountered an error: {e}")
+        finally:
+            # Clear active terminals and hide progress
+            self.active_terminals.clear()
+            self._hide_cleanup_progress()
+            # Quit on next idle to flush UI updates
+            GLib.idle_add(self._do_quit)
+        return False  # Do not repeat
 
     def _show_cleanup_progress(self, total_connections):
         """Show cleanup progress dialog"""
