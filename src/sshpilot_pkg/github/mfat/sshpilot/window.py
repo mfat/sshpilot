@@ -62,6 +62,12 @@ class ConnectionRow(Gtk.ListBoxRow):
         
         box.append(info_box)
         
+        # Port forwarding indicators (L/R/D)
+        self.indicator_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.indicator_box.set_halign(Gtk.Align.CENTER)
+        self.indicator_box.set_valign(Gtk.Align.CENTER)
+        box.append(self.indicator_box)
+
         # Connection status indicator
         self.status_icon = Gtk.Image.new_from_icon_name('network-offline-symbolic')
         self.status_icon.set_pixel_size(16)  # GTK4 uses pixel size instead of IconSize
@@ -72,6 +78,72 @@ class ConnectionRow(Gtk.ListBoxRow):
         
         # Update status
         self.update_status()
+        # Update forwarding indicators
+        self._update_forwarding_indicators()
+
+    @staticmethod
+    def _install_pf_css():
+        try:
+            # Install CSS for port forwarding indicator badges once per display
+            display = Gdk.Display.get_default()
+            if not display:
+                return
+            # Use an attribute on the display to avoid re-adding provider
+            if getattr(display, '_pf_css_installed', False):
+                return
+            provider = Gtk.CssProvider()
+            css = """
+            .pf-indicator { /* kept for legacy, not used by circled glyphs */ }
+            .pf-local { color: #E01B24; }
+            .pf-remote { color: #2EC27E; }
+            .pf-dynamic { color: #3584E4; }
+            """
+            provider.load_from_data(css.encode('utf-8'))
+            Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            setattr(display, '_pf_css_installed', True)
+        except Exception:
+            pass
+
+    def _update_forwarding_indicators(self):
+        # Ensure CSS exists
+        self._install_pf_css()
+        # Clear previous indicators
+        try:
+            while self.indicator_box.get_first_child():
+                self.indicator_box.remove(self.indicator_box.get_first_child())
+        except Exception:
+            return
+
+        rules = getattr(self.connection, 'forwarding_rules', []) or []
+        has_local = any(r.get('enabled', True) and r.get('type') == 'local' for r in rules)
+        has_remote = any(r.get('enabled', True) and r.get('type') == 'remote' for r in rules)
+        has_dynamic = any(r.get('enabled', True) and r.get('type') == 'dynamic' for r in rules)
+
+        def make_badge(letter: str, cls: str):
+            # Use Unicode precomposed circled letters for perfect centering
+            circled_map = {
+                'L': '\u24C1',  # Ⓛ
+                'R': '\u24C7',  # Ⓡ
+                'D': '\u24B9',  # Ⓓ
+            }
+            glyph = circled_map.get(letter, letter)
+            lbl = Gtk.Label(label=glyph)
+            lbl.add_css_class(cls)
+            lbl.set_halign(Gtk.Align.CENTER)
+            lbl.set_valign(Gtk.Align.CENTER)
+            try:
+                lbl.set_xalign(0.5)
+                lbl.set_yalign(0.5)
+            except Exception:
+                pass
+            return lbl
+
+        if has_local:
+            self.indicator_box.append(make_badge('L', 'pf-local'))
+        if has_remote:
+            self.indicator_box.append(make_badge('R', 'pf-remote'))
+        if has_dynamic:
+            self.indicator_box.append(make_badge('D', 'pf-dynamic'))
 
     def _apply_host_label_text(self):
         try:
@@ -132,6 +204,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         if hasattr(self.connection, 'username') and hasattr(self.connection, 'host') and hasattr(self, 'host_label'):
             port_text = f":{self.connection.port}" if hasattr(self.connection, 'port') and self.connection.port != 22 else ""
             self.host_label.set_text(f"{self.connection.username}@{self.connection.host}{port_text}")
+        # Refresh forwarding indicators if rules changed
+        self._update_forwarding_indicators()
         
         self.update_status()
 
