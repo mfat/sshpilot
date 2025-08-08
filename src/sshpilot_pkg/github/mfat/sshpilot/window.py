@@ -1125,7 +1125,11 @@ class MainWindow(Adw.ApplicationWindow):
             row.update_status()
             row.queue_draw()  # Force redraw
         
-        # Only log if this is not a controlled reconnect
+        # Hide reconnecting feedback if visible and reset controlled flag
+        GLib.idle_add(self._hide_reconnecting_message)
+        self._is_controlled_reconnect = False
+
+        # Log connection event
         if not getattr(self, '_is_controlled_reconnect', False):
             logger.info(f"Terminal connected: {terminal.connection.nickname} ({terminal.connection.username}@{terminal.connection.host})")
         else:
@@ -1144,9 +1148,8 @@ class MainWindow(Adw.ApplicationWindow):
             
         logger.info(f"Terminal disconnected: {terminal.connection.nickname} ({terminal.connection.username}@{terminal.connection.host})")
         
-        # Clean up any reconnection state
-        if hasattr(self, '_is_controlled_reconnect'):
-            self._is_controlled_reconnect = False
+        # Do not reset controlled reconnect flag here; it is managed by the
+        # reconnection flow (_on_reconnect_response/_reset_controlled_reconnect)
             
     def on_connection_added(self, manager, connection):
         """Handle new connection added to the connection manager"""
@@ -1212,6 +1215,11 @@ class MainWindow(Adw.ApplicationWindow):
             row.update_status()
             # Force a redraw of the row
             row.queue_draw()
+
+        # If this was a controlled reconnect and we are now connected, hide feedback
+        if is_connected and getattr(self, '_is_controlled_reconnect', False):
+            GLib.idle_add(self._hide_reconnecting_message)
+            self._is_controlled_reconnect = False
 
     def on_setting_changed(self, config, key, value):
         """Handle configuration setting change"""
@@ -1406,6 +1414,56 @@ class MainWindow(Adw.ApplicationWindow):
             except Exception as e:
                 logger.debug(f"Error closing progress dialog: {e}")
 
+    def _show_reconnecting_message(self, connection):
+        """Show a small modal indicating reconnection is in progress"""
+        try:
+            # Avoid duplicate dialogs
+            if hasattr(self, '_reconnect_dialog') and self._reconnect_dialog:
+                return
+
+            self._reconnect_dialog = Gtk.Window()
+            self._reconnect_dialog.set_title(_("Reconnecting"))
+            self._reconnect_dialog.set_transient_for(self)
+            self._reconnect_dialog.set_modal(True)
+            self._reconnect_dialog.set_default_size(320, 100)
+            self._reconnect_dialog.set_resizable(False)
+
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            box.set_margin_top(16)
+            box.set_margin_bottom(16)
+            box.set_margin_start(16)
+            box.set_margin_end(16)
+
+            spinner = Gtk.Spinner()
+            spinner.set_hexpand(False)
+            spinner.set_vexpand(False)
+            spinner.start()
+            box.append(spinner)
+
+            label = Gtk.Label()
+            label.set_text(_("Reconnecting to {}...").format(getattr(connection, "nickname", "")))
+            label.set_halign(Gtk.Align.START)
+            label.set_hexpand(True)
+            box.append(label)
+
+            self._reconnect_spinner = spinner
+            self._reconnect_label = label
+            self._reconnect_dialog.set_child(box)
+            self._reconnect_dialog.present()
+        except Exception as e:
+            logger.debug(f"Failed to show reconnecting message: {e}")
+
+    def _hide_reconnecting_message(self):
+        """Hide the reconnection progress dialog if shown"""
+        try:
+            if hasattr(self, '_reconnect_dialog') and self._reconnect_dialog:
+                self._reconnect_dialog.close()
+            self._reconnect_dialog = None
+            self._reconnect_spinner = None
+            self._reconnect_label = None
+        except Exception as e:
+            logger.debug(f"Failed to hide reconnecting message: {e}")
+
     def _disconnect_terminal_safely(self, terminal):
         """Safely disconnect a terminal"""
         try:
@@ -1576,6 +1634,9 @@ class MainWindow(Adw.ApplicationWindow):
             
         # Set controlled reconnect flag
         self._is_controlled_reconnect = True
+
+        # Show reconnecting feedback
+        self._show_reconnecting_message(connection)
         
         try:
             # Disconnect first
@@ -1646,6 +1707,8 @@ class MainWindow(Adw.ApplicationWindow):
         
     def _show_reconnect_error(self, connection, error_message=None):
         """Show an error message when reconnection fails"""
+        # Ensure reconnecting feedback is hidden
+        self._hide_reconnecting_message()
         # Remove from active terminals if reconnection fails
         if connection in self.active_terminals:
             del self.active_terminals[connection]
