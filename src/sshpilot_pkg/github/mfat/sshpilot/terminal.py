@@ -11,6 +11,7 @@ import time
 import json
 import re
 import gi
+import asyncio
 import threading
 import weakref
 import subprocess
@@ -149,6 +150,8 @@ class TerminalWidget(Gtk.Box):
         self.watch_id = 0
         self.ssh_client = None
         self.session_id = str(id(self))  # Unique ID for this session
+        self._preflight_ok = False
+        self._preflight_error = None
         
         # Register with process manager
         process_manager.register_terminal(self)
@@ -167,21 +170,47 @@ class TerminalWidget(Gtk.Box):
         # Set up the terminal
         self.vte = Vte.Terminal()
         
-        # Initialize terminal with basic settings
+        # Initialize terminal with basic settings and apply configured theme early
         self.setup_terminal()
+        try:
+            self.apply_theme()
+        except Exception:
+            pass
         
-        # Set initial colors
-        fg_color = Gdk.RGBA()
-        fg_color.parse('black')
-        bg_color = Gdk.RGBA()
-        bg_color.parse('white')
-        
-        self.vte.set_color_foreground(fg_color)
-        self.vte.set_color_background(bg_color)
-        
-        # Add terminal to scrolled window and to the box
+        # Add terminal to scrolled window and to the box via an overlay with a connecting view
         self.scrolled_window.set_child(self.vte)
-        self.append(self.scrolled_window)
+        self.overlay = Gtk.Overlay()
+        self.overlay.set_child(self.scrolled_window)
+
+        # Connecting overlay elements
+        self.connecting_bg = Gtk.Box()
+        self.connecting_bg.set_hexpand(True)
+        self.connecting_bg.set_vexpand(True)
+        try:
+            provider = Gtk.CssProvider()
+            provider.load_from_data(b".connecting-bg { background-color: #000000; }")
+            display = Gdk.Display.get_default()
+            if display:
+                Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            if hasattr(self.connecting_bg, 'add_css_class'):
+                self.connecting_bg.add_css_class('connecting-bg')
+        except Exception:
+            pass
+
+        self.connecting_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.connecting_box.set_halign(Gtk.Align.CENTER)
+        self.connecting_box.set_valign(Gtk.Align.CENTER)
+        spinner = Gtk.Spinner()
+        spinner.start()
+        label = Gtk.Label()
+        label.set_markup('<span color="#FFFFFF">Connecting</span>')
+        self.connecting_box.append(spinner)
+        self.connecting_box.append(label)
+
+        self.overlay.add_overlay(self.connecting_bg)
+        self.overlay.add_overlay(self.connecting_box)
+
+        self.append(self.overlay)
         
         # Set expansion properties
         self.scrolled_window.set_hexpand(True)
@@ -200,7 +229,18 @@ class TerminalWidget(Gtk.Box):
         self.scrolled_window.set_visible(True)
         self.vte.set_visible(True)
         
+        # Show overlay initially
+        self._set_connecting_overlay_visible(True)
         logger.debug("Terminal widget initialized")
+
+    def _set_connecting_overlay_visible(self, visible: bool):
+        try:
+            if hasattr(self.connecting_bg, 'set_visible'):
+                self.connecting_bg.set_visible(visible)
+            if hasattr(self.connecting_box, 'set_visible'):
+                self.connecting_box.set_visible(visible)
+        except Exception:
+            pass
     
     def _connect_ssh(self):
         """Connect to SSH host"""
@@ -227,22 +267,45 @@ class TerminalWidget(Gtk.Box):
             return False
     
     def _connect_ssh_thread(self):
-        """SSH connection thread - simplified approach"""
+        """SSH connection thread with TCP preflight and clear errors"""
         try:
-            # Test SSH connection first
-            self.ssh_client = self.connection_manager.connect(self.connection)
-            
-            if not self.ssh_client:
-                GLib.idle_add(self._on_connection_failed, "Failed to establish SSH connection")
+            import socket
+            host = getattr(self.connection, 'host', None)
+            port = int(getattr(self.connection, 'port', 22) or 22)
+            if not host:
+                # Even if host is missing, set up terminal to render theme; ssh will error
+                GLib.idle_add(self._setup_ssh_terminal)
                 return
-            
-            # Connection successful - disconnect the test connection
-            self.ssh_client.close()
-            self.ssh_client = None
-            
-            # Set up terminal with direct SSH command
+
+            # Quick TCP preflight to avoid hanging ssh on blackhole hosts
+            try:
+                with socket.create_connection((host, port), timeout=5) as sock:
+                    # Try to read SSH banner to ensure it's an SSH server
+                    sock.settimeout(2)
+                    try:
+                        banner = sock.recv(255)
+                        if banner and banner.startswith(b'SSH-'):
+                            self._preflight_ok = True
+                        else:
+                            self._preflight_ok = False
+                            self._preflight_error = "Invalid SSH banner from server"
+                    except Exception as read_err:
+                        self._preflight_ok = False
+                        self._preflight_error = f"Failed to read SSH banner: {read_err}"
+            except Exception as sock_err:
+                # Do not bail out early; still spawn ssh so terminal paints with theme
+                self._preflight_ok = False
+                self._preflight_error = f"TCP connection failed: {sock_err}"
+                logger.debug(f"TCP preflight failed: {sock_err}; proceeding to spawn ssh with timeout options")
+
+            # If preflight failed based on TCP or banner, show error without spawning ssh
+            if not self._preflight_ok:
+                GLib.idle_add(self._show_preflight_error, self._preflight_error or "Connection failed")
+                return
+
+            # Proceed to set up the SSH terminal for valid SSH servers
             GLib.idle_add(self._setup_ssh_terminal)
-            
+
         except Exception as e:
             logger.error(f"SSH connection failed: {e}")
             GLib.idle_add(self._on_connection_failed, str(e))
@@ -252,6 +315,34 @@ class TerminalWidget(Gtk.Box):
         try:
             # Build SSH command
             ssh_cmd = ['ssh']
+
+            # Read SSH behavior from config with sane defaults
+            try:
+                ssh_cfg = self.config.get_ssh_config() if hasattr(self.config, 'get_ssh_config') else {}
+            except Exception:
+                ssh_cfg = {}
+            connect_timeout = int(ssh_cfg.get('connection_timeout', 10))
+            connection_attempts = int(ssh_cfg.get('connection_attempts', 1))
+            keepalive_interval = int(ssh_cfg.get('keepalive_interval', 30))
+            keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3))
+            strict_host = str(ssh_cfg.get('strict_host_key_checking', 'accept-new'))
+            batch_mode = bool(ssh_cfg.get('batch_mode', True))
+            compression = bool(ssh_cfg.get('compression', True))
+
+            # Robust non-interactive options to prevent hangs
+            if batch_mode:
+                ssh_cmd.extend(['-o', 'BatchMode=yes'])
+            ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
+            ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+            ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
+            ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
+            if strict_host:
+                ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
+            if compression:
+                ssh_cmd.append('-C')
+
+            # Ensure SSH exits immediately on failure rather than waiting in background
+            ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
             
             # Only add verbose flag if explicitly enabled in config
             try:
@@ -348,9 +439,17 @@ class TerminalWidget(Gtk.Box):
             # Store the PTY for later cleanup
             self.pty = pty
             
-            # Mark as connected and emit signal
-            self.is_connected = True
-            self.emit('connection-established')
+            # Only mark as connected if preflight succeeded (host reachable)
+            if getattr(self, '_preflight_ok', False):
+                # Re-apply theme immediately after spawning to avoid default flash
+                try:
+                    self.apply_theme()
+                except Exception:
+                    pass
+                self.is_connected = True
+                self.emit('connection-established')
+            # Hide connecting overlay regardless of outcome at this point
+            self._set_connecting_overlay_visible(False)
             
             # Apply theme after connection is established
             self.apply_theme()
@@ -368,6 +467,11 @@ class TerminalWidget(Gtk.Box):
         """Called when terminal spawn is complete"""
         if error:
             logger.error(f"Terminal spawn failed: {error}")
+            # Ensure theme is applied before showing error so bg doesn't flash white
+            try:
+                self.apply_theme()
+            except Exception:
+                pass
             self._on_connection_failed(str(error))
             return
             
@@ -388,12 +492,17 @@ class TerminalWidget(Gtk.Box):
                     'pgid': self.process_pgid
                 }
             
-            # Connection is already marked as connected in _setup_ssh_terminal
+            # Connection is already marked as connected in _setup_ssh_terminal when preflight OK
             # Just grab focus here
             self.vte.grab_focus()
             
             # Apply theme to ensure it's set correctly after spawn
             self.apply_theme()
+
+            # If preflight indicated failure, show error now (after VTE is ready) and do not mark connected
+            if not getattr(self, '_preflight_ok', False):
+                self._on_connection_failed(self._preflight_error or "Connection failed")
+                return
             
         except Exception as e:
             logger.error(f"Error in spawn complete: {e}")
@@ -403,15 +512,38 @@ class TerminalWidget(Gtk.Box):
         """Handle connection failure (called from main thread)"""
         logger.error(f"Connection failed: {error_message}")
         
+        # Ensure theme is applied so background remains consistent
+        try:
+            self.apply_theme()
+        except Exception:
+            pass
+        
         # Show error in terminal
         try:
-            self.vte.feed(f"Connection failed: {error_message}\r\n".encode())
-            self.vte.feed("Press Ctrl+Shift+N to create a new connection.\r\n".encode())
+            self.vte.feed(f"\r\n\x1b[31mConnection failed: {error_message}\x1b[0m\r\n".encode('utf-8'))
+            self.vte.feed("Press Ctrl+Shift+N to create a new connection.\r\n".encode('utf-8'))
         except Exception as e:
             logger.error(f"Error displaying connection error: {e}")
         
         self.is_connected = False
         self.emit('connection-failed', error_message)
+
+    def _show_preflight_error(self, message):
+        """Show preflight error in the terminal area without spawning SSH"""
+        try:
+            # Ensure theme
+            self.apply_theme()
+            # Render error
+            self.vte.feed(("\r\n\x1b[31m" + str(message) + "\x1b[0m\r\n").encode('utf-8'))
+            self.vte.feed("Press Ctrl+Shift+N to create a new connection.\r\n".encode('utf-8'))
+        except Exception as e:
+            logger.error(f"Error showing preflight error: {e}")
+        finally:
+            self.is_connected = False
+            self.emit('connection-failed', str(message))
+            # Hide connecting overlay now that we have an error to show
+            self._set_connecting_overlay_visible(False)
+        return False
         
     def apply_theme(self, theme_name=None):
         """Apply terminal theme and font settings
@@ -459,6 +591,25 @@ class TerminalWidget(Gtk.Box):
             self.vte.set_color_cursor(cursor_color)
             self.vte.set_color_highlight(highlight_bg)
             self.vte.set_color_highlight_foreground(highlight_fg)
+
+            # Also color the container background to prevent white flash before VTE paints
+            try:
+                rgba = bg_color
+                # For Gtk4, setting the widget style via CSS provider
+                provider = Gtk.CssProvider()
+                css = f".terminal-bg {{ background-color: rgba({int(rgba.red*255)}, {int(rgba.green*255)}, {int(rgba.blue*255)}, {rgba.alpha}); }}"
+                provider.load_from_data(css.encode('utf-8'))
+                display = Gdk.Display.get_default()
+                if display:
+                    Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+                if hasattr(self, 'add_css_class'):
+                    self.add_css_class('terminal-bg')
+                if hasattr(self.scrolled_window, 'add_css_class'):
+                    self.scrolled_window.add_css_class('terminal-bg')
+                if hasattr(self.vte, 'add_css_class'):
+                    self.vte.add_css_class('terminal-bg')
+            except Exception as e:
+                logger.debug(f"Failed to set container background: {e}")
             
             # Set font
             font_desc = Pango.FontDescription.from_string(profile['font'])
@@ -487,14 +638,8 @@ class TerminalWidget(Gtk.Box):
             font_desc.set_size(12 * Pango.SCALE)  # Slightly larger default font
             self.vte.set_font(font_desc)
             
-            # Set default colors (light theme by default)
-            fg_color = Gdk.RGBA()
-            fg_color.parse('black')
-            bg_color = Gdk.RGBA()
-            bg_color.parse('white')
-            
-            self.vte.set_color_foreground(fg_color)
-            self.vte.set_color_background(bg_color)
+            # Do not force a light default; theme will define colors
+            self.apply_theme()
             
             # Set cursor properties
             self.vte.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)
@@ -875,11 +1020,7 @@ class TerminalWidget(Gtk.Box):
                     if proc_info.get('terminal')() is self:
                         del process_manager.processes[proc_pid]
             
-            # Reset the terminal
-            try:
-                self.vte.reset(True, True)
-            except Exception as e:
-                logger.error(f"Error resetting terminal: {e}")
+            # Do not hard-reset here; keep current theme/colors
             
             logger.debug(f"Cleaned up {len(pids_to_clean)} processes for session {self.session_id}")
             
@@ -910,8 +1051,7 @@ class TerminalWidget(Gtk.Box):
                 self.pty.close()
                 del self.pty
             
-            # Reset terminal
-            self.vte.reset(True, True)
+            # Do not reset here to avoid losing theme; leave buffer with error text
             
             # Notify UI
             self.emit('connection-failed', error_message)

@@ -210,6 +210,9 @@ class PreferencesWindow(Adw.PreferencesWindow):
         
         # Initialize the preferences UI
         self.setup_preferences()
+
+        # Save on close to persist advanced SSH settings
+        self.connect('close-request', self.on_close_request)
     
     def setup_preferences(self):
         """Set up preferences UI with current values"""
@@ -339,14 +342,85 @@ class PreferencesWindow(Adw.PreferencesWindow):
             window_group.add(remember_size_switch)
             window_group.add(auto_focus_switch)
             interface_page.add(window_group)
-            
+
+            # Advanced SSH settings
+            advanced_page = Adw.PreferencesPage()
+            advanced_page.set_title("Advanced")
+            advanced_page.set_icon_name("applications-system-symbolic")
+
+            advanced_group = Adw.PreferencesGroup()
+            advanced_group.set_title("SSH Settings")
+
+            # Connect timeout
+            self.connect_timeout_row = Adw.SpinRow.new_with_range(1, 120, 1)
+            self.connect_timeout_row.set_title("Connect Timeout (s)")
+            self.connect_timeout_row.set_value(self.config.get_setting('ssh.connection_timeout', 10))
+            advanced_group.add(self.connect_timeout_row)
+
+            # Connection attempts
+            self.connection_attempts_row = Adw.SpinRow.new_with_range(1, 10, 1)
+            self.connection_attempts_row.set_title("Connection Attempts")
+            self.connection_attempts_row.set_value(self.config.get_setting('ssh.connection_attempts', 1))
+            advanced_group.add(self.connection_attempts_row)
+
+            # Keepalive interval
+            self.keepalive_interval_row = Adw.SpinRow.new_with_range(0, 300, 5)
+            self.keepalive_interval_row.set_title("ServerAlive Interval (s)")
+            self.keepalive_interval_row.set_value(self.config.get_setting('ssh.keepalive_interval', 30))
+            advanced_group.add(self.keepalive_interval_row)
+
+            # Keepalive count max
+            self.keepalive_count_row = Adw.SpinRow.new_with_range(1, 10, 1)
+            self.keepalive_count_row.set_title("ServerAlive CountMax")
+            self.keepalive_count_row.set_value(self.config.get_setting('ssh.keepalive_count_max', 3))
+            advanced_group.add(self.keepalive_count_row)
+
+            # Strict host key checking
+            self.strict_host_row = Adw.ComboRow()
+            self.strict_host_row.set_title("StrictHostKeyChecking")
+            strict_model = Gtk.StringList()
+            for item in ["accept-new", "yes", "no", "ask"]:
+                strict_model.append(item)
+            self.strict_host_row.set_model(strict_model)
+            # Map current value
+            current_strict = str(self.config.get_setting('ssh.strict_host_key_checking', 'accept-new'))
+            try:
+                idx = ["accept-new", "yes", "no", "ask"].index(current_strict)
+            except ValueError:
+                idx = 0
+            self.strict_host_row.set_selected(idx)
+            advanced_group.add(self.strict_host_row)
+
+            # BatchMode (non-interactive)
+            self.batch_mode_row = Adw.SwitchRow()
+            self.batch_mode_row.set_title("BatchMode (disable prompts)")
+            self.batch_mode_row.set_active(bool(self.config.get_setting('ssh.batch_mode', True)))
+            advanced_group.add(self.batch_mode_row)
+
+            # Compression
+            self.compression_row = Adw.SwitchRow()
+            self.compression_row.set_title("Enable Compression (-C)")
+            self.compression_row.set_active(bool(self.config.get_setting('ssh.compression', True)))
+            advanced_group.add(self.compression_row)
+
+            advanced_page.add(advanced_group)
+
             # Add pages to the preferences window
             self.add(terminal_page)
             self.add(interface_page)
+            self.add(advanced_page)
             
             logger.info("Preferences window initialized")
         except Exception as e:
             logger.error(f"Failed to setup preferences: {e}")
+
+    def on_close_request(self, *args):
+        """Persist settings when the preferences window closes"""
+        try:
+            self.save_advanced_ssh_settings()
+        except Exception:
+            pass
+        return False  # allow close
     
     def on_font_button_clicked(self, button):
         """Handle font button click"""
@@ -412,6 +486,29 @@ class PreferencesWindow(Adw.PreferencesWindow):
         elif selected == 2:  # Dark
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
             self.config.set_setting('app-theme', 'dark')
+
+    def save_advanced_ssh_settings(self):
+        """Persist advanced SSH settings from the preferences UI"""
+        try:
+            if hasattr(self, 'connect_timeout_row'):
+                self.config.set_setting('ssh.connection_timeout', int(self.connect_timeout_row.get_value()))
+            if hasattr(self, 'connection_attempts_row'):
+                self.config.set_setting('ssh.connection_attempts', int(self.connection_attempts_row.get_value()))
+            if hasattr(self, 'keepalive_interval_row'):
+                self.config.set_setting('ssh.keepalive_interval', int(self.keepalive_interval_row.get_value()))
+            if hasattr(self, 'keepalive_count_row'):
+                self.config.set_setting('ssh.keepalive_count_max', int(self.keepalive_count_row.get_value()))
+            if hasattr(self, 'strict_host_row'):
+                options = ["accept-new", "yes", "no", "ask"]
+                idx = self.strict_host_row.get_selected()
+                value = options[idx] if 0 <= idx < len(options) else 'accept-new'
+                self.config.set_setting('ssh.strict_host_key_checking', value)
+            if hasattr(self, 'batch_mode_row'):
+                self.config.set_setting('ssh.batch_mode', bool(self.batch_mode_row.get_active()))
+            if hasattr(self, 'compression_row'):
+                self.config.set_setting('ssh.compression', bool(self.compression_row.get_active()))
+        except Exception as e:
+            logger.error(f"Failed to save advanced SSH settings: {e}")
     
     def get_theme_name_mapping(self):
         """Get mapping between display names and config keys"""
@@ -680,8 +777,14 @@ class MainWindow(Adw.ApplicationWindow):
         tab_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         tab_content_box.append(self.tab_bar)
         tab_content_box.append(self.tab_view)
+        # Ensure background matches terminal theme to avoid white flash
+        if hasattr(tab_content_box, 'add_css_class'):
+            tab_content_box.add_css_class('terminal-bg')
         
         self.content_stack.add_named(tab_content_box, "tabs")
+        # Also color the stack background
+        if hasattr(self.content_stack, 'add_css_class'):
+            self.content_stack.add_css_class('terminal-bg')
         
         # Start with welcome view visible
         self.content_stack.set_visible_child_name("welcome")
@@ -1349,7 +1452,18 @@ class MainWindow(Adw.ApplicationWindow):
             for index, (connection, terminal) in enumerate(connections_to_disconnect, start=1):
                 try:
                     logger.debug(f"Disconnecting {connection.nickname} ({index}/{total})")
-                    self._disconnect_terminal_safely(terminal)
+                    # Always try to cancel any pending SSH spawn quickly first
+                    if hasattr(terminal, 'process_pid') and terminal.process_pid:
+                        try:
+                            import os, signal
+                            os.kill(terminal.process_pid, signal.SIGTERM)
+                        except Exception:
+                            pass
+                    # Skip normal disconnect if terminal not connected to avoid hangs
+                    if hasattr(terminal, 'is_connected') and not terminal.is_connected:
+                        logger.debug("Terminal not connected; skipped disconnect")
+                    else:
+                        self._disconnect_terminal_safely(terminal)
                 finally:
                     # Update progress even if a disconnect fails
                     self._update_cleanup_progress(index, total)

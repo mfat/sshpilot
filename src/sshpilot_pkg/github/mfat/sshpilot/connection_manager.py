@@ -14,6 +14,8 @@ import signal
 from typing import Dict, List, Optional, Any, Tuple, Union
 
 import secretstorage
+import socket
+import time
 from gi.repository import GObject, GLib
 
 # Set up asyncio event loop for GTK integration
@@ -72,6 +74,29 @@ class Connection:
         try:
             # Build SSH command
             ssh_cmd = ['ssh']
+
+            # Pull advanced SSH defaults from config when available
+            try:
+                from .config import Config  # avoid circular import at top level
+                cfg = Config()
+                ssh_cfg = cfg.get_ssh_config()
+            except Exception:
+                ssh_cfg = {}
+            connect_timeout = int(ssh_cfg.get('connection_timeout', 10))
+            connection_attempts = int(ssh_cfg.get('connection_attempts', 1))
+            strict_host = str(ssh_cfg.get('strict_host_key_checking', 'accept-new'))
+            batch_mode = bool(ssh_cfg.get('batch_mode', True))
+            compression = bool(ssh_cfg.get('compression', True))
+
+            # Sane non-interactive defaults to avoid indefinite hangs
+            if batch_mode:
+                ssh_cmd.extend(['-o', 'BatchMode=yes'])
+            ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
+            ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+            if strict_host:
+                ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
+            if compression:
+                ssh_cmd.append('-C')
             
             # Add key file if specified
             if self.keyfile and os.path.exists(self.keyfile):
@@ -98,8 +123,18 @@ class Connection:
                 stderr=asyncio.subprocess.PIPE
             )
             
-            # Wait for the process to complete
-            stdout, stderr = await process.communicate()
+            # Wait for the process to complete with a hard timeout safeguard
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=connect_timeout + 2)
+            except asyncio.TimeoutError:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+                await asyncio.sleep(0)
+                logger.error("SSH connectivity check timed out")
+                self.is_connected = False
+                return False
             
             if process.returncode == 0:
                 self.is_connected = True
@@ -220,6 +255,30 @@ class Connection:
             
             # Build the complete SSH command for dynamic port forwarding
             ssh_cmd = ['ssh', '-v']  # Add verbose flag for debugging
+
+            # Read config for options
+            try:
+                from .config import Config
+                cfg = Config()
+                ssh_cfg = cfg.get_ssh_config()
+            except Exception:
+                ssh_cfg = {}
+            connect_timeout = int(ssh_cfg.get('connection_timeout', 10))
+            connection_attempts = int(ssh_cfg.get('connection_attempts', 1))
+            keepalive_interval = int(ssh_cfg.get('keepalive_interval', 30))
+            keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3))
+            strict_host = str(ssh_cfg.get('strict_host_key_checking', 'accept-new'))
+            batch_mode = bool(ssh_cfg.get('batch_mode', True))
+
+            # Robust non-interactive options to prevent hangs
+            if batch_mode:
+                ssh_cmd.extend(['-o', 'BatchMode=yes'])
+            ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
+            ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+            ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
+            ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
+            if strict_host:
+                ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
             
             # Add key file if specified
             if self.keyfile and os.path.exists(self.keyfile):
