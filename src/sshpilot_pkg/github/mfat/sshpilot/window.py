@@ -871,6 +871,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.copy_key_button.set_sensitive(False)
         self.copy_key_button.connect('clicked', self.on_copy_key_to_server_clicked)
         toolbar.append(self.copy_key_button)
+
+        # Upload (scp) button
+        self.upload_button = Gtk.Button.new_from_icon_name('document-send-symbolic')
+        self.upload_button.set_tooltip_text('Upload file(s) to server (scp)')
+        self.upload_button.set_sensitive(False)
+        self.upload_button.connect('clicked', self.on_upload_file_clicked)
+        toolbar.append(self.upload_button)
         
         # Delete button
         self.delete_button = Gtk.Button.new_from_icon_name('user-trash-symbolic')
@@ -1366,6 +1373,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.edit_button.set_sensitive(has_selection)
         if hasattr(self, 'copy_key_button'):
             self.copy_key_button.set_sensitive(has_selection)
+        if hasattr(self, 'upload_button'):
+            self.upload_button.set_sensitive(has_selection)
         self.delete_button.set_sensitive(has_selection)
 
     def on_add_connection_clicked(self, button):
@@ -1465,6 +1474,197 @@ class MainWindow(Adw.ApplicationWindow):
             picker.present()
         except Exception as e:
             logger.error(f'Copy key to server failed: {e}')
+
+    def on_upload_file_clicked(self, button):
+        """Show SCP intro dialog and start upload to selected server."""
+        try:
+            selected_row = self.connection_list.get_selected_row()
+            if not selected_row:
+                return
+            connection = getattr(selected_row, 'connection', None)
+            if not connection:
+                return
+
+            intro = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_('Upload files to server'),
+                body=_('We will use scp to upload file(s) to the selected server. You will be prompted to choose files and a destination path on the server.')
+            )
+            intro.add_response('cancel', _('Cancel'))
+            intro.add_response('choose', _('Choose files…'))
+            intro.set_default_response('choose')
+            intro.set_close_response('cancel')
+
+            def _on_intro(dlg, response):
+                dlg.close()
+                if response != 'choose':
+                    return
+                # Choose local files
+                file_chooser = Gtk.FileChooserNative(
+                    title=_('Select files to upload'),
+                    transient_for=self,
+                    action=Gtk.FileChooserAction.OPEN
+                )
+                file_chooser.set_select_multiple(True)
+                file_chooser.connect('response', lambda fc, resp: self._on_files_chosen(fc, resp, connection))
+                file_chooser.show()
+
+            intro.connect('response', _on_intro)
+            intro.present()
+        except Exception as e:
+            logger.error(f'Upload dialog failed: {e}')
+
+    def _on_files_chosen(self, chooser, response, connection):
+        try:
+            if response != Gtk.ResponseType.ACCEPT:
+                chooser.destroy()
+                return
+            files = chooser.get_files()
+            chooser.destroy()
+            if not files:
+                return
+            # Ask remote destination path
+            prompt = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_('Remote destination'),
+                body=_('Enter a remote directory (e.g., ~/ or /var/tmp). Files will be uploaded using scp.')
+            )
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            dest_row = Adw.EntryRow(title=_('Remote directory'))
+            dest_row.set_text('~')
+            box.append(dest_row)
+            prompt.set_extra_child(box)
+            prompt.add_response('cancel', _('Cancel'))
+            prompt.add_response('upload', _('Upload'))
+            prompt.set_default_response('upload')
+            prompt.set_close_response('cancel')
+
+            def _go(d, resp):
+                d.close()
+                if resp != 'upload':
+                    return
+                remote_dir = dest_row.get_text().strip() or '~'
+                self._start_scp_upload(connection, [f.get_path() for f in files], remote_dir)
+
+            prompt.connect('response', _go)
+            prompt.present()
+        except Exception as e:
+            logger.error(f'File selection failed: {e}')
+
+    def _start_scp_upload(self, connection, local_paths, remote_dir):
+        """Run scp and show progress + verbose output."""
+        try:
+            # Build command
+            target = f"{connection.username}@{connection.host}"
+            cmd = ['scp', '-v']  # verbose output for logging
+            if hasattr(connection, 'port') and connection.port and connection.port != 22:
+                cmd.extend(['-P', str(connection.port)])
+            # Add each file
+            cmd.extend(local_paths)
+            cmd.append(f"{target}:{remote_dir}")
+
+            # Progress UI
+            dlg = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_('Uploading…'),
+                body=_('Uploading files to {}').format(target)
+            )
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            try:
+                box.set_margin_top(12)
+                box.set_margin_bottom(12)
+                box.set_margin_start(12)
+                box.set_margin_end(12)
+            except Exception:
+                pass
+            bar = Gtk.ProgressBar()
+            bar.set_fraction(0)
+            out_view = Gtk.TextView()
+            out_view.set_editable(False)
+            out_view.set_monospace(True)
+            out_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+            sw = Gtk.ScrolledWindow()
+            sw.set_hexpand(True)
+            sw.set_vexpand(True)
+            sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            sw.set_child(out_view)
+            # Make the dialog content large enough for comfortable reading
+            try:
+                if hasattr(sw, 'set_min_content_width'):
+                    sw.set_min_content_width(800)
+                if hasattr(sw, 'set_min_content_height'):
+                    sw.set_min_content_height(400)
+            except Exception:
+                pass
+            box.append(bar)
+            box.append(sw)
+            dlg.set_extra_child(box)
+            dlg.add_response('ok', _('OK'))
+            dlg.set_default_response('ok')
+            dlg.set_close_response('ok')
+            dlg.present()
+
+            # Spawn scp with a pty-like output (no exact progress %; we simulate)
+            import subprocess, threading
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+
+            buffer = out_view.get_buffer()
+            # Log the command line at the top
+            try:
+                iter_end = buffer.get_end_iter()
+                buffer.insert(iter_end, 'Command: ' + ' '.join(cmd) + '\n')
+            except Exception:
+                pass
+
+            def reader():
+                try:
+                    total_lines = 0
+                    for line in process.stdout:
+                        total_lines += 1
+                        txt = line.rstrip('\n')
+                        def _append():
+                            iter_end = buffer.get_end_iter()
+                            buffer.insert(iter_end, txt + '\n')
+                            # Naive progress: advance a bit each line
+                            new_frac = min(0.95, bar.get_fraction() + 0.01)
+                            bar.set_fraction(new_frac)
+                            # Auto-scroll to bottom for latest output
+                            try:
+                                iter_new_end = buffer.get_end_iter()
+                                out_view.scroll_to_iter(iter_new_end, 0.0, True, 0.0, 1.0)
+                            except Exception:
+                                pass
+                            return False
+                        GLib.idle_add(_append)
+                    process.wait()
+                finally:
+                    def _finish():
+                        success = (process.returncode == 0)
+                        if success:
+                            bar.set_fraction(1.0)
+                            dlg.set_heading(_('Upload complete'))
+                            # Ensure log ends with a success line
+                            iter_end2 = buffer.get_end_iter()
+                            buffer.insert(iter_end2, _('Upload finished successfully.\n'))
+                        else:
+                            dlg.set_heading(_('Upload failed'))
+                            iter_end2 = buffer.get_end_iter()
+                            buffer.insert(iter_end2, _('scp exited with an error. See log above.\n'))
+                        return False
+                    GLib.idle_add(_finish)
+
+            threading.Thread(target=reader, daemon=True).start()
+        except Exception as e:
+            logger.error(f'scp upload failed to start: {e}')
 
     def on_delete_connection_clicked(self, button):
         """Handle delete connection button click"""
