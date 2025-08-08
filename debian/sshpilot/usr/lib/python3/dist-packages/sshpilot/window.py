@@ -236,7 +236,7 @@ class WelcomePage(Gtk.Box):
         self.set_margin_bottom(48)
         
         # Welcome icon
-        icon = Gtk.Image.new_from_icon_name('org.gnome.Settings-network-workgroup-symbolic')
+        icon = Gtk.Image.new_from_icon_name('network-workgroup-symbolic')
         icon.set_icon_size(Gtk.IconSize.LARGE)
         icon.set_pixel_size(64)
         self.append(icon)
@@ -1131,6 +1131,19 @@ class MainWindow(Adw.ApplicationWindow):
 
     def show_welcome_view(self):
         """Show the welcome/help view when no connections are active"""
+        # Remove terminal background styling so welcome uses app theme colors
+        if hasattr(self.content_stack, 'remove_css_class'):
+            try:
+                self.content_stack.remove_css_class('terminal-bg')
+            except Exception:
+                pass
+        # Ensure welcome fills the pane
+        if hasattr(self, 'welcome_view'):
+            try:
+                self.welcome_view.set_hexpand(True)
+                self.welcome_view.set_vexpand(True)
+            except Exception:
+                pass
         self.content_stack.set_visible_child_name("welcome")
         logger.info("Showing welcome view")
 
@@ -1154,6 +1167,12 @@ class MainWindow(Adw.ApplicationWindow):
     
     def show_tab_view(self):
         """Show the tab view when connections are active"""
+        # Re-apply terminal background when switching back to tabs
+        if hasattr(self.content_stack, 'add_css_class'):
+            try:
+                self.content_stack.add_css_class('terminal-bg')
+            except Exception:
+                pass
         self.content_stack.set_visible_child_name("tabs")
         logger.info("Showing tab view")
 
@@ -1685,11 +1704,14 @@ class MainWindow(Adw.ApplicationWindow):
                 if response != 'choose':
                     return
                 # Choose local files
-                file_chooser = Gtk.FileChooserNative(
+                file_chooser = Gtk.FileChooserDialog(
                     title=_('Select files to upload'),
-                    transient_for=self,
-                    action=Gtk.FileChooserAction.OPEN
+                    action=Gtk.FileChooserAction.OPEN,
                 )
+                file_chooser.set_transient_for(self)
+                file_chooser.set_modal(True)
+                file_chooser.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
+                file_chooser.add_button(_('Open'), Gtk.ResponseType.ACCEPT)
                 file_chooser.set_select_multiple(True)
                 file_chooser.connect('response', lambda fc, resp: self._on_files_chosen(fc, resp, connection))
                 file_chooser.show()

@@ -2,8 +2,8 @@ Package: sshpilot
 Version: 2.0.0-1
 Architecture: all
 Maintainer: mFat <newmfat@gmail.com>
-Installed-Size: 503
-Depends: python3, python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-vte-3.91, python3-paramiko, python3-cryptography, python3-secretstorage, python3-matplotlib, sshpass
+Installed-Size: 504
+Depends: python3, python3-gi, python3-gi-cairo, libgtk-4-1, gir1.2-gtk-4.0, libadwaita-1-0, gir1.2-adw-1, libvte-2.91-gtk4-0, gir1.2-vte-3.91, python3-paramiko, python3-cryptography, python3-secretstorage, python3-matplotlib, sshpass
 Section: utils
 Priority: optional
 Homepage: https://github.com/mfat/sshpilot

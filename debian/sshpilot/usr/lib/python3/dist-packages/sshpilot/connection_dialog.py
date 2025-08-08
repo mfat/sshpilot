@@ -670,11 +670,14 @@ class ConnectionDialog(Adw.Window):
     
     def browse_for_key_file(self):
         """Open file chooser to browse for SSH key file"""
-        dialog = Gtk.FileChooserNative(
+        dialog = Gtk.FileChooserDialog(
             title=_("Select SSH Key File"),
-            transient_for=self,
-            action=Gtk.FileChooserAction.OPEN
+            action=Gtk.FileChooserAction.OPEN,
         )
+        dialog.set_transient_for(self)
+        dialog.set_modal(True)
+        dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
+        dialog.add_button(_("Open"), Gtk.ResponseType.ACCEPT)
         
         # Set filters
         filter_ssh = Gtk.FileFilter()

@@ -1,7 +1,7 @@
 725393ec29aff59a188d5633a422c01a  usr/bin/sshpilot
 bd55b78fe5845dd268bbbfe1602d707e  usr/lib/python3/dist-packages/sshpilot/__init__.py
 7e4afeadb4789a72a44b855795b9fec5  usr/lib/python3/dist-packages/sshpilot/config.py
-0da4eec3c61fd048ff030bd2fab5eaa0  usr/lib/python3/dist-packages/sshpilot/connection_dialog.py
+061c9557c28b3589fb5707cf497926a3  usr/lib/python3/dist-packages/sshpilot/connection_dialog.py
 8eed74416f0279774d052d5a73a140fd  usr/lib/python3/dist-packages/sshpilot/connection_manager.py
 17757c7324c0a0803cc8183e0803aebb  usr/lib/python3/dist-packages/sshpilot/key_manager.py
 d6dca834a001844f49fe1bce15ac9631  usr/lib/python3/dist-packages/sshpilot/main.py
@@ -10,7 +10,7 @@ e30972092d2a77248166eedeed70e777  usr/lib/python3/dist-packages/sshpilot/port_fo
 d8780eecf6f9090282c73e2da9f19ed0  usr/lib/python3/dist-packages/sshpilot/resource_monitor.py
 6b91867e2dd286f1b600904d45c54f12  usr/lib/python3/dist-packages/sshpilot/resources/sshpilot.gresource
 2a69a698ead37827b6d8d9405fee5fa4  usr/lib/python3/dist-packages/sshpilot/resources/sshpilot.gresource.xml
-e8a0e71c7bddf517c19810df63f0896a  usr/lib/python3/dist-packages/sshpilot/resources/sshpilot.png
+3005995b6f482dc780c0e2e02772317e  usr/lib/python3/dist-packages/sshpilot/resources/sshpilot.png
 427a73d1ee1052b18bc7fb43779b82d4  usr/lib/python3/dist-packages/sshpilot/terminal.py
 a1c2be30fda1d9404db9f533692aa970  usr/lib/python3/dist-packages/sshpilot/ui/connection_dialog.ui
 eb646bbc36ffd58044de586f72a3b810  usr/lib/python3/dist-packages/sshpilot/ui/connection_dialog.ui.new
@@ -18,7 +18,7 @@ fadfb49f12998dc8c2e2aaefd0680055  usr/lib/python3/dist-packages/sshpilot/ui/key_
 f47f091076400c65e138aff2c851e52c  usr/lib/python3/dist-packages/sshpilot/ui/main_window.ui
 5c6a336b25051612d93b5c8859c38a93  usr/lib/python3/dist-packages/sshpilot/ui/port_forwarding_rules.ui
 677634df73ee551a045a637c3e7c03e4  usr/lib/python3/dist-packages/sshpilot/ui/preferences.ui
-94c100e56414960fded136d316780738  usr/lib/python3/dist-packages/sshpilot/window.py
+09e8d194d1b3367a8e98e9f0ad38ae63  usr/lib/python3/dist-packages/sshpilot/window.py
 41c15fa5e1119388bf5e52642632601b  usr/share/applications/io.github.mfat.sshpilot.desktop
-05ed1be312edf4de0949bde0d30c32a5  usr/share/doc/sshpilot/changelog.Debian.gz
-e8a0e71c7bddf517c19810df63f0896a  usr/share/pixmaps/io.github.mfat.sshpilot.png
+b21d3d0b315d1e1926e63dfbc40659fd  usr/share/doc/sshpilot/changelog.Debian.gz
+3005995b6f482dc780c0e2e02772317e  usr/share/pixmaps/io.github.mfat.sshpilot.png
