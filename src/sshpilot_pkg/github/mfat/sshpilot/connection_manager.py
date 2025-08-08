@@ -794,6 +794,53 @@ class ConnectionManager(GObject.Object):
             logger.error(f"Error updating SSH config: {e}", exc_info=True)
             raise
 
+    def remove_ssh_config_entry(self, host_nickname: str) -> bool:
+        """Remove a Host block from ~/.ssh/config by nickname.
+
+        Returns True if a block was removed, False if not found or on error.
+        """
+        try:
+            if not os.path.exists(self.ssh_config_path):
+                return False
+            try:
+                with open(self.ssh_config_path, 'r') as f:
+                    lines = f.readlines()
+            except IOError as e:
+                logger.error(f"Failed to read SSH config for delete: {e}")
+                return False
+
+            updated_lines = []
+            i = 0
+            removed = False
+            while i < len(lines):
+                raw_line = lines[i]
+                line = raw_line.strip()
+                if line.startswith('Host '):
+                    parts = line.split()
+                    name = parts[1] if len(parts) > 1 else ''
+                    if name == host_nickname:
+                        # Skip this host block
+                        removed = True
+                        i += 1
+                        while i < len(lines) and not lines[i].startswith('Host '):
+                            i += 1
+                        continue
+                # Keep line
+                updated_lines.append(raw_line)
+                i += 1
+
+            if removed:
+                try:
+                    with open(self.ssh_config_path, 'w') as f:
+                        f.writelines(updated_lines)
+                except IOError as e:
+                    logger.error(f"Failed to write SSH config after delete: {e}")
+                    return False
+            return removed
+        except Exception as e:
+            logger.error(f"Error removing SSH config entry: {e}", exc_info=True)
+            return False
+
     def update_connection(self, connection: Connection, new_data: Dict[str, Any]) -> bool:
         """Update an existing connection"""
         try:
@@ -845,7 +892,12 @@ class ConnectionManager(GObject.Object):
                 except Exception as e:
                     logger.warning(f"Failed to remove password from keyring: {e}")
             
-            # TODO: Remove from SSH config file (requires config rewriting)
+            # Remove from SSH config file
+            try:
+                removed = self.remove_ssh_config_entry(connection.nickname)
+                logger.debug(f"SSH config entry removed={removed} for {connection.nickname}")
+            except Exception as e:
+                logger.warning(f"Failed to remove SSH config entry for {connection.nickname}: {e}")
             
             # Emit signal
             self.emit('connection-removed', connection)
