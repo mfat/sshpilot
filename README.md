@@ -8,16 +8,16 @@ Runtime dependencies
 
 Install system GTK/libadwaita/VTE GI bindings (do not use pip for these).
 
-Debian/Ubuntu
+Debian/Ubuntu (minimum versions)
 ~~~~~~~~~~~~~
 
 ```
 sudo apt update
 sudo apt install \
   python3-gi python3-gi-cairo \
-  libgtk-4-1 gir1.2-gtk-4.0 \
-  libadwaita-1-0 gir1.2-adw-1 \
-  libvte-2.91-gtk4-0 gir1.2-vte-3.91 \
+  libgtk-4-1 (>= 4.6) gir1.2-gtk-4.0 (>= 4.6) \
+  libadwaita-1-0 (>= 1.4) gir1.2-adw-1 (>= 1.4) \
+  libvte-2.91-gtk4-0 (>= 0.70) gir1.2-vte-3.91 (>= 0.70) \
   sshpass python3-paramiko python3-cryptography python3-secretstorage python3-matplotlib
 # Optional for keyring
 sudo apt install gnome-keyring libsecret-1-0
