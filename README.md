@@ -1,7 +1,7 @@
 sshPilot
 ========
 
-SSH connection manager with integrated terminal, tunneling, key management, and resource monitoring.
+SSH connection manager with integrated terminal, tunneling, key management and scp upload support.
 
 Runtime dependencies
 --------------------
