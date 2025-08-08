@@ -12,6 +12,7 @@ import json
 import re
 import gi
 import asyncio
+import errno
 import threading
 import weakref
 import subprocess
@@ -20,7 +21,8 @@ from datetime import datetime
 gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
 
-from gi.repository import Gtk, GObject, GLib, Vte, Pango, Gdk, Gio
+gi.require_version('Adw', '1')
+from gi.repository import Gtk, GObject, GLib, Vte, Pango, Gdk, Gio, Adw
 
 logger = logging.getLogger(__name__)
 
@@ -298,6 +300,37 @@ class TerminalWidget(Gtk.Box):
                 self._preflight_error = f"TCP connection failed: {sock_err}"
                 logger.debug(f"TCP preflight failed: {sock_err}; proceeding to spawn ssh with timeout options")
 
+            # Local port-forward preflight: check local bind ports for dynamic/local forwards
+            try:
+                forwarding_rules = getattr(self.connection, 'forwarding_rules', []) or []
+                for rule in forwarding_rules:
+                    rtype = rule.get('type')
+                    listen_addr = rule.get('listen_addr', '127.0.0.1')
+                    listen_port = int(rule.get('listen_port') or 0)
+                    if listen_port <= 0:
+                        continue
+                    if rtype in ('dynamic', 'local'):
+                        try:
+                            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                                s.bind((listen_addr, listen_port))
+                        except OSError as e:
+                            if e.errno == errno.EADDRINUSE:
+                                msg = f"bind [{listen_addr}]:{listen_port}: Address already in use"
+                                logger.debug(f"Local port preflight failed: {msg}")
+                                GLib.idle_add(self._show_preflight_error, msg)
+                                GLib.idle_add(self._show_forwarding_error_dialog, msg)
+                                return
+                            else:
+                                # Other bind errors
+                                msg = f"bind [{listen_addr}]:{listen_port}: {e}"
+                                logger.debug(f"Local port preflight failed: {msg}")
+                                GLib.idle_add(self._show_preflight_error, msg)
+                                GLib.idle_add(self._show_forwarding_error_dialog, msg)
+                                return
+            except Exception as e:
+                logger.debug(f"Port-forward preflight check skipped/failed: {e}")
+
             # If preflight failed based on TCP or banner, show error without spawning ssh
             if not self._preflight_ok:
                 GLib.idle_add(self._show_preflight_error, self._preflight_error or "Connection failed")
@@ -445,6 +478,11 @@ class TerminalWidget(Gtk.Box):
             
             # Store the PTY for later cleanup
             self.pty = pty
+            try:
+                import time
+                self._spawn_start_time = time.time()
+            except Exception:
+                self._spawn_start_time = None
             
             # Only mark as connected if preflight succeeded (host reachable)
             if getattr(self, '_preflight_ok', False):
@@ -548,6 +586,21 @@ class TerminalWidget(Gtk.Box):
             self.emit('connection-failed', str(message))
             # Hide connecting overlay now that we have an error to show
             self._set_connecting_overlay_visible(False)
+        return False
+
+    def _show_forwarding_error_dialog(self, message):
+        try:
+            dialog = Adw.MessageDialog(
+                transient_for=self.get_root() if hasattr(self, 'get_root') else None,
+                modal=True,
+                heading="Port Forwarding Error",
+                body=str(message)
+            )
+            dialog.add_response('ok', 'OK')
+            dialog.set_default_response('ok')
+            dialog.present()
+        except Exception as e:
+            logger.debug(f"Failed to present forwarding error dialog: {e}")
         return False
         
     def apply_theme(self, theme_name=None):
@@ -881,6 +934,21 @@ class TerminalWidget(Gtk.Box):
             self.is_connected = False
             logger.info(f"SSH session ended with status {status}")
             self.emit('connection-lost')
+        else:
+            # Early exit without connection; if forwarding was requested, show dialog
+            try:
+                if getattr(self.connection, 'forwarding_rules', None):
+                    import time
+                    fast_fail = (getattr(self, '_spawn_start_time', None) and (time.time() - self._spawn_start_time) < 5)
+                    if fast_fail:
+                        self._show_forwarding_error_dialog("SSH failed to start with requested port forwarding. Check if ports are available.")
+                        # Also print red hint
+                        try:
+                            self.vte.feed(b"\r\n\x1b[31mPort forwarding failed.\x1b[0m\r\n")
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.debug(f"Error handling early child exit: {e}")
     
     def _on_terminal_input(self, widget, text, size):
         """Handle input from the terminal (handled automatically by VTE)"""
