@@ -236,7 +236,7 @@ class WelcomePage(Gtk.Box):
         self.set_margin_bottom(48)
         
         # Welcome icon
-        icon = Gtk.Image.new_from_icon_name('network-workgroup')
+        icon = Gtk.Image.new_from_icon_name('network-workgroup-symbolic')
         icon.set_icon_size(Gtk.IconSize.LARGE)
         icon.set_pixel_size(64)
         self.append(icon)
