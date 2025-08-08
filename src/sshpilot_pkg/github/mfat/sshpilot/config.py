@@ -92,6 +92,7 @@ class Config(GObject.Object):
                 'window_height': 800,
                 'sidebar_width': 250,
             },
+            'connections_meta': {},  # per-connection metadata (e.g., auth_method)
             'ssh': {
                 'connection_timeout': 30,
                 'keepalive_interval': 60,
@@ -377,6 +378,29 @@ class Config(GObject.Object):
     def get_available_themes(self) -> Dict[str, str]:
         """Get list of available themes"""
         return {name: theme['name'] for name, theme in self.terminal_themes.items()}
+
+    # --- Per-connection metadata helpers ---
+    def get_connection_meta(self, key: str) -> Dict[str, Any]:
+        """Return stored metadata for a connection keyed by nickname (or unique key)."""
+        try:
+            meta_all = self.get_setting('connections_meta', {})
+            if isinstance(meta_all, dict):
+                value = meta_all.get(key, {})
+                return value if isinstance(value, dict) else {}
+        except Exception:
+            pass
+        return {}
+
+    def set_connection_meta(self, key: str, meta: Dict[str, Any]):
+        """Store metadata for a connection (e.g., {'auth_method': 1})."""
+        try:
+            meta_all = self.get_setting('connections_meta', {})
+            if not isinstance(meta_all, dict):
+                meta_all = {}
+            meta_all[key] = meta or {}
+            self.set_setting('connections_meta', meta_all)
+        except Exception:
+            logger.error(f"Failed to persist connection meta for {key}")
 
     def add_custom_theme(self, name: str, theme_data: Dict[str, str]):
         """Add a custom theme"""

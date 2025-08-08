@@ -467,6 +467,30 @@ class ConnectionManager(GObject.Object):
             logger.warning(f"Failed to initialize secure storage: {e}")
             self.collection = None
         return False  # run once
+
+    def _ensure_collection(self) -> bool:
+        """Ensure secretstorage collection is initialized and unlocked."""
+        try:
+            if getattr(self, 'collection', None) is None:
+                try:
+                    self.bus = secretstorage.dbus_init()
+                    self.collection = secretstorage.get_default_collection(self.bus)
+                except Exception as e:
+                    logger.warning(f"Secret storage init failed: {e}")
+                    self.collection = None
+                    return False
+            # Attempt to unlock if locked
+            try:
+                if hasattr(self.collection, 'is_locked') and self.collection.is_locked():
+                    unlocked, _ = self.collection.unlock()
+                    if not unlocked:
+                        logger.warning("Secret storage collection remains locked")
+                        return False
+            except Exception as e:
+                logger.debug(f"Could not unlock collection: {e}")
+            return self.collection is not None
+        except Exception:
+            return False
         
     def load_ssh_config(self):
         """Load connections from SSH config file"""
@@ -516,7 +540,18 @@ class ConnectionManager(GObject.Object):
             if current_host and current_config:
                 connection_data = self.parse_host_config(current_config)
                 if connection_data:
-                    self.connections.append(Connection(connection_data))
+                    conn = Connection(connection_data)
+                    # Apply per-connection metadata from app config (auth method, etc.)
+                    try:
+                        from .config import Config
+                        cfg = Config()
+                        meta = cfg.get_connection_meta(conn.nickname)
+                        if isinstance(meta, dict):
+                            if 'auth_method' in meta:
+                                conn.auth_method = meta['auth_method']
+                    except Exception:
+                        pass
+                    self.connections.append(conn)
             
             logger.info(f"Loaded {len(self.connections)} connections from SSH config")
             
@@ -632,7 +667,7 @@ class ConnectionManager(GObject.Object):
 
     def store_password(self, host: str, username: str, password: str):
         """Store password securely in system keyring"""
-        if not self.collection:
+        if not self._ensure_collection():
             logger.warning("Secure storage not available, password not stored")
             return False
         
@@ -664,7 +699,7 @@ class ConnectionManager(GObject.Object):
 
     def get_password(self, host: str, username: str) -> Optional[str]:
         """Retrieve password from system keyring"""
-        if not self.collection:
+        if not self._ensure_collection():
             return None
         
         try:

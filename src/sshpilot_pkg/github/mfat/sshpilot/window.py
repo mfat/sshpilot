@@ -2277,6 +2277,15 @@ class MainWindow(Adw.ApplicationWindow):
                 old_connection.x11_forwarding = connection_data['x11_forwarding']
                 old_connection.forwarding_rules = connection_data.get('forwarding_rules', [])
                 
+                # Persist per-connection metadata not stored in SSH config (auth method, etc.)
+                try:
+                    meta_key = old_connection.nickname
+                    self.config.set_connection_meta(meta_key, {
+                        'auth_method': connection_data.get('auth_method', 0)
+                    })
+                except Exception:
+                    pass
+
                 # Update UI
                 if old_connection in self.connection_rows:
                     # Get the row before potentially modifying the dictionary
@@ -2304,6 +2313,13 @@ class MainWindow(Adw.ApplicationWindow):
                 
                 # Save the connection to SSH config and emit the connection-added signal
                 if self.connection_manager.update_connection(connection, connection_data):
+                    # Persist per-connection metadata
+                    try:
+                        self.config.set_connection_meta(connection.nickname, {
+                            'auth_method': connection_data.get('auth_method', 0)
+                        })
+                    except Exception:
+                        pass
                     # Manually add the connection to the UI since we're not using the signal
                     self.add_connection_row(connection)
                     logger.info(f"Created new connection: {connection_data['nickname']}")

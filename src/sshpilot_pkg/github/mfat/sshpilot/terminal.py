@@ -16,6 +16,7 @@ import errno
 import threading
 import weakref
 import subprocess
+import shutil
 from datetime import datetime
 
 gi.require_version('Gtk', '4.0')
@@ -362,8 +363,17 @@ class TerminalWidget(Gtk.Box):
             batch_mode = bool(ssh_cfg.get('batch_mode', True))
             compression = bool(ssh_cfg.get('compression', True))
 
+            # Determine auth method from connection
+            password_auth_selected = False
+            try:
+                # In our UI: 0 = key-based, 1 = password
+                password_auth_selected = (getattr(self.connection, 'auth_method', 0) == 1)
+            except Exception:
+                password_auth_selected = False
+
             # Robust non-interactive options to prevent hangs
-            if batch_mode:
+            # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
+            if batch_mode and not password_auth_selected:
                 ssh_cmd.extend(['-o', 'BatchMode=yes'])
             ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
             ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
@@ -400,14 +410,38 @@ class TerminalWidget(Gtk.Box):
                 logger.warning(f"Could not check SSH verbosity/debug settings: {e}")
                 # Default to non-verbose on error
             
-            # Add key file if specified and valid
-            if hasattr(self.connection, 'keyfile') and self.connection.keyfile and \
-               os.path.isfile(self.connection.keyfile) and \
-               not self.connection.keyfile.startswith('Select key file'):
-                ssh_cmd.extend(['-i', self.connection.keyfile])
-                logger.debug(f"Using SSH key: {self.connection.keyfile}")
+            # Add key file only for key-based auth
+            if not password_auth_selected:
+                if hasattr(self.connection, 'keyfile') and self.connection.keyfile and \
+                   os.path.isfile(self.connection.keyfile) and \
+                   not self.connection.keyfile.startswith('Select key file'):
+                    ssh_cmd.extend(['-i', self.connection.keyfile])
+                    logger.debug(f"Using SSH key: {self.connection.keyfile}")
+                else:
+                    logger.debug("No valid SSH key specified, using default")
             else:
-                logger.debug("No valid SSH key specified, using default")
+                # Prefer password/interactive methods when user chose password auth
+                ssh_cmd.extend(['-o', 'PreferredAuthentications=password,keyboard-interactive'])
+                ssh_cmd.extend(['-o', 'PubkeyAuthentication=no'])
+
+                # If we have a stored password and sshpass is available, use it to avoid prompts
+                password_value = None
+                try:
+                    password_value = getattr(self.connection, 'password', None)
+                    if (not password_value) and hasattr(self, 'connection_manager') and self.connection_manager:
+                        password_value = self.connection_manager.get_password(self.connection.host, self.connection.username)
+                except Exception:
+                    password_value = None
+
+                if password_value and shutil.which('sshpass'):
+                    # Prepend sshpass and move current ssh_cmd after it
+                    ssh_cmd = ['sshpass', '-p', str(password_value), 'ssh'] + ssh_cmd[1:]
+                    # Do not log plaintext password
+                    try:
+                        masked = [part if part != str(password_value) else '******' for part in ssh_cmd]
+                        logger.debug("Using sshpass with command: %s", ' '.join(masked))
+                    except Exception:
+                        pass
             
             # Add X11 forwarding if enabled
             if hasattr(self.connection, 'x11_forwarding') and self.connection.x11_forwarding:
@@ -456,7 +490,16 @@ class TerminalWidget(Gtk.Box):
             if hasattr(self.connection, 'port') and self.connection.port != 22:
                 ssh_cmd.extend(['-p', str(self.connection.port)])
             
-            logger.debug(f"SSH command: {' '.join(ssh_cmd)}")
+            # Avoid logging password when sshpass is used
+            try:
+                if ssh_cmd[:2] == ['sshpass', '-p'] and len(ssh_cmd) > 2:
+                    masked_cmd = ssh_cmd.copy()
+                    masked_cmd[2] = '******'
+                    logger.debug(f"SSH command: {' '.join(masked_cmd)}")
+                else:
+                    logger.debug(f"SSH command: {' '.join(ssh_cmd)}")
+            except Exception:
+                logger.debug("Prepared SSH command")
             
             # Create a new PTY for the terminal
             pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
