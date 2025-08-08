@@ -246,7 +246,7 @@ class WelcomePage(Gtk.Box):
         
         # Welcome message
         message = Gtk.Label()
-        message.set_text('Select a host from the list to connect')
+        message.set_text('Manage your SSH connections with ease')
         message.set_halign(Gtk.Align.CENTER)
         message.add_css_class('dim-label')
         self.append(message)
