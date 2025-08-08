@@ -7,6 +7,22 @@ SSH connection manager with integrated terminal, tunneling, key management and s
 
 <img width="722" height="822" alt="Connection settings" src="https://github.com/user-attachments/assets/55fad9a6-9d4d-4c15-bfac-8c19c6df15c5" />
 
+
+
+Features
+
+- Load/save standard .ssh/config entries (it loads you current configuration)
+- Full support for Local, Remote and Dynamic port forwarding 
+- Intuitive, minimal UI with keyboard navigation and shortcuts 
+-- Press ctrl+L to quickly switch between hosts), close tabs with ctrl+w and move between tabs with alt+right/left arrow
+- SCP support for quicly uploading a file to remote server
+- Generate keypairs and add them to remote servers
+- Toggle to show/hide ip addresses/hostnames in main UI
+- Light/Dark themes
+- Customizable terminal font and color schemes
+- Free software (GPL v3 license)
+
+
 Runtime dependencies
 --------------------
 
