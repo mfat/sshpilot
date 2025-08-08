@@ -1,0 +1,27 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	# No build step needed - standalone Python application
+
+override_dh_auto_install:
+	# Install the main executable (runner)
+	install -D -m 755 run.py $(CURDIR)/debian/sshpilot/usr/bin/sshpilot
+	# Install resources into site-packages so app can import
+	install -d $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot
+	cp -a sshpilot/*.py $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/
+	install -d $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui
+	cp -a sshpilot/resources/* $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources/
+	cp -a sshpilot/ui/* $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui/
+	# Install desktop file and icon
+	install -D -m 644 io.github.mfat.sshpilot.desktop $(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop
+	install -D -m 644 sshpilot/resources/sshpilot.png $(CURDIR)/debian/sshpilot/usr/share/pixmaps/io.github.mfat.sshpilot.png
+
+override_dh_auto_test:
+	# Skip tests for now (can be enabled later)
+
+override_dh_auto_clean:
+	# Nothing to clean
+
