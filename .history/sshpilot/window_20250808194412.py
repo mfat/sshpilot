@@ -233,7 +233,7 @@ class WelcomePage(Gtk.Box):
         self.set_margin_bottom(48)
         
         # Welcome icon
-        icon = Gtk.Image.new_from_icon_name('org.gnome.Settings-network-workgroup-symbolic')
+        icon = Gtk.Image.new_from_icon_name('network-server-symbolic')
         icon.set_icon_size(Gtk.IconSize.LARGE)
         icon.set_pixel_size(64)
         self.append(icon)
@@ -261,11 +261,9 @@ class WelcomePage(Gtk.Box):
         
         shortcuts = [
             ('Ctrl+N', 'New Connection'),
-            ('Ctrl+L', 'Focus connection list to select server'),
-            ('Ctrl+Shift+K', 'New SSH Key'),
-            ('Alt+Right', 'Next Tab'),
-            ('Alt+Left', 'Previous Tab'),
-            ('Ctrl+W', 'Close Tab'),
+            ('Ctrl+L', 'Toggle Connection List'),
+            ('Ctrl+Shift+K', 'Generate SSH Key'),
+            ('Enter', 'Connect to Selected Host'),
         ]
         
         for shortcut, description in shortcuts:

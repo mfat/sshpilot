@@ -261,8 +261,10 @@ class WelcomePage(Gtk.Box):
         
         shortcuts = [
             ('Ctrl+N', 'New Connection'),
-            ('Ctrl+L', 'Focus connection list to select server'),
+            ('Ctrl+L', 'Toggle List Focus'),
             ('Ctrl+Shift+K', 'New SSH Key'),
+            ('Ctrl+R', 'Show Resources'),
+            ('Ctrl+,', 'Preferences'),
             ('Alt+Right', 'Next Tab'),
             ('Alt+Left', 'Previous Tab'),
             ('Ctrl+W', 'Close Tab'),
