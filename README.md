@@ -1,7 +1,7 @@
 sshPilot
 ========
 
-SSH connection manager with integrated terminal, tunneling, key management and scp upload support.
+SSH connection manager with integrated terminal, tunneling, tabbed interface and scp upload support.
 
 <img width="1260" height="833" alt="Main window" src="https://github.com/user-attachments/assets/743bb1fb-22de-4537-ba91-775cea48d57a" />
 
