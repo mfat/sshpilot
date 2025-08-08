@@ -657,6 +657,12 @@ class MainWindow(Adw.ApplicationWindow):
         
         logger.info("Main window initialized")
 
+        # On startup, focus the first item in the connection list (not the toolbar buttons)
+        try:
+            GLib.idle_add(self._focus_connection_list_first_row)
+        except Exception:
+            pass
+
     def setup_window(self):
         """Configure main window properties"""
         self.set_title('sshPilot')
@@ -669,6 +675,11 @@ class MainWindow(Adw.ApplicationWindow):
         # Connect window state signals
         self.connect('notify::default-width', self.on_window_size_changed)
         self.connect('notify::default-height', self.on_window_size_changed)
+        # Ensure initial focus after the window is mapped
+        try:
+            self.connect('map', lambda *a: GLib.timeout_add(50, self._focus_connection_list_first_row))
+        except Exception:
+            pass
 
         # Global shortcuts for tab navigation: Alt+Right / Alt+Left
         try:
@@ -769,6 +780,10 @@ class MainWindow(Adw.ApplicationWindow):
         add_button = Gtk.Button.new_from_icon_name('list-add-symbolic')
         add_button.set_tooltip_text('Add Connection (Ctrl+N)')
         add_button.connect('clicked', self.on_add_connection_clicked)
+        try:
+            add_button.set_can_focus(False)
+        except Exception:
+            pass
         header.append(add_button)
 
         # Hide/Show hostnames button (eye icon)
@@ -799,6 +814,10 @@ class MainWindow(Adw.ApplicationWindow):
             except Exception:
                 pass
         hide_button.connect('clicked', _on_toggle_hide)
+        try:
+            hide_button.set_can_focus(False)
+        except Exception:
+            pass
         header.append(hide_button)
         
         sidebar_box.append(header)
@@ -810,6 +829,10 @@ class MainWindow(Adw.ApplicationWindow):
         
         self.connection_list = Gtk.ListBox()
         self.connection_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        try:
+            self.connection_list.set_can_focus(True)
+        except Exception:
+            pass
         
         # Connect signals
         self.connection_list.connect('row-selected', self.on_connection_selected)  # For button sensitivity
@@ -939,6 +962,8 @@ class MainWindow(Adw.ApplicationWindow):
             first_row = self.connection_list.get_row_at_index(0)
             if first_row:
                 self.connection_list.select_row(first_row)
+                # Defer focus to the list to ensure keyboard navigation works immediately
+                GLib.idle_add(self._focus_connection_list_first_row)
 
     def setup_signals(self):
         """Connect to manager signals"""
@@ -963,6 +988,24 @@ class MainWindow(Adw.ApplicationWindow):
         """Show the welcome/help view when no connections are active"""
         self.content_stack.set_visible_child_name("welcome")
         logger.info("Showing welcome view")
+
+    def _focus_connection_list_first_row(self):
+        """Focus the connection list and ensure the first row is selected."""
+        try:
+            if not hasattr(self, 'connection_list') or self.connection_list is None:
+                return False
+            # If the list has no selection, select the first row
+            selected = self.connection_list.get_selected_row() if hasattr(self.connection_list, 'get_selected_row') else None
+            first_row = self.connection_list.get_row_at_index(0)
+            if not selected and first_row:
+                self.connection_list.select_row(first_row)
+            # If no widget currently has focus in the window, give it to the list
+            focus_widget = self.get_focus() if hasattr(self, 'get_focus') else None
+            if focus_widget is None and first_row:
+                self.connection_list.grab_focus()
+        except Exception:
+            pass
+        return False
     
     def show_tab_view(self):
         """Show the tab view when connections are active"""
