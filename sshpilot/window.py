@@ -5,7 +5,7 @@ Primary UI with connection list, tabs, and terminal management
 
 import os
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -166,11 +166,17 @@ class ConnectionRow(Gtk.ListBoxRow):
     def update_status(self):
         """Update connection status display"""
         try:
-            # Check if there's an active terminal for this connection
+            # Check if there's any active terminal for this connection
             window = self.get_root()
             has_active_terminal = False
-            
-            if hasattr(window, 'active_terminals') and self.connection in window.active_terminals:
+
+            # Prefer multi-tab map if present; fallback to most-recent mapping
+            if hasattr(window, 'connection_to_terminals') and self.connection in getattr(window, 'connection_to_terminals', {}):
+                for t in window.connection_to_terminals.get(self.connection, []) or []:
+                    if getattr(t, 'is_connected', False):
+                        has_active_terminal = True
+                        break
+            elif hasattr(window, 'active_terminals') and self.connection in window.active_terminals:
                 terminal = window.active_terminals[self.connection]
                 # Check if the terminal is still valid and connected
                 if terminal and hasattr(terminal, 'is_connected'):
@@ -574,12 +580,15 @@ class PreferencesWindow(Adw.PreferencesWindow):
         """Apply font to all active terminal widgets"""
         try:
             parent_window = self.get_transient_for()
-            if parent_window and hasattr(parent_window, 'active_terminals'):
+            if parent_window and hasattr(parent_window, 'connection_to_terminals'):
                 font_desc = Pango.FontDescription.from_string(font_string)
-                for terminal in parent_window.active_terminals.values():
-                    if hasattr(terminal, 'vte'):
-                        terminal.vte.set_font(font_desc)
-                logger.info(f"Applied font {font_string} to {len(parent_window.active_terminals)} terminals")
+                count = 0
+                for terms in parent_window.connection_to_terminals.values():
+                    for terminal in terms:
+                        if hasattr(terminal, 'vte'):
+                            terminal.vte.set_font(font_desc)
+                            count += 1
+                logger.info(f"Applied font {font_string} to {count} terminals")
         except Exception as e:
             logger.error(f"Failed to apply font to terminals: {e}")
     
@@ -683,14 +692,14 @@ class PreferencesWindow(Adw.PreferencesWindow):
         """Apply color scheme to all active terminal widgets"""
         try:
             parent_window = self.get_transient_for()
-            
-            if parent_window and hasattr(parent_window, 'active_terminals'):
-                for terminal in parent_window.active_terminals.values():
-                    if hasattr(terminal, 'apply_theme'):
-                        # Use the terminal's apply_theme method which will get the theme from config
-                        terminal.apply_theme(scheme_key)
-                
-                logger.info(f"Applied color scheme {scheme_key} to {len(parent_window.active_terminals)} terminals")
+            if parent_window and hasattr(parent_window, 'connection_to_terminals'):
+                count = 0
+                for terms in parent_window.connection_to_terminals.values():
+                    for terminal in terms:
+                        if hasattr(terminal, 'apply_theme'):
+                            terminal.apply_theme(scheme_key)
+                            count += 1
+                logger.info(f"Applied color scheme {scheme_key} to {count} terminals")
         except Exception as e:
             logger.error(f"Failed to apply color scheme to terminals: {e}")
 
@@ -710,7 +719,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.key_manager = KeyManager()
         
         # UI state
-        self.active_terminals = {}  # connection -> terminal_widget
+        self.active_terminals: Dict[Connection, TerminalWidget] = {}  # most recent terminal per connection
+        self.connection_to_terminals: Dict[Connection, List[TerminalWidget]] = {}
+        self.terminal_to_connection: Dict[TerminalWidget, Connection] = {}
         self.connection_rows = {}   # connection -> row_widget
         # Hide hosts toggle state
         try:
@@ -728,6 +739,10 @@ class MainWindow(Adw.ApplicationWindow):
         self.activate_action = Gio.SimpleAction.new('activate-connection', None)
         self.activate_action.connect('activate', self.on_activate_connection)
         self.add_action(self.activate_action)
+        # Context menu action to force opening a new connection tab
+        self.open_new_connection_action = Gio.SimpleAction.new('open-new-connection', None)
+        self.open_new_connection_action.connect('activate', self.on_open_new_connection_action)
+        self.add_action(self.open_new_connection_action)
         
         # Connect to close request signal
         self.connect('close-request', self.on_close_request)
@@ -977,6 +992,45 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Set up drag and drop for reordering
         self.setup_connection_list_dnd()
+
+        # Right-click context menu to open multiple connections
+        try:
+            context_click = Gtk.GestureClick()
+            context_click.set_button(0)  # handle any button; filter inside
+            def _on_list_pressed(gesture, n_press, x, y):
+                try:
+                    btn = 0
+                    try:
+                        btn = gesture.get_current_button()
+                    except Exception:
+                        pass
+                    if btn not in (Gdk.BUTTON_SECONDARY, 3):
+                        return
+                    row = self.connection_list.get_row_at_y(int(y))
+                    if not row:
+                        return
+                    self.connection_list.select_row(row)
+                    self._context_menu_connection = getattr(row, 'connection', None)
+                    menu = Gio.Menu()
+                    menu.append(_('Open New Connection'), 'win.open-new-connection')
+                    pop = Gtk.PopoverMenu.new_from_model(menu)
+                    pop.set_parent(self.connection_list)
+                    try:
+                        rect = Gdk.Rectangle()
+                        rect.x = int(x)
+                        rect.y = int(y)
+                        rect.width = 1
+                        rect.height = 1
+                        pop.set_pointing_to(rect)
+                    except Exception:
+                        pass
+                    pop.popup()
+                except Exception:
+                    pass
+            context_click.connect('pressed', _on_list_pressed)
+            self.connection_list.add_controller(context_click)
+        except Exception:
+            pass
         
         scrolled.set_child(self.connection_list)
         sidebar_box.append(scrolled)
@@ -1420,19 +1474,31 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception:
             pass
 
-    def connect_to_host(self, connection: Connection):
-        """Connect to SSH host and create terminal tab"""
-        if connection in self.active_terminals:
-            # Already connected, activate existing tab
-            terminal = self.active_terminals[connection]
-            page = self.tab_view.get_page(terminal)
-            if page is not None:
-                self.tab_view.set_selected_page(page)
-                return
-            else:
-                # Terminal exists but not in tab view, remove from active terminals
-                logger.warning(f"Terminal for {connection.nickname} not found in tab view, removing from active terminals")
-                del self.active_terminals[connection]
+    def connect_to_host(self, connection: Connection, force_new: bool = False):
+        """Connect to SSH host and create terminal tab.
+        If force_new is False and a tab exists for this server, select the most recent tab.
+        If force_new is True, always open a new tab.
+        """
+        if not force_new:
+            # If a tab exists for this connection, activate the most recent one
+            if connection in self.active_terminals:
+                terminal = self.active_terminals[connection]
+                page = self.tab_view.get_page(terminal)
+                if page is not None:
+                    self.tab_view.set_selected_page(page)
+                    return
+                else:
+                    # Terminal exists but not in tab view, remove from active terminals
+                    logger.warning(f"Terminal for {connection.nickname} not found in tab view, removing from active terminals")
+                    del self.active_terminals[connection]
+            # Fallback: look up any existing terminals for this connection
+            existing_terms = self.connection_to_terminals.get(connection) or []
+            for t in reversed(existing_terms):  # most recent last
+                page = self.tab_view.get_page(t)
+                if page is not None:
+                    self.active_terminals[connection] = t
+                    self.tab_view.set_selected_page(page)
+                    return
         
         # Create new terminal
         terminal = TerminalWidget(connection, self.config, self.connection_manager)
@@ -1448,7 +1514,9 @@ class MainWindow(Adw.ApplicationWindow):
         page.set_title(connection.nickname)
         page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
         
-        # Store reference
+        # Store references for multi-tab tracking
+        self.connection_to_terminals.setdefault(connection, []).append(terminal)
+        self.terminal_to_connection[terminal] = connection
         self.active_terminals[connection] = terminal
         
         # Switch to tab view when first connection is made
@@ -1479,8 +1547,18 @@ class MainWindow(Adw.ApplicationWindow):
                 if not terminal._connect_ssh():
                     logger.error("Failed to establish SSH connection")
                     self.tab_view.close_page(page)
-                    if connection in self.active_terminals:
-                        del self.active_terminals[connection]
+                    # Cleanup on failure
+                    try:
+                        if connection in self.active_terminals and self.active_terminals[connection] is terminal:
+                            del self.active_terminals[connection]
+                        if terminal in self.terminal_to_connection:
+                            del self.terminal_to_connection[terminal]
+                        if connection in self.connection_to_terminals and terminal in self.connection_to_terminals[connection]:
+                            self.connection_to_terminals[connection].remove(terminal)
+                            if not self.connection_to_terminals[connection]:
+                                del self.connection_to_terminals[connection]
+                    except Exception:
+                        pass
                         
             except Exception as e:
                 logger.error(f"Error setting terminal colors: {e}")
@@ -1488,8 +1566,18 @@ class MainWindow(Adw.ApplicationWindow):
                 if not terminal._connect_ssh():
                     logger.error("Failed to establish SSH connection")
                     self.tab_view.close_page(page)
-                    if connection in self.active_terminals:
-                        del self.active_terminals[connection]
+                    # Cleanup on failure
+                    try:
+                        if connection in self.active_terminals and self.active_terminals[connection] is terminal:
+                            del self.active_terminals[connection]
+                        if terminal in self.terminal_to_connection:
+                            del self.terminal_to_connection[terminal]
+                        if connection in self.connection_to_terminals and terminal in self.connection_to_terminals[connection]:
+                            self.connection_to_terminals[connection].remove(terminal)
+                            if not self.connection_to_terminals[connection]:
+                                del self.connection_to_terminals[connection]
+                    except Exception:
+                        pass
         
         # Schedule the color setting to run after the terminal is fully initialized
         GLib.idle_add(_set_terminal_colors)
@@ -1542,20 +1630,20 @@ class MainWindow(Adw.ApplicationWindow):
             self.connection_list.select_row(row)
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
         elif n_press == 2:  # Double click - connect
-            self.connect_to_host(row.connection)
+            self._cycle_connection_tabs_or_open(row.connection)
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
 
     def on_connection_activated(self, list_box, row):
         """Handle connection activation (Enter key)"""
         if row:
-            self.connect_to_host(row.connection)
+            self._cycle_connection_tabs_or_open(row.connection)
             
 
         
     def on_connection_activate(self, list_box, row):
         """Handle connection activation (Enter key or double-click)"""
         if row:
-            self.connect_to_host(row.connection)
+            self._cycle_connection_tabs_or_open(row.connection)
             return True  # Stop event propagation
         return False
         
@@ -1563,12 +1651,54 @@ class MainWindow(Adw.ApplicationWindow):
         """Handle the activate-connection action"""
         row = self.connection_list.get_selected_row()
         if row:
-            self.connect_to_host(row.connection)
+            self._cycle_connection_tabs_or_open(row.connection)
             
     def on_connection_activated(self, list_box, row):
         """Handle connection activation (double-click)"""
         if row:
-            self.connect_to_host(row.connection)
+            self._cycle_connection_tabs_or_open(row.connection)
+
+    def _cycle_connection_tabs_or_open(self, connection: Connection):
+        """If there are open tabs for this server, cycle to the next one (wrap).
+        Otherwise open a new tab for the server.
+        """
+        try:
+            # Collect current pages in visual/tab order
+            terms_for_conn = []
+            try:
+                n = self.tab_view.get_n_pages()
+            except Exception:
+                n = 0
+            for i in range(n):
+                page = self.tab_view.get_nth_page(i)
+                child = page.get_child() if hasattr(page, 'get_child') else None
+                if child is not None and self.terminal_to_connection.get(child) == connection:
+                    terms_for_conn.append(child)
+
+            if terms_for_conn:
+                # Determine current index among this connection's tabs
+                selected = self.tab_view.get_selected_page()
+                current_idx = -1
+                if selected is not None:
+                    current_child = selected.get_child()
+                    for i, t in enumerate(terms_for_conn):
+                        if t == current_child:
+                            current_idx = i
+                            break
+                # Compute next index (wrap)
+                next_idx = (current_idx + 1) % len(terms_for_conn) if current_idx >= 0 else 0
+                next_term = terms_for_conn[next_idx]
+                page = self.tab_view.get_page(next_term)
+                if page is not None:
+                    self.tab_view.set_selected_page(page)
+                    # Update most-recent mapping
+                    self.active_terminals[connection] = next_term
+                    return
+
+            # No existing tabs for this connection -> open a new one
+            self.connect_to_host(connection, force_new=False)
+        except Exception as e:
+            logger.error(f"Failed to cycle or open for {getattr(connection, 'nickname', '')}: {e}")
 
     def on_connection_selected(self, list_box, row):
         """Handle connection list selection change"""
@@ -1914,15 +2044,29 @@ class MainWindow(Adw.ApplicationWindow):
         if hasattr(page, 'get_child'):
             child = page.get_child()
             if hasattr(child, 'disconnect'):
-                # Get the connection associated with this terminal
-                for connection, terminal in list(self.active_terminals.items()):
-                    if terminal == child:
-                        # Disconnect the terminal
-                        child.disconnect()
-                        # Remove from active terminals
-                        if connection in self.active_terminals:
-                            del self.active_terminals[connection]
-                        break
+                # Get the connection associated with this terminal using reverse map
+                connection = self.terminal_to_connection.get(child)
+                # Disconnect the terminal
+                child.disconnect()
+                # Clean up multi-tab tracking maps
+                try:
+                    if connection is not None:
+                        # Remove from list for this connection
+                        if connection in self.connection_to_terminals and child in self.connection_to_terminals[connection]:
+                            self.connection_to_terminals[connection].remove(child)
+                            if not self.connection_to_terminals[connection]:
+                                del self.connection_to_terminals[connection]
+                        # Update most-recent mapping
+                        if connection in self.active_terminals and self.active_terminals[connection] is child:
+                            remaining = self.connection_to_terminals.get(connection)
+                            if remaining:
+                                self.active_terminals[connection] = remaining[-1]
+                            else:
+                                del self.active_terminals[connection]
+                    if child in self.terminal_to_connection:
+                        del self.terminal_to_connection[child]
+                except Exception:
+                    pass
         
         # Close the tab page
         tab_view.close_page(page)
@@ -1938,11 +2082,8 @@ class MainWindow(Adw.ApplicationWindow):
         if hasattr(page, 'get_child'):
             child = page.get_child()
             if hasattr(child, 'disconnect'):
-                for conn, term in list(self.active_terminals.items()):
-                    if term == child:
-                        connection = conn
-                        terminal = term
-                        break
+                terminal = child
+                connection = self.terminal_to_connection.get(child)
         
         if not connection:
             # For non-terminal tabs, allow immediate close
@@ -2018,6 +2159,29 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_tab_detached(self, tab_view, page, position):
         """Handle tab detached"""
+        # Cleanup terminal-to-connection maps when a page is detached
+        try:
+            if hasattr(page, 'get_child'):
+                child = page.get_child()
+                if child in self.terminal_to_connection:
+                    connection = self.terminal_to_connection.get(child)
+                    # Remove reverse map
+                    del self.terminal_to_connection[child]
+                    # Remove from per-connection list
+                    if connection in self.connection_to_terminals and child in self.connection_to_terminals[connection]:
+                        self.connection_to_terminals[connection].remove(child)
+                        if not self.connection_to_terminals[connection]:
+                            del self.connection_to_terminals[connection]
+                    # Update most recent mapping if needed
+                    if connection in self.active_terminals and self.active_terminals[connection] is child:
+                        remaining = self.connection_to_terminals.get(connection)
+                        if remaining:
+                            self.active_terminals[connection] = remaining[-1]
+                        else:
+                            del self.active_terminals[connection]
+        except Exception:
+            pass
+
         # Show welcome view if no more tabs are left
         if tab_view.get_n_pages() == 0:
             self.show_welcome_view()
@@ -2077,19 +2241,32 @@ class MainWindow(Adw.ApplicationWindow):
     def on_connection_removed(self, manager, connection):
         """Handle connection removed from the connection manager"""
         logger.info(f"Connection removed: {connection.nickname}")
-        
+
         # Remove from UI if it exists
         if connection in self.connection_rows:
             row = self.connection_rows[connection]
             self.connection_list.remove(row)
             del self.connection_rows[connection]
-        
-        # Close terminal if it's open
+
+        # Close all terminals for this connection and clean up maps
+        terminals = list(self.connection_to_terminals.get(connection, []))
+        for term in terminals:
+            try:
+                page = self.tab_view.get_page(term)
+                if page:
+                    self.tab_view.close_page(page)
+            except Exception:
+                pass
+            try:
+                if hasattr(term, 'disconnect'):
+                    term.disconnect()
+            except Exception:
+                pass
+            if term in self.terminal_to_connection:
+                del self.terminal_to_connection[term]
+        if connection in self.connection_to_terminals:
+            del self.connection_to_terminals[connection]
         if connection in self.active_terminals:
-            terminal = self.active_terminals[connection]
-            page = self.tab_view.get_page(terminal)
-            if page:
-                self.tab_view.close_page(page)
             del self.active_terminals[connection]
 
 
@@ -2099,18 +2276,33 @@ class MainWindow(Adw.ApplicationWindow):
         self.add_connection_row(connection)
 
     def on_connection_removed(self, manager, connection):
-        """Handle connection removed"""
+        """Handle connection removed (multi-tab aware)"""
         # Remove from UI
         if connection in self.connection_rows:
             row = self.connection_rows[connection]
             self.connection_list.remove(row)
             del self.connection_rows[connection]
-        
-        # Close terminal if open
+
+        # Close all terminals for this connection and clean up maps
+        terminals = list(self.connection_to_terminals.get(connection, []))
+        for term in terminals:
+            try:
+                page = self.tab_view.get_page(term)
+                if page:
+                    self.tab_view.close_page(page)
+            except Exception:
+                pass
+            try:
+                if hasattr(term, 'disconnect'):
+                    term.disconnect()
+            except Exception:
+                pass
+            if term in self.terminal_to_connection:
+                del self.terminal_to_connection[term]
+        if connection in self.connection_to_terminals:
+            del self.connection_to_terminals[connection]
         if connection in self.active_terminals:
-            terminal = self.active_terminals[connection]
-            page = self.tab_view.get_page(terminal)
-            self.tab_view.close_page(page)
+            del self.active_terminals[connection]
 
     def on_connection_status_changed(self, manager, connection, is_connected):
         """Handle connection status change"""
@@ -2136,8 +2328,9 @@ class MainWindow(Adw.ApplicationWindow):
         # Apply relevant changes
         if key.startswith('terminal.'):
             # Update terminal themes/fonts
-            for terminal in self.active_terminals.values():
-                terminal.apply_theme()
+            for terms in self.connection_to_terminals.values():
+                for terminal in terms:
+                    terminal.apply_theme()
 
     def on_window_size_changed(self, window, param):
         """Handle window size change"""
@@ -2186,12 +2379,12 @@ class MainWindow(Adw.ApplicationWindow):
         if self._is_quitting:
             return False  # Already quitting, allow close
             
-        # Check for active connections
-        # Filter only truly connected terminals
-        actually_connected = {
-            conn: term for conn, term in self.active_terminals.items()
-            if getattr(term, 'is_connected', False)
-        }
+        # Check for active connections across all tabs
+        actually_connected = {}
+        for conn, terms in self.connection_to_terminals.items():
+            for term in terms:
+                if getattr(term, 'is_connected', False):
+                    actually_connected.setdefault(conn, []).append(term)
         if actually_connected:
             self.show_quit_confirmation_dialog()
             return True  # Prevent close, let dialog handle it
@@ -2201,11 +2394,12 @@ class MainWindow(Adw.ApplicationWindow):
 
     def show_quit_confirmation_dialog(self):
         """Show confirmation dialog when quitting with active connections"""
-        # Only count terminals that are actually connected
-        connected_items = [
-            (conn, term) for conn, term in self.active_terminals.items()
-            if getattr(term, 'is_connected', False)
-        ]
+        # Only count terminals that are actually connected across all tabs
+        connected_items = []
+        for conn, terms in self.connection_to_terminals.items():
+            for term in terms:
+                if getattr(term, 'is_connected', False):
+                    connected_items.append((conn, term))
         active_count = len(connected_items)
         connection_names = [conn.nickname for conn, _ in connected_items]
         
@@ -2237,6 +2431,20 @@ class MainWindow(Adw.ApplicationWindow):
             # Start cleanup process
             self._cleanup_and_quit()
 
+    def on_open_new_connection_action(self, action, param=None):
+        """Open a new tab for the selected connection via context menu."""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                # Fallback to selected row if any
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+            self.connect_to_host(connection, force_new=True)
+        except Exception as e:
+            logger.error(f"Failed to open new connection tab: {e}")
+
     def _cleanup_and_quit(self):
         """Clean up all connections and quit - SIMPLIFIED VERSION"""
         if self._is_quitting:
@@ -2246,8 +2454,11 @@ class MainWindow(Adw.ApplicationWindow):
         logger.info("Starting cleanup before quit...")
         self._is_quitting = True
         
-        # Get list of connections to disconnect
-        connections_to_disconnect = list(self.active_terminals.items())
+        # Get list of all terminals to disconnect
+        connections_to_disconnect = []
+        for conn, terms in self.connection_to_terminals.items():
+            for term in terms:
+                connections_to_disconnect.append((conn, term))
         
         if not connections_to_disconnect:
             # No connections to clean up, quit immediately
