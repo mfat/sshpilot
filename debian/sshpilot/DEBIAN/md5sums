@@ -10,7 +10,7 @@ e30972092d2a77248166eedeed70e777  usr/lib/python3/dist-packages/sshpilot/port_fo
 d8780eecf6f9090282c73e2da9f19ed0  usr/lib/python3/dist-packages/sshpilot/resource_monitor.py
 6b91867e2dd286f1b600904d45c54f12  usr/lib/python3/dist-packages/sshpilot/resources/sshpilot.gresource
 2a69a698ead37827b6d8d9405fee5fa4  usr/lib/python3/dist-packages/sshpilot/resources/sshpilot.gresource.xml
-6bd93dbc8adef92f907fa6abed1f7d17  usr/lib/python3/dist-packages/sshpilot/resources/sshpilot.png
+9a42b8be78dcee456df3e049c8a8a4ce  usr/lib/python3/dist-packages/sshpilot/resources/sshpilot.png
 427a73d1ee1052b18bc7fb43779b82d4  usr/lib/python3/dist-packages/sshpilot/terminal.py
 a1c2be30fda1d9404db9f533692aa970  usr/lib/python3/dist-packages/sshpilot/ui/connection_dialog.ui
 eb646bbc36ffd58044de586f72a3b810  usr/lib/python3/dist-packages/sshpilot/ui/connection_dialog.ui.new
@@ -19,6 +19,6 @@ f47f091076400c65e138aff2c851e52c  usr/lib/python3/dist-packages/sshpilot/ui/main
 5c6a336b25051612d93b5c8859c38a93  usr/lib/python3/dist-packages/sshpilot/ui/port_forwarding_rules.ui
 677634df73ee551a045a637c3e7c03e4  usr/lib/python3/dist-packages/sshpilot/ui/preferences.ui
 09e8d194d1b3367a8e98e9f0ad38ae63  usr/lib/python3/dist-packages/sshpilot/window.py
-41c15fa5e1119388bf5e52642632601b  usr/share/applications/io.github.mfat.sshpilot.desktop
-7c76576001ba94479233bd81f05524c6  usr/share/doc/sshpilot/changelog.Debian.gz
-6bd93dbc8adef92f907fa6abed1f7d17  usr/share/pixmaps/io.github.mfat.sshpilot.png
+e8f99b0a4d3d08fbfef517a9c3ccbd20  usr/share/applications/io.github.mfat.sshpilot.desktop
+dbdcf4b515b947a9ee81477e7fe2bdf5  usr/share/doc/sshpilot/changelog.Debian.gz
+9a42b8be78dcee456df3e049c8a8a4ce  usr/share/pixmaps/io.github.mfat.sshpilot.png
