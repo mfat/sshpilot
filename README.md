@@ -11,7 +11,7 @@ SSH connection manager with integrated terminal, tunneling, tabbed interface and
 
 ## Features
 
-- Load/save standard .ssh/config entries (it loads you current configuration)
+- Load/save standard .ssh/config entries (it can load your current configuration)
 - Tabbed interface
 - Full support for Local, Remote and Dynamic port forwarding 
 - Intuitive, minimal UI with keyboard navigation and shortcuts 
