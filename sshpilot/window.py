@@ -743,6 +743,12 @@ class MainWindow(Adw.ApplicationWindow):
         self.open_new_connection_action = Gio.SimpleAction.new('open-new-connection', None)
         self.open_new_connection_action.connect('activate', self.on_open_new_connection_action)
         self.add_action(self.open_new_connection_action)
+        # (Toasts disabled) Remove any toast-related actions if previously defined
+        try:
+            if hasattr(self, '_toast_reconnect_action'):
+                self.remove_action('toast-reconnect')
+        except Exception:
+            pass
         
         # Connect to close request signal
         self.connect('close-request', self.on_close_request)
@@ -858,8 +864,8 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Add split view to main container
         main_box.append(self.split_view)
-        
-        # Set as window content
+
+        # Set main content (no toasts preferred)
         self.set_content(main_box)
 
     def _set_sidebar_widget(self, widget: Gtk.Widget) -> None:
@@ -2222,6 +2228,9 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Do not reset controlled reconnect flag here; it is managed by the
         # reconnection flow (_on_reconnect_response/_reset_controlled_reconnect)
+
+        # Toasts are disabled per user preference; no notification here.
+        pass
             
     def on_connection_added(self, manager, connection):
         """Handle new connection added to the connection manager"""
@@ -2320,6 +2329,18 @@ class MainWindow(Adw.ApplicationWindow):
         if is_connected and getattr(self, '_is_controlled_reconnect', False):
             GLib.idle_add(self._hide_reconnecting_message)
             self._is_controlled_reconnect = False
+
+        # Use the same reliable status to control terminal banners
+        try:
+            for term in self.connection_to_terminals.get(connection, []) or []:
+                if hasattr(term, '_set_disconnected_banner_visible'):
+                    if is_connected:
+                        term._set_disconnected_banner_visible(False)
+                    else:
+                        # Do not force-show here to avoid duplicate messages; terminals handle showing on failure/loss
+                        pass
+        except Exception:
+            pass
 
     def on_setting_changed(self, config, key, value):
         """Handle configuration setting change"""

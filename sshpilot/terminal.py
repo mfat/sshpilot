@@ -11,6 +11,7 @@ import time
 import json
 import re
 import gi
+from gettext import gettext as _
 import asyncio
 import errno
 import threading
@@ -213,7 +214,86 @@ class TerminalWidget(Gtk.Box):
         self.overlay.add_overlay(self.connecting_bg)
         self.overlay.add_overlay(self.connecting_box)
 
-        self.append(self.overlay)
+        # Disconnected banner with reconnect button at the bottom (separate panel below terminal)
+        # Install CSS for a solid red background banner once
+        try:
+            display = Gdk.Display.get_default()
+            if display and not getattr(display, '_sshpilot_banner_css_installed', False):
+                css_provider = Gtk.CssProvider()
+                css_provider.load_from_data(b"""
+                    .disconnected-banner {
+                        background-color: #cc0000;
+                        color: #ffffff;
+                        border-radius: 6px;
+                        padding: 8px 10px;
+                    }
+                    .disconnected-banner label {
+                        color: #ffffff;
+                    }
+                    .reconnect-button {
+                        background: #4a4a4a;
+                        color: #ffffff;
+                        border-radius: 4px;
+                        padding: 6px 10px;
+                    }
+                    .reconnect-button:hover {
+                        background: #3f3f3f;
+                    }
+                    .reconnect-button:active {
+                        background: #353535;
+                    }
+                """)
+                Gtk.StyleContext.add_provider_for_display(
+                    display, css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                )
+                setattr(display, '_sshpilot_banner_css_installed', True)
+        except Exception:
+            pass
+
+        self.disconnected_banner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.disconnected_banner.set_halign(Gtk.Align.FILL)
+        self.disconnected_banner.set_valign(Gtk.Align.END)
+        self.disconnected_banner.set_margin_start(8)
+        self.disconnected_banner.set_margin_end(8)
+        self.disconnected_banner.set_margin_bottom(8)
+        try:
+            self.disconnected_banner.add_css_class('disconnected-banner')
+        except Exception:
+            pass
+        # Banner content: label + spacer + reconnect + dismiss
+        self.disconnected_banner_label = Gtk.Label()
+        self.disconnected_banner_label.set_halign(Gtk.Align.START)
+        self.disconnected_banner_label.set_hexpand(True)
+        self.disconnected_banner_label.set_text(_('Disconnected.'))
+        self.disconnected_banner.append(self.disconnected_banner_label)
+        self.reconnect_button = Gtk.Button.new_with_label(_('Reconnect'))
+        try:
+            # Ensure neutral gray styling via custom class
+            self.reconnect_button.add_css_class('reconnect-button')
+        except Exception:
+            pass
+        self.reconnect_button.connect('clicked', self._on_reconnect_clicked)
+        self.disconnected_banner.append(self.reconnect_button)
+
+        # Dismiss button to hide the banner manually
+        self.dismiss_button = Gtk.Button.new_with_label(_('Dismiss'))
+        try:
+            self.dismiss_button.add_css_class('flat')
+            self.dismiss_button.add_css_class('reconnect-button')
+        except Exception:
+            pass
+        self.dismiss_button.connect('clicked', lambda *_: self._set_disconnected_banner_visible(False))
+        self.disconnected_banner.append(self.dismiss_button)
+        self.disconnected_banner.set_visible(False)
+
+        # Container to stack terminal (overlay) above the banner panel
+        self.container_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.container_box.set_hexpand(True)
+        self.container_box.set_vexpand(True)
+        self.container_box.append(self.overlay)
+        self.container_box.append(self.disconnected_banner)
+
+        self.append(self.container_box)
         
         # Set expansion properties
         self.scrolled_window.set_hexpand(True)
@@ -235,6 +315,30 @@ class TerminalWidget(Gtk.Box):
         # Show overlay initially
         self._set_connecting_overlay_visible(True)
         logger.debug("Terminal widget initialized")
+
+    def _set_disconnected_banner_visible(self, visible: bool, message: str = None):
+        try:
+            if message:
+                self.disconnected_banner_label.set_text(message)
+            if hasattr(self.disconnected_banner, 'set_visible'):
+                self.disconnected_banner.set_visible(visible)
+        except Exception:
+            pass
+
+    def _on_reconnect_clicked(self, *args):
+        """User clicked reconnect on the banner"""
+        try:
+            # Immediately hide banner and show connecting overlay
+            self._set_disconnected_banner_visible(False)
+            self._set_connecting_overlay_visible(True)
+            # Reuse existing connect method
+            if not self._connect_ssh():
+                # Show banner again if failed to start reconnect
+                self._set_connecting_overlay_visible(False)
+                self._set_disconnected_banner_visible(True, _('Reconnect failed to start'))
+        except Exception:
+            self._set_connecting_overlay_visible(False)
+            self._set_disconnected_banner_visible(True, _('Reconnect failed'))
 
     def _set_connecting_overlay_visible(self, visible: bool):
         try:
@@ -820,47 +924,71 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Error in setup_terminal: {e}", exc_info=True)
             raise
         
-        # Enable right-click context menu
-        self.vte.set_context_menu_model(self.create_context_menu())
-        
-        # Install standard Linux terminal shortcuts (Ctrl+Shift+C/V/A)
+        # Install terminal shortcuts and custom context menu
         self._install_shortcuts()
+        self._setup_context_menu()
 
-    def create_context_menu(self):
-        """Create right-click context menu"""
-        menu = Gio.Menu()
-        # Add actions
-        menu.append("Copy", "app.terminal-copy")
-        menu.append("Paste", "app.terminal-paste")
-        menu.append("Select All", "app.terminal-select-all")
-        
-        # Install actions on the widget's application
-        app = Gtk.Application.get_default()
-        if app:
-            # Copy
-            if app.lookup_action("terminal-copy") is None:
-                copy_action = Gio.SimpleAction.new("terminal-copy", None)
-                copy_action.connect("activate", lambda a, p: self.copy_text())
-                app.add_action(copy_action)
-            # Paste
-            if app.lookup_action("terminal-paste") is None:
-                paste_action = Gio.SimpleAction.new("terminal-paste", None)
-                paste_action.connect("activate", lambda a, p: self.paste_text())
-                app.add_action(paste_action)
-            # Select All
-            if app.lookup_action("terminal-select-all") is None:
-                sel_action = Gio.SimpleAction.new("terminal-select-all", None)
-                sel_action.connect("activate", lambda a, p: self.select_all())
-                app.add_action(sel_action)
-            # Standard accelerators
-            try:
-                app.set_accels_for_action("app.terminal-copy", ["<Primary><Shift>c"]) 
-                app.set_accels_for_action("app.terminal-paste", ["<Primary><Shift>v"]) 
-                app.set_accels_for_action("app.terminal-select-all", ["<Primary><Shift>a"]) 
-            except Exception:
-                pass
-        
-        return menu
+    def _setup_context_menu(self):
+        """Set up a robust per-terminal context menu and actions."""
+        try:
+            # Per-widget action group
+            self._menu_actions = Gio.SimpleActionGroup()
+            act_copy = Gio.SimpleAction.new("copy", None)
+            act_copy.connect("activate", lambda a, p: self.copy_text())
+            self._menu_actions.add_action(act_copy)
+            act_paste = Gio.SimpleAction.new("paste", None)
+            act_paste.connect("activate", lambda a, p: self.paste_text())
+            self._menu_actions.add_action(act_paste)
+            act_selall = Gio.SimpleAction.new("select_all", None)
+            act_selall.connect("activate", lambda a, p: self.select_all())
+            self._menu_actions.add_action(act_selall)
+            self.insert_action_group('term', self._menu_actions)
+
+            # Menu model
+            self._menu_model = Gio.Menu()
+            self._menu_model.append(_("Copy"), "term.copy")
+            self._menu_model.append(_("Paste"), "term.paste")
+            self._menu_model.append(_("Select All"), "term.select_all")
+
+            # Popover
+            self._menu_popover = Gtk.PopoverMenu.new_from_model(self._menu_model)
+            self._menu_popover.set_has_arrow(True)
+            self._menu_popover.set_parent(self.vte)
+
+            # Right-click gesture to open popover
+            gesture = Gtk.GestureClick()
+            gesture.set_button(0)
+            def _on_pressed(gest, n_press, x, y):
+                try:
+                    btn = 0
+                    try:
+                        btn = gest.get_current_button()
+                    except Exception:
+                        pass
+                    if btn not in (Gdk.BUTTON_SECONDARY, 3):
+                        return
+                    # Focus terminal first for reliable copy/paste
+                    try:
+                        self.vte.grab_focus()
+                    except Exception:
+                        pass
+                    # Position popover near click
+                    try:
+                        rect = Gdk.Rectangle()
+                        rect.x = int(x)
+                        rect.y = int(y)
+                        rect.width = 1
+                        rect.height = 1
+                        self._menu_popover.set_pointing_to(rect)
+                    except Exception:
+                        pass
+                    self._menu_popover.popup()
+                except Exception:
+                    pass
+            gesture.connect('pressed', _on_pressed)
+            self.vte.add_controller(gesture)
+        except Exception as e:
+            logger.debug(f"Context menu setup skipped/failed: {e}")
 
     def _install_shortcuts(self):
         """Install local shortcuts on the VTE widget for copy/paste/select-all"""
@@ -957,6 +1085,8 @@ class TerminalWidget(Gtk.Box):
         
         # Apply theme after connection is established
         self.apply_theme()
+        # Hide any reconnect banner on success
+        self._set_disconnected_banner_visible(False)
         
     def _on_connection_lost(self):
         """Handle SSH connection loss"""
@@ -970,6 +1100,9 @@ class TerminalWidget(Gtk.Box):
                 self.connection_manager.emit('connection-status-changed', self.connection, False)
             
             self.emit('connection-lost')
+            # Show reconnect UI
+            self._set_connecting_overlay_visible(False)
+            self._set_disconnected_banner_visible(True, _('Connection lost.'))
     
     def on_child_exited(self, widget, status):
         """Called when the child process exits"""
@@ -977,6 +1110,9 @@ class TerminalWidget(Gtk.Box):
             self.is_connected = False
             logger.info(f"SSH session ended with status {status}")
             self.emit('connection-lost')
+            # Show reconnect UI
+            self._set_connecting_overlay_visible(False)
+            self._set_disconnected_banner_visible(True, _('Session ended.'))
         else:
             # Early exit without connection; if forwarding was requested, show dialog
             try:
@@ -1229,19 +1365,31 @@ class TerminalWidget(Gtk.Box):
             # Show error in terminal
             error_msg = f"\r\n\x1b[31mConnection failed: {error_message}\x1b[0m\r\n"
             self.vte.feed(error_msg.encode('utf-8'))
-            
+
             self.is_connected = False
-            
+
             # Clean up PTY if it exists
             if hasattr(self, 'pty') and self.pty:
                 self.pty.close()
                 del self.pty
-            
+
             # Do not reset here to avoid losing theme; leave buffer with error text
-            
+
             # Notify UI
             self.emit('connection-failed', error_message)
-            
+
+            # Show reconnect banner for new-connection failures as well
+            self._set_connecting_overlay_visible(False)
+            # Detect timeout-ish messages to provide clearer text
+            msg_lower = (error_message or '').lower()
+            if 'timeout' in msg_lower or 'timed out' in msg_lower:
+                banner_text = _('Connection timeout. Try again?')
+            elif 'failed to read ssh banner' in msg_lower:
+                banner_text = _('Server not ready yet. Try again?')
+            else:
+                banner_text = _('Connection failed.')
+            self._set_disconnected_banner_visible(True, banner_text)
+
         except Exception as e:
             logger.error(f"Error in _on_connection_failed: {e}")
 
@@ -1254,6 +1402,9 @@ class TerminalWidget(Gtk.Box):
         
         self.disconnect()
         self.emit('connection-lost')
+        # Show reconnect UI
+        self._set_connecting_overlay_visible(False)
+        self._set_disconnected_banner_visible(True, _('Session ended.'))
 
     def on_title_changed(self, terminal):
         """Handle terminal title change"""
