@@ -23,5 +23,5 @@ Depends: ${misc:Depends}, ${python3:Depends},
          sshpass
 Description: SSH connection manager with integrated terminal
  sshPilot provides SSH connection management, integrated terminal using VTE,
- tunneling, key management, and resource monitoring.
+ tunneling, key management, and tabbed interface.
 
