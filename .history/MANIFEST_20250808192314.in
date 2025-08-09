@@ -1,4 +1,0 @@
-include io.github.mfat.sshpilot.desktop
-recursive-include sshpilot/resources *
-recursive-include sshpilot/ui *
-
