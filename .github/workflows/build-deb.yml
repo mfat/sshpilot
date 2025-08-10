@@ -88,7 +88,7 @@ EOF
             cat > debian/rules <<'EOF'
 #!/usr/bin/make -f
 %:
-	dh $@
+  dh $@
 EOF
             chmod +x debian/rules
           fi
