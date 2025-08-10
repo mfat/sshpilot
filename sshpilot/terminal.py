@@ -616,6 +616,11 @@ class TerminalWidget(Gtk.Box):
             self.is_connected = True
             self.emit('connection-established')
             self._set_connecting_overlay_visible(False)
+            # Ensure any reconnect/disconnected banner is hidden upon successful spawn
+            try:
+                self._set_disconnected_banner_visible(False)
+            except Exception:
+                pass
             
         except Exception as e:
             logger.error(f"Error in spawn complete: {e}")
@@ -1318,6 +1323,13 @@ class TerminalWidget(Gtk.Box):
         title = terminal.get_window_title()
         if title:
             self.emit('title-changed', title)
+        # If terminal is connected and a title update occurs (often when prompt is ready),
+        # ensure the reconnect banner is hidden
+        try:
+            if getattr(self, 'is_connected', False):
+                self._set_disconnected_banner_visible(False)
+        except Exception:
+            pass
 
     def on_bell(self, terminal):
         """Handle terminal bell"""

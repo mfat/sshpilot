@@ -515,7 +515,17 @@ class ConnectionManager(GObject.Object):
                             if current_host and current_config:
                                 connection_data = self.parse_host_config(current_config)
                                 if connection_data:
-                                    self.connections.append(Connection(connection_data))
+                                    # Build connection and apply per-connection metadata (e.g., auth_method)
+                                    conn = Connection(connection_data)
+                                    try:
+                                        from .config import Config
+                                        cfg = Config()
+                                        meta = cfg.get_connection_meta(conn.nickname)
+                                        if isinstance(meta, dict) and 'auth_method' in meta:
+                                            conn.auth_method = meta['auth_method']
+                                    except Exception:
+                                        pass
+                                    self.connections.append(conn)
                             
                             # Start new host
                             current_host = value
