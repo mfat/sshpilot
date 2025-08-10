@@ -19,8 +19,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-class ConnectionDialog(Adw.Window):
-    """Dialog for adding/editing SSH connections"""
+class ConnectionDialog(Adw.PreferencesDialog):
+    """Dialog for adding/editing SSH connections using PreferencesDialog layout"""
     
     __gtype_name__ = 'ConnectionDialog'
     
@@ -36,14 +36,22 @@ class ConnectionDialog(Adw.Window):
         self.is_editing = connection is not None
         
         self.set_title('Edit Connection' if self.is_editing else 'New Connection')
-        self.set_default_size(600, 700)
-        self.set_modal(True)
-        self.set_resizable(True)
-        self.set_transient_for(parent)
-        self.set_size_request(500, 500)  # Minimum size
+        # PreferencesDialog is modal by nature; just set transient parent
+        try:
+            self.set_transient_for(parent)
+        except Exception:
+            pass
+        # PreferencesDialog doesn't support set_default_size; rely on content sizing
         
         self.setup_ui()
-        self.load_connection_data()
+        try:
+            self.add_response("cancel", _("Cancel"))
+            self.add_response("save", _("Save"))
+            self.set_close_response("cancel")
+            self.connect("response", self.on_response)
+        except Exception:
+            pass
+        GLib.idle_add(self.load_connection_data)
         
         # Add ESC key to cancel/close the dialog
         try:
@@ -82,6 +90,14 @@ class ConnectionDialog(Adw.Window):
             return
         
         try:
+            # Ensure UI controls exist
+            required_attrs = [
+                'nickname_row', 'host_row', 'username_row', 'port_row',
+                'auth_method_row', 'keyfile_row', 'password_row', 'key_passphrase_row'
+            ]
+            for attr in required_attrs:
+                if not hasattr(self, attr):
+                    return
             # Load basic connection data
             if hasattr(self.connection, 'nickname'):
                 self.nickname_row.set_text(self.connection.nickname or "")
@@ -90,7 +106,10 @@ class ConnectionDialog(Adw.Window):
             if hasattr(self.connection, 'username'):
                 self.username_row.set_text(self.connection.username or "")
             if hasattr(self.connection, 'port'):
-                self.port_row.set_value(int(self.connection.port) if self.connection.port else 22)
+                try:
+                    self.port_row.set_text(str(int(self.connection.port) if self.connection.port else 22))
+                except Exception:
+                    self.port_row.set_text("22")
             
             # Set authentication method and related fields
             auth_method = getattr(self.connection, 'auth_method', 0)
@@ -203,56 +222,28 @@ class ConnectionDialog(Adw.Window):
     
     def setup_ui(self):
         """Set up the dialog UI"""
-        # Main container - using Adw.ToolbarView for better layout
-        self.main_box = Adw.ToolbarView()
-        self.set_content(self.main_box)
-        
-        # Header Bar
-        header_bar = Adw.HeaderBar()
-        header_bar.set_show_title(False)
-        
-        # Create tab view
-        self.tab_view = Adw.TabView()
-        self.tab_view.set_hexpand(True)
-        self.tab_view.set_vexpand(True)
-        
-        # Create tab bar for the header
-        tab_bar = Adw.TabBar()
-        tab_bar.set_view(self.tab_view)
-        header_bar.set_title_widget(tab_bar)
-        
-        # Cancel button
-        self.cancel_button = Gtk.Button(label=_("Cancel"))
-        self.cancel_button.connect("clicked", self.on_cancel_clicked)
-        header_bar.pack_start(self.cancel_button)
-        
-        # Save button
-        self.save_button = Gtk.Button(label=_("Save"))
-        self.save_button.add_css_class("suggested-action")
-        self.save_button.connect("clicked", self.on_save_clicked)
-        header_bar.pack_end(self.save_button)
-        
-        # Add header bar to the window
-        self.main_box.add_top_bar(header_bar)
-        
-        # Create a scrolled window for the content
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_hexpand(True)
-        scrolled.set_vexpand(True)
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        
-        # Create tab pages
-        self.setup_connection_page()
-        self.setup_port_forwarding_page()
-        
-        # Add the tab view to the scrolled window
-        scrolled.set_child(self.tab_view)
-        
-        # Add the scrolled window to the main box
-        self.main_box.set_content(scrolled)
+        # Build pages using PreferencesDialog model
+        general_page = Adw.PreferencesPage()
+        general_page.set_title(_("Connection"))
+        general_page.set_icon_name("network-server-symbolic")
+        for group in self.build_connection_groups():
+            general_page.add(group)
+        self.add(general_page)
+
+        forwarding_page = Adw.PreferencesPage()
+        forwarding_page.set_title(_("Advanced"))
+        forwarding_page.set_icon_name("network-transmit-receive-symbolic")
+        for group in self.build_port_forwarding_groups():
+            forwarding_page.add(group)
+        self.add(forwarding_page)
+        # After building views, populate existing data if editing
+        try:
+            self.load_connection_data()
+        except Exception as e:
+            logger.error(f"Failed to populate connection data: {e}")
     
-    def setup_connection_page(self):
-        """Set up the connection settings page"""
+    def build_connection_groups(self):
+        """Build PreferencesGroups for the General page"""
         # Create main container
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         page.set_margin_top(12)
@@ -261,23 +252,6 @@ class ConnectionDialog(Adw.Window):
         page.set_margin_end(12)
         page.set_hexpand(True)
         page.set_vexpand(True)
-        
-        # Create a scrolled window for the content
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_child(page)
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_hexpand(True)
-        scrolled.set_vexpand(True)
-        
-        # Create a viewport for the scrolled window
-        viewport = Gtk.Viewport()
-        viewport.set_child(scrolled)
-        
-        # Add page to tab view
-        self.connection_page = self.tab_view.append(viewport)
-        self.connection_page.set_title(_("Connection"))
-        self.connection_page.set_icon(Gio.ThemedIcon.new("network-server-symbolic"))
-        self.connection_page.set_tooltip(_("Connection settings"))
         
         # Basic Settings Group
         basic_group = Adw.PreferencesGroup(title=_("Basic Settings"))
@@ -294,13 +268,18 @@ class ConnectionDialog(Adw.Window):
         self.username_row = Adw.EntryRow(title=_("Username"))
         basic_group.add(self.username_row)
         
-        # Port
-        self.port_row = Adw.SpinRow.new_with_range(1, 65535, 1)
-        self.port_row.set_title(_("Port"))
-        self.port_row.set_value(22)
+        # Port (match style of fields above using EntryRow)
+        self.port_row = Adw.EntryRow(title=_("Port"))
+        try:
+            entry = self.port_row.get_child()
+            if entry and hasattr(entry, 'set_input_purpose'):
+                entry.set_input_purpose(Gtk.InputPurpose.DIGITS)
+            if entry and hasattr(entry, 'set_max_length'):
+                entry.set_max_length(5)
+        except Exception:
+            pass
+        self.port_row.set_text("22")
         basic_group.add(self.port_row)
-        
-        page.append(basic_group)
         
         # Authentication Group
         auth_group = Adw.PreferencesGroup(title=_("Authentication"))
@@ -335,24 +314,11 @@ class ConnectionDialog(Adw.Window):
         self.password_row.set_visible(False)
         auth_group.add(self.password_row)
         
-        page.append(auth_group)
+        # Remove unused advanced label group from this page
+        advanced_group = Adw.PreferencesGroup()
+        advanced_group.set_visible(False)
         
-        # Advanced Group
-        advanced_group = Adw.PreferencesGroup(title=_("Advanced"))
-        
-        # Port Forwarding
-        port_forwarding_expander = Adw.ExpanderRow(title=_("Port Forwarding"))
-        port_forwarding_expander.set_subtitle(_("Configure port forwarding rules"))
-        port_forwarding_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        port_forwarding_box.set_margin_top(12)
-        port_forwarding_box.set_margin_bottom(12)
-        port_forwarding_box.set_margin_start(12)
-        port_forwarding_box.set_margin_end(12)
-        
-        # Store port forwarding settings as instance variables
-        self.port_forwarding_rules = {}
-        
-        # Local Port Forwarding
+        # Local Port Forwarding (moved to Port Forwarding view)
         local_forwarding_group = Adw.PreferencesGroup(title=_("Local Port Forwarding"))
         
         # Enable toggle for local port forwarding
@@ -400,9 +366,10 @@ class ConnectionDialog(Adw.Window):
         # Initially hide settings if not enabled
         local_settings_box.set_visible(False)
         
-        port_forwarding_box.append(local_forwarding_group)
+        # group kept for structure but hidden in this view
+        local_forwarding_group.set_visible(False)
         
-        # Remote Port Forwarding
+        # Remote Port Forwarding (moved)
         remote_forwarding_group = Adw.PreferencesGroup(title=_("Remote Port Forwarding"))
         
         # Enable toggle for remote port forwarding
@@ -450,9 +417,9 @@ class ConnectionDialog(Adw.Window):
         # Initially hide settings if not enabled
         remote_settings_box.set_visible(False)
         
-        port_forwarding_box.append(remote_forwarding_group)
+        remote_forwarding_group.set_visible(False)
         
-        # Dynamic Port Forwarding (SOCKS)
+        # Dynamic Port Forwarding (moved)
         dynamic_forwarding_group = Adw.PreferencesGroup(title=_("Dynamic Port Forwarding (SOCKS)"))
         
         # Enable toggle for dynamic port forwarding
@@ -486,27 +453,15 @@ class ConnectionDialog(Adw.Window):
         # Initially hide settings if not enabled
         dynamic_settings_box.set_visible(False)
         
-        port_forwarding_box.append(dynamic_forwarding_group)
+        dynamic_forwarding_group.set_visible(False)
         
-        # Add the box to the expander
-        port_forwarding_expander.add_row(port_forwarding_box)
+        # X11 Forwarding moved to Port Forwarding view
         
-        # Add port forwarding expander to advanced group
-        advanced_group.add(port_forwarding_expander)
-        
-        # X11 Forwarding
-        self.x11_row = Adw.SwitchRow(
-            title=_("X11 Forwarding"), 
-            subtitle=_("Forward X11 connections for GUI applications")
-        )
-        advanced_group.add(self.x11_row)
-        
-        page.append(advanced_group)
-        
-        scrolled.set_child(page)
+        # Return groups for PreferencesPage
+        return [basic_group, auth_group, advanced_group]
     
-    def setup_port_forwarding_page(self):
-        """Set up the port forwarding page"""
+    def build_port_forwarding_groups(self):
+        """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""
         # Create main container
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         page.set_margin_top(12)
@@ -516,13 +471,14 @@ class ConnectionDialog(Adw.Window):
         page.set_hexpand(True)
         page.set_vexpand(True)
         
-        # Create a scrolled window for the content
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_child(page)
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_hexpand(True)
-        scrolled.set_vexpand(True)
-        
+        # X11 Forwarding group (will be placed last)
+        self.x11_row = Adw.SwitchRow(
+            title=_("X11 Forwarding"), 
+            subtitle=_("Forward X11 connections for GUI applications")
+        )
+        x11_group = Adw.PreferencesGroup(title=_("X11 Forwarding"))
+        x11_group.add(self.x11_row)
+
         # Port Forwarding Rules Group
         rules_group = Adw.PreferencesGroup(
             title=_("Port Forwarding Rules"),
@@ -564,19 +520,8 @@ class ConnectionDialog(Adw.Window):
             )
         )
         
-        # Add groups to the page
-        page.append(rules_group)
-        page.append(about_group)
-        
-        # Create a viewport for the scrolled window
-        viewport = Gtk.Viewport()
-        viewport.set_child(scrolled)
-        
-        # Add page to tab view
-        self.port_forwarding_page = self.tab_view.append(viewport)
-        self.port_forwarding_page.set_title(_("Port Forwarding"))
-        self.port_forwarding_page.set_icon(Gio.ThemedIcon.new("network-transmit-receive-symbolic"))
-        self.port_forwarding_page.set_tooltip(_("Port forwarding settings"))
+        # Return groups for PreferencesPage: Port forwarding first, X11 last
+        return [rules_group, about_group, x11_group]
         
         # Initialize empty rules list if it doesn't exist
         if not hasattr(self, 'forwarding_rules'):
@@ -755,10 +700,10 @@ class ConnectionDialog(Adw.Window):
     
     def on_cancel_clicked(self, button):
         """Handle cancel button click"""
-        self.destroy()
+        self.close()
     
-    def on_save_clicked(self, button):
-        """Handle save button click"""
+    def on_save_clicked(self, *_args):
+        """Handle save button click or dialog save response"""
         # Validate required fields
         if not self.nickname_row.get_text().strip():
             self.show_error(_("Please enter a nickname for this connection"))
@@ -829,7 +774,7 @@ class ConnectionDialog(Adw.Window):
             'nickname': self.nickname_row.get_text().strip(),
             'host': self.host_row.get_text().strip(),
             'username': self.username_row.get_text().strip(),
-            'port': int(self.port_row.get_value()),
+            'port': int(self.port_row.get_text().strip() or '22'),
             'auth_method': self.auth_method_row.get_selected(),
             'keyfile': self.keyfile_row.get_subtitle() if hasattr(self.keyfile_row, 'get_subtitle') else "",
             'key_passphrase': self.key_passphrase_row.get_text(),
@@ -846,7 +791,13 @@ class ConnectionDialog(Adw.Window):
             
         # Emit signal with connection data
         self.emit('connection-saved', connection_data)
-        self.destroy()
+        self.close()
+
+    def on_response(self, dialog, response_id):
+        if str(response_id) == 'save':
+            self.on_save_clicked()
+        else:
+            self.close()
     
     def on_forwarding_toggled(self, switch, param, settings_box):
         """Handle toggling of port forwarding settings visibility and state"""
