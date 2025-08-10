@@ -468,8 +468,26 @@ class ConnectionDialog(Adw.PreferencesDialog):
         
         # X11 Forwarding moved to Port Forwarding view
         
+        # Footer actions (ensure visible Save/Cancel regardless of lib version)
+        actions_group = Adw.PreferencesGroup()
+        actions_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        actions_box.set_halign(Gtk.Align.END)
+        try:
+            cancel_btn = Gtk.Button(label=_("Cancel"))
+            save_btn = Gtk.Button(label=_("Save"))
+            cancel_btn.add_css_class('flat')
+            save_btn.add_css_class('suggested-action')
+        except Exception:
+            cancel_btn = Gtk.Button(label="Cancel")
+            save_btn = Gtk.Button(label="Save")
+        cancel_btn.connect('clicked', self.on_cancel_clicked)
+        save_btn.connect('clicked', self.on_save_clicked)
+        actions_box.append(cancel_btn)
+        actions_box.append(save_btn)
+        actions_group.add(actions_box)
+        
         # Return groups for PreferencesPage
-        return [basic_group, auth_group, advanced_group]
+        return [basic_group, auth_group, advanced_group, actions_group]
     
     def build_port_forwarding_groups(self):
         """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""
@@ -531,8 +549,26 @@ class ConnectionDialog(Adw.PreferencesDialog):
             )
         )
         
+        # Footer actions on this page as well, so Save is available while editing rules
+        actions_group = Adw.PreferencesGroup()
+        actions_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        actions_box.set_halign(Gtk.Align.END)
+        try:
+            cancel_btn2 = Gtk.Button(label=_("Cancel"))
+            save_btn2 = Gtk.Button(label=_("Save"))
+            cancel_btn2.add_css_class('flat')
+            save_btn2.add_css_class('suggested-action')
+        except Exception:
+            cancel_btn2 = Gtk.Button(label="Cancel")
+            save_btn2 = Gtk.Button(label="Save")
+        cancel_btn2.connect('clicked', self.on_cancel_clicked)
+        save_btn2.connect('clicked', self.on_save_clicked)
+        actions_box.append(cancel_btn2)
+        actions_box.append(save_btn2)
+        actions_group.add(actions_box)
+
         # Return groups for PreferencesPage: Port forwarding first, X11 last
-        return [rules_group, about_group, x11_group]
+        return [rules_group, about_group, x11_group, actions_group]
         
         # Initialize empty rules list if it doesn't exist
         if not hasattr(self, 'forwarding_rules'):
@@ -789,16 +825,44 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 pass
         else:
             type_row.set_selected(0)
-            listen_addr_row.set_text('localhost')
-            listen_port_row.set_value(0)
+            # Sane defaults for a new rule
+            listen_addr_row.set_text('127.0.0.1')
+            listen_port_row.set_value(8080)
             remote_host_row.set_text('localhost')
-            remote_port_row.set_value(0)
+            remote_port_row.set_value(22)
 
         def _sync_visibility(*_):
             idx = type_row.get_selected()
             is_dynamic = (idx == 2)
             remote_host_row.set_visible(not is_dynamic)
             remote_port_row.set_visible(not is_dynamic)
+            # Apply smart defaults when switching types and fields are empty
+            try:
+                if idx == 0:  # Local
+                    if not listen_addr_row.get_text().strip():
+                        listen_addr_row.set_text('127.0.0.1')
+                    if int(listen_port_row.get_value() or 0) == 0:
+                        listen_port_row.set_value(8080)
+                    if not remote_host_row.get_text().strip():
+                        remote_host_row.set_text('localhost')
+                    if int(remote_port_row.get_value() or 0) == 0:
+                        remote_port_row.set_value(22)
+                elif idx == 1:  # Remote
+                    if not listen_addr_row.get_text().strip():
+                        listen_addr_row.set_text('0.0.0.0')
+                    if int(listen_port_row.get_value() or 0) == 0:
+                        listen_port_row.set_value(8080)
+                    if not remote_host_row.get_text().strip():
+                        remote_host_row.set_text('localhost')
+                    if int(remote_port_row.get_value() or 0) == 0:
+                        remote_port_row.set_value(22)
+                else:  # Dynamic
+                    if not listen_addr_row.get_text().strip():
+                        listen_addr_row.set_text('127.0.0.1')
+                    if int(listen_port_row.get_value() or 0) == 0:
+                        listen_port_row.set_value(1080)
+            except Exception:
+                pass
         type_row.connect('notify::selected', _sync_visibility)
         _sync_visibility()
 
@@ -873,6 +937,14 @@ class ConnectionDialog(Adw.PreferencesDialog):
         forwarding_rules = self._sanitize_forwarding_rules(
             [dict(r) for r in self.forwarding_rules if r.get('enabled', True)]
         )
+        try:
+            logger.info(
+                "ConnectionDialog save: %d forwarding rules before sanitize, %d after sanitize",
+                len(self.forwarding_rules or []), len(forwarding_rules or [])
+            )
+            logger.debug("Forwarding rules (sanitized): %s", forwarding_rules)
+        except Exception:
+            pass
         
         # Gather connection data
         connection_data = {
@@ -893,6 +965,13 @@ class ConnectionDialog(Adw.PreferencesDialog):
             self.connection.data.update(connection_data)
             # Explicitly update forwarding rules to ensure they're fresh
             self.connection.forwarding_rules = forwarding_rules
+            # Perform an immediate write via the manager as a safety net
+            try:
+                if getattr(self, 'parent_window', None) is not None and hasattr(self.parent_window, 'connection_manager'):
+                    logger.info("Saving connection immediately via manager from dialog (rules=%d)", len(forwarding_rules))
+                    self.parent_window.connection_manager.update_connection(self.connection, connection_data)
+            except Exception as e:
+                logger.error(f"Immediate save via manager failed: {e}")
             
         # Emit signal with connection data
         self.emit('connection-saved', connection_data)

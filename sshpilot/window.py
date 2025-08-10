@@ -2876,12 +2876,20 @@ class MainWindow(Adw.ApplicationWindow):
                 # Store the current terminal instance if connected
                 terminal = self.active_terminals.get(old_connection) if is_connected else None
                 
+                try:
+                    logger.info(
+                        "Window.on_connection_saved(edit): saving '%s' with %d forwarding rules",
+                        old_connection.nickname, len(connection_data.get('forwarding_rules', []) or [])
+                    )
+                except Exception:
+                    pass
+                
                 # Update connection in manager first
                 if not self.connection_manager.update_connection(old_connection, connection_data):
                     logger.error("Failed to update connection in SSH config")
                     return
                 
-                # Update connection attributes
+                # Update connection attributes in memory (ensure forwarding rules kept)
                 old_connection.nickname = connection_data['nickname']
                 old_connection.host = connection_data['host']
                 old_connection.username = connection_data['username']
@@ -2891,7 +2899,17 @@ class MainWindow(Adw.ApplicationWindow):
                 old_connection.key_passphrase = connection_data['key_passphrase']
                 old_connection.auth_method = connection_data['auth_method']
                 old_connection.x11_forwarding = connection_data['x11_forwarding']
-                old_connection.forwarding_rules = connection_data.get('forwarding_rules', [])
+                old_connection.forwarding_rules = list(connection_data.get('forwarding_rules', []))
+                
+                # Sync from reloaded manager copy to ensure persistence reflects UI immediately
+                try:
+                    reloaded = self.connection_manager.find_connection_by_nickname(old_connection.nickname) or \
+                               self.connection_manager.find_connection_by_nickname(connection_data.get('nickname', ''))
+                    if reloaded:
+                        old_connection.forwarding_rules = list(reloaded.forwarding_rules or [])
+                        logger.info("Reloaded %d forwarding rules from disk for '%s'", len(old_connection.forwarding_rules), old_connection.nickname)
+                except Exception:
+                    pass
                 
                 # Persist per-connection metadata not stored in SSH config (auth method, etc.)
                 try:
@@ -2939,6 +2957,14 @@ class MainWindow(Adw.ApplicationWindow):
                         self.config.set_connection_meta(connection.nickname, {
                             'auth_method': connection_data.get('auth_method', 0)
                         })
+                    except Exception:
+                        pass
+                    # Sync forwarding rules from a fresh reload to ensure UI matches disk
+                    try:
+                        reloaded_new = self.connection_manager.find_connection_by_nickname(connection.nickname)
+                        if reloaded_new:
+                            connection.forwarding_rules = list(reloaded_new.forwarding_rules or [])
+                            logger.info("New connection '%s' has %d rules after write", connection.nickname, len(connection.forwarding_rules))
                     except Exception:
                         pass
                     # Manually add the connection to the UI since we're not using the signal

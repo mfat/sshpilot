@@ -497,6 +497,8 @@ class ConnectionManager(GObject.Object):
     def load_ssh_config(self):
         """Load connections from SSH config file"""
         try:
+            # Reset current list to reflect latest config on each load
+            self.connections = []
             if not os.path.exists(self.ssh_config_path):
                 logger.info("SSH config file not found, creating empty one")
                 os.makedirs(os.path.dirname(self.ssh_config_path), exist_ok=True)
@@ -803,7 +805,7 @@ class ConnectionManager(GObject.Object):
                     lines = f.readlines()
             except IOError as e:
                 logger.error(f"Failed to read SSH config: {e}")
-                return
+                raise
             
             # Find and update the connection's Host block
             updated_lines = []
@@ -813,10 +815,17 @@ class ConnectionManager(GObject.Object):
             
             i = 0
             while i < len(lines):
-                line = lines[i].strip()
-                
-                # Check if this is the start of our target host block
-                if line.startswith('Host ') and line.split()[1] == host_nickname:
+                raw_line = lines[i]
+                line = raw_line.strip()
+                lstripped = raw_line.lstrip()
+                # Check if this is the start of our target host block (robust to leading spaces)
+                if lstripped.startswith('Host '):
+                    parts = lstripped.split()
+                    current_name = parts[1] if len(parts) > 1 else ''
+                else:
+                    current_name = ''
+
+                if current_name == host_nickname:
                     host_found = True
                     in_target_host = True
                     # Write the updated host block
@@ -825,13 +834,13 @@ class ConnectionManager(GObject.Object):
                     
                     # Skip all lines until the next Host or end of file
                     i += 1
-                    while i < len(lines) and not lines[i].startswith('Host '):
+                    while i < len(lines) and not lines[i].lstrip().startswith('Host '):
                         i += 1
                     in_target_host = False
                     continue
                 
                 if not in_target_host:
-                    updated_lines.append(lines[i])
+                    updated_lines.append(raw_line)
                 
                 i += 1
             
@@ -844,9 +853,16 @@ class ConnectionManager(GObject.Object):
             try:
                 with open(self.ssh_config_path, 'w') as f:
                     f.writelines(updated_lines)
+                logger.info(
+                    "Wrote SSH config for host %s (found=%s, rules=%d) to %s",
+                    host_nickname,
+                    host_found,
+                    len(new_data.get('forwarding_rules', []) or []),
+                    self.ssh_config_path,
+                )
             except IOError as e:
                 logger.error(f"Failed to write SSH config: {e}")
-                
+                raise
         except Exception as e:
             logger.error(f"Error updating SSH config: {e}", exc_info=True)
             raise
@@ -901,6 +917,12 @@ class ConnectionManager(GObject.Object):
     def update_connection(self, connection: Connection, new_data: Dict[str, Any]) -> bool:
         """Update an existing connection"""
         try:
+            logger.info(
+                "Updating connection '%s' → writing to %s (rules=%d)",
+                connection.nickname,
+                self.ssh_config_path,
+                len(new_data.get('forwarding_rules', []) or [])
+            )
             # Update connection data
             connection.data.update(new_data)
             # Ensure forwarding rules stored on the object are updated too
