@@ -458,6 +458,13 @@ class PreferencesWindow(Adw.PreferencesWindow):
 
             advanced_group = Adw.PreferencesGroup()
             advanced_group.set_title("SSH Settings")
+            # Use custom options toggle
+            self.apply_advanced_row = Adw.SwitchRow()
+            self.apply_advanced_row.set_title("Use custom connection options")
+            self.apply_advanced_row.set_subtitle("Enable and edit the options below")
+            self.apply_advanced_row.set_active(bool(self.config.get_setting('ssh.apply_advanced', False)))
+            advanced_group.add(self.apply_advanced_row)
+
 
             # Connect timeout
             self.connect_timeout_row = Adw.SpinRow.new_with_range(1, 120, 1)
@@ -522,6 +529,29 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.debug_enabled_row.set_title("Enable SSH Debug Logging")
             self.debug_enabled_row.set_active(bool(self.config.get_setting('ssh.debug_enabled', False)))
             advanced_group.add(self.debug_enabled_row)
+
+            # Reset button
+            reset_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            reset_btn = Gtk.Button.new_with_label("Reset Advanced SSH to Defaults")
+            reset_btn.add_css_class('destructive-action')
+            reset_btn.connect('clicked', self.on_reset_advanced_ssh)
+            reset_box.append(reset_btn)
+            advanced_group.add(reset_box)
+
+            # Disable/enable advanced controls based on toggle
+            def _sync_advanced_sensitivity(row=None, *_):
+                enabled = bool(self.apply_advanced_row.get_active())
+                for w in [self.connect_timeout_row, self.connection_attempts_row,
+                          self.keepalive_interval_row, self.keepalive_count_row,
+                          self.strict_host_row, self.batch_mode_row,
+                          self.compression_row, self.verbosity_row,
+                          self.debug_enabled_row]:
+                    try:
+                        w.set_sensitive(enabled)
+                    except Exception:
+                        pass
+            _sync_advanced_sensitivity()
+            self.apply_advanced_row.connect('notify::active', _sync_advanced_sensitivity)
 
             advanced_page.add(advanced_group)
 
@@ -616,6 +646,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
     def save_advanced_ssh_settings(self):
         """Persist advanced SSH settings from the preferences UI"""
         try:
+            if hasattr(self, 'apply_advanced_row'):
+                self.config.set_setting('ssh.apply_advanced', bool(self.apply_advanced_row.get_active()))
             if hasattr(self, 'connect_timeout_row'):
                 self.config.set_setting('ssh.connection_timeout', int(self.connect_timeout_row.get_value()))
             if hasattr(self, 'connection_attempts_row'):
@@ -639,6 +671,41 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 self.config.set_setting('ssh.debug_enabled', bool(self.debug_enabled_row.get_active()))
         except Exception as e:
             logger.error(f"Failed to save advanced SSH settings: {e}")
+
+    def on_reset_advanced_ssh(self, *_args):
+        """Reset only advanced SSH keys to defaults and update UI."""
+        try:
+            defaults = self.config.get_default_config().get('ssh', {})
+            # Persist defaults and disable apply
+            self.config.set_setting('ssh.apply_advanced', False)
+            for key in ['connection_timeout', 'connection_attempts', 'keepalive_interval', 'keepalive_count_max', 'compression', 'auto_add_host_keys', 'verbosity', 'debug_enabled']:
+                self.config.set_setting(f'ssh.{key}', defaults.get(key))
+            # Update UI
+            if hasattr(self, 'apply_advanced_row'):
+                self.apply_advanced_row.set_active(False)
+            if hasattr(self, 'connect_timeout_row'):
+                self.connect_timeout_row.set_value(int(defaults.get('connection_timeout', 30)))
+            if hasattr(self, 'connection_attempts_row'):
+                self.connection_attempts_row.set_value(int(defaults.get('connection_attempts', 1)))
+            if hasattr(self, 'keepalive_interval_row'):
+                self.keepalive_interval_row.set_value(int(defaults.get('keepalive_interval', 60)))
+            if hasattr(self, 'keepalive_count_row'):
+                self.keepalive_count_row.set_value(int(defaults.get('keepalive_count_max', 3)))
+            if hasattr(self, 'strict_host_row'):
+                try:
+                    self.strict_host_row.set_selected(["accept-new", "yes", "no", "ask"].index('accept-new'))
+                except ValueError:
+                    self.strict_host_row.set_selected(0)
+            if hasattr(self, 'batch_mode_row'):
+                self.batch_mode_row.set_active(False)
+            if hasattr(self, 'compression_row'):
+                self.compression_row.set_active(bool(defaults.get('compression', True)))
+            if hasattr(self, 'verbosity_row'):
+                self.verbosity_row.set_value(int(defaults.get('verbosity', 0)))
+            if hasattr(self, 'debug_enabled_row'):
+                self.debug_enabled_row.set_active(bool(defaults.get('debug_enabled', False)))
+        except Exception as e:
+            logger.error(f"Failed to reset advanced SSH settings: {e}")
     
     def get_theme_name_mapping(self):
         """Get mapping between display names and config keys"""
@@ -1048,6 +1115,19 @@ class MainWindow(Adw.ApplicationWindow):
         toolbar.set_margin_top(6)
         toolbar.set_margin_bottom(6)
         toolbar.add_css_class('toolbar')
+        try:
+            # Expose the computed visual height so terminal banners can match
+            min_h, nat_h, min_baseline, nat_baseline = toolbar.measure(Gtk.Orientation.VERTICAL, -1)
+            self._toolbar_row_height = max(min_h, nat_h)
+            # Also track the real allocated height dynamically
+            def _on_toolbar_alloc(widget, allocation):
+                try:
+                    self._toolbar_row_height = allocation.height
+                except Exception:
+                    pass
+            toolbar.connect('size-allocate', _on_toolbar_alloc)
+        except Exception:
+            self._toolbar_row_height = 36
         
         # Edit button
         self.edit_button = Gtk.Button.new_from_icon_name('document-edit-symbolic')
@@ -1113,6 +1193,44 @@ class MainWindow(Adw.ApplicationWindow):
         self.tab_view.connect('close-page', self.on_tab_close)
         self.tab_view.connect('page-attached', self.on_tab_attached)
         self.tab_view.connect('page-detached', self.on_tab_detached)
+
+        # Whenever the window layout changes, propagate toolbar height to
+        # any TerminalWidget so the reconnect banner exactly matches.
+        try:
+            # Capture the toolbar variable from this scope for measurement
+            local_toolbar = locals().get('toolbar', None)
+            def _sync_banner_heights(*_args):
+                try:
+                    # Re-measure toolbar height in case style/theme changed
+                    try:
+                        if local_toolbar is not None:
+                            min_h, nat_h, min_baseline, nat_baseline = local_toolbar.measure(Gtk.Orientation.VERTICAL, -1)
+                            self._toolbar_row_height = max(min_h, nat_h)
+                    except Exception:
+                        pass
+                    # Push exact allocated height to all terminal widgets (+5px)
+                    for terms in self.connection_to_terminals.values():
+                        for term in terms:
+                            if hasattr(term, 'set_banner_height'):
+                                term.set_banner_height(getattr(self, '_toolbar_row_height', 37) + 55)
+                except Exception:
+                    pass
+            # Call once after UI is built and again after a short delay
+            def _push_now():
+                try:
+                    height = getattr(self, '_toolbar_row_height', 36)
+                    for terms in self.connection_to_terminals.values():
+                        for term in terms:
+                            if hasattr(term, 'set_banner_height'):
+                                term.set_banner_height(height + 55)
+                except Exception:
+                    pass
+                return False
+            GLib.idle_add(_sync_banner_heights)
+            GLib.timeout_add(200, _sync_banner_heights)
+            GLib.idle_add(_push_now)
+        except Exception:
+            pass
         
         # Create tab bar
         self.tab_bar = Adw.TabBar()

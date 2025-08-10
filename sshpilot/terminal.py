@@ -218,27 +218,17 @@ class TerminalWidget(Gtk.Box):
             if display and not getattr(display, '_sshpilot_banner_css_installed', False):
                 css_provider = Gtk.CssProvider()
                 css_provider.load_from_data(b"""
-                    .disconnected-banner {
+                    .error-toolbar.toolbar {
                         background-color: #cc0000;
                         color: #ffffff;
-                        border-radius: 6px;
-                        padding: 8px 10px;
+                        border-radius: 0;
+                        padding-top: 10px;
+                        padding-bottom: 10px;
                     }
-                    .disconnected-banner label {
-                        color: #ffffff;
-                    }
-                    .reconnect-button {
-                        background: #4a4a4a;
-                        color: #ffffff;
-                        border-radius: 4px;
-                        padding: 6px 10px;
-                    }
-                    .reconnect-button:hover {
-                        background: #3f3f3f;
-                    }
-                    .reconnect-button:active {
-                        background: #353535;
-                    }
+                    .error-toolbar.toolbar label { color: #ffffff; }
+                    .reconnect-button { background: #4a4a4a; color: #ffffff; border-radius: 4px; padding: 6px 10px; }
+                    .reconnect-button:hover { background: #3f3f3f; }
+                    .reconnect-button:active { background: #353535; }
                 """)
                 Gtk.StyleContext.add_provider_for_display(
                     display, css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
@@ -247,25 +237,34 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             pass
 
-        self.disconnected_banner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        # Create error toolbar with same structure as sidebar toolbar
+        self.disconnected_banner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.disconnected_banner.set_halign(Gtk.Align.FILL)
         self.disconnected_banner.set_valign(Gtk.Align.END)
-        self.disconnected_banner.set_margin_start(8)
-        self.disconnected_banner.set_margin_end(8)
-        self.disconnected_banner.set_margin_bottom(8)
+        self.disconnected_banner.set_margin_start(0)
+        self.disconnected_banner.set_margin_end(0)
+        self.disconnected_banner.set_margin_top(0)
+        self.disconnected_banner.set_margin_bottom(0)
         try:
-            self.disconnected_banner.add_css_class('disconnected-banner')
+            self.disconnected_banner.add_css_class('toolbar')
+            self.disconnected_banner.add_css_class('error-toolbar')
+            # Add a unique class per instance so we can set a per-widget min-height via CSS
+            self._banner_unique_class = f"banner-{id(self)}"
+            self.disconnected_banner.add_css_class(self._banner_unique_class)
         except Exception:
             pass
-        # Banner content: label + spacer + reconnect + dismiss
+        # Banner content: icon + label + spacer + reconnect + dismiss, matching toolbar layout
+        icon = Gtk.Image.new_from_icon_name('dialog-error-symbolic')
+        icon.set_valign(Gtk.Align.CENTER)
+        self.disconnected_banner.append(icon)
         self.disconnected_banner_label = Gtk.Label()
         self.disconnected_banner_label.set_halign(Gtk.Align.START)
+        self.disconnected_banner_label.set_valign(Gtk.Align.CENTER)
         self.disconnected_banner_label.set_hexpand(True)
-        self.disconnected_banner_label.set_text(_('Disconnected.'))
+        self.disconnected_banner_label.set_text(_('Session ended.'))
         self.disconnected_banner.append(self.disconnected_banner_label)
         self.reconnect_button = Gtk.Button.new_with_label(_('Reconnect'))
         try:
-            # Ensure neutral gray styling via custom class
             self.reconnect_button.add_css_class('reconnect-button')
         except Exception:
             pass
@@ -282,6 +281,24 @@ class TerminalWidget(Gtk.Box):
         self.dismiss_button.connect('clicked', lambda *_: self._set_disconnected_banner_visible(False))
         self.disconnected_banner.append(self.dismiss_button)
         self.disconnected_banner.set_visible(False)
+
+        # Allow window to force an exact height match to the sidebar toolbar using per-widget CSS min-height
+        self._banner_css_provider = None
+        def _apply_external_height(new_h: int):
+            try:
+                h = max(0, int(new_h))
+                display = Gdk.Display.get_default()
+                if not display:
+                    return
+                css = f".{self._banner_unique_class} {{ min-height: {h}px; }}"
+                provider = Gtk.CssProvider()
+                provider.load_from_data(css.encode('utf-8'))
+                Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+                # Keep a reference to prevent GC; latest provider wins at same priority
+                self._banner_css_provider = provider
+            except Exception:
+                pass
+        self.set_banner_height = _apply_external_height
 
         # Container to stack terminal (overlay) above the banner panel
         self.container_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -389,13 +406,14 @@ class TerminalWidget(Gtk.Box):
                 ssh_cfg = self.config.get_ssh_config() if hasattr(self.config, 'get_ssh_config') else {}
             except Exception:
                 ssh_cfg = {}
-            connect_timeout = int(ssh_cfg.get('connection_timeout', 10))
-            connection_attempts = int(ssh_cfg.get('connection_attempts', 1))
-            keepalive_interval = int(ssh_cfg.get('keepalive_interval', 30))
-            keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3))
-            strict_host = str(ssh_cfg.get('strict_host_key_checking', 'accept-new'))
-            batch_mode = bool(ssh_cfg.get('batch_mode', True))
-            compression = bool(ssh_cfg.get('compression', True))
+            apply_adv = bool(ssh_cfg.get('apply_advanced', False))
+            connect_timeout = int(ssh_cfg.get('connection_timeout', 10)) if apply_adv else None
+            connection_attempts = int(ssh_cfg.get('connection_attempts', 1)) if apply_adv else None
+            keepalive_interval = int(ssh_cfg.get('keepalive_interval', 30)) if apply_adv else None
+            keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3)) if apply_adv else None
+            strict_host = str(ssh_cfg.get('strict_host_key_checking', '')) if apply_adv else ''
+            batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
+            compression = bool(ssh_cfg.get('compression', True)) if apply_adv else False
 
             # Determine auth method from connection
             password_auth_selected = False
@@ -405,18 +423,23 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 password_auth_selected = False
 
-            # Robust non-interactive options to prevent hangs
-            # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
-            if batch_mode and not password_auth_selected:
-                ssh_cmd.extend(['-o', 'BatchMode=yes'])
-            ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
-            ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
-            ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
-            ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
-            if strict_host:
-                ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
-            if compression:
-                ssh_cmd.append('-C')
+            # Apply advanced args only when user explicitly enabled them
+            if apply_adv:
+                # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
+                if batch_mode and not password_auth_selected:
+                    ssh_cmd.extend(['-o', 'BatchMode=yes'])
+                if connect_timeout is not None:
+                    ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
+                if connection_attempts is not None:
+                    ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+                if keepalive_interval is not None:
+                    ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
+                if keepalive_count is not None:
+                    ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
+                if strict_host:
+                    ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
+                if compression:
+                    ssh_cmd.append('-C')
 
             # Ensure SSH exits immediately on failure rather than waiting in background
             ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
@@ -969,7 +992,7 @@ class TerminalWidget(Gtk.Box):
         
         GLib.timeout_add(500, _reconnect)  # 500ms delay before reconnecting
     
-    def _on_connection_updated_signal(self, _, connection):
+    def _on_connection_updated_signal(self, sender, connection):
         """Signal handler for connection-updated signal"""
         self._on_connection_updated(connection)
         

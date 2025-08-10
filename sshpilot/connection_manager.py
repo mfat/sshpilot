@@ -89,23 +89,27 @@ class Connection:
                 ssh_cfg = cfg.get_ssh_config()
             except Exception:
                 ssh_cfg = {}
-            connect_timeout = int(ssh_cfg.get('connection_timeout', 10))
-            connection_attempts = int(ssh_cfg.get('connection_attempts', 1))
-            strict_host = str(ssh_cfg.get('strict_host_key_checking', 'accept-new'))
-            batch_mode = bool(ssh_cfg.get('batch_mode', True))
-            compression = bool(ssh_cfg.get('compression', True))
+            apply_adv = bool(ssh_cfg.get('apply_advanced', False))
+            connect_timeout = int(ssh_cfg.get('connection_timeout', 10)) if apply_adv else None
+            connection_attempts = int(ssh_cfg.get('connection_attempts', 1)) if apply_adv else None
+            strict_host = str(ssh_cfg.get('strict_host_key_checking', '')) if apply_adv else ''
+            batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
+            compression = bool(ssh_cfg.get('compression', True)) if apply_adv else False
             verbosity = int(ssh_cfg.get('verbosity', 0))
             debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
 
-            # Sane non-interactive defaults to avoid indefinite hangs
-            if batch_mode:
-                ssh_cmd.extend(['-o', 'BatchMode=yes'])
-            ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
-            ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
-            if strict_host:
-                ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
-            if compression:
-                ssh_cmd.append('-C')
+            # Apply advanced args only when user explicitly enabled them
+            if apply_adv:
+                if batch_mode:
+                    ssh_cmd.extend(['-o', 'BatchMode=yes'])
+                if connect_timeout is not None:
+                    ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
+                if connection_attempts is not None:
+                    ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+                if strict_host:
+                    ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
+                if compression:
+                    ssh_cmd.append('-C')
             ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
 
             # Apply verbosity flags
