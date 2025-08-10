@@ -54,6 +54,21 @@ class SshPilotApplication(Adw.Application):
         # Set up logging
         self.setup_logging()
         
+        # Apply saved application theme (light/dark/system)
+        try:
+            from .config import Config
+            cfg = Config()
+            saved_theme = str(cfg.get_setting('app-theme', 'default'))
+            style_manager = Adw.StyleManager.get_default()
+            if saved_theme == 'light':
+                style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
+            elif saved_theme == 'dark':
+                style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+            else:
+                style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+        except Exception:
+            pass
+        
         # Create actions with keyboard shortcuts
         self.create_action('quit', self.quit, ['<primary>q'])
         self.create_action('new-connection', self.on_new_connection, ['<primary>n'])
