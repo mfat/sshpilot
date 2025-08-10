@@ -2,9 +2,7 @@ name: Build Debian Package
 
 on:
   push:
-    branches: [ main, dev ]
-    tags:
-      - 'v*'
+    tags: [ 'v*' ]
   workflow_dispatch:
 
 permissions:
@@ -32,64 +30,26 @@ jobs:
             git \
             fakeroot
 
-      - name: Generate debian/changelog from __init__ version
+      - name: Sync or create debian/changelog from __init__ version
         run: |
           VERSION=$(python3 -c "import re, pathlib; t=pathlib.Path('sshpilot/__init__.py').read_text(); print(re.search(r'__version__\\s*=\\s*\"([^\"]+)\"', t).group(1))")
           echo "Detected version: ${VERSION}"
           mkdir -p debian
-          {
-            echo "sshpilot (${VERSION}-1) unstable; urgency=medium"
-            echo
-            echo "  * Various fixes and improvements"
-            echo
-            echo " -- mFat <newmfat@gmail.com>  $(LC_ALL=C date -R)"
-          } > debian/changelog
+          if [ ! -f debian/changelog ]; then
+            {
+              echo "sshpilot (${VERSION}-1) unstable; urgency=medium"
+              echo
+              echo "  * Various fixes and improvements"
+              echo
+              echo " -- mFat <newmfat@gmail.com>  $(LC_ALL=C date -R)"
+            } > debian/changelog
+          else
+            # Update first line version
+            sed -i -E "1 s/^sshpilot \\(.+\\)/sshpilot (${VERSION}-1)/" debian/changelog
+            # Replace body with fixed message and update date on maintainer line
+            awk -v date="$(LC_ALL=C date -R)" 'NR==1{print; print ""; print "  * Various fixes and improvements"; print ""; print " -- mFat <newmfat@gmail.com>  " date; exit}' debian/changelog > debian/changelog.new && mv debian/changelog.new debian/changelog
+          fi
           head -n 6 debian/changelog
-
-      - name: Ensure Debian packaging files (if missing)
-        run: |
-          mkdir -p debian/source
-          if [ ! -f debian/control ]; then
-            cat > debian/control <<'EOF'
-Source: sshpilot
-Section: utils
-Priority: optional
-Maintainer: mFat <newmfat@gmail.com>
-Build-Depends: debhelper-compat (= 13)
-Standards-Version: 4.6.2
-Homepage: https://github.com/mfat/sshpilot
-Rules-Requires-Root: no
-
-Package: sshpilot
-Architecture: all
-Depends: ${misc:Depends}, ${python3:Depends},
-         python3,
-         python3-gi,
-         python3-gi-cairo,
-         libgtk-4-1 (>= 4.6), gir1.2-gtk-4.0 (>= 4.6),
-         libadwaita-1-0 (>= 1.4), gir1.2-adw-1 (>= 1.4),
-         libvte-2.91-gtk4-0 (>= 0.70), gir1.2-vte-3.91 (>= 0.70),
-         python3-paramiko,
-         python3-cryptography,
-         python3-secretstorage,
-         python3-matplotlib,
-         sshpass
-Description: SSH connection manager with integrated terminal
- sshPilot provides SSH connection management, integrated terminal using VTE,
- tunneling, key management, and tabbed interface.
-EOF
-          fi
-          if [ ! -f debian/rules ]; then
-            cat > debian/rules <<'EOF'
-#!/usr/bin/make -f
-%:
-	dh $@
-EOF
-            chmod +x debian/rules
-          fi
-          if [ ! -f debian/source/format ]; then
-            echo '3.0 (native)' > debian/source/format
-          fi
 
       - name: Build package
         run: |
