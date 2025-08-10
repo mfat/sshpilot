@@ -727,37 +727,128 @@ class ConnectionDialog(Adw.PreferencesDialog):
     
     def on_edit_forwarding_rule_clicked(self, button, rule):
         """Handle edit port forwarding rule button click"""
-        # Implementation for editing an existing port forwarding rule
         logger.info(f"Edit port forwarding rule clicked: {rule}")
-        # This would open a dialog to edit the existing rule
-        
-        # For now, we'll just remove the old rule and add a new one
-        # This is a placeholder - in a real implementation, you'd want to open an edit dialog
-        if hasattr(self, 'forwarding_rules'):
-            self.forwarding_rules = [r for r in self.forwarding_rules if r != rule]
-            self.load_port_forwarding_rules()
+        self._open_rule_editor(existing_rule=rule)
     
     def on_add_forwarding_rule_clicked(self, button):
         """Handle add port forwarding rule button click"""
-        # Implementation for adding a new port forwarding rule
         logger.info("Add port forwarding rule clicked")
-        # This would open a dialog to configure the new rule
-        
-        # For now, we'll just add a sample rule
-        if not hasattr(self, 'forwarding_rules'):
-            self.forwarding_rules = []
-            
-        new_rule = {
-            'type': 'local',
+        self._open_rule_editor(existing_rule=None)
+
+    def _open_rule_editor(self, existing_rule=None):
+        """Open a small Gtk.Dialog to add/edit a forwarding rule (compatible across lib versions)."""
+        # Create dialog
+        parent_win = self.get_transient_for() if hasattr(self, 'get_transient_for') else None
+        dialog = Gtk.Dialog(title=_("Port Forwarding Rule"), transient_for=parent_win, modal=True)
+        dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
+        dialog.add_button(_("Save"), Gtk.ResponseType.OK)
+
+        content = dialog.get_content_area()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        content.append(box)
+
+        # Type selector
+        type_model = Gtk.StringList()
+        type_model.append(_("Local"))
+        type_model.append(_("Remote"))
+        type_model.append(_("Dynamic"))
+        type_row = Adw.ComboRow()
+        type_row.set_title(_("Type"))
+        type_row.set_model(type_model)
+
+        listen_addr_row = Adw.EntryRow(title=_("Listen Address"))
+        listen_port_row = Adw.SpinRow.new_with_range(1, 65535, 1)
+        listen_port_row.set_title(_("Listen Port"))
+
+        remote_host_row = Adw.EntryRow(title=_("Remote Host"))
+        remote_port_row = Adw.SpinRow.new_with_range(1, 65535, 1)
+        remote_port_row.set_title(_("Remote Port"))
+
+        # Pack rows
+        group = Adw.PreferencesGroup()
+        group.add(type_row)
+        group.add(listen_addr_row)
+        group.add(listen_port_row)
+        group.add(remote_host_row)
+        group.add(remote_port_row)
+        box.append(group)
+
+        # Populate when editing
+        if existing_rule:
+            t = existing_rule.get('type', 'local')
+            type_row.set_selected({'local':0,'remote':1,'dynamic':2}.get(t,0))
+            listen_addr_row.set_text(str(existing_rule.get('listen_addr', 'localhost')))
+            try:
+                listen_port_row.set_value(int(existing_rule.get('listen_port', 0) or 0))
+            except Exception:
+                pass
+            remote_host_row.set_text(str(existing_rule.get('remote_host', 'localhost')))
+            try:
+                remote_port_row.set_value(int(existing_rule.get('remote_port', 0) or 0))
+            except Exception:
+                pass
+        else:
+            type_row.set_selected(0)
+            listen_addr_row.set_text('localhost')
+            listen_port_row.set_value(0)
+            remote_host_row.set_text('localhost')
+            remote_port_row.set_value(0)
+
+        def _sync_visibility(*_):
+            idx = type_row.get_selected()
+            is_dynamic = (idx == 2)
+            remote_host_row.set_visible(not is_dynamic)
+            remote_port_row.set_visible(not is_dynamic)
+        type_row.connect('notify::selected', _sync_visibility)
+        _sync_visibility()
+
+        # Run dialog
+        resp = dialog.run() if hasattr(dialog, 'run') else None
+        # GTK4 dialogs don't block run; use response signal fallback
+        if resp is None:
+            def _on_resp(dlg, response_id):
+                if response_id == Gtk.ResponseType.OK:
+                    self._save_rule_from_editor(existing_rule, type_row, listen_addr_row, listen_port_row, remote_host_row, remote_port_row)
+                dlg.destroy()
+            dialog.connect('response', _on_resp)
+            dialog.show()
+        else:
+            if resp == Gtk.ResponseType.OK:
+                self._save_rule_from_editor(existing_rule, type_row, listen_addr_row, listen_port_row, remote_host_row, remote_port_row)
+            dialog.destroy()
+
+    def _save_rule_from_editor(self, existing_rule, type_row, listen_addr_row, listen_port_row, remote_host_row, remote_port_row):
+        idx = type_row.get_selected()
+        rtype = 'local' if idx == 0 else ('remote' if idx == 1 else 'dynamic')
+        listen_addr = listen_addr_row.get_text().strip() or '127.0.0.1'
+        listen_port = int(listen_port_row.get_value() or 0)
+        if listen_port <= 0:
+            self.show_error(_("Please enter a valid listen port (> 0)"))
+            return
+        rule = {
+            'type': rtype,
             'enabled': True,
-            'listen_addr': 'localhost',
-            'listen_port': 8080,
-            'remote_host': 'localhost',
-            'remote_port': 80
+            'listen_addr': listen_addr,
+            'listen_port': listen_port,
         }
-        
-        self.forwarding_rules.append(new_rule)
+        if rtype != 'dynamic':
+            rule['remote_host'] = remote_host_row.get_text().strip() or 'localhost'
+            rule['remote_port'] = int(remote_port_row.get_value() or 0)
+
+        if not hasattr(self, 'forwarding_rules') or self.forwarding_rules is None:
+            self.forwarding_rules = []
+
+        if existing_rule and existing_rule in self.forwarding_rules:
+            idx_existing = self.forwarding_rules.index(existing_rule)
+            self.forwarding_rules[idx_existing] = rule
+        else:
+            self.forwarding_rules.append(rule)
+
         self.load_port_forwarding_rules()
+
+    def _autosave_forwarding_changes(self):
+        """Disabled autosave to avoid log floods; saving occurs on dialog Save."""
+        return
     
     def on_cancel_clicked(self, button):
         """Handle cancel button click"""
@@ -774,61 +865,14 @@ class ConnectionDialog(Adw.PreferencesDialog):
             self.show_error(_("Please enter a hostname or IP address"))
             return
         
-        # Initialize forwarding_rules if it doesn't exist
-        if not hasattr(self, 'forwarding_rules'):
+        # Initialize forwarding_rules list if needed
+        if not hasattr(self, 'forwarding_rules') or self.forwarding_rules is None:
             self.forwarding_rules = []
-        
-        # Start with existing disabled rules
-        forwarding_rules = [r for r in getattr(self, 'forwarding_rules', []) if not r.get('enabled', True)]
-        
-        # Local port forwarding
-        if hasattr(self, 'local_forwarding_enabled') and self.local_forwarding_enabled.get_active():
-            local_rule = {
-                'type': 'local',
-                'enabled': True,
-                'listen_addr': 'localhost',
-                'listen_port': int(self.local_port_row.get_value() if hasattr(self, 'local_port_row') else 0),
-                'remote_host': (self.remote_host_row.get_text().strip() 
-                              if hasattr(self, 'remote_host_row') and self.remote_host_row.get_text().strip() 
-                              else 'localhost'),
-                'remote_port': int(self.remote_port_row.get_value() if hasattr(self, 'remote_port_row') else 0)
-            }
-            forwarding_rules.append(local_rule)
-            logger.info(f"Saving local port forwarding rule: {local_rule}")
-        
-        # Remote port forwarding
-        if hasattr(self, 'remote_forwarding_enabled') and self.remote_forwarding_enabled.get_active():
-            remote_rule = {
-                'type': 'remote',
-                'enabled': True,
-                'listen_addr': '0.0.0.0',
-                'listen_port': int(self.remote_bind_port_row.get_value() 
-                                 if hasattr(self, 'remote_bind_port_row') else 0),
-                'remote_host': (self.local_host_row.get_text().strip() 
-                              if hasattr(self, 'local_host_row') and self.local_host_row.get_text().strip() 
-                              else 'localhost'),
-                'remote_port': int(self.local_bind_port_row.get_value() 
-                                 if hasattr(self, 'local_bind_port_row') else 0)
-            }
-            forwarding_rules.append(remote_rule)
-            logger.info(f"Saving remote port forwarding rule: {remote_rule}")
-        
-        # Dynamic port forwarding
-        if hasattr(self, 'dynamic_forwarding_enabled') and self.dynamic_forwarding_enabled.get_active():
-            dynamic_rule = {
-                'type': 'dynamic',
-                'enabled': True,
-                'listen_addr': 'localhost',
-                'listen_port': int(self.dynamic_port_row.get_value() 
-                                 if hasattr(self, 'dynamic_port_row') else 0)
-            }
-            forwarding_rules.append(dynamic_rule)
-            logger.info(f"Saving dynamic port forwarding rule: {dynamic_rule}")
-            
-        # Keep any existing disabled rules
-        for rule in getattr(self, 'forwarding_rules', []):
-            if not rule.get('enabled', True):
-                forwarding_rules.append(rule)
+
+        # Persist exactly what is in the editor list (enabled rules only) and sanitize
+        forwarding_rules = self._sanitize_forwarding_rules(
+            [dict(r) for r in self.forwarding_rules if r.get('enabled', True)]
+        )
         
         # Gather connection data
         connection_data = {
@@ -853,6 +897,46 @@ class ConnectionDialog(Adw.PreferencesDialog):
         # Emit signal with connection data
         self.emit('connection-saved', connection_data)
         self.close()
+
+    def _sanitize_forwarding_rules(self, rules):
+        """Validate and normalize forwarding rules before saving.
+        - Ensure listen_addr defaults to 127.0.0.1 (or 0.0.0.0 for remote if provided as such)
+        - Ensure listen_port > 0
+        - For local/remote: ensure remote_host non-empty and remote_port > 0
+        Invalid rules are dropped silently.
+        """
+        sanitized = []
+        for r in rules or []:
+            try:
+                rtype = r.get('type')
+                listen_addr = (r.get('listen_addr') or '').strip() or '127.0.0.1'
+                listen_port = int(r.get('listen_port') or 0)
+                if listen_port <= 0:
+                    continue
+                if rtype in ('local', 'remote'):
+                    remote_host = (r.get('remote_host') or '').strip() or 'localhost'
+                    remote_port = int(r.get('remote_port') or 0)
+                    if remote_port <= 0:
+                        continue
+                    sanitized.append({
+                        'type': rtype,
+                        'enabled': True,
+                        'listen_addr': listen_addr,
+                        'listen_port': listen_port,
+                        'remote_host': remote_host,
+                        'remote_port': remote_port,
+                    })
+                elif rtype == 'dynamic':
+                    sanitized.append({
+                        'type': 'dynamic',
+                        'enabled': True,
+                        'listen_addr': listen_addr,
+                        'listen_port': listen_port,
+                    })
+            except Exception:
+                # Skip malformed rule
+                pass
+        return sanitized
 
     def on_response(self, dialog, response_id):
         if str(response_id) == 'save':

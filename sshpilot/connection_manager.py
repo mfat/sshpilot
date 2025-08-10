@@ -763,9 +763,13 @@ class ConnectionManager(GObject.Object):
         if data.get('x11_forwarding', False):
             lines.append("    ForwardX11 yes")
         
-        # Add port forwarding rules if any
+        # Add port forwarding rules if any (ensure sane defaults)
         for rule in data.get('forwarding_rules', []):
-            listen_spec = f"{rule.get('listen_addr', '')}:{rule.get('listen_port', '')}"
+            listen_addr = rule.get('listen_addr', '') or '127.0.0.1'
+            listen_port = rule.get('listen_port', '')
+            if not listen_port:
+                continue
+            listen_spec = f"{listen_addr}:{listen_port}"
             
             if rule.get('type') == 'local':
                 dest_spec = f"{rule.get('remote_host', '')}:{rule.get('remote_port', '')}"
@@ -899,6 +903,11 @@ class ConnectionManager(GObject.Object):
         try:
             # Update connection data
             connection.data.update(new_data)
+            # Ensure forwarding rules stored on the object are updated too
+            try:
+                connection.forwarding_rules = list(new_data.get('forwarding_rules', connection.forwarding_rules or []))
+            except Exception:
+                pass
             
             # Update the SSH config file
             self.update_ssh_config_file(connection, new_data)
