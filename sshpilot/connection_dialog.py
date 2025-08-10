@@ -47,10 +47,19 @@ class ConnectionDialog(Adw.PreferencesDialog):
         try:
             self.add_response("cancel", _("Cancel"))
             self.add_response("save", _("Save"))
+            # Mark save as suggested if available
+            try:
+                from gi.repository import Adw as _Adw
+                if hasattr(self, 'set_response_appearance'):
+                    self.set_response_appearance("save", _Adw.ResponseAppearance.SUGGESTED)
+            except Exception:
+                pass
             self.set_close_response("cancel")
             self.connect("response", self.on_response)
+            self._has_dialog_responses = True
         except Exception:
-            pass
+            # Fallback path when responses API is unavailable
+            self._has_dialog_responses = False
         GLib.idle_add(self.load_connection_data)
         
         # Add ESC key to cancel/close the dialog
@@ -251,6 +260,8 @@ class ConnectionDialog(Adw.PreferencesDialog):
     def setup_ui(self):
         """Set up the dialog UI"""
         # Build pages using PreferencesDialog model
+        # If responses API is unavailable, we will add a single footer later as fallback
+
         general_page = Adw.PreferencesPage()
         general_page.set_title(_("Connection"))
         general_page.set_icon_name("network-server-symbolic")
@@ -264,6 +275,15 @@ class ConnectionDialog(Adw.PreferencesDialog):
         for group in self.build_port_forwarding_groups():
             forwarding_page.add(group)
         self.add(forwarding_page)
+
+        # Add a persistent action bar at the bottom of each page
+        try:
+            action_group_general = self._build_action_bar_group()
+            general_page.add(action_group_general)
+            action_group_forward = self._build_action_bar_group()
+            forwarding_page.add(action_group_forward)
+        except Exception as e:
+            logger.debug(f"Failed to add action bars: {e}")
         # After building views, populate existing data if editing
         try:
             self.load_connection_data()
@@ -566,26 +586,8 @@ class ConnectionDialog(Adw.PreferencesDialog):
         
         # X11 Forwarding moved to Port Forwarding view
         
-        # Footer actions (ensure visible Save/Cancel regardless of lib version)
-        actions_group = Adw.PreferencesGroup()
-        actions_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        actions_box.set_halign(Gtk.Align.END)
-        try:
-            cancel_btn = Gtk.Button(label=_("Cancel"))
-            save_btn = Gtk.Button(label=_("Save"))
-            cancel_btn.add_css_class('flat')
-            save_btn.add_css_class('suggested-action')
-        except Exception:
-            cancel_btn = Gtk.Button(label="Cancel")
-            save_btn = Gtk.Button(label="Save")
-        cancel_btn.connect('clicked', self.on_cancel_clicked)
-        save_btn.connect('clicked', self.on_save_clicked)
-        actions_box.append(cancel_btn)
-        actions_box.append(save_btn)
-        actions_group.add(actions_box)
-        
         # Return groups for PreferencesPage
-        return [basic_group, auth_group, advanced_group, actions_group]
+        return [basic_group, auth_group, advanced_group]
     
     def build_port_forwarding_groups(self):
         """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""
@@ -647,26 +649,8 @@ class ConnectionDialog(Adw.PreferencesDialog):
             )
         )
         
-        # Footer actions on this page as well, so Save is available while editing rules
-        actions_group = Adw.PreferencesGroup()
-        actions_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        actions_box.set_halign(Gtk.Align.END)
-        try:
-            cancel_btn2 = Gtk.Button(label=_("Cancel"))
-            save_btn2 = Gtk.Button(label=_("Save"))
-            cancel_btn2.add_css_class('flat')
-            save_btn2.add_css_class('suggested-action')
-        except Exception:
-            cancel_btn2 = Gtk.Button(label="Cancel")
-            save_btn2 = Gtk.Button(label="Save")
-        cancel_btn2.connect('clicked', self.on_cancel_clicked)
-        save_btn2.connect('clicked', self.on_save_clicked)
-        actions_box.append(cancel_btn2)
-        actions_box.append(save_btn2)
-        actions_group.add(actions_box)
-
         # Return groups for PreferencesPage: Port forwarding first, X11 last
-        return [rules_group, about_group, x11_group, actions_group]
+        return [rules_group, about_group, x11_group]
         
         # Initialize empty rules list if it doesn't exist
         if not hasattr(self, 'forwarding_rules'):
@@ -787,6 +771,26 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 return
         except Exception:
             pass
+
+    def _build_action_bar_group(self):
+        """Build a bottom-aligned action bar with Cancel/Save."""
+        actions_group = Adw.PreferencesGroup()
+        actions_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        actions_box.set_halign(Gtk.Align.END)
+        try:
+            cancel_btn = Gtk.Button(label=_("Cancel"))
+            save_btn = Gtk.Button(label=_("Save"))
+            cancel_btn.add_css_class('flat')
+            save_btn.add_css_class('suggested-action')
+        except Exception:
+            cancel_btn = Gtk.Button(label="Cancel")
+            save_btn = Gtk.Button(label="Save")
+        cancel_btn.connect('clicked', self.on_cancel_clicked)
+        save_btn.connect('clicked', self.on_save_clicked)
+        actions_box.append(cancel_btn)
+        actions_box.append(save_btn)
+        actions_group.add(actions_box)
+        return actions_group
 
         # Fallback to Gtk.FileChooserDialog
         dialog = Gtk.FileChooserDialog(
