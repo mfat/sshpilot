@@ -54,6 +54,21 @@ class SshPilotApplication(Adw.Application):
         # Set up logging
         self.setup_logging()
         
+        # Apply saved application theme (light/dark/system)
+        try:
+            from .config import Config
+            cfg = Config()
+            saved_theme = str(cfg.get_setting('app-theme', 'default'))
+            style_manager = Adw.StyleManager.get_default()
+            if saved_theme == 'light':
+                style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
+            elif saved_theme == 'dark':
+                style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+            else:
+                style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+        except Exception:
+            pass
+        
         # Create actions with keyboard shortcuts
         self.create_action('quit', self.quit, ['<primary>q'])
         self.create_action('new-connection', self.on_new_connection, ['<primary>n'])
@@ -65,8 +80,8 @@ class SshPilotApplication(Adw.Application):
         # Tab navigation accelerators
         self.create_action('tab-next', self.on_tab_next, ['<alt>Right'])
         self.create_action('tab-prev', self.on_tab_prev, ['<alt>Left'])
-        # Close tab accelerator
-        self.create_action('tab-close', self.on_tab_close, ['<primary>w'])
+        # Close tab accelerator (use Ctrl+F4 to avoid conflicts with TUI editors like nano/vim)
+        self.create_action('tab-close', self.on_tab_close, ['<primary>F4'])
         
         # Connect to signals
         self.connect('shutdown', self.on_shutdown)

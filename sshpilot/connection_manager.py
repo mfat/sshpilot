@@ -59,6 +59,11 @@ class Connection:
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
+        # Authentication method: 0 = key-based, 1 = password
+        try:
+            self.auth_method = int(data.get('auth_method', 0))
+        except Exception:
+            self.auth_method = 0
         # X11 forwarding preference
         self.x11_forwarding = bool(data.get('x11_forwarding', False))
         
@@ -72,7 +77,7 @@ class Connection:
         return f"{self.nickname} ({self.username}@{self.host})"
         
     async def connect(self):
-        """Establish the SSH connection using system SSH client"""
+        """Prepare SSH command for later use (no preflight echo)."""
         try:
             # Build SSH command
             ssh_cmd = ['ssh']
@@ -84,21 +89,44 @@ class Connection:
                 ssh_cfg = cfg.get_ssh_config()
             except Exception:
                 ssh_cfg = {}
-            connect_timeout = int(ssh_cfg.get('connection_timeout', 10))
-            connection_attempts = int(ssh_cfg.get('connection_attempts', 1))
-            strict_host = str(ssh_cfg.get('strict_host_key_checking', 'accept-new'))
-            batch_mode = bool(ssh_cfg.get('batch_mode', True))
-            compression = bool(ssh_cfg.get('compression', True))
+            apply_adv = bool(ssh_cfg.get('apply_advanced', False))
+            connect_timeout = int(ssh_cfg.get('connection_timeout', 10)) if apply_adv else None
+            connection_attempts = int(ssh_cfg.get('connection_attempts', 1)) if apply_adv else None
+            strict_host = str(ssh_cfg.get('strict_host_key_checking', '')) if apply_adv else ''
+            batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
+            compression = bool(ssh_cfg.get('compression', True)) if apply_adv else False
+            verbosity = int(ssh_cfg.get('verbosity', 0))
+            debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
 
-            # Sane non-interactive defaults to avoid indefinite hangs
-            if batch_mode:
-                ssh_cmd.extend(['-o', 'BatchMode=yes'])
-            ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
-            ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
-            if strict_host:
-                ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
-            if compression:
-                ssh_cmd.append('-C')
+            # Apply advanced args only when user explicitly enabled them
+            if apply_adv:
+                if batch_mode:
+                    ssh_cmd.extend(['-o', 'BatchMode=yes'])
+                if connect_timeout is not None:
+                    ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
+                if connection_attempts is not None:
+                    ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+                if strict_host:
+                    ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
+                if compression:
+                    ssh_cmd.append('-C')
+            ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
+
+            # Apply verbosity flags
+            try:
+                v = max(0, min(3, int(verbosity)))
+                for _ in range(v):
+                    ssh_cmd.append('-v')
+                if v == 1:
+                    ssh_cmd.extend(['-o', 'LogLevel=VERBOSE'])
+                elif v == 2:
+                    ssh_cmd.extend(['-o', 'LogLevel=DEBUG2'])
+                elif v >= 3:
+                    ssh_cmd.extend(['-o', 'LogLevel=DEBUG3'])
+                elif debug_enabled:
+                    ssh_cmd.extend(['-o', 'LogLevel=DEBUG'])
+            except Exception:
+                pass
             
             # Add key file if specified
             if self.keyfile and os.path.exists(self.keyfile):
@@ -114,39 +142,11 @@ class Connection:
                 
             # Add username if specified
             ssh_cmd.append(f"{self.username}@{self.host}" if self.username else self.host)
-            
-            # For non-interactive checks, just run a simple command
-            test_cmd = ssh_cmd + ["echo", "Connection successful"]
-            
-            # Run the command
-            process = await asyncio.create_subprocess_exec(
-                *test_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            # Wait for the process to complete with a hard timeout safeguard
-            try:
-                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=connect_timeout + 2)
-            except asyncio.TimeoutError:
-                try:
-                    process.kill()
-                except Exception:
-                    pass
-                await asyncio.sleep(0)
-                logger.error("SSH connectivity check timed out")
-                self.is_connected = False
-                return False
-            
-            if process.returncode == 0:
-                self.is_connected = True
-                # Store the base SSH command for later use
-                self.ssh_cmd = ssh_cmd
-                return True
-            else:
-                logger.error(f"SSH connection failed: {stderr.decode().strip()}")
-                self.is_connected = False
-                return False
+
+            # No preflight: store command and mark as ready; real errors will come from spawned ssh
+            self.ssh_cmd = ssh_cmd
+            self.is_connected = True
+            return True
                 
         except Exception as e:
             logger.error(f"Failed to connect to {self}: {e}")
@@ -497,6 +497,8 @@ class ConnectionManager(GObject.Object):
     def load_ssh_config(self):
         """Load connections from SSH config file"""
         try:
+            # Reset current list to reflect latest config on each load
+            self.connections = []
             if not os.path.exists(self.ssh_config_path):
                 logger.info("SSH config file not found, creating empty one")
                 os.makedirs(os.path.dirname(self.ssh_config_path), exist_ok=True)
@@ -524,7 +526,17 @@ class ConnectionManager(GObject.Object):
                             if current_host and current_config:
                                 connection_data = self.parse_host_config(current_config)
                                 if connection_data:
-                                    self.connections.append(Connection(connection_data))
+                                    # Build connection and apply per-connection metadata (e.g., auth_method)
+                                    conn = Connection(connection_data)
+                                    try:
+                                        from .config import Config
+                                        cfg = Config()
+                                        meta = cfg.get_connection_meta(conn.nickname)
+                                        if isinstance(meta, dict) and 'auth_method' in meta:
+                                            conn.auth_method = meta['auth_method']
+                                    except Exception:
+                                        pass
+                                    self.connections.append(conn)
                             
                             # Start new host
                             current_host = value
@@ -633,14 +645,25 @@ class ConnectionManager(GObject.Object):
                                 remote_port = 22  # Default SSH port
                             
                             rule_type = 'local' if forward_type == 'localforward' else 'remote'
-                            parsed['forwarding_rules'].append({
-                                'type': rule_type,
-                                'listen_addr': bind_addr,
-                                'listen_port': listen_port,
-                                'remote_host': remote_host,
-                                'remote_port': remote_port,
-                                'enabled': True
-                            })
+                            if rule_type == 'local':
+                                parsed['forwarding_rules'].append({
+                                    'type': 'local',
+                                    'listen_addr': bind_addr,
+                                    'listen_port': listen_port,
+                                    'remote_host': remote_host,
+                                    'remote_port': remote_port,
+                                    'enabled': True
+                                })
+                            else:
+                                # RemoteForward: remote host/port listens, destination is local host/port
+                                parsed['forwarding_rules'].append({
+                                    'type': 'remote',
+                                    'listen_addr': bind_addr,   # remote host
+                                    'listen_port': listen_port, # remote port
+                                    'local_host': remote_host,  # destination host (local)
+                                    'local_port': remote_port,  # destination port (local)
+                                    'enabled': True
+                                })
             
             # Handle proxy settings if any
             if 'proxycommand' in config:
@@ -753,15 +776,20 @@ class ConnectionManager(GObject.Object):
         if data.get('x11_forwarding', False):
             lines.append("    ForwardX11 yes")
         
-        # Add port forwarding rules if any
+        # Add port forwarding rules if any (ensure sane defaults)
         for rule in data.get('forwarding_rules', []):
-            listen_spec = f"{rule.get('listen_addr', '')}:{rule.get('listen_port', '')}"
+            listen_addr = rule.get('listen_addr', '') or '127.0.0.1'
+            listen_port = rule.get('listen_port', '')
+            if not listen_port:
+                continue
+            listen_spec = f"{listen_addr}:{listen_port}"
             
             if rule.get('type') == 'local':
                 dest_spec = f"{rule.get('remote_host', '')}:{rule.get('remote_port', '')}"
                 lines.append(f"    LocalForward {listen_spec} {dest_spec}")
             elif rule.get('type') == 'remote':
-                dest_spec = f"{rule.get('remote_host', '')}:{rule.get('remote_port', '')}"
+                # For RemoteForward we forward remote listen -> local destination
+                dest_spec = f"{rule.get('local_host') or rule.get('remote_host', '')}:{rule.get('local_port') or rule.get('remote_port', '')}"
                 lines.append(f"    RemoteForward {listen_spec} {dest_spec}")
             elif rule.get('type') == 'dynamic':
                 lines.append(f"    DynamicForward {listen_spec}")
@@ -789,20 +817,28 @@ class ConnectionManager(GObject.Object):
                     lines = f.readlines()
             except IOError as e:
                 logger.error(f"Failed to read SSH config: {e}")
-                return
+                raise
             
             # Find and update the connection's Host block
             updated_lines = []
             in_target_host = False
-            host_nickname = connection.nickname
+            # Use the nickname from new_data if present (handles rename-in-place cases)
+            host_nickname = str(new_data.get('nickname') or connection.nickname)
             host_found = False
             
             i = 0
             while i < len(lines):
-                line = lines[i].strip()
-                
-                # Check if this is the start of our target host block
-                if line.startswith('Host ') and line.split()[1] == host_nickname:
+                raw_line = lines[i]
+                line = raw_line.strip()
+                lstripped = raw_line.lstrip()
+                # Check if this is the start of our target host block (robust to leading spaces)
+                if lstripped.startswith('Host '):
+                    parts = lstripped.split()
+                    current_name = parts[1] if len(parts) > 1 else ''
+                else:
+                    current_name = ''
+
+                if current_name == host_nickname:
                     host_found = True
                     in_target_host = True
                     # Write the updated host block
@@ -811,13 +847,13 @@ class ConnectionManager(GObject.Object):
                     
                     # Skip all lines until the next Host or end of file
                     i += 1
-                    while i < len(lines) and not lines[i].startswith('Host '):
+                    while i < len(lines) and not lines[i].lstrip().startswith('Host '):
                         i += 1
                     in_target_host = False
                     continue
                 
                 if not in_target_host:
-                    updated_lines.append(lines[i])
+                    updated_lines.append(raw_line)
                 
                 i += 1
             
@@ -830,9 +866,16 @@ class ConnectionManager(GObject.Object):
             try:
                 with open(self.ssh_config_path, 'w') as f:
                     f.writelines(updated_lines)
+                logger.info(
+                    "Wrote SSH config for host %s (found=%s, rules=%d) to %s",
+                    host_nickname,
+                    host_found,
+                    len(new_data.get('forwarding_rules', []) or []),
+                    self.ssh_config_path,
+                )
             except IOError as e:
                 logger.error(f"Failed to write SSH config: {e}")
-                
+                raise
         except Exception as e:
             logger.error(f"Error updating SSH config: {e}", exc_info=True)
             raise
@@ -887,8 +930,19 @@ class ConnectionManager(GObject.Object):
     def update_connection(self, connection: Connection, new_data: Dict[str, Any]) -> bool:
         """Update an existing connection"""
         try:
+            logger.info(
+                "Updating connection '%s' → writing to %s (rules=%d)",
+                connection.nickname,
+                self.ssh_config_path,
+                len(new_data.get('forwarding_rules', []) or [])
+            )
             # Update connection data
             connection.data.update(new_data)
+            # Ensure forwarding rules stored on the object are updated too
+            try:
+                connection.forwarding_rules = list(new_data.get('forwarding_rules', connection.forwarding_rules or []))
+            except Exception:
+                pass
             
             # Update the SSH config file
             self.update_ssh_config_file(connection, new_data)

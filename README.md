@@ -16,6 +16,8 @@ SSH connection manager with integrated terminal, tunneling, tabbed interface and
 - Full support for Local, Remote and Dynamic port forwarding 
 - Intuitive, minimal UI with keyboard navigation and shortcuts 
 -- Press ctrl+L to quickly switch between hosts, close tabs with ctrl+w and move between tabs with alt+right/left arrow
+=======
+
 - SCP support for quicly uploading a file to remote server
 - Generate keypairs and add them to remote servers
 - Secure storage for credentials using libsecret

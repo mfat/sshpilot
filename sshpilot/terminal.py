@@ -11,8 +11,8 @@ import time
 import json
 import re
 import gi
+from gettext import gettext as _
 import asyncio
-import errno
 import threading
 import weakref
 import subprocess
@@ -153,8 +153,6 @@ class TerminalWidget(Gtk.Box):
         self.watch_id = 0
         self.ssh_client = None
         self.session_id = str(id(self))  # Unique ID for this session
-        self._preflight_ok = False
-        self._preflight_error = None
         
         # Register with process manager
         process_manager.register_terminal(self)
@@ -213,7 +211,103 @@ class TerminalWidget(Gtk.Box):
         self.overlay.add_overlay(self.connecting_bg)
         self.overlay.add_overlay(self.connecting_box)
 
-        self.append(self.overlay)
+        # Disconnected banner with reconnect button at the bottom (separate panel below terminal)
+        # Install CSS for a solid red background banner once
+        try:
+            display = Gdk.Display.get_default()
+            if display and not getattr(display, '_sshpilot_banner_css_installed', False):
+                css_provider = Gtk.CssProvider()
+                css_provider.load_from_data(b"""
+                    .error-toolbar.toolbar {
+                        background-color: #cc0000;
+                        color: #ffffff;
+                        border-radius: 0;
+                        padding-top: 10px;
+                        padding-bottom: 10px;
+                    }
+                    .error-toolbar.toolbar label { color: #ffffff; }
+                    .reconnect-button { background: #4a4a4a; color: #ffffff; border-radius: 4px; padding: 6px 10px; }
+                    .reconnect-button:hover { background: #3f3f3f; }
+                    .reconnect-button:active { background: #353535; }
+                """)
+                Gtk.StyleContext.add_provider_for_display(
+                    display, css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                )
+                setattr(display, '_sshpilot_banner_css_installed', True)
+        except Exception:
+            pass
+
+        # Create error toolbar with same structure as sidebar toolbar
+        self.disconnected_banner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.disconnected_banner.set_halign(Gtk.Align.FILL)
+        self.disconnected_banner.set_valign(Gtk.Align.END)
+        self.disconnected_banner.set_margin_start(0)
+        self.disconnected_banner.set_margin_end(0)
+        self.disconnected_banner.set_margin_top(0)
+        self.disconnected_banner.set_margin_bottom(0)
+        try:
+            self.disconnected_banner.add_css_class('toolbar')
+            self.disconnected_banner.add_css_class('error-toolbar')
+            # Add a unique class per instance so we can set a per-widget min-height via CSS
+            self._banner_unique_class = f"banner-{id(self)}"
+            self.disconnected_banner.add_css_class(self._banner_unique_class)
+        except Exception:
+            pass
+        # Banner content: icon + label + spacer + reconnect + dismiss, matching toolbar layout
+        icon = Gtk.Image.new_from_icon_name('dialog-error-symbolic')
+        icon.set_valign(Gtk.Align.CENTER)
+        self.disconnected_banner.append(icon)
+        self.disconnected_banner_label = Gtk.Label()
+        self.disconnected_banner_label.set_halign(Gtk.Align.START)
+        self.disconnected_banner_label.set_valign(Gtk.Align.CENTER)
+        self.disconnected_banner_label.set_hexpand(True)
+        self.disconnected_banner_label.set_text(_('Session ended.'))
+        self.disconnected_banner.append(self.disconnected_banner_label)
+        self.reconnect_button = Gtk.Button.new_with_label(_('Reconnect'))
+        try:
+            self.reconnect_button.add_css_class('reconnect-button')
+        except Exception:
+            pass
+        self.reconnect_button.connect('clicked', self._on_reconnect_clicked)
+        self.disconnected_banner.append(self.reconnect_button)
+
+        # Dismiss button to hide the banner manually
+        self.dismiss_button = Gtk.Button.new_with_label(_('Dismiss'))
+        try:
+            self.dismiss_button.add_css_class('flat')
+            self.dismiss_button.add_css_class('reconnect-button')
+        except Exception:
+            pass
+        self.dismiss_button.connect('clicked', lambda *_: self._set_disconnected_banner_visible(False))
+        self.disconnected_banner.append(self.dismiss_button)
+        self.disconnected_banner.set_visible(False)
+
+        # Allow window to force an exact height match to the sidebar toolbar using per-widget CSS min-height
+        self._banner_css_provider = None
+        def _apply_external_height(new_h: int):
+            try:
+                h = max(0, int(new_h))
+                display = Gdk.Display.get_default()
+                if not display:
+                    return
+                css = f".{self._banner_unique_class} {{ min-height: {h}px; }}"
+                provider = Gtk.CssProvider()
+                provider.load_from_data(css.encode('utf-8'))
+                Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+                # Keep a reference to prevent GC; latest provider wins at same priority
+                self._banner_css_provider = provider
+            except Exception:
+                pass
+        self.set_banner_height = _apply_external_height
+
+        # Container to stack terminal (overlay) above the banner panel
+        self.container_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.container_box.set_hexpand(True)
+        self.container_box.set_vexpand(True)
+        self.container_box.append(self.overlay)
+        self.container_box.append(self.disconnected_banner)
+
+        self.append(self.container_box)
         
         # Set expansion properties
         self.scrolled_window.set_hexpand(True)
@@ -235,6 +329,30 @@ class TerminalWidget(Gtk.Box):
         # Show overlay initially
         self._set_connecting_overlay_visible(True)
         logger.debug("Terminal widget initialized")
+
+    def _set_disconnected_banner_visible(self, visible: bool, message: str = None):
+        try:
+            if message:
+                self.disconnected_banner_label.set_text(message)
+            if hasattr(self.disconnected_banner, 'set_visible'):
+                self.disconnected_banner.set_visible(visible)
+        except Exception:
+            pass
+
+    def _on_reconnect_clicked(self, *args):
+        """User clicked reconnect on the banner"""
+        try:
+            # Immediately hide banner and show connecting overlay
+            self._set_disconnected_banner_visible(False)
+            self._set_connecting_overlay_visible(True)
+            # Reuse existing connect method
+            if not self._connect_ssh():
+                # Show banner again if failed to start reconnect
+                self._set_connecting_overlay_visible(False)
+                self._set_disconnected_banner_visible(True, _('Reconnect failed to start'))
+        except Exception:
+            self._set_connecting_overlay_visible(False)
+            self._set_disconnected_banner_visible(True, _('Reconnect failed'))
 
     def _set_connecting_overlay_visible(self, visible: bool):
         try:
@@ -270,76 +388,9 @@ class TerminalWidget(Gtk.Box):
             return False
     
     def _connect_ssh_thread(self):
-        """SSH connection thread with TCP preflight and clear errors"""
+        """SSH connection thread: directly spawn SSH and rely on its output for errors."""
         try:
-            import socket
-            host = getattr(self.connection, 'host', None)
-            port = int(getattr(self.connection, 'port', 22) or 22)
-            if not host:
-                # Even if host is missing, set up terminal to render theme; ssh will error
-                GLib.idle_add(self._setup_ssh_terminal)
-                return
-
-            # Quick TCP preflight to avoid hanging ssh on blackhole hosts
-            try:
-                with socket.create_connection((host, port), timeout=5) as sock:
-                    # Try to read SSH banner to ensure it's an SSH server
-                    sock.settimeout(2)
-                    try:
-                        banner = sock.recv(255)
-                        if banner and banner.startswith(b'SSH-'):
-                            self._preflight_ok = True
-                        else:
-                            self._preflight_ok = False
-                            self._preflight_error = "Invalid SSH banner from server"
-                    except Exception as read_err:
-                        self._preflight_ok = False
-                        self._preflight_error = f"Failed to read SSH banner: {read_err}"
-            except Exception as sock_err:
-                # Do not bail out early; still spawn ssh so terminal paints with theme
-                self._preflight_ok = False
-                self._preflight_error = f"TCP connection failed: {sock_err}"
-                logger.debug(f"TCP preflight failed: {sock_err}; proceeding to spawn ssh with timeout options")
-
-            # Local port-forward preflight: check local bind ports for dynamic/local forwards
-            try:
-                forwarding_rules = getattr(self.connection, 'forwarding_rules', []) or []
-                for rule in forwarding_rules:
-                    rtype = rule.get('type')
-                    listen_addr = rule.get('listen_addr', '127.0.0.1')
-                    listen_port = int(rule.get('listen_port') or 0)
-                    if listen_port <= 0:
-                        continue
-                    if rtype in ('dynamic', 'local'):
-                        try:
-                            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                                s.bind((listen_addr, listen_port))
-                        except OSError as e:
-                            if e.errno == errno.EADDRINUSE:
-                                msg = f"bind [{listen_addr}]:{listen_port}: Address already in use"
-                                logger.debug(f"Local port preflight failed: {msg}")
-                                GLib.idle_add(self._show_preflight_error, msg)
-                                GLib.idle_add(self._show_forwarding_error_dialog, msg)
-                                return
-                            else:
-                                # Other bind errors
-                                msg = f"bind [{listen_addr}]:{listen_port}: {e}"
-                                logger.debug(f"Local port preflight failed: {msg}")
-                                GLib.idle_add(self._show_preflight_error, msg)
-                                GLib.idle_add(self._show_forwarding_error_dialog, msg)
-                                return
-            except Exception as e:
-                logger.debug(f"Port-forward preflight check skipped/failed: {e}")
-
-            # If preflight failed based on TCP or banner, show error without spawning ssh
-            if not self._preflight_ok:
-                GLib.idle_add(self._show_preflight_error, self._preflight_error or "Connection failed")
-                return
-
-            # Proceed to set up the SSH terminal for valid SSH servers
             GLib.idle_add(self._setup_ssh_terminal)
-
         except Exception as e:
             logger.error(f"SSH connection failed: {e}")
             GLib.idle_add(self._on_connection_failed, str(e))
@@ -355,13 +406,14 @@ class TerminalWidget(Gtk.Box):
                 ssh_cfg = self.config.get_ssh_config() if hasattr(self.config, 'get_ssh_config') else {}
             except Exception:
                 ssh_cfg = {}
-            connect_timeout = int(ssh_cfg.get('connection_timeout', 10))
-            connection_attempts = int(ssh_cfg.get('connection_attempts', 1))
-            keepalive_interval = int(ssh_cfg.get('keepalive_interval', 30))
-            keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3))
-            strict_host = str(ssh_cfg.get('strict_host_key_checking', 'accept-new'))
-            batch_mode = bool(ssh_cfg.get('batch_mode', True))
-            compression = bool(ssh_cfg.get('compression', True))
+            apply_adv = bool(ssh_cfg.get('apply_advanced', False))
+            connect_timeout = int(ssh_cfg.get('connection_timeout', 10)) if apply_adv else None
+            connection_attempts = int(ssh_cfg.get('connection_attempts', 1)) if apply_adv else None
+            keepalive_interval = int(ssh_cfg.get('keepalive_interval', 30)) if apply_adv else None
+            keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3)) if apply_adv else None
+            strict_host = str(ssh_cfg.get('strict_host_key_checking', '')) if apply_adv else ''
+            batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
+            compression = bool(ssh_cfg.get('compression', True)) if apply_adv else False
 
             # Determine auth method from connection
             password_auth_selected = False
@@ -371,18 +423,23 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 password_auth_selected = False
 
-            # Robust non-interactive options to prevent hangs
-            # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
-            if batch_mode and not password_auth_selected:
-                ssh_cmd.extend(['-o', 'BatchMode=yes'])
-            ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
-            ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
-            ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
-            ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
-            if strict_host:
-                ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
-            if compression:
-                ssh_cmd.append('-C')
+            # Apply advanced args only when user explicitly enabled them
+            if apply_adv:
+                # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
+                if batch_mode and not password_auth_selected:
+                    ssh_cmd.extend(['-o', 'BatchMode=yes'])
+                if connect_timeout is not None:
+                    ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
+                if connection_attempts is not None:
+                    ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+                if keepalive_interval is not None:
+                    ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
+                if keepalive_count is not None:
+                    ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
+                if strict_host:
+                    ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
+                if compression:
+                    ssh_cmd.append('-C')
 
             # Ensure SSH exits immediately on failure rather than waiting in background
             ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
@@ -473,13 +530,14 @@ class TerminalWidget(Gtk.Box):
                         except Exception as e:
                             logger.error(f"Failed to set up local forwarding: {e}")
                             
-                    # Handle remote port forwarding
-                    elif rule_type == 'remote' and listen_port and 'remote_host' in rule and 'remote_port' in rule:
+                    # Handle remote port forwarding (remote bind -> local destination)
+                    elif rule_type == 'remote' and listen_port:
                         try:
-                            remote_host = rule.get('remote_host', 'localhost')
-                            remote_port = rule.get('remote_port')
-                            ssh_cmd.extend(['-R', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"])
-                            logger.debug(f"Added remote port forwarding: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
+                            local_host = rule.get('local_host') or rule.get('remote_host', 'localhost')
+                            local_port = rule.get('local_port') or rule.get('remote_port')
+                            if local_port:
+                                ssh_cmd.extend(['-R', f"{listen_addr}:{listen_port}:{local_host}:{local_port}"])
+                                logger.debug(f"Added remote port forwarding: {listen_addr}:{listen_port} -> {local_host}:{local_port}")
                         except Exception as e:
                             logger.error(f"Failed to set up remote forwarding: {e}")
             
@@ -527,17 +585,11 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 self._spawn_start_time = None
             
-            # Only mark as connected if preflight succeeded (host reachable)
-            if getattr(self, '_preflight_ok', False):
-                # Re-apply theme immediately after spawning to avoid default flash
-                try:
-                    self.apply_theme()
-                except Exception:
-                    pass
-                self.is_connected = True
-                self.emit('connection-established')
-            # Hide connecting overlay regardless of outcome at this point
-            self._set_connecting_overlay_visible(False)
+            # Defer marking as connected until spawn completes
+            try:
+                self.apply_theme()
+            except Exception:
+                pass
             
             # Apply theme after connection is established
             self.apply_theme()
@@ -580,17 +632,19 @@ class TerminalWidget(Gtk.Box):
                     'pgid': self.process_pgid
                 }
             
-            # Connection is already marked as connected in _setup_ssh_terminal when preflight OK
-            # Just grab focus here
+            # Grab focus and apply theme
             self.vte.grab_focus()
-            
-            # Apply theme to ensure it's set correctly after spawn
             self.apply_theme()
 
-            # If preflight indicated failure, show error now (after VTE is ready) and do not mark connected
-            if not getattr(self, '_preflight_ok', False):
-                self._on_connection_failed(self._preflight_error or "Connection failed")
-                return
+            # Spawn succeeded; mark as connected and hide overlay
+            self.is_connected = True
+            self.emit('connection-established')
+            self._set_connecting_overlay_visible(False)
+            # Ensure any reconnect/disconnected banner is hidden upon successful spawn
+            try:
+                self._set_disconnected_banner_visible(False)
+            except Exception:
+                pass
             
         except Exception as e:
             logger.error(f"Error in spawn complete: {e}")
@@ -615,21 +669,7 @@ class TerminalWidget(Gtk.Box):
         self.is_connected = False
         self.emit('connection-failed', error_message)
 
-    def _show_preflight_error(self, message):
-        """Show preflight error in the terminal area without spawning SSH"""
-        try:
-            # Ensure theme
-            self.apply_theme()
-            # Render error
-            self.vte.feed(("\r\n\x1b[31m" + str(message) + "\x1b[0m\r\n").encode('utf-8'))
-        except Exception as e:
-            logger.error(f"Error showing preflight error: {e}")
-        finally:
-            self.is_connected = False
-            self.emit('connection-failed', str(message))
-            # Hide connecting overlay now that we have an error to show
-            self._set_connecting_overlay_visible(False)
-        return False
+    
 
     def _show_forwarding_error_dialog(self, message):
         try:
@@ -820,47 +860,71 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Error in setup_terminal: {e}", exc_info=True)
             raise
         
-        # Enable right-click context menu
-        self.vte.set_context_menu_model(self.create_context_menu())
-        
-        # Install standard Linux terminal shortcuts (Ctrl+Shift+C/V/A)
+        # Install terminal shortcuts and custom context menu
         self._install_shortcuts()
+        self._setup_context_menu()
 
-    def create_context_menu(self):
-        """Create right-click context menu"""
-        menu = Gio.Menu()
-        # Add actions
-        menu.append("Copy", "app.terminal-copy")
-        menu.append("Paste", "app.terminal-paste")
-        menu.append("Select All", "app.terminal-select-all")
-        
-        # Install actions on the widget's application
-        app = Gtk.Application.get_default()
-        if app:
-            # Copy
-            if app.lookup_action("terminal-copy") is None:
-                copy_action = Gio.SimpleAction.new("terminal-copy", None)
-                copy_action.connect("activate", lambda a, p: self.copy_text())
-                app.add_action(copy_action)
-            # Paste
-            if app.lookup_action("terminal-paste") is None:
-                paste_action = Gio.SimpleAction.new("terminal-paste", None)
-                paste_action.connect("activate", lambda a, p: self.paste_text())
-                app.add_action(paste_action)
-            # Select All
-            if app.lookup_action("terminal-select-all") is None:
-                sel_action = Gio.SimpleAction.new("terminal-select-all", None)
-                sel_action.connect("activate", lambda a, p: self.select_all())
-                app.add_action(sel_action)
-            # Standard accelerators
-            try:
-                app.set_accels_for_action("app.terminal-copy", ["<Primary><Shift>c"]) 
-                app.set_accels_for_action("app.terminal-paste", ["<Primary><Shift>v"]) 
-                app.set_accels_for_action("app.terminal-select-all", ["<Primary><Shift>a"]) 
-            except Exception:
-                pass
-        
-        return menu
+    def _setup_context_menu(self):
+        """Set up a robust per-terminal context menu and actions."""
+        try:
+            # Per-widget action group
+            self._menu_actions = Gio.SimpleActionGroup()
+            act_copy = Gio.SimpleAction.new("copy", None)
+            act_copy.connect("activate", lambda a, p: self.copy_text())
+            self._menu_actions.add_action(act_copy)
+            act_paste = Gio.SimpleAction.new("paste", None)
+            act_paste.connect("activate", lambda a, p: self.paste_text())
+            self._menu_actions.add_action(act_paste)
+            act_selall = Gio.SimpleAction.new("select_all", None)
+            act_selall.connect("activate", lambda a, p: self.select_all())
+            self._menu_actions.add_action(act_selall)
+            self.insert_action_group('term', self._menu_actions)
+
+            # Menu model
+            self._menu_model = Gio.Menu()
+            self._menu_model.append(_("Copy"), "term.copy")
+            self._menu_model.append(_("Paste"), "term.paste")
+            self._menu_model.append(_("Select All"), "term.select_all")
+
+            # Popover
+            self._menu_popover = Gtk.PopoverMenu.new_from_model(self._menu_model)
+            self._menu_popover.set_has_arrow(True)
+            self._menu_popover.set_parent(self.vte)
+
+            # Right-click gesture to open popover
+            gesture = Gtk.GestureClick()
+            gesture.set_button(0)
+            def _on_pressed(gest, n_press, x, y):
+                try:
+                    btn = 0
+                    try:
+                        btn = gest.get_current_button()
+                    except Exception:
+                        pass
+                    if btn not in (Gdk.BUTTON_SECONDARY, 3):
+                        return
+                    # Focus terminal first for reliable copy/paste
+                    try:
+                        self.vte.grab_focus()
+                    except Exception:
+                        pass
+                    # Position popover near click
+                    try:
+                        rect = Gdk.Rectangle()
+                        rect.x = int(x)
+                        rect.y = int(y)
+                        rect.width = 1
+                        rect.height = 1
+                        self._menu_popover.set_pointing_to(rect)
+                    except Exception:
+                        pass
+                    self._menu_popover.popup()
+                except Exception:
+                    pass
+            gesture.connect('pressed', _on_pressed)
+            self.vte.add_controller(gesture)
+        except Exception as e:
+            logger.debug(f"Context menu setup skipped/failed: {e}")
 
     def _install_shortcuts(self):
         """Install local shortcuts on the VTE widget for copy/paste/select-all"""
@@ -929,7 +993,7 @@ class TerminalWidget(Gtk.Box):
         
         GLib.timeout_add(500, _reconnect)  # 500ms delay before reconnecting
     
-    def _on_connection_updated_signal(self, _, connection):
+    def _on_connection_updated_signal(self, sender, connection):
         """Signal handler for connection-updated signal"""
         self._on_connection_updated(connection)
         
@@ -957,6 +1021,8 @@ class TerminalWidget(Gtk.Box):
         
         # Apply theme after connection is established
         self.apply_theme()
+        # Hide any reconnect banner on success
+        self._set_disconnected_banner_visible(False)
         
     def _on_connection_lost(self):
         """Handle SSH connection loss"""
@@ -970,6 +1036,9 @@ class TerminalWidget(Gtk.Box):
                 self.connection_manager.emit('connection-status-changed', self.connection, False)
             
             self.emit('connection-lost')
+            # Show reconnect UI
+            self._set_connecting_overlay_visible(False)
+            self._set_disconnected_banner_visible(True, _('Connection lost.'))
     
     def on_child_exited(self, widget, status):
         """Called when the child process exits"""
@@ -977,6 +1046,9 @@ class TerminalWidget(Gtk.Box):
             self.is_connected = False
             logger.info(f"SSH session ended with status {status}")
             self.emit('connection-lost')
+            # Show reconnect UI
+            self._set_connecting_overlay_visible(False)
+            self._set_disconnected_banner_visible(True, _('Session ended.'))
         else:
             # Early exit without connection; if forwarding was requested, show dialog
             try:
@@ -1229,19 +1301,31 @@ class TerminalWidget(Gtk.Box):
             # Show error in terminal
             error_msg = f"\r\n\x1b[31mConnection failed: {error_message}\x1b[0m\r\n"
             self.vte.feed(error_msg.encode('utf-8'))
-            
+
             self.is_connected = False
-            
+
             # Clean up PTY if it exists
             if hasattr(self, 'pty') and self.pty:
                 self.pty.close()
                 del self.pty
-            
+
             # Do not reset here to avoid losing theme; leave buffer with error text
-            
+
             # Notify UI
             self.emit('connection-failed', error_message)
-            
+
+            # Show reconnect banner for new-connection failures as well
+            self._set_connecting_overlay_visible(False)
+            # Detect timeout-ish messages to provide clearer text
+            msg_lower = (error_message or '').lower()
+            if 'timeout' in msg_lower or 'timed out' in msg_lower:
+                banner_text = _('Connection timeout. Try again?')
+            elif 'failed to read ssh banner' in msg_lower:
+                banner_text = _('Server not ready yet. Try again?')
+            else:
+                banner_text = _('Connection failed.')
+            self._set_disconnected_banner_visible(True, banner_text)
+
         except Exception as e:
             logger.error(f"Error in _on_connection_failed: {e}")
 
@@ -1254,12 +1338,22 @@ class TerminalWidget(Gtk.Box):
         
         self.disconnect()
         self.emit('connection-lost')
+        # Show reconnect UI
+        self._set_connecting_overlay_visible(False)
+        self._set_disconnected_banner_visible(True, _('Session ended.'))
 
     def on_title_changed(self, terminal):
         """Handle terminal title change"""
         title = terminal.get_window_title()
         if title:
             self.emit('title-changed', title)
+        # If terminal is connected and a title update occurs (often when prompt is ready),
+        # ensure the reconnect banner is hidden
+        try:
+            if getattr(self, 'is_connected', False):
+                self._set_disconnected_banner_visible(False)
+        except Exception:
+            pass
 
     def on_bell(self, terminal):
         """Handle terminal bell"""

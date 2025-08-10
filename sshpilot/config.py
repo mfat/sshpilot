@@ -326,8 +326,40 @@ class Config(GObject.Object):
                 # Convert key format for GSettings
                 gsettings_key = key.replace('.', '-')
                 if self.settings.list_keys().__contains__(gsettings_key):
-                    # Attempt to set as string value by default
-                    self.settings.set_value(gsettings_key, GLib.Variant.new_string(str(value)))
+                    # Use proper GSettings setter based on Python type
+                    try:
+                        if isinstance(value, bool):
+                            self.settings.set_boolean(gsettings_key, bool(value))
+                        elif isinstance(value, int) and not isinstance(value, bool):
+                            # bool is subclass of int; ensure pure int here
+                            self.settings.set_int(gsettings_key, int(value))
+                        elif isinstance(value, float):
+                            try:
+                                self.settings.set_double(gsettings_key, float(value))
+                            except Exception:
+                                # Fallback to string if schema type is not double
+                                self.settings.set_string(gsettings_key, str(value))
+                        elif isinstance(value, str):
+                            self.settings.set_string(gsettings_key, value)
+                        else:
+                            # Fallback: try to coerce to the existing key's variant type
+                            try:
+                                current_variant = self.settings.get_value(gsettings_key)
+                                variant_type = current_variant.get_type_string()
+                                self.settings.set_value(gsettings_key, GLib.Variant(variant_type, value))
+                            except Exception:
+                                # Last resort: store as string
+                                self.settings.set_string(gsettings_key, str(value))
+                    except Exception:
+                        # If anything goes wrong, fall back to storing in JSON config
+                        keys = key.split('.')
+                        current = self.config_data
+                        for k in keys[:-1]:
+                            if k not in current or not isinstance(current[k], dict):
+                                current[k] = {}
+                            current = current[k]
+                        current[keys[-1]] = value
+                        self.save_json_config()
                 else:
                     # Fallback to JSON store when key not present in schema
                     keys = key.split('.')
@@ -450,6 +482,7 @@ class Config(GObject.Object):
     def get_ssh_config(self) -> Dict[str, Any]:
         """Get SSH configuration"""
         return {
+            'apply_advanced': self.get_setting('ssh.apply_advanced', False),
             'connection_timeout': self.get_setting('ssh.connection_timeout', 30),
             'connection_attempts': self.get_setting('ssh.connection_attempts', 1),
             'keepalive_interval': self.get_setting('ssh.keepalive_interval', 60),
