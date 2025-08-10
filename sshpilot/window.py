@@ -274,7 +274,7 @@ class WelcomePage(Gtk.Box):
             ('Ctrl+Shift+K', 'New SSH Key'),
             ('Alt+Right', 'Next Tab'),
             ('Alt+Left', 'Previous Tab'),
-            ('Ctrl+W', 'Close Tab'),
+            ('Ctrl+F4', 'Close Tab'),
         ]
         
         for shortcut, description in shortcuts:

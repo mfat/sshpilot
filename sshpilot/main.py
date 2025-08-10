@@ -80,8 +80,8 @@ class SshPilotApplication(Adw.Application):
         # Tab navigation accelerators
         self.create_action('tab-next', self.on_tab_next, ['<alt>Right'])
         self.create_action('tab-prev', self.on_tab_prev, ['<alt>Left'])
-        # Close tab accelerator
-        self.create_action('tab-close', self.on_tab_close, ['<primary>w'])
+        # Close tab accelerator (use Ctrl+F4 to avoid conflicts with TUI editors like nano/vim)
+        self.create_action('tab-close', self.on_tab_close, ['<primary>F4'])
         
         # Connect to signals
         self.connect('shutdown', self.on_shutdown)
