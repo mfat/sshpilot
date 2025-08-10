@@ -1594,6 +1594,12 @@ class MainWindow(Adw.ApplicationWindow):
         if response_id == 'disconnect' and connection in self.active_terminals:
             terminal = self.active_terminals[connection]
             terminal.disconnect()
+            # If part of a delete flow, remove the connection now
+            if getattr(self, '_pending_delete_connection', None) is connection:
+                try:
+                    self.connection_manager.remove_connection(connection)
+                finally:
+                    self._pending_delete_connection = None
     
     def disconnect_from_host(self, connection: Connection):
         """Disconnect from SSH host"""
@@ -2016,27 +2022,58 @@ class MainWindow(Adw.ApplicationWindow):
         
         connection = selected_row.connection
         
-        # Show confirmation dialog
-        dialog = Adw.MessageDialog.new(self, 'Delete Connection?', 
-                                     f'Are you sure you want to delete "{connection.nickname}"?')
-        dialog.add_response('cancel', 'Cancel')
-        dialog.add_response('delete', 'Delete')
-        dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_default_response('cancel')
-        dialog.set_close_response('cancel')
-        
+        # If host has active connections/tabs, warn about closing them first
+        has_active_terms = bool(self.connection_to_terminals.get(connection, []))
+        if getattr(connection, 'is_connected', False) or has_active_terms:
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_('Remove host?'),
+                body=_('Close connections and remove host?')
+            )
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('close_remove', _('Close and Remove'))
+            dialog.set_response_appearance('close_remove', Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response('cancel')
+            dialog.set_close_response('cancel')
+        else:
+            # Simple delete confirmation when not connected
+            dialog = Adw.MessageDialog.new(self, _('Delete Connection?'),
+                                         _('Are you sure you want to delete "{}"?').format(connection.nickname))
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('delete', _('Delete'))
+            dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response('cancel')
+            dialog.set_close_response('cancel')
+
         dialog.connect('response', self.on_delete_connection_response, connection)
         dialog.present()
 
     def on_delete_connection_response(self, dialog, response, connection):
         """Handle delete connection dialog response"""
         if response == 'delete':
-            # Disconnect if connected
-            if connection.is_connected:
-                self.disconnect_from_host(connection)
-            
-            # Remove connection
+            # Simple deletion when not connected
             self.connection_manager.remove_connection(connection)
+        elif response == 'close_remove':
+            # Close connections immediately (no extra confirmation), then remove
+            try:
+                # Disconnect all terminals for this connection
+                for term in list(self.connection_to_terminals.get(connection, [])):
+                    try:
+                        if hasattr(term, 'disconnect'):
+                            term.disconnect()
+                    except Exception:
+                        pass
+                # Also disconnect the active terminal if tracked separately
+                term = self.active_terminals.get(connection)
+                if term and hasattr(term, 'disconnect'):
+                    try:
+                        term.disconnect()
+                    except Exception:
+                        pass
+            finally:
+                # Remove connection without further prompts
+                self.connection_manager.remove_connection(connection)
 
     def _on_tab_close_confirmed(self, dialog, response_id, tab_view, page):
         """Handle response from tab close confirmation dialog"""
@@ -2082,6 +2119,11 @@ class MainWindow(Adw.ApplicationWindow):
     
     def on_tab_close(self, tab_view, page):
         """Handle tab close - THE KEY FIX: Never call close_page ourselves"""
+        # If we are closing pages programmatically (e.g., after deleting a
+        # connection), suppress the confirmation dialog and allow the default
+        # close behavior to proceed.
+        if getattr(self, '_suppress_close_confirmation', False):
+            return False
         # Get the connection for this tab
         connection = None
         terminal = None
@@ -2259,20 +2301,29 @@ class MainWindow(Adw.ApplicationWindow):
 
         # Close all terminals for this connection and clean up maps
         terminals = list(self.connection_to_terminals.get(connection, []))
-        for term in terminals:
-            try:
-                page = self.tab_view.get_page(term)
-                if page:
-                    self.tab_view.close_page(page)
-            except Exception:
-                pass
-            try:
-                if hasattr(term, 'disconnect'):
-                    term.disconnect()
-            except Exception:
-                pass
-            if term in self.terminal_to_connection:
-                del self.terminal_to_connection[term]
+        # Suppress confirmation while we programmatically close pages
+        self._suppress_close_confirmation = True
+        try:
+            for term in terminals:
+                try:
+                    page = self.tab_view.get_page(term)
+                    if page:
+                        self.tab_view.close_page(page)
+                except Exception:
+                    pass
+                try:
+                    if hasattr(term, 'disconnect'):
+                        term.disconnect()
+                except Exception:
+                    pass
+                # Remove reverse map entry for each terminal
+                try:
+                    if term in self.terminal_to_connection:
+                        del self.terminal_to_connection[term]
+                except Exception:
+                    pass
+        finally:
+            self._suppress_close_confirmation = False
         if connection in self.connection_to_terminals:
             del self.connection_to_terminals[connection]
         if connection in self.active_terminals:
@@ -2294,20 +2345,29 @@ class MainWindow(Adw.ApplicationWindow):
 
         # Close all terminals for this connection and clean up maps
         terminals = list(self.connection_to_terminals.get(connection, []))
-        for term in terminals:
-            try:
-                page = self.tab_view.get_page(term)
-                if page:
-                    self.tab_view.close_page(page)
-            except Exception:
-                pass
-            try:
-                if hasattr(term, 'disconnect'):
-                    term.disconnect()
-            except Exception:
-                pass
-            if term in self.terminal_to_connection:
-                del self.terminal_to_connection[term]
+        # Suppress confirmation while we programmatically close pages
+        self._suppress_close_confirmation = True
+        try:
+            for term in terminals:
+                try:
+                    page = self.tab_view.get_page(term)
+                    if page:
+                        self.tab_view.close_page(page)
+                except Exception:
+                    pass
+                try:
+                    if hasattr(term, 'disconnect'):
+                        term.disconnect()
+                except Exception:
+                    pass
+                # Remove reverse map entry for each terminal
+                try:
+                    if term in self.terminal_to_connection:
+                        del self.terminal_to_connection[term]
+                except Exception:
+                    pass
+        finally:
+            self._suppress_close_confirmation = False
         if connection in self.connection_to_terminals:
             del self.connection_to_terminals[connection]
         if connection in self.active_terminals:
