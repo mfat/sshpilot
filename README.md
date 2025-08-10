@@ -1,7 +1,7 @@
 sshPilot
 ========
 
-SSH connection manager with integrated terminal, tunneling, tabbed interface and scp upload support.
+SSH connection manager with integrated terminal, tunneling, tabbed interface and scp upload support. It's a free alternative to Putty and Termius for GNU/Linux.
 
 <img width="1260" height="833" alt="Main window" src="https://github.com/user-attachments/assets/743bb1fb-22de-4537-ba91-775cea48d57a" />
 
@@ -11,16 +11,18 @@ SSH connection manager with integrated terminal, tunneling, tabbed interface and
 
 ## Features
 
-- Load/save standard .ssh/config entries (it loads you current configuration)
+- Load/save standard .ssh/config entries (it can load your current configuration)
 - Tabbed interface
 - Full support for Local, Remote and Dynamic port forwarding 
 - Intuitive, minimal UI with keyboard navigation and shortcuts 
+
 -- Press ctrl+L to quickly switch between hosts, close tabs with ctrl+F4 and move between tabs with alt+right/left arrow
+
 - SCP support for quicly uploading a file to remote server
 - Generate keypairs and add them to remote servers
 - Secure storage for credentials using libsecret
-- Toggle to show/hide ip addresses/hostnames in main UI
-- Light/Dark themes
+- Privacy toggle to show/hide ip addresses/hostnames in the main window
+- Light/Dark interface themes
 - Customizable terminal font and color schemes
 - Free software (GPL v3 license)
 
