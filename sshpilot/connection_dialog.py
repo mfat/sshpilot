@@ -191,27 +191,55 @@ class ConnectionDialog(Adw.PreferencesDialog):
                     if rule_type == 'local' and hasattr(self, 'local_forwarding_enabled'):
                         self.local_forwarding_enabled.set_active(True)
                         if hasattr(self, 'local_port_row') and 'listen_port' in rule:
-                            self.local_port_row.set_value(rule['listen_port'])
+                            try:
+                                self.local_port_row.set_text(str(int(rule['listen_port'])))
+                            except Exception:
+                                self.local_port_row.set_text(str(rule['listen_port']))
                         if hasattr(self, 'remote_host_row') and 'remote_host' in rule:
                             self.remote_host_row.set_text(rule['remote_host'])
                         if hasattr(self, 'remote_port_row') and 'remote_port' in rule:
-                            self.remote_port_row.set_value(rule['remote_port'])
+                            try:
+                                self.remote_port_row.set_text(str(int(rule['remote_port'])))
+                            except Exception:
+                                self.remote_port_row.set_text(str(rule['remote_port']))
                     
                     # Handle remote forwarding
                     elif rule_type == 'remote' and hasattr(self, 'remote_forwarding_enabled'):
                         self.remote_forwarding_enabled.set_active(True)
+                        if hasattr(self, 'remote_bind_host_row') and 'listen_addr' in rule:
+                            try:
+                                self.remote_bind_host_row.set_text(str(rule.get('listen_addr') or 'localhost'))
+                            except Exception:
+                                pass
                         if hasattr(self, 'remote_bind_port_row') and 'listen_port' in rule:
-                            self.remote_bind_port_row.set_value(rule['listen_port'])
-                        if hasattr(self, 'local_host_row') and 'remote_host' in rule:
-                            self.local_host_row.set_text(rule['remote_host'])
-                        if hasattr(self, 'local_bind_port_row') and 'remote_port' in rule:
-                            self.local_bind_port_row.set_value(rule['remote_port'])
+                            try:
+                                self.remote_bind_port_row.set_text(str(int(rule['listen_port'])))
+                            except Exception:
+                                self.remote_bind_port_row.set_text(str(rule['listen_port']))
+                        # Destination (local) host/port
+                        if hasattr(self, 'dest_host_row'):
+                            try:
+                                self.dest_host_row.set_text(
+                                    str(rule.get('local_host') or rule.get('remote_host', 'localhost'))
+                                )
+                            except Exception:
+                                pass
+                        if hasattr(self, 'dest_port_row'):
+                            try:
+                                self.dest_port_row.set_text(
+                                    str(int(rule.get('local_port') or rule.get('remote_port') or 0))
+                                )
+                            except Exception:
+                                self.dest_port_row.set_text(str(rule.get('local_port') or rule.get('remote_port') or ''))
                     
                     # Handle dynamic forwarding
                     elif rule_type == 'dynamic' and hasattr(self, 'dynamic_forwarding_enabled'):
                         self.dynamic_forwarding_enabled.set_active(True)
                         if hasattr(self, 'dynamic_port_row') and 'listen_port' in rule:
-                            self.dynamic_port_row.set_value(rule['listen_port'])
+                            try:
+                                self.dynamic_port_row.set_text(str(int(rule['listen_port'])))
+                            except Exception:
+                                self.dynamic_port_row.set_text(str(rule['listen_port']))
                 
                 # Load the rules into the UI
                 self.load_port_forwarding_rules()
@@ -344,22 +372,44 @@ class ConnectionDialog(Adw.PreferencesDialog):
         local_settings_box.set_margin_end(12)
         local_settings_box.set_margin_bottom(12)
         
-        local_port_row = Adw.SpinRow.new_with_range(1, 65535, 1)
+        local_port_row = Adw.EntryRow()
         local_port_row.set_title(_("Local Port"))
-        local_port_row.set_subtitle(_("Local port to forward"))
+        try:
+            local_port_row.set_subtitle(_("Local port to forward"))
+        except Exception:
+            pass
+        try:
+            lpe = local_port_row.get_child()
+            if lpe and hasattr(lpe, 'set_input_purpose'):
+                lpe.set_input_purpose(Gtk.InputPurpose.DIGITS)
+            if lpe and hasattr(lpe, 'set_max_length'):
+                lpe.set_max_length(5)
+        except Exception:
+            pass
         local_settings_box.append(local_port_row)
         
         remote_host_row = Adw.EntryRow()
-        remote_host_row.set_title(_("Remote Host"))
+        remote_host_row.set_title(_("Target Host"))
         entry = remote_host_row.get_child()
         if entry and hasattr(entry, 'set_placeholder_text'):
             entry.set_placeholder_text("localhost")
         remote_host_row.set_show_apply_button(False)
         local_settings_box.append(remote_host_row)
         
-        remote_port_row = Adw.SpinRow.new_with_range(1, 65535, 1)
-        remote_port_row.set_title(_("Remote Port"))
-        remote_port_row.set_subtitle(_("Port on remote host"))
+        remote_port_row = Adw.EntryRow()
+        remote_port_row.set_title(_("Target Port"))
+        try:
+            remote_port_row.set_subtitle(_("Port on remote host"))
+        except Exception:
+            pass
+        try:
+            rpe = remote_port_row.get_child()
+            if rpe and hasattr(rpe, 'set_input_purpose'):
+                rpe.set_input_purpose(Gtk.InputPurpose.DIGITS)
+            if rpe and hasattr(rpe, 'set_max_length'):
+                rpe.set_max_length(5)
+        except Exception:
+            pass
         local_settings_box.append(remote_port_row)
         
         # Add settings box to group
@@ -389,37 +439,67 @@ class ConnectionDialog(Adw.PreferencesDialog):
         self.remote_forwarding_enabled.set_subtitle(_("Forward a remote port to a local host"))
         remote_forwarding_group.add(self.remote_forwarding_enabled)
         
-        # Remote port forwarding settings
+        # Remote port forwarding settings (RemoteHost, RemotePort -> DestinationHost, DestinationPort)
         remote_settings_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         remote_settings_box.set_margin_start(12)
         remote_settings_box.set_margin_end(12)
         remote_settings_box.set_margin_bottom(12)
         
-        remote_bind_port_row = Adw.SpinRow.new_with_range(1, 65535, 1)
-        remote_bind_port_row.set_title(_("Remote Port"))
-        remote_bind_port_row.set_subtitle(_("Port on remote host"))
+        remote_bind_host_row = Adw.EntryRow()
+        remote_bind_host_row.set_title(_("Remote host (optional)"))
+        rbh_entry = remote_bind_host_row.get_child()
+        if rbh_entry and hasattr(rbh_entry, 'set_placeholder_text'):
+            rbh_entry.set_placeholder_text("localhost")
+        remote_bind_host_row.set_show_apply_button(False)
+        remote_bind_host_row.set_text("localhost")
+        remote_settings_box.append(remote_bind_host_row)
+        
+        remote_bind_port_row = Adw.EntryRow()
+        remote_bind_port_row.set_title(_("Remote port"))
+        try:
+            rbpe = remote_bind_port_row.get_child()
+            if rbpe and hasattr(rbpe, 'set_input_purpose'):
+                rbpe.set_input_purpose(Gtk.InputPurpose.DIGITS)
+            if rbpe and hasattr(rbpe, 'set_max_length'):
+                rbpe.set_max_length(5)
+        except Exception:
+            pass
         remote_settings_box.append(remote_bind_port_row)
         
-        local_host_row = Adw.EntryRow()
-        local_host_row.set_title(_("Local Host"))
-        local_entry = local_host_row.get_child()
-        if local_entry and hasattr(local_entry, 'set_placeholder_text'):
-            local_entry.set_placeholder_text("localhost")
-        local_host_row.set_show_apply_button(False)
-        remote_settings_box.append(local_host_row)
-        
-        local_bind_port_row = Adw.SpinRow.new_with_range(1, 65535, 1)
-        local_bind_port_row.set_title(_("Local Port"))
-        local_bind_port_row.set_subtitle(_("Local port to forward"))
-        remote_settings_box.append(local_bind_port_row)
+        dest_host_row = Adw.EntryRow()
+        dest_host_row.set_title(_("Destination host"))
+        dest_entry = dest_host_row.get_child()
+        if dest_entry and hasattr(dest_entry, 'set_placeholder_text'):
+            dest_entry.set_placeholder_text("localhost")
+        dest_host_row.set_show_apply_button(False)
+        dest_host_row.set_text("localhost")
+        remote_settings_box.append(dest_host_row)
+
+        dest_port_row = Adw.EntryRow()
+        dest_port_row.set_title(_("Destination port"))
+        try:
+            # Align subtitle to previous implementation wording
+            dest_port_row.set_subtitle(_("Local port to forward"))
+        except Exception:
+            pass
+        try:
+            dpe = dest_port_row.get_child()
+            if dpe and hasattr(dpe, 'set_input_purpose'):
+                dpe.set_input_purpose(Gtk.InputPurpose.DIGITS)
+            if dpe and hasattr(dpe, 'set_max_length'):
+                dpe.set_max_length(5)
+        except Exception:
+            pass
+        remote_settings_box.append(dest_port_row)
         
         # Add settings box to group
         remote_forwarding_group.add(remote_settings_box)
         
         # Store references to the rows for saving
+        self.remote_bind_host_row = remote_bind_host_row
         self.remote_bind_port_row = remote_bind_port_row
-        self.local_host_row = local_host_row
-        self.local_bind_port_row = local_bind_port_row
+        self.dest_host_row = dest_host_row
+        self.dest_port_row = dest_port_row
         self.remote_settings_box = remote_settings_box  # Store reference to the settings box
         
         # Connect toggle to show/hide settings
@@ -444,17 +524,35 @@ class ConnectionDialog(Adw.PreferencesDialog):
         dynamic_settings_box.set_margin_start(12)
         dynamic_settings_box.set_margin_end(12)
         dynamic_settings_box.set_margin_bottom(12)
-        
-        dynamic_port_row = Adw.SpinRow.new_with_range(1, 65535, 1)
+
+        dynamic_bind_row = Adw.EntryRow()
+        dynamic_bind_row.set_title(_("Bind address (optional)"))
+        try:
+            dbe = dynamic_bind_row.get_child()
+            if dbe and hasattr(dbe, 'set_placeholder_text'):
+                dbe.set_placeholder_text("127.0.0.1")
+        except Exception:
+            pass
+        dynamic_settings_box.append(dynamic_bind_row)
+
+        dynamic_port_row = Adw.EntryRow()
         dynamic_port_row.set_title(_("Local Port"))
-        dynamic_port_row.set_subtitle(_("Local SOCKS proxy port"))
-        dynamic_port_row.set_value(1080)  # Default SOCKS port
+        try:
+            dpe2 = dynamic_port_row.get_child()
+            if dpe2 and hasattr(dpe2, 'set_input_purpose'):
+                dpe2.set_input_purpose(Gtk.InputPurpose.DIGITS)
+            if dpe2 and hasattr(dpe2, 'set_max_length'):
+                dpe2.set_max_length(5)
+        except Exception:
+            pass
+        dynamic_port_row.set_text("1080")  # Default SOCKS port
         dynamic_settings_box.append(dynamic_port_row)
         
         # Add settings box to group
         dynamic_forwarding_group.add(dynamic_settings_box)
         
         # Store reference for saving
+        self.dynamic_bind_row = dynamic_bind_row
         self.dynamic_port_row = dynamic_port_row
         self.dynamic_settings_box = dynamic_settings_box  # Store reference to the settings box
         
@@ -507,7 +605,7 @@ class ConnectionDialog(Adw.PreferencesDialog):
         )
         x11_group = Adw.PreferencesGroup(title=_("X11 Forwarding"))
         x11_group.add(self.x11_row)
-
+        
         # Port Forwarding Rules Group
         rules_group = Adw.PreferencesGroup(
             title=_("Port Forwarding Rules"),
@@ -619,10 +717,11 @@ class ConnectionDialog(Adw.PreferencesDialog):
             elif rule_type == 'remote':
                 row.set_title(_("Remote Port Forwarding"))
                 row.add_prefix(Gtk.Image.new_from_icon_name("network-receive-symbolic"))
-                description = _("Remote port {remote_port} → {local_host}:{local_port}").format(
+                description = _("Remote {remote_host}:{remote_port} → {dest_host}:{dest_port}").format(
+                    remote_host=rule.get('listen_addr', 'localhost'),
                     remote_port=rule.get('listen_port', ''),
-                    local_host=rule.get('remote_host', ''),
-                    local_port=rule.get('remote_port', '')
+                    dest_host=rule.get('local_host') or rule.get('remote_host', ''),
+                    dest_port=rule.get('local_port') or rule.get('remote_port', '')
                 )
             elif rule_type == 'dynamic':
                 row.set_title(_("Dynamic Port Forwarding (SOCKS)"))
@@ -792,13 +891,29 @@ class ConnectionDialog(Adw.PreferencesDialog):
         type_row.set_title(_("Type"))
         type_row.set_model(type_model)
 
-        listen_addr_row = Adw.EntryRow(title=_("Listen Address"))
-        listen_port_row = Adw.SpinRow.new_with_range(1, 65535, 1)
-        listen_port_row.set_title(_("Listen Port"))
+        listen_addr_row = Adw.EntryRow(title=_("Bind address (optional)"))
+        listen_port_row = Adw.EntryRow()
+        listen_port_row.set_title(_("Local port"))
+        try:
+            lpe2 = listen_port_row.get_child()
+            if lpe2 and hasattr(lpe2, 'set_input_purpose'):
+                lpe2.set_input_purpose(Gtk.InputPurpose.DIGITS)
+            if lpe2 and hasattr(lpe2, 'set_max_length'):
+                lpe2.set_max_length(5)
+        except Exception:
+            pass
 
-        remote_host_row = Adw.EntryRow(title=_("Remote Host"))
-        remote_port_row = Adw.SpinRow.new_with_range(1, 65535, 1)
-        remote_port_row.set_title(_("Remote Port"))
+        remote_host_row = Adw.EntryRow(title=_("Host"))
+        remote_port_row = Adw.EntryRow()
+        remote_port_row.set_title(_("Port"))
+        try:
+            rpe2 = remote_port_row.get_child()
+            if rpe2 and hasattr(rpe2, 'set_input_purpose'):
+                rpe2.set_input_purpose(Gtk.InputPurpose.DIGITS)
+            if rpe2 and hasattr(rpe2, 'set_max_length'):
+                rpe2.set_max_length(5)
+        except Exception:
+            pass
 
         # Pack rows
         group = Adw.PreferencesGroup()
@@ -815,52 +930,99 @@ class ConnectionDialog(Adw.PreferencesDialog):
             type_row.set_selected({'local':0,'remote':1,'dynamic':2}.get(t,0))
             listen_addr_row.set_text(str(existing_rule.get('listen_addr', 'localhost')))
             try:
-                listen_port_row.set_value(int(existing_rule.get('listen_port', 0) or 0))
+                listen_port_row.set_text(str(int(existing_rule.get('listen_port', 0) or 0)))
             except Exception:
-                pass
-            remote_host_row.set_text(str(existing_rule.get('remote_host', 'localhost')))
-            try:
-                remote_port_row.set_value(int(existing_rule.get('remote_port', 0) or 0))
-            except Exception:
-                pass
+                listen_port_row.set_text(str(existing_rule.get('listen_port', '')))
+            if t == 'remote':
+                # For remote rules, the destination is local_host/local_port
+                remote_host_row.set_text(str(existing_rule.get('local_host', 'localhost')))
+                try:
+                    remote_port_row.set_text(str(int(existing_rule.get('local_port', 0) or 0)))
+                except Exception:
+                    remote_port_row.set_text(str(existing_rule.get('local_port', '')))
+            else:
+                remote_host_row.set_text(str(existing_rule.get('remote_host', 'localhost')))
+                try:
+                    remote_port_row.set_text(str(int(existing_rule.get('remote_port', 0) or 0)))
+                except Exception:
+                    remote_port_row.set_text(str(existing_rule.get('remote_port', '')))
         else:
             type_row.set_selected(0)
             # Sane defaults for a new rule
             listen_addr_row.set_text('127.0.0.1')
-            listen_port_row.set_value(8080)
+            listen_port_row.set_text('8080')
             remote_host_row.set_text('localhost')
-            remote_port_row.set_value(22)
+            remote_port_row.set_text('22')
 
-        def _sync_visibility(*_):
+        # Avoid shadowing translation function '_' by using a local alias
+        t = _
+        def _sync_visibility(*args):
             idx = type_row.get_selected()
-            is_dynamic = (idx == 2)
-            remote_host_row.set_visible(not is_dynamic)
-            remote_port_row.set_visible(not is_dynamic)
+            # Apply label set per type
+            if idx == 0:
+                # Local
+                listen_addr_row.set_visible(False)
+                listen_port_row.set_title(t("Local Port"))
+                remote_host_row.set_visible(True)
+                remote_host_row.set_title(t("Target Host"))
+                remote_port_row.set_visible(True)
+                remote_port_row.set_title(t("Target Port"))
+            elif idx == 1:
+                # Remote
+                listen_addr_row.set_visible(True)
+                listen_addr_row.set_title(t("Remote host (optional)"))
+                listen_port_row.set_title(t("Remote port"))
+                remote_host_row.set_visible(True)
+                remote_host_row.set_title(t("Destination host"))
+                remote_port_row.set_visible(True)
+                remote_port_row.set_title(t("Destination port"))
+            else:
+                # Dynamic
+                listen_addr_row.set_visible(True)
+                listen_addr_row.set_title(t("Bind address (optional)"))
+                listen_port_row.set_title(t("Local port"))
+                remote_host_row.set_visible(False)
+                remote_port_row.set_visible(False)
             # Apply smart defaults when switching types and fields are empty
             try:
                 if idx == 0:  # Local
                     if not listen_addr_row.get_text().strip():
                         listen_addr_row.set_text('127.0.0.1')
-                    if int(listen_port_row.get_value() or 0) == 0:
-                        listen_port_row.set_value(8080)
+                    try:
+                        if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
+                            listen_port_row.set_text('8080')
+                    except Exception:
+                        listen_port_row.set_text('8080')
                     if not remote_host_row.get_text().strip():
                         remote_host_row.set_text('localhost')
-                    if int(remote_port_row.get_value() or 0) == 0:
-                        remote_port_row.set_value(22)
+                    try:
+                        if int((remote_port_row.get_text() or '0').strip() or '0') == 0:
+                            remote_port_row.set_text('22')
+                    except Exception:
+                        remote_port_row.set_text('22')
                 elif idx == 1:  # Remote
                     if not listen_addr_row.get_text().strip():
-                        listen_addr_row.set_text('0.0.0.0')
-                    if int(listen_port_row.get_value() or 0) == 0:
-                        listen_port_row.set_value(8080)
+                        listen_addr_row.set_text('localhost')
+                    try:
+                        if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
+                            listen_port_row.set_text('8080')
+                    except Exception:
+                        listen_port_row.set_text('8080')
                     if not remote_host_row.get_text().strip():
                         remote_host_row.set_text('localhost')
-                    if int(remote_port_row.get_value() or 0) == 0:
-                        remote_port_row.set_value(22)
+                    try:
+                        if int((remote_port_row.get_text() or '0').strip() or '0') == 0:
+                            remote_port_row.set_text('22')
+                    except Exception:
+                        remote_port_row.set_text('22')
                 else:  # Dynamic
                     if not listen_addr_row.get_text().strip():
                         listen_addr_row.set_text('127.0.0.1')
-                    if int(listen_port_row.get_value() or 0) == 0:
-                        listen_port_row.set_value(1080)
+                    try:
+                        if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
+                            listen_port_row.set_text('1080')
+                    except Exception:
+                        listen_port_row.set_text('1080')
             except Exception:
                 pass
         type_row.connect('notify::selected', _sync_visibility)
@@ -885,7 +1047,10 @@ class ConnectionDialog(Adw.PreferencesDialog):
         idx = type_row.get_selected()
         rtype = 'local' if idx == 0 else ('remote' if idx == 1 else 'dynamic')
         listen_addr = listen_addr_row.get_text().strip() or '127.0.0.1'
-        listen_port = int(listen_port_row.get_value() or 0)
+        try:
+            listen_port = int((listen_port_row.get_text() or '0').strip() or '0')
+        except Exception:
+            listen_port = 0
         if listen_port <= 0:
             self.show_error(_("Please enter a valid listen port (> 0)"))
             return
@@ -895,9 +1060,20 @@ class ConnectionDialog(Adw.PreferencesDialog):
             'listen_addr': listen_addr,
             'listen_port': listen_port,
         }
-        if rtype != 'dynamic':
+        if rtype == 'local':
+            # LocalForward: [listen_addr:]listen_port remote_host:remote_port
             rule['remote_host'] = remote_host_row.get_text().strip() or 'localhost'
-            rule['remote_port'] = int(remote_port_row.get_value() or 0)
+            try:
+                rule['remote_port'] = int((remote_port_row.get_text() or '0').strip() or '0')
+            except Exception:
+                rule['remote_port'] = 0
+        elif rtype == 'remote':
+            # RemoteForward: [listen_addr:]listen_port local_host:local_port
+            rule['local_host'] = remote_host_row.get_text().strip() or 'localhost'
+            try:
+                rule['local_port'] = int((remote_port_row.get_text() or '0').strip() or '0')
+            except Exception:
+                rule['local_port'] = 0
 
         if not hasattr(self, 'forwarding_rules') or self.forwarding_rules is None:
             self.forwarding_rules = []
@@ -932,7 +1108,7 @@ class ConnectionDialog(Adw.PreferencesDialog):
         # Initialize forwarding_rules list if needed
         if not hasattr(self, 'forwarding_rules') or self.forwarding_rules is None:
             self.forwarding_rules = []
-
+        
         # Persist exactly what is in the editor list (enabled rules only) and sanitize
         forwarding_rules = self._sanitize_forwarding_rules(
             [dict(r) for r in self.forwarding_rules if r.get('enabled', True)]
@@ -992,18 +1168,31 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 listen_port = int(r.get('listen_port') or 0)
                 if listen_port <= 0:
                     continue
-                if rtype in ('local', 'remote'):
+                if rtype == 'local':
                     remote_host = (r.get('remote_host') or '').strip() or 'localhost'
                     remote_port = int(r.get('remote_port') or 0)
                     if remote_port <= 0:
                         continue
                     sanitized.append({
-                        'type': rtype,
+                        'type': 'local',
                         'enabled': True,
                         'listen_addr': listen_addr,
                         'listen_port': listen_port,
                         'remote_host': remote_host,
                         'remote_port': remote_port,
+                    })
+                elif rtype == 'remote':
+                    local_host = (r.get('local_host') or r.get('remote_host') or '').strip() or 'localhost'
+                    local_port = int(r.get('local_port') or r.get('remote_port') or 0)
+                    if local_port <= 0:
+                        continue
+                    sanitized.append({
+                        'type': 'remote',
+                        'enabled': True,
+                        'listen_addr': listen_addr,
+                        'listen_port': listen_port,
+                        'local_host': local_host,
+                        'local_port': local_port,
                     })
                 elif rtype == 'dynamic':
                     sanitized.append({
@@ -1056,21 +1245,21 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 if rule_type == 'local' and hasattr(self, 'local_port_row') and hasattr(self, 'remote_host_row') and hasattr(self, 'remote_port_row'):
                     rule.update({
                         'listen_addr': 'localhost',
-                        'listen_port': int(self.local_port_row.get_value() or 0),
+                        'listen_port': int((self.local_port_row.get_text() or '0').strip() or '0'),
                         'remote_host': self.remote_host_row.get_text().strip() or 'localhost',
-                        'remote_port': int(self.remote_port_row.get_value() or 0)
+                        'remote_port': int((self.remote_port_row.get_text() or '0').strip() or '0')
                     })
-                elif rule_type == 'remote' and hasattr(self, 'remote_bind_port_row') and hasattr(self, 'local_host_row') and hasattr(self, 'local_bind_port_row'):
+                elif rule_type == 'remote' and hasattr(self, 'remote_bind_host_row') and hasattr(self, 'remote_bind_port_row') and hasattr(self, 'dest_host_row') and hasattr(self, 'dest_port_row'):
                     rule.update({
-                        'listen_addr': '0.0.0.0',
-                        'listen_port': int(self.remote_bind_port_row.get_value() or 0),
-                        'remote_host': self.local_host_row.get_text().strip() or 'localhost',
-                        'remote_port': int(self.local_bind_port_row.get_value() or 0)
+                        'listen_addr': self.remote_bind_host_row.get_text().strip() or 'localhost',
+                        'listen_port': int((self.remote_bind_port_row.get_text() or '0').strip() or '0'),
+                        'local_host': self.dest_host_row.get_text().strip() or 'localhost',
+                        'local_port': int((self.dest_port_row.get_text() or '0').strip() or '0')
                     })
                 elif rule_type == 'dynamic' and hasattr(self, 'dynamic_port_row'):
                     rule.update({
-                        'listen_addr': 'localhost',
-                        'listen_port': int(self.dynamic_port_row.get_value())
+                        'listen_addr': (self.dynamic_bind_row.get_text().strip() if hasattr(self, 'dynamic_bind_row') else '') or '127.0.0.1',
+                        'listen_port': int((self.dynamic_port_row.get_text() or '0').strip() or '0')
                     })
                 
                 self.forwarding_rules.append(rule)

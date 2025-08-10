@@ -645,14 +645,25 @@ class ConnectionManager(GObject.Object):
                                 remote_port = 22  # Default SSH port
                             
                             rule_type = 'local' if forward_type == 'localforward' else 'remote'
-                            parsed['forwarding_rules'].append({
-                                'type': rule_type,
-                                'listen_addr': bind_addr,
-                                'listen_port': listen_port,
-                                'remote_host': remote_host,
-                                'remote_port': remote_port,
-                                'enabled': True
-                            })
+                            if rule_type == 'local':
+                                parsed['forwarding_rules'].append({
+                                    'type': 'local',
+                                    'listen_addr': bind_addr,
+                                    'listen_port': listen_port,
+                                    'remote_host': remote_host,
+                                    'remote_port': remote_port,
+                                    'enabled': True
+                                })
+                            else:
+                                # RemoteForward: remote host/port listens, destination is local host/port
+                                parsed['forwarding_rules'].append({
+                                    'type': 'remote',
+                                    'listen_addr': bind_addr,   # remote host
+                                    'listen_port': listen_port, # remote port
+                                    'local_host': remote_host,  # destination host (local)
+                                    'local_port': remote_port,  # destination port (local)
+                                    'enabled': True
+                                })
             
             # Handle proxy settings if any
             if 'proxycommand' in config:
@@ -777,7 +788,8 @@ class ConnectionManager(GObject.Object):
                 dest_spec = f"{rule.get('remote_host', '')}:{rule.get('remote_port', '')}"
                 lines.append(f"    LocalForward {listen_spec} {dest_spec}")
             elif rule.get('type') == 'remote':
-                dest_spec = f"{rule.get('remote_host', '')}:{rule.get('remote_port', '')}"
+                # For RemoteForward we forward remote listen -> local destination
+                dest_spec = f"{rule.get('local_host') or rule.get('remote_host', '')}:{rule.get('local_port') or rule.get('remote_port', '')}"
                 lines.append(f"    RemoteForward {listen_spec} {dest_spec}")
             elif rule.get('type') == 'dynamic':
                 lines.append(f"    DynamicForward {listen_spec}")
@@ -810,7 +822,8 @@ class ConnectionManager(GObject.Object):
             # Find and update the connection's Host block
             updated_lines = []
             in_target_host = False
-            host_nickname = connection.nickname
+            # Use the nickname from new_data if present (handles rename-in-place cases)
+            host_nickname = str(new_data.get('nickname') or connection.nickname)
             host_found = False
             
             i = 0

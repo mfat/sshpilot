@@ -530,13 +530,14 @@ class TerminalWidget(Gtk.Box):
                         except Exception as e:
                             logger.error(f"Failed to set up local forwarding: {e}")
                             
-                    # Handle remote port forwarding
-                    elif rule_type == 'remote' and listen_port and 'remote_host' in rule and 'remote_port' in rule:
+                    # Handle remote port forwarding (remote bind -> local destination)
+                    elif rule_type == 'remote' and listen_port:
                         try:
-                            remote_host = rule.get('remote_host', 'localhost')
-                            remote_port = rule.get('remote_port')
-                            ssh_cmd.extend(['-R', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"])
-                            logger.debug(f"Added remote port forwarding: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
+                            local_host = rule.get('local_host') or rule.get('remote_host', 'localhost')
+                            local_port = rule.get('local_port') or rule.get('remote_port')
+                            if local_port:
+                                ssh_cmd.extend(['-R', f"{listen_addr}:{listen_port}:{local_host}:{local_port}"])
+                                logger.debug(f"Added remote port forwarding: {listen_addr}:{listen_port} -> {local_host}:{local_port}")
                         except Exception as e:
                             logger.error(f"Failed to set up remote forwarding: {e}")
             
