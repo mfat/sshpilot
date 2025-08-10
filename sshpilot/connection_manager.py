@@ -72,7 +72,7 @@ class Connection:
         return f"{self.nickname} ({self.username}@{self.host})"
         
     async def connect(self):
-        """Establish the SSH connection using system SSH client"""
+        """Prepare SSH command for later use (no preflight echo)."""
         try:
             # Build SSH command
             ssh_cmd = ['ssh']
@@ -89,6 +89,8 @@ class Connection:
             strict_host = str(ssh_cfg.get('strict_host_key_checking', 'accept-new'))
             batch_mode = bool(ssh_cfg.get('batch_mode', True))
             compression = bool(ssh_cfg.get('compression', True))
+            verbosity = int(ssh_cfg.get('verbosity', 0))
+            debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
 
             # Sane non-interactive defaults to avoid indefinite hangs
             if batch_mode:
@@ -99,6 +101,23 @@ class Connection:
                 ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
             if compression:
                 ssh_cmd.append('-C')
+            ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
+
+            # Apply verbosity flags
+            try:
+                v = max(0, min(3, int(verbosity)))
+                for _ in range(v):
+                    ssh_cmd.append('-v')
+                if v == 1:
+                    ssh_cmd.extend(['-o', 'LogLevel=VERBOSE'])
+                elif v == 2:
+                    ssh_cmd.extend(['-o', 'LogLevel=DEBUG2'])
+                elif v >= 3:
+                    ssh_cmd.extend(['-o', 'LogLevel=DEBUG3'])
+                elif debug_enabled:
+                    ssh_cmd.extend(['-o', 'LogLevel=DEBUG'])
+            except Exception:
+                pass
             
             # Add key file if specified
             if self.keyfile and os.path.exists(self.keyfile):
@@ -114,39 +133,11 @@ class Connection:
                 
             # Add username if specified
             ssh_cmd.append(f"{self.username}@{self.host}" if self.username else self.host)
-            
-            # For non-interactive checks, just run a simple command
-            test_cmd = ssh_cmd + ["echo", "Connection successful"]
-            
-            # Run the command
-            process = await asyncio.create_subprocess_exec(
-                *test_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            # Wait for the process to complete with a hard timeout safeguard
-            try:
-                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=connect_timeout + 2)
-            except asyncio.TimeoutError:
-                try:
-                    process.kill()
-                except Exception:
-                    pass
-                await asyncio.sleep(0)
-                logger.error("SSH connectivity check timed out")
-                self.is_connected = False
-                return False
-            
-            if process.returncode == 0:
-                self.is_connected = True
-                # Store the base SSH command for later use
-                self.ssh_cmd = ssh_cmd
-                return True
-            else:
-                logger.error(f"SSH connection failed: {stderr.decode().strip()}")
-                self.is_connected = False
-                return False
+
+            # No preflight: store command and mark as ready; real errors will come from spawned ssh
+            self.ssh_cmd = ssh_cmd
+            self.is_connected = True
+            return True
                 
         except Exception as e:
             logger.error(f"Failed to connect to {self}: {e}")

@@ -13,7 +13,6 @@ import re
 import gi
 from gettext import gettext as _
 import asyncio
-import errno
 import threading
 import weakref
 import subprocess
@@ -154,8 +153,6 @@ class TerminalWidget(Gtk.Box):
         self.watch_id = 0
         self.ssh_client = None
         self.session_id = str(id(self))  # Unique ID for this session
-        self._preflight_ok = False
-        self._preflight_error = None
         
         # Register with process manager
         process_manager.register_terminal(self)
@@ -374,76 +371,9 @@ class TerminalWidget(Gtk.Box):
             return False
     
     def _connect_ssh_thread(self):
-        """SSH connection thread with TCP preflight and clear errors"""
+        """SSH connection thread: directly spawn SSH and rely on its output for errors."""
         try:
-            import socket
-            host = getattr(self.connection, 'host', None)
-            port = int(getattr(self.connection, 'port', 22) or 22)
-            if not host:
-                # Even if host is missing, set up terminal to render theme; ssh will error
-                GLib.idle_add(self._setup_ssh_terminal)
-                return
-
-            # Quick TCP preflight to avoid hanging ssh on blackhole hosts
-            try:
-                with socket.create_connection((host, port), timeout=5) as sock:
-                    # Try to read SSH banner to ensure it's an SSH server
-                    sock.settimeout(2)
-                    try:
-                        banner = sock.recv(255)
-                        if banner and banner.startswith(b'SSH-'):
-                            self._preflight_ok = True
-                        else:
-                            self._preflight_ok = False
-                            self._preflight_error = "Invalid SSH banner from server"
-                    except Exception as read_err:
-                        self._preflight_ok = False
-                        self._preflight_error = f"Failed to read SSH banner: {read_err}"
-            except Exception as sock_err:
-                # Do not bail out early; still spawn ssh so terminal paints with theme
-                self._preflight_ok = False
-                self._preflight_error = f"TCP connection failed: {sock_err}"
-                logger.debug(f"TCP preflight failed: {sock_err}; proceeding to spawn ssh with timeout options")
-
-            # Local port-forward preflight: check local bind ports for dynamic/local forwards
-            try:
-                forwarding_rules = getattr(self.connection, 'forwarding_rules', []) or []
-                for rule in forwarding_rules:
-                    rtype = rule.get('type')
-                    listen_addr = rule.get('listen_addr', '127.0.0.1')
-                    listen_port = int(rule.get('listen_port') or 0)
-                    if listen_port <= 0:
-                        continue
-                    if rtype in ('dynamic', 'local'):
-                        try:
-                            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                                s.bind((listen_addr, listen_port))
-                        except OSError as e:
-                            if e.errno == errno.EADDRINUSE:
-                                msg = f"bind [{listen_addr}]:{listen_port}: Address already in use"
-                                logger.debug(f"Local port preflight failed: {msg}")
-                                GLib.idle_add(self._show_preflight_error, msg)
-                                GLib.idle_add(self._show_forwarding_error_dialog, msg)
-                                return
-                            else:
-                                # Other bind errors
-                                msg = f"bind [{listen_addr}]:{listen_port}: {e}"
-                                logger.debug(f"Local port preflight failed: {msg}")
-                                GLib.idle_add(self._show_preflight_error, msg)
-                                GLib.idle_add(self._show_forwarding_error_dialog, msg)
-                                return
-            except Exception as e:
-                logger.debug(f"Port-forward preflight check skipped/failed: {e}")
-
-            # If preflight failed based on TCP or banner, show error without spawning ssh
-            if not self._preflight_ok:
-                GLib.idle_add(self._show_preflight_error, self._preflight_error or "Connection failed")
-                return
-
-            # Proceed to set up the SSH terminal for valid SSH servers
             GLib.idle_add(self._setup_ssh_terminal)
-
         except Exception as e:
             logger.error(f"SSH connection failed: {e}")
             GLib.idle_add(self._on_connection_failed, str(e))
@@ -631,17 +561,11 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 self._spawn_start_time = None
             
-            # Only mark as connected if preflight succeeded (host reachable)
-            if getattr(self, '_preflight_ok', False):
-                # Re-apply theme immediately after spawning to avoid default flash
-                try:
-                    self.apply_theme()
-                except Exception:
-                    pass
-                self.is_connected = True
-                self.emit('connection-established')
-            # Hide connecting overlay regardless of outcome at this point
-            self._set_connecting_overlay_visible(False)
+            # Defer marking as connected until spawn completes
+            try:
+                self.apply_theme()
+            except Exception:
+                pass
             
             # Apply theme after connection is established
             self.apply_theme()
@@ -684,17 +608,14 @@ class TerminalWidget(Gtk.Box):
                     'pgid': self.process_pgid
                 }
             
-            # Connection is already marked as connected in _setup_ssh_terminal when preflight OK
-            # Just grab focus here
+            # Grab focus and apply theme
             self.vte.grab_focus()
-            
-            # Apply theme to ensure it's set correctly after spawn
             self.apply_theme()
 
-            # If preflight indicated failure, show error now (after VTE is ready) and do not mark connected
-            if not getattr(self, '_preflight_ok', False):
-                self._on_connection_failed(self._preflight_error or "Connection failed")
-                return
+            # Spawn succeeded; mark as connected and hide overlay
+            self.is_connected = True
+            self.emit('connection-established')
+            self._set_connecting_overlay_visible(False)
             
         except Exception as e:
             logger.error(f"Error in spawn complete: {e}")
@@ -719,21 +640,7 @@ class TerminalWidget(Gtk.Box):
         self.is_connected = False
         self.emit('connection-failed', error_message)
 
-    def _show_preflight_error(self, message):
-        """Show preflight error in the terminal area without spawning SSH"""
-        try:
-            # Ensure theme
-            self.apply_theme()
-            # Render error
-            self.vte.feed(("\r\n\x1b[31m" + str(message) + "\x1b[0m\r\n").encode('utf-8'))
-        except Exception as e:
-            logger.error(f"Error showing preflight error: {e}")
-        finally:
-            self.is_connected = False
-            self.emit('connection-failed', str(message))
-            # Hide connecting overlay now that we have an error to show
-            self._set_connecting_overlay_visible(False)
-        return False
+    
 
     def _show_forwarding_error_dialog(self, message):
         try:
