@@ -2746,6 +2746,11 @@ class MainWindow(Adw.ApplicationWindow):
             else:
                 # Create new connection
                 connection = Connection(connection_data)
+                # Ensure the in-memory object has the chosen auth_method immediately
+                try:
+                    connection.auth_method = int(connection_data.get('auth_method', 0))
+                except Exception:
+                    connection.auth_method = 0
                 # Add the new connection to the manager's connections list
                 self.connection_manager.connections.append(connection)
                 

@@ -59,6 +59,11 @@ class Connection:
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
+        # Authentication method: 0 = key-based, 1 = password
+        try:
+            self.auth_method = int(data.get('auth_method', 0))
+        except Exception:
+            self.auth_method = 0
         # X11 forwarding preference
         self.x11_forwarding = bool(data.get('x11_forwarding', False))
         
