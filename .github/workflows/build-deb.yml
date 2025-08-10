@@ -52,6 +52,7 @@ jobs:
           head -n 6 debian/changelog
 
       - name: Ensure Debian packaging files (if missing)
+        shell: bash
         run: |
           mkdir -p debian/source
           if [ ! -f debian/control ]; then
@@ -85,7 +86,11 @@ Description: SSH connection manager with integrated terminal
 EOF
           fi
           if [ ! -f debian/rules ]; then
-            printf '%s\n' '#!/usr/bin/make -f' '%:' $'\t''dh $@' > debian/rules
+            cat > debian/rules <<'EOF'
+#!/usr/bin/make -f
+%:
+	dh $@
+EOF
             chmod +x debian/rules
           fi
           if [ ! -f debian/source/format ]; then
