@@ -1738,7 +1738,7 @@ class MainWindow(Adw.ApplicationWindow):
             dialog.add_response('cancel', _("Cancel"))
             dialog.add_response('disconnect', _("Disconnect"))
             dialog.set_response_appearance('disconnect', Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response('cancel')
+            dialog.set_default_response('close')
             dialog.set_close_response('cancel')
             
             dialog.connect('response', self._on_disconnect_confirmed, connection)
@@ -2152,7 +2152,7 @@ class MainWindow(Adw.ApplicationWindow):
             dialog.add_response('cancel', _('Cancel'))
             dialog.add_response('close_remove', _('Close and Remove'))
             dialog.set_response_appearance('close_remove', Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response('cancel')
+            dialog.set_default_response('close')
             dialog.set_close_response('cancel')
         else:
             # Simple delete confirmation when not connected
@@ -2275,7 +2275,8 @@ class MainWindow(Adw.ApplicationWindow):
             dialog.add_response('cancel', _("Cancel"))
             dialog.add_response('close', _("Close"))
             dialog.set_response_appearance('close', Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response('cancel')
+            dialog.set_default_response('close')
+            dialog.set_close_response('cancel')
             
             # Connect to response signal before showing the dialog
             dialog.connect('response', self._on_tab_close_response)

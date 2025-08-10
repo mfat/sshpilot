@@ -205,7 +205,7 @@ class ConnectionDialog(Adw.PreferencesDialog):
         self.validator = SSHConnectionValidator()
         self.validation_results: Dict[str, ValidationResult] = {}
         self._save_buttons = []
-
+        
         self.setup_ui()
         try:
             self.add_response("cancel", _("Cancel"))
@@ -1046,7 +1046,7 @@ class ConnectionDialog(Adw.PreferencesDialog):
         dynamic_settings_box.set_margin_start(12)
         dynamic_settings_box.set_margin_end(12)
         dynamic_settings_box.set_margin_bottom(12)
-
+        
         dynamic_bind_row = Adw.EntryRow()
         dynamic_bind_row.set_title(_("Bind address (optional)"))
         try:
