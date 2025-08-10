@@ -30,15 +30,19 @@ jobs:
             git \
             fakeroot
 
-      - name: Sync changelog version/date from __init__.py
+      - name: Generate debian/changelog from __init__ version
         run: |
           VERSION=$(python3 -c "import re, pathlib; t=pathlib.Path('sshpilot/__init__.py').read_text(); print(re.search(r'__version__\\s*=\\s*\"([^\"]+)\"', t).group(1))")
           echo "Detected version: ${VERSION}"
-          # Update version (first line like: sshpilot (X.Y.Z-1) ...)
-          sed -i -E "1 s/\(.*\)/(${VERSION}-1) unstable; urgency=medium/" debian/changelog
-          # Update maintainer line date
-          sed -i -E "s/^ -- .*$/ -- mFat <newmfat@gmail.com>  $(LC_ALL=C date -R)/" debian/changelog
-          head -n 5 debian/changelog
+          mkdir -p debian
+          {
+            echo "sshpilot (${VERSION}-1) unstable; urgency=medium"
+            echo
+            echo "  * Various fixes and improvements"
+            echo
+            echo " -- mFat <newmfat@gmail.com>  $(LC_ALL=C date -R)"
+          } > debian/changelog
+          head -n 6 debian/changelog
 
       - name: Build package
         run: |
