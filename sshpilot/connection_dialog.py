@@ -314,6 +314,35 @@ class ConnectionDialog(Adw.PreferencesDialog):
             # Set X11 forwarding
             self.x11_row.set_active(getattr(self.connection, 'x11_forwarding', False))
             
+            # Load commands if present
+            try:
+                def _display_safe(val: str) -> str:
+                    # Show exactly as in config; if user had quoted, keep quotes intact
+                    if not isinstance(val, str):
+                        return ''
+                    return val
+
+                if hasattr(self, 'local_command_row'):
+                    local_cmd_val = ''
+                    try:
+                        local_cmd_val = getattr(self.connection, 'local_command', '') or (
+                            self.connection.data.get('local_command') if hasattr(self.connection, 'data') else ''
+                        ) or ''
+                    except Exception:
+                        local_cmd_val = ''
+                    self.local_command_row.set_text(_display_safe(local_cmd_val))
+                if hasattr(self, 'remote_command_row'):
+                    remote_cmd_val = ''
+                    try:
+                        remote_cmd_val = getattr(self.connection, 'remote_command', '') or (
+                            self.connection.data.get('remote_command') if hasattr(self.connection, 'data') else ''
+                        ) or ''
+                    except Exception:
+                        remote_cmd_val = ''
+                    self.remote_command_row.set_text(_display_safe(remote_cmd_val))
+            except Exception:
+                pass
+            
             # Initialize forwarding rules list if it doesn't exist
             if not hasattr(self, 'forwarding_rules'):
                 self.forwarding_rules = []
@@ -498,12 +527,22 @@ class ConnectionDialog(Adw.PreferencesDialog):
             mgr = getattr(self.parent_window, 'connection_manager', None)
             names = set()
             if mgr and hasattr(mgr, 'connections'):
+                # Normalize current connection name (when editing) to exclude it from duplicates
+                current_name_norm = ''
+                try:
+                    if self.is_editing and self.connection:
+                        current_name_norm = str(getattr(self.connection, 'nickname', '')).strip().lower()
+                except Exception:
+                    current_name_norm = ''
                 for conn in mgr.connections or []:
-                    if self.is_editing and self.connection and conn is self.connection:
-                        continue
                     n = getattr(conn, 'nickname', None)
-                    if n:
-                        names.add(str(n))
+                    if not n:
+                        continue
+                    n_norm = str(n).strip().lower()
+                    # Exclude the current connection by name (case-insensitive), not by object identity
+                    if current_name_norm and n_norm == current_name_norm:
+                        continue
+                    names.add(str(n))
             # Ensure current typed value isn't auto-included incorrectly
             self.validator.set_existing_names(names)
         except Exception:
@@ -613,11 +652,21 @@ class ConnectionDialog(Adw.PreferencesDialog):
             if mgr is None or not hasattr(mgr, 'connections'):
                 return False
             normalized = (name or '').strip().lower()
+            current_name_norm = ''
+            try:
+                if self.is_editing and self.connection:
+                    current_name_norm = str(getattr(self.connection, 'nickname', '')).strip().lower()
+            except Exception:
+                current_name_norm = ''
             for conn in getattr(mgr, 'connections', []) or []:
-                # Skip current connection when editing
-                if self.is_editing and self.connection and conn is self.connection:
+                other_name = getattr(conn, 'nickname', None)
+                if not other_name:
                     continue
-                if getattr(conn, 'nickname', None) and str(conn.nickname).strip().lower() == normalized:
+                other_norm = str(other_name).strip().lower()
+                # Skip the same connection object and also skip the current connection name when editing
+                if current_name_norm and (conn is self.connection or other_norm == current_name_norm):
+                    continue
+                if other_norm == normalized:
                     return True
         except Exception:
             return False
@@ -1140,6 +1189,28 @@ class ConnectionDialog(Adw.PreferencesDialog):
         self.placeholder.add_css_class("dim-label")
         self.rules_list.append(self.placeholder)
         
+        # Commands Group (LocalCommand / RemoteCommand)
+        commands_group = Adw.PreferencesGroup(
+            title=_("Connection Commands"),
+            description=_(
+                "Run a command automatically on connect.\n\n"
+                "• Local Command: Runs on your machine after connection (requires PermitLocalCommand).\n"
+                "• Remote Command: Runs on the remote host (uses RequestTTY for interactive shell)."
+            )
+        )
+        self.local_command_row = Adw.EntryRow(title=_("Local Command"))
+        try:
+            self.local_command_row.set_subtitle(_("Executed locally after connect"))
+        except Exception:
+            pass
+        self.remote_command_row = Adw.EntryRow(title=_("Remote Command"))
+        try:
+            self.remote_command_row.set_subtitle(_("Executed on remote; TTY requested for interactivity"))
+        except Exception:
+            pass
+        commands_group.add(self.local_command_row)
+        commands_group.add(self.remote_command_row)
+
         # About Port Forwarding Group
         about_group = Adw.PreferencesGroup(
             title=_("About Port Forwarding"),
@@ -1151,8 +1222,8 @@ class ConnectionDialog(Adw.PreferencesDialog):
             )
         )
         
-        # Return groups for PreferencesPage: Port forwarding first, X11 last
-        return [rules_group, about_group, x11_group]
+        # Return groups for PreferencesPage: Port forwarding first, commands, about, X11 last
+        return [rules_group, commands_group, about_group, x11_group]
         
         # Initialize empty rules list if it doesn't exist
         if not hasattr(self, 'forwarding_rules'):
@@ -1655,7 +1726,9 @@ class ConnectionDialog(Adw.PreferencesDialog):
             'key_passphrase': self.key_passphrase_row.get_text(),
             'password': self.password_row.get_text(),
             'x11_forwarding': self.x11_row.get_active(),
-            'forwarding_rules': forwarding_rules
+            'forwarding_rules': forwarding_rules,
+            'local_command': (self.local_command_row.get_text() if hasattr(self, 'local_command_row') else ''),
+            'remote_command': (self.remote_command_row.get_text() if hasattr(self, 'remote_command_row') else ''),
         }
         
         # Update the connection object with new data if editing
