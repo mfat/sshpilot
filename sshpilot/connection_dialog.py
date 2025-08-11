@@ -307,6 +307,16 @@ class ConnectionDialog(Adw.PreferencesDialog):
             
             if hasattr(self.connection, 'password') and self.connection.password:
                 self.password_row.set_text(self.connection.password)
+            else:
+                # Fallback: fetch from keyring so the dialog shows stored password (masked)
+                try:
+                    mgr = getattr(self.parent_window, 'connection_manager', None)
+                    if mgr and hasattr(self.connection, 'host') and hasattr(self.connection, 'username'):
+                        pw = mgr.get_password(self.connection.host, self.connection.username)
+                        if pw:
+                            self.password_row.set_text(pw)
+                except Exception:
+                    pass
                 
             if hasattr(self.connection, 'key_passphrase') and self.connection.key_passphrase:
                 self.key_passphrase_row.set_text(self.connection.key_passphrase)

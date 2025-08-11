@@ -792,6 +792,31 @@ class ConnectionManager(GObject.Object):
             logger.error(f"Error retrieving password for {username}@{host}: {e}")
             return None
 
+    def delete_password(self, host: str, username: str) -> bool:
+        """Delete stored password for host/user from system keyring"""
+        if not self._ensure_collection():
+            return False
+        try:
+            attributes = {
+                'application': 'sshPilot',
+                'host': host,
+                'username': username
+            }
+            items = list(self.collection.search_items(attributes))
+            removed_any = False
+            for item in items:
+                try:
+                    item.delete()
+                    removed_any = True
+                except Exception:
+                    pass
+            if removed_any:
+                logger.debug(f"Deleted stored password for {username}@{host}")
+            return removed_any
+        except Exception as e:
+            logger.error(f"Error deleting password for {username}@{host}: {e}")
+            return False
+
     def format_ssh_config_entry(self, data: Dict[str, Any]) -> str:
         """Format connection data as SSH config entry"""
         lines = [f"Host {data['nickname']}"]
@@ -994,6 +1019,9 @@ class ConnectionManager(GObject.Object):
                 self.ssh_config_path,
                 len(new_data.get('forwarding_rules', []) or [])
             )
+            # Capture previous identifiers for credential cleanup
+            prev_host = getattr(connection, 'host', '')
+            prev_user = getattr(connection, 'username', '')
             # Update connection data
             connection.data.update(new_data)
             # Ensure forwarding rules stored on the object are updated too
@@ -1005,13 +1033,26 @@ class ConnectionManager(GObject.Object):
             # Update the SSH config file
             self.update_ssh_config_file(connection, new_data)
             
-            # Store password if provided
-            if new_data.get('password'):
-                self.store_password(
-                    new_data['host'],
-                    new_data['username'],
-                    new_data['password']
-                )
+            # Handle password storage/removal
+            if 'password' in new_data:
+                pwd = new_data.get('password') or ''
+                # Determine current identifiers after update
+                curr_host = new_data.get('host') or getattr(connection, 'host', prev_host)
+                curr_user = new_data.get('username') or getattr(connection, 'username', prev_user)
+                if pwd:
+                    self.store_password(curr_host, curr_user, pwd)
+                else:
+                    # Remove any stored passwords for both previous and current identifiers
+                    try:
+                        if prev_host and prev_user:
+                            self.delete_password(prev_host, prev_user)
+                    except Exception:
+                        pass
+                    try:
+                        if curr_host and curr_user and (curr_host != prev_host or curr_user != prev_user):
+                            self.delete_password(curr_host, curr_user)
+                    except Exception:
+                        pass
             
             # Reload SSH config to reflect changes
             self.load_ssh_config()
