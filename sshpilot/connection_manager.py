@@ -100,6 +100,7 @@ class Connection:
             compression = bool(ssh_cfg.get('compression', True)) if apply_adv else False
             verbosity = int(ssh_cfg.get('verbosity', 0))
             debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
+            auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
 
             # Apply advanced args only when user explicitly enabled them
             if apply_adv:
@@ -114,6 +115,13 @@ class Connection:
                 if compression:
                     ssh_cmd.append('-C')
             ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
+
+            # Apply default host key behavior when not explicitly set
+            try:
+                if (not strict_host) and auto_add_host_keys:
+                    ssh_cmd.extend(['-o', 'StrictHostKeyChecking=accept-new'])
+            except Exception:
+                pass
 
             # Apply verbosity flags
             try:
