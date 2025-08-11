@@ -870,8 +870,9 @@ class ConnectionManager(GObject.Object):
             # Find and update the connection's Host block
             updated_lines = []
             in_target_host = False
-            # Use the nickname from new_data if present (handles rename-in-place cases)
-            host_nickname = str(new_data.get('nickname') or connection.nickname)
+            # Handle rename: replace by old nickname when present, otherwise by new nickname
+            old_name = str(getattr(connection, 'nickname', '') or '')
+            new_name = str(new_data.get('nickname') or old_name)
             host_found = False
             
             i = 0
@@ -886,7 +887,8 @@ class ConnectionManager(GObject.Object):
                 else:
                     current_name = ''
 
-                if current_name == host_nickname:
+                # Replace when encountering either the old or the new name to avoid duplicates on rename
+                if current_name and (current_name == old_name or current_name == new_name):
                     host_found = True
                     in_target_host = True
                     # Write the updated host block
@@ -905,7 +907,7 @@ class ConnectionManager(GObject.Object):
                 
                 i += 1
             
-            # If host not found, append the new config
+            # If host not found, append the new config (new or old name not present)
             if not host_found:
                 updated_config = self.format_ssh_config_entry(new_data)
                 updated_lines.append('\n' + updated_config + '\n')
@@ -916,7 +918,7 @@ class ConnectionManager(GObject.Object):
                     f.writelines(updated_lines)
                 logger.info(
                     "Wrote SSH config for host %s (found=%s, rules=%d) to %s",
-                    host_nickname,
+                    new_name,
                     host_found,
                     len(new_data.get('forwarding_rules', []) or []),
                     self.ssh_config_path,

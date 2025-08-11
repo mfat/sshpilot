@@ -659,10 +659,14 @@ class ConnectionDialog(Adw.PreferencesDialog):
             except Exception:
                 current_name_norm = ''
             for conn in getattr(mgr, 'connections', []) or []:
-                if getattr(conn, 'nickname', None) and str(conn.nickname).strip().lower() == normalized:
-                    # Consider it taken only if it doesn't match the current connection's original name
-                    if current_name_norm and normalized == current_name_norm:
-                        continue
+                other_name = getattr(conn, 'nickname', None)
+                if not other_name:
+                    continue
+                other_norm = str(other_name).strip().lower()
+                # Skip the same connection object and also skip the current connection name when editing
+                if current_name_norm and (conn is self.connection or other_norm == current_name_norm):
+                    continue
+                if other_norm == normalized:
                     return True
         except Exception:
             return False
