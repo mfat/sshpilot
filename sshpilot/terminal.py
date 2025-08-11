@@ -412,6 +412,7 @@ class TerminalWidget(Gtk.Box):
             keepalive_interval = int(ssh_cfg.get('keepalive_interval', 30)) if apply_adv else None
             keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3)) if apply_adv else None
             strict_host = str(ssh_cfg.get('strict_host_key_checking', '')) if apply_adv else ''
+            auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
             batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
             compression = bool(ssh_cfg.get('compression', True)) if apply_adv else False
 
@@ -441,8 +442,22 @@ class TerminalWidget(Gtk.Box):
                 if compression:
                     ssh_cmd.append('-C')
 
+            # Apply auto-add host keys policy even when advanced block is off, unless user explicitly set a policy
+            try:
+                if (not strict_host) and auto_add_host_keys:
+                    ssh_cmd.extend(['-o', 'StrictHostKeyChecking=accept-new'])
+            except Exception:
+                pass
+
             # Ensure SSH exits immediately on failure rather than waiting in background
             ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
+            
+            # Default to accepting new host keys non-interactively on fresh installs
+            try:
+                if (not strict_host) and auto_add_host_keys:
+                    ssh_cmd.extend(['-o', 'StrictHostKeyChecking=accept-new'])
+            except Exception:
+                pass
             
             # Only add verbose flag if explicitly enabled in config
             try:
