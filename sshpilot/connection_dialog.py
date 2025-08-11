@@ -1317,33 +1317,59 @@ class ConnectionDialog(Adw.PreferencesDialog):
         self.rules_list.show()
     
     def browse_for_key_file(self):
-        """Open file chooser to browse for SSH key file.
-        Prefer Adw.FileDialog when available, otherwise use Gtk.FileChooserDialog.
-        """
-        # Prefer Adw.FileDialog if available in this libadwaita build
+        """Open file chooser to browse for SSH key file (Gtk.FileChooserDialog)."""
         try:
-            if hasattr(Adw, 'FileDialog'):
-                file_dialog = Adw.FileDialog(title=_("Select SSH Key File"))
-                # Default folder to ~/.ssh
-                try:
-                    ssh_dir = os.path.expanduser('~/.ssh')
-                    if os.path.isdir(ssh_dir):
-                        file_dialog.set_initial_folder(Gio.File.new_for_path(ssh_dir))
-                except Exception:
-                    pass
+            dialog = Gtk.FileChooserDialog(
+                title=_("Select SSH Key File"),
+                action=Gtk.FileChooserAction.OPEN,
+            )
+            # Parent must be a Gtk.Window; PreferencesDialog is not one. Try to set if available
+            try:
+                parent_win = self.get_transient_for()
+                if isinstance(parent_win, Gtk.Window):
+                    dialog.set_transient_for(parent_win)
+            except Exception:
+                pass
+            dialog.set_modal(True)
+            dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
+            dialog.add_button(_("Open"), Gtk.ResponseType.ACCEPT)
 
-                def _on_chosen(dlg, result):
+            # Default to ~/.ssh directory when available
+            try:
+                ssh_dir = os.path.expanduser('~/.ssh')
+                if os.path.isdir(ssh_dir):
                     try:
-                        file = dlg.open_finish(result)
-                        if file:
-                            self.keyfile_row.set_subtitle(file.get_path())
+                        dialog.set_current_folder(Gio.File.new_for_path(ssh_dir))
                     except Exception:
-                        pass
-                parent_obj = self.get_transient_for() if hasattr(self, 'get_transient_for') else None
-                file_dialog.open(parent_obj, None, _on_chosen)
-                return
-        except Exception:
-            pass
+                        try:
+                            dialog.set_current_folder(ssh_dir)
+                        except Exception:
+                            try:
+                                dialog.set_current_folder_uri(Gio.File.new_for_path(ssh_dir).get_uri())
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+
+            # Set filters
+            try:
+                filter_ssh = Gtk.FileFilter()
+                filter_ssh.set_name(_("SSH Private Keys"))
+                for pat in ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "*.pem", "*.key"):
+                    filter_ssh.add_pattern(pat)
+                dialog.add_filter(filter_ssh)
+
+                filter_any = Gtk.FileFilter()
+                filter_any.set_name(_("All Files"))
+                filter_any.add_pattern("*")
+                dialog.add_filter(filter_any)
+            except Exception:
+                pass
+
+            dialog.connect("response", self.on_key_file_selected)
+            dialog.show()
+        except Exception as e:
+            logger.error(f"Failed to open key file chooser: {e}")
 
     def _build_action_bar_group(self):
         """Build a bottom-aligned action bar with Cancel/Save."""
