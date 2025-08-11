@@ -59,6 +59,9 @@ class Connection:
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
+        # Commands
+        self.local_command = data.get('local_command', '')
+        self.remote_command = data.get('remote_command', '')
         # Authentication method: 0 = key-based, 1 = password
         try:
             self.auth_method = int(data.get('auth_method', 0))
@@ -519,7 +522,8 @@ class ConnectionManager(GObject.Object):
                     if ' ' in line:
                         key, value = line.split(maxsplit=1)
                         key = key.lower()
-                        value = value.strip('\"\'')
+                        # Preserve quotes in value; we'll handle key-specific unquoting later
+                        value = value
                         
                         if key == 'host':
                             # Save previous host if exists
@@ -575,18 +579,24 @@ class ConnectionManager(GObject.Object):
     def parse_host_config(self, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Parse host configuration from SSH config"""
         try:
-            host = config.get('host', '')
+            def _unwrap(val: Any) -> Any:
+                if isinstance(val, str) and len(val) >= 2:
+                    if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                        return val[1:-1]
+                return val
+
+            host = _unwrap(config.get('host', ''))
             if not host:
                 return None
                 
             # Extract relevant configuration
             parsed = {
                 'nickname': host,
-                'host': config.get('hostname', host),
-                'port': int(config.get('port', 22)),
-                'username': config.get('user', getpass.getuser()),
+                'host': _unwrap(config.get('hostname', host)),
+                'port': int(_unwrap(config.get('port', 22))),
+                'username': _unwrap(config.get('user', getpass.getuser())),
                 # previously: 'private_key': config.get('identityfile'),
-                'keyfile': os.path.expanduser(config.get('identityfile')) if config.get('identityfile') else None,
+                'keyfile': os.path.expanduser(_unwrap(config.get('identityfile'))) if config.get('identityfile') else None,
                 'forwarding_rules': []
             }
             # Map ForwardX11 yes/no → x11_forwarding boolean
@@ -668,6 +678,29 @@ class ConnectionManager(GObject.Object):
             # Handle proxy settings if any
             if 'proxycommand' in config:
                 parsed['proxy_command'] = config['proxycommand']
+            
+            # Commands: LocalCommand requires PermitLocalCommand
+            try:
+                def _unescape_cfg_value(val: str) -> str:
+                    if not isinstance(val, str):
+                        return val
+                    v = val.strip()
+                    # If the value is wrapped in double quotes, strip only the outer quotes
+                    if len(v) >= 2 and v.startswith('"') and v.endswith('"'):
+                        v = v[1:-1]
+                    # Convert escaped quotes back for UI
+                    v = v.replace('\\"', '"').replace('\\\\', '\\')
+                    return v
+
+                if 'localcommand' in config:
+                    parsed['local_command'] = _unescape_cfg_value(config.get('localcommand', ''))
+                if 'remotecommand' in config:
+                    parsed['remote_command'] = _unescape_cfg_value(config.get('remotecommand', ''))
+                # Map RequestTTY to a boolean flag to aid terminal decisions if needed
+                if 'requesttty' in config:
+                    parsed['request_tty'] = str(config.get('requesttty', '')).strip().lower() in ('yes', 'force', 'true', '1', 'on')
+            except Exception:
+                pass
                 
             return parsed
             
@@ -775,6 +808,21 @@ class ConnectionManager(GObject.Object):
         # Add X11 forwarding if enabled
         if data.get('x11_forwarding', False):
             lines.append("    ForwardX11 yes")
+
+        # Add LocalCommand if specified, ensure PermitLocalCommand (write exactly as provided)
+        local_cmd = (data.get('local_command') or '').strip()
+        if local_cmd:
+            lines.append("    PermitLocalCommand yes")
+            lines.append(f"    LocalCommand {local_cmd}")
+
+        # Add RemoteCommand and RequestTTY if specified (ensure shell stays active)
+        remote_cmd = (data.get('remote_command') or '').strip()
+        if remote_cmd:
+            # Ensure we keep an interactive shell after the command
+            remote_cmd_aug = remote_cmd if 'exec $SHELL' in remote_cmd else f"{remote_cmd} ; exec $SHELL -l"
+            # Write RemoteCommand first, then RequestTTY (order for readability)
+            lines.append(f"    RemoteCommand {remote_cmd_aug}")
+            lines.append("    RequestTTY yes")
         
         # Add port forwarding rules if any (ensure sane defaults)
         for rule in data.get('forwarding_rules', []):
