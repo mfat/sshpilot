@@ -2,6 +2,9 @@
 # Copyright (C) 2025 mFat <newmfat@gmail.com>
 # Licensed under GPL-3.0
 
+
 __version__ = "2.1.0"
+
+
 __author__ = "mFat"
 __email__ = "newmfat@gmail.com"

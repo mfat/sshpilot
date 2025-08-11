@@ -2885,6 +2885,66 @@ class MainWindow(Adw.ApplicationWindow):
                 except Exception:
                     pass
                 
+                # Detect if anything actually changed; avoid unnecessary writes/prompts
+                def _norm_str(v):
+                    try:
+                        s = ('' if v is None else str(v)).strip()
+                        # Treat keyfile placeholders as empty
+                        if s.lower().startswith('select key file') or 'select key file or leave empty' in s.lower():
+                            return ''
+                        return s
+                    except Exception:
+                        return ''
+                def _norm_rules(rules):
+                    try:
+                        return list(rules or [])
+                    except Exception:
+                        return []
+                existing = {
+                    'nickname': _norm_str(getattr(old_connection, 'nickname', '')),
+                    'host': _norm_str(getattr(old_connection, 'host', '')),
+                    'username': _norm_str(getattr(old_connection, 'username', '')),
+                    'port': int(getattr(old_connection, 'port', 22) or 22),
+                    'auth_method': int(getattr(old_connection, 'auth_method', 0) or 0),
+                    'keyfile': _norm_str(getattr(old_connection, 'keyfile', '')),
+                    'password': _norm_str(getattr(old_connection, 'password', '')),
+                    'key_passphrase': _norm_str(getattr(old_connection, 'key_passphrase', '')),
+                    'x11_forwarding': bool(getattr(old_connection, 'x11_forwarding', False)),
+                    'forwarding_rules': _norm_rules(getattr(old_connection, 'forwarding_rules', [])),
+                    'local_command': _norm_str(getattr(old_connection, 'local_command', '') or (getattr(old_connection, 'data', {}).get('local_command') if hasattr(old_connection, 'data') else '')),
+                    'remote_command': _norm_str(getattr(old_connection, 'remote_command', '') or (getattr(old_connection, 'data', {}).get('remote_command') if hasattr(old_connection, 'data') else '')),
+                }
+                incoming = {
+                    'nickname': _norm_str(connection_data.get('nickname')),
+                    'host': _norm_str(connection_data.get('host')),
+                    'username': _norm_str(connection_data.get('username')),
+                    'port': int(connection_data.get('port') or 22),
+                    'auth_method': int(connection_data.get('auth_method') or 0),
+                    'keyfile': _norm_str(connection_data.get('keyfile')),
+                    'password': _norm_str(connection_data.get('password')),
+                    'key_passphrase': _norm_str(connection_data.get('key_passphrase')),
+                    'x11_forwarding': bool(connection_data.get('x11_forwarding', False)),
+                    'forwarding_rules': _norm_rules(connection_data.get('forwarding_rules')),
+                    'local_command': _norm_str(connection_data.get('local_command')),
+                    'remote_command': _norm_str(connection_data.get('remote_command')),
+                }
+                # Determine if anything meaningful changed by comparing canonical SSH config blocks
+                try:
+                    existing_block = self.connection_manager.format_ssh_config_entry(existing)
+                    incoming_block = self.connection_manager.format_ssh_config_entry(incoming)
+                    # Also include auth_method in change detection (stored outside ssh config)
+                    changed = (existing_block != incoming_block) or (existing['auth_method'] != incoming['auth_method'])
+                except Exception:
+                    # Fallback to dict comparison if formatter fails
+                    changed = existing != incoming
+
+                if not changed:
+                    logger.info("No changes detected for '%s'; skipping update and reconnect prompt", existing['nickname'])
+                    # Ensure the UI stays in sync just in case
+                    if old_connection in self.connection_rows:
+                        self.connection_rows[old_connection].update_display()
+                    return
+
                 # Update connection in manager first
                 if not self.connection_manager.update_connection(old_connection, connection_data):
                     logger.error("Failed to update connection in SSH config")
@@ -2901,6 +2961,12 @@ class MainWindow(Adw.ApplicationWindow):
                 old_connection.auth_method = connection_data['auth_method']
                 old_connection.x11_forwarding = connection_data['x11_forwarding']
                 old_connection.forwarding_rules = list(connection_data.get('forwarding_rules', []))
+                # Update commands
+                try:
+                    old_connection.local_command = connection_data.get('local_command', '')
+                    old_connection.remote_command = connection_data.get('remote_command', '')
+                except Exception:
+                    pass
                 
                 # Sync from reloaded manager copy to ensure persistence reflects UI immediately
                 try:

@@ -504,6 +504,34 @@ class TerminalWidget(Gtk.Box):
             if hasattr(self.connection, 'x11_forwarding') and self.connection.x11_forwarding:
                 ssh_cmd.append('-X')
             
+            # Prepare command-related options (must appear before host)
+            remote_cmd = ''
+            local_cmd = ''
+            try:
+                if hasattr(self.connection, 'remote_command'):
+                    remote_cmd = (self.connection.remote_command or '').strip()
+                if not remote_cmd and hasattr(self.connection, 'data'):
+                    remote_cmd = (self.connection.data.get('remote_command') or '').strip()
+            except Exception:
+                remote_cmd = ''
+            try:
+                if hasattr(self.connection, 'local_command'):
+                    local_cmd = (self.connection.local_command or '').strip()
+                if not local_cmd and hasattr(self.connection, 'data'):
+                    local_cmd = (self.connection.data.get('local_command') or '').strip()
+            except Exception:
+                local_cmd = ''
+
+            # If remote command is specified, request a TTY (twice for force allocation)
+            if remote_cmd:
+                ssh_cmd.extend(['-t', '-t'])
+
+            # If local command specified, allow and set it via options
+            if local_cmd:
+                ssh_cmd.extend(['-o', 'PermitLocalCommand=yes'])
+                # Pass exactly as user provided, letting ssh parse quoting
+                ssh_cmd.extend(['-o', f'LocalCommand={local_cmd}'])
+
             # Add port forwarding rules
             if hasattr(self.connection, 'forwarding_rules'):
                 for rule in self.connection.forwarding_rules:
@@ -543,10 +571,16 @@ class TerminalWidget(Gtk.Box):
             
             # Add host and user
             ssh_cmd.append(f"{self.connection.username}@{self.connection.host}" if hasattr(self.connection, 'username') and self.connection.username else self.connection.host)
-            
-            # Add port if not default
+
+            # Add port if not default (ideally before host, but keep consistent with existing behavior)
             if hasattr(self.connection, 'port') and self.connection.port != 22:
                 ssh_cmd.extend(['-p', str(self.connection.port)])
+
+            # Append remote command last so ssh treats it as the command to run, ensure shell remains active
+            if remote_cmd:
+                final_remote_cmd = remote_cmd if 'exec $SHELL' in remote_cmd else f"{remote_cmd} ; exec $SHELL -l"
+                # Append as single argument; let shell on remote parse quotes. Keep as-is to allow user quoting.
+                ssh_cmd.append(final_remote_cmd)
             
             # Avoid logging password when sshpass is used
             try:
