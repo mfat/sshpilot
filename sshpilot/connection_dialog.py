@@ -1357,20 +1357,7 @@ class ConnectionDialog(Adw.PreferencesDialog):
             except Exception:
                 pass
 
-            # Set filters
-            try:
-                filter_ssh = Gtk.FileFilter()
-                filter_ssh.set_name(_("SSH Private Keys"))
-                for pat in ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "*.pem", "*.key"):
-                    filter_ssh.add_pattern(pat)
-                dialog.add_filter(filter_ssh)
-
-                filter_any = Gtk.FileFilter()
-                filter_any.set_name(_("All Files"))
-                filter_any.add_pattern("*")
-                dialog.add_filter(filter_any)
-            except Exception:
-                pass
+            # No filters: list all files in ~/.ssh
 
             dialog.connect("response", self.on_key_file_selected)
             dialog.show()
