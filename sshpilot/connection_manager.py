@@ -70,6 +70,12 @@ class Connection:
         # X11 forwarding preference
         self.x11_forwarding = bool(data.get('x11_forwarding', False))
         
+        # Key selection mode: 0 try all, 1 specific key
+        try:
+            self.key_select_mode = int(data.get('key_select_mode', 0) or 0)
+        except Exception:
+            self.key_select_mode = 0
+
         # Port forwarding rules
         self.forwarding_rules = data.get('forwarding_rules', [])
         
@@ -709,6 +715,16 @@ class ConnectionManager(GObject.Object):
                     parsed['request_tty'] = str(config.get('requesttty', '')).strip().lower() in ('yes', 'force', 'true', '1', 'on')
             except Exception:
                 pass
+
+            # Key selection mode: if IdentitiesOnly is set truthy, select specific key
+            try:
+                ident_only = str(config.get('identitiesonly', '')).strip().lower()
+                if ident_only in ('yes', 'true', '1', 'on'):
+                    parsed['key_select_mode'] = 1
+                else:
+                    parsed['key_select_mode'] = 0
+            except Exception:
+                parsed['key_select_mode'] = 0
                 
             return parsed
             
@@ -830,13 +846,20 @@ class ConnectionManager(GObject.Object):
         if port and port != 22:  # Only add port if it's not the default 22
             lines.append(f"    Port {port}")
         
-        # Add keyfile if specified and not a placeholder
+        # Add IdentityFile/IdentitiesOnly per selection when auth is key-based
         keyfile = data.get('keyfile') or data.get('private_key')
-        if keyfile and keyfile.strip() and not keyfile.strip().lower().startswith('select key file'):
-            # Ensure the keyfile path is properly quoted if it contains spaces
-            if ' ' in keyfile and not (keyfile.startswith('"') and keyfile.endswith('"')):
-                keyfile = f'"{keyfile}"'
-            lines.append(f"    IdentityFile {keyfile}")
+        auth_method = int(data.get('auth_method', 0) or 0)
+        key_select_mode = int(data.get('key_select_mode', 0) or 0)  # 0=try all, 1=specific
+        if auth_method == 0:
+            if key_select_mode == 1 and keyfile and keyfile.strip() and not keyfile.strip().lower().startswith('select key file'):
+                # Use only the specified key
+                if ' ' in keyfile and not (keyfile.startswith('"') and keyfile.endswith('"')):
+                    keyfile = f'"{keyfile}"'
+                lines.append(f"    IdentityFile {keyfile}")
+                lines.append("    IdentitiesOnly yes")
+            else:
+                # Try all available keys (no IdentityFile, ensure IdentitiesOnly is not set)
+                pass
         
         # Add X11 forwarding if enabled
         if data.get('x11_forwarding', False):

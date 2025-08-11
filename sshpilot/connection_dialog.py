@@ -251,10 +251,33 @@ class ConnectionDialog(Adw.PreferencesDialog):
             self.keyfile_row.set_visible(is_key_based)
         if hasattr(self, 'key_passphrase_row'):
             self.key_passphrase_row.set_visible(is_key_based)
+        if hasattr(self, 'key_select_row'):
+            self.key_select_row.set_visible(is_key_based)
             
         # Show/hide password field for password-based auth
         if hasattr(self, 'password_row'):
             self.password_row.set_visible(not is_key_based)
+
+        # Also update browse availability per key selection mode
+        try:
+            self.on_key_select_changed(self.key_select_row, None)
+        except Exception:
+            pass
+
+    def on_key_select_changed(self, combo_row, param):
+        """Enable browse button only when 'Use a specific key' is selected."""
+        try:
+            use_specific = (combo_row.get_selected() == 1) if combo_row else False
+        except Exception:
+            use_specific = False
+        # Enable/disable keyfile browse UI
+        try:
+            if hasattr(self, 'keyfile_btn'):
+                self.keyfile_btn.set_sensitive(use_specific)
+            if hasattr(self, 'keyfile_row'):
+                self.keyfile_row.set_sensitive(use_specific)
+        except Exception:
+            pass
     
     def load_connection_data(self):
         """Load connection data into the dialog fields"""
@@ -325,6 +348,22 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 
             if hasattr(self.connection, 'key_passphrase') and self.connection.key_passphrase:
                 self.key_passphrase_row.set_text(self.connection.key_passphrase)
+
+            # Load key selection mode
+            try:
+                if hasattr(self, 'key_select_row'):
+                    mode = 0
+                    try:
+                        mode = int(getattr(self.connection, 'key_select_mode', 0))
+                    except Exception:
+                        try:
+                            mode = int(self.connection.data.get('key_select_mode', 0)) if hasattr(self.connection, 'data') else 0
+                        except Exception:
+                            mode = 0
+                    self.key_select_row.set_selected(0 if mode != 1 else 1)
+                    self.on_key_select_changed(self.key_select_row, None)
+            except Exception:
+                pass
             
             # Set X11 forwarding
             self.x11_row.set_active(getattr(self.connection, 'x11_forwarding', False))
@@ -914,6 +953,18 @@ class ConnectionDialog(Adw.PreferencesDialog):
         self.auth_method_row.set_model(auth_model)
         self.auth_method_row.connect("notify::selected", self.on_auth_method_changed)
         auth_group.add(self.auth_method_row)
+
+        # Key selection mode for key-based auth
+        key_select_model = Gtk.StringList()
+        key_select_model.append(_("Try all available keys"))
+        key_select_model.append(_("Use a specific key"))
+        self.key_select_row = Adw.ComboRow()
+        self.key_select_row.set_title(_("Key selection"))
+        self.key_select_row.set_model(key_select_model)
+        # default: Try all available keys
+        self.key_select_row.set_selected(0)
+        self.key_select_row.connect("notify::selected", self.on_key_select_changed)
+        auth_group.add(self.key_select_row)
         
         # Keyfile
         self.keyfile_row = Adw.ActionRow(title=_("SSH Key"), subtitle=_("Select key file or leave empty for auto-detection"))
@@ -1763,6 +1814,7 @@ class ConnectionDialog(Adw.PreferencesDialog):
             'port': int(self.port_row.get_text().strip() or '22'),
             'auth_method': self.auth_method_row.get_selected(),
             'keyfile': self.keyfile_row.get_subtitle() if hasattr(self.keyfile_row, 'get_subtitle') else "",
+            'key_select_mode': (self.key_select_row.get_selected() if hasattr(self, 'key_select_row') else 0),
             'key_passphrase': self.key_passphrase_row.get_text(),
             'password': self.password_row.get_text(),
             'x11_forwarding': self.x11_row.get_active(),
