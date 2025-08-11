@@ -1875,6 +1875,24 @@ class ConnectionDialog(Adw.PreferencesDialog):
         except Exception:
             password_changed = False
 
+        # Resolve keyfile from dropdown/browse/subtitle/existing
+        try:
+            keyfile_value = ''
+            if hasattr(self, 'key_dropdown') and hasattr(self, '_key_paths'):
+                sel = self.key_dropdown.get_selected()
+                if 0 <= sel < len(self._key_paths):
+                    pth = self._key_paths[sel]
+                    if pth and pth != '__BROWSE__':
+                        keyfile_value = pth
+            if (not keyfile_value) and hasattr(self, '_selected_keyfile_path') and self._selected_keyfile_path:
+                keyfile_value = str(self._selected_keyfile_path)
+            if (not keyfile_value) and hasattr(self.keyfile_row, 'get_subtitle'):
+                keyfile_value = self.keyfile_row.get_subtitle() or ''
+            if (not keyfile_value) and self.is_editing and hasattr(self, 'connection') and self.connection:
+                keyfile_value = str(getattr(self.connection, 'keyfile', '') or '')
+        except Exception:
+            keyfile_value = ''
+
         # Gather connection data
         connection_data = {
             'nickname': self.nickname_row.get_text().strip(),
@@ -1882,7 +1900,7 @@ class ConnectionDialog(Adw.PreferencesDialog):
             'username': self.username_row.get_text().strip(),
             'port': int(self.port_row.get_text().strip() or '22'),
             'auth_method': self.auth_method_row.get_selected(),
-            'keyfile': self.keyfile_row.get_subtitle() if hasattr(self.keyfile_row, 'get_subtitle') else "",
+            'keyfile': keyfile_value,
             'key_select_mode': (self.key_select_row.get_selected() if hasattr(self, 'key_select_row') else 0),
             'key_passphrase': self.key_passphrase_row.get_text(),
             'password': self.password_row.get_text(),
