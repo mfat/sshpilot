@@ -543,6 +543,12 @@ class ConnectionDialog(Adw.PreferencesDialog):
                     if current_name_norm and n_norm == current_name_norm:
                         continue
                     names.add(str(n))
+            # Ensure fresh names after deletions
+            try:
+                if hasattr(mgr, 'load_ssh_config'):
+                    mgr.load_ssh_config()
+            except Exception:
+                pass
             # Ensure current typed value isn't auto-included incorrectly
             self.validator.set_existing_names(names)
         except Exception:

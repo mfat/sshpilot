@@ -1054,9 +1054,27 @@ class ConnectionManager(GObject.Object):
             except Exception as e:
                 logger.warning(f"Failed to remove SSH config entry for {connection.nickname}: {e}")
             
+            # Remove per-connection metadata (auth method, etc.) to avoid lingering entries
+            try:
+                from .config import Config
+                cfg = Config()
+                meta_all = cfg.get_setting('connections_meta', {}) or {}
+                if isinstance(meta_all, dict) and connection.nickname in meta_all:
+                    del meta_all[connection.nickname]
+                    cfg.set_setting('connections_meta', meta_all)
+                    logger.debug(f"Removed metadata for {connection.nickname}")
+            except Exception as e:
+                logger.debug(f"Could not remove metadata for {connection.nickname}: {e}")
+            
             # Emit signal
             self.emit('connection-removed', connection)
             
+            # Reload connections so in-memory list reflects latest file state
+            try:
+                self.load_ssh_config()
+            except Exception:
+                pass
+
             logger.info(f"Connection removed: {connection}")
             return True
             
