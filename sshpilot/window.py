@@ -2932,8 +2932,9 @@ class MainWindow(Adw.ApplicationWindow):
                 try:
                     existing_block = self.connection_manager.format_ssh_config_entry(existing)
                     incoming_block = self.connection_manager.format_ssh_config_entry(incoming)
-                    # Also include auth_method in change detection (stored outside ssh config)
-                    changed = (existing_block != incoming_block) or (existing['auth_method'] != incoming['auth_method'])
+                    # Also include auth_method and password delta in change detection
+                    pw_changed_flag = bool(connection_data.get('password_changed', False))
+                    changed = (existing_block != incoming_block) or (existing['auth_method'] != incoming['auth_method']) or pw_changed_flag or (existing['password'] != incoming['password'])
                 except Exception:
                     # Fallback to dict comparison if formatter fails
                     changed = existing != incoming

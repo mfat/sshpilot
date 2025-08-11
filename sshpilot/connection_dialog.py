@@ -317,6 +317,11 @@ class ConnectionDialog(Adw.PreferencesDialog):
                             self.password_row.set_text(pw)
                 except Exception:
                     pass
+            # Capture original password value to detect user changes later
+            try:
+                self._orig_password = self.password_row.get_text()
+            except Exception:
+                self._orig_password = ""
                 
             if hasattr(self.connection, 'key_passphrase') and self.connection.key_passphrase:
                 self.key_passphrase_row.set_text(self.connection.key_passphrase)
@@ -1744,6 +1749,12 @@ class ConnectionDialog(Adw.PreferencesDialog):
         except Exception:
             pass
         
+        # Detect if password text was changed by user during this edit session
+        try:
+            password_changed = (self.password_row.get_text() != getattr(self, '_orig_password', None))
+        except Exception:
+            password_changed = False
+
         # Gather connection data
         connection_data = {
             'nickname': self.nickname_row.get_text().strip(),
@@ -1758,6 +1769,7 @@ class ConnectionDialog(Adw.PreferencesDialog):
             'forwarding_rules': forwarding_rules,
             'local_command': (self.local_command_row.get_text() if hasattr(self, 'local_command_row') else ''),
             'remote_command': (self.remote_command_row.get_text() if hasattr(self, 'remote_command_row') else ''),
+            'password_changed': bool(password_changed),
         }
         
         # Update the connection object with new data if editing
