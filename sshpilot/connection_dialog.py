@@ -830,6 +830,54 @@ class ConnectionDialog(Adw.PreferencesDialog):
         if hasattr(self, 'dynamic_port_row'):
             self._connect_row_validation(self.dynamic_port_row, lambda r: self._validate_port_row(r, _("Local Port")))
 
+    def _populate_detected_keys(self):
+        """Populate key dropdown with detected private keys and a Browse item (reuse KeyManager.discover_keys)."""
+        try:
+            keys = []
+            parent = getattr(self, 'parent_window', None) or None
+            if parent and hasattr(parent, 'key_manager') and parent.key_manager:
+                keys = parent.key_manager.discover_keys() or []
+            names = []
+            paths = []
+            for k in keys:
+                try:
+                    names.append(os.path.basename(k.path))
+                    paths.append(k.path)
+                except Exception:
+                    pass
+            # Add placeholder when none
+            if not names:
+                names.append(_("No keys detected"))
+                paths.append("")
+            # Add browse option
+            names.append(_("Browse…"))
+            paths.append("__BROWSE__")
+            self._key_paths = paths
+            model = Gtk.StringList()
+            for n in names:
+                model.append(n)
+            self.key_dropdown.set_model(model)
+            # Preselect currently set keyfile if present
+            preselect_idx = 0
+            try:
+                current_path = None
+                if hasattr(self, '_selected_keyfile_path') and self._selected_keyfile_path:
+                    current_path = self._selected_keyfile_path
+                elif hasattr(self.keyfile_row, 'get_subtitle'):
+                    current_path = self.keyfile_row.get_subtitle() or None
+                if (not current_path) and hasattr(self, 'connection') and self.connection:
+                    current_path = getattr(self.connection, 'keyfile', None)
+                if current_path and current_path in paths:
+                    preselect_idx = paths.index(current_path)
+            except Exception:
+                preselect_idx = 0
+            try:
+                self.key_dropdown.set_selected(preselect_idx)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.debug(f"Could not populate detected keys: {e}")
+
     def _run_initial_validation(self):
         try:
             if hasattr(self, 'nickname_row'):
@@ -966,22 +1014,43 @@ class ConnectionDialog(Adw.PreferencesDialog):
         self.key_select_row.connect("notify::selected", self.on_key_select_changed)
         auth_group.add(self.key_select_row)
         
-        # Keyfile
+        # Keyfile dropdown with detected keys and an inline Browse item
         self.keyfile_row = Adw.ActionRow(title=_("SSH Key"), subtitle=_("Select key file or leave empty for auto-detection"))
-        # Compact, icon-only browse button
+        # Build dropdown items from detected keys
+        self.key_dropdown = Gtk.DropDown()
+        self.key_dropdown.set_hexpand(True)
+        # Populate via helper
+        self._key_paths = []
+        self._populate_detected_keys()
+
+        def _on_key_selected(drop, _param):
+            try:
+                idx = drop.get_selected()
+                if idx < 0 or idx >= len(getattr(self, '_key_paths', [])):
+                    return
+                path = self._key_paths[idx]
+                if path == "__BROWSE__":
+                    # Revert selection to previous if any
+                    try:
+                        drop.set_selected(0)
+                    except Exception:
+                        pass
+                    self.browse_for_key_file()
+                elif path:
+                    self._selected_keyfile_path = path
+                    if hasattr(self.keyfile_row, 'set_subtitle'):
+                        self.keyfile_row.set_subtitle(path)
+            except Exception:
+                pass
         try:
-            self.keyfile_btn = Gtk.Button.new_from_icon_name('folder-open-symbolic')
-        except Exception:
-            self.keyfile_btn = Gtk.Button.new_from_icon_name('document-open-symbolic')
-        try:
-            self.keyfile_btn.add_css_class('flat')
-            self.keyfile_btn.set_valign(Gtk.Align.CENTER)
-            self.keyfile_btn.set_halign(Gtk.Align.END)
-            self.keyfile_btn.set_tooltip_text(_("Browse"))
+            self.key_dropdown.connect('notify::selected', _on_key_selected)
         except Exception:
             pass
-        self.keyfile_btn.connect("clicked", lambda *_: self.browse_for_key_file())
-        self.keyfile_row.add_suffix(self.keyfile_btn)
+
+        # Pack dropdown and add to row
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        box.append(self.key_dropdown)
+        self.keyfile_row.add_suffix(box)
         self.keyfile_row.set_activatable(False)
         auth_group.add(self.keyfile_row)
         

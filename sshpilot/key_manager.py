@@ -113,23 +113,20 @@ class KeyManager(GObject.Object):
             if not self.ssh_dir.exists():
                 return keys
             
-            # Look for private key files
+            # Look for private key files (list all plausible private keys, even without .pub)
             for file_path in self.ssh_dir.iterdir():
-                if file_path.is_file() and not file_path.name.endswith('.pub'):
-                    # Skip known non-key files
-                    if file_path.name in ['config', 'known_hosts', 'authorized_keys']:
-                        continue
-                    
-                    # Check if corresponding .pub file exists
-                    pub_path = file_path.with_suffix(file_path.suffix + '.pub')
-                    if pub_path.exists():
-                        try:
-                            # Try to load as SSH key
-                            key = SSHKey(str(file_path))
-                            if key.key_type:  # Valid key
-                                keys.append(key)
-                        except Exception as e:
-                            logger.debug(f"Skipping {file_path}: {e}")
+                if not file_path.is_file():
+                    continue
+                name = file_path.name
+                # Skip obvious non-key files
+                if name.endswith('.pub') or name in ['config', 'known_hosts', 'authorized_keys']:
+                    continue
+                try:
+                    # Create SSHKey object; it may not have metadata if no .pub exists, but still usable
+                    key = SSHKey(str(file_path))
+                    keys.append(key)
+                except Exception as e:
+                    logger.debug(f"Skipping {file_path}: {e}")
             
             logger.info(f"Discovered {len(keys)} SSH keys")
             
