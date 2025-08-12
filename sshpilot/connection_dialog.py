@@ -1021,12 +1021,12 @@ class ConnectionDialog(Adw.PreferencesDialog):
 
         # Key selection mode for key-based auth
         key_select_model = Gtk.StringList()
-        key_select_model.append(_("Try all available keys"))
+        key_select_model.append(_("Automatic"))
         key_select_model.append(_("Use a specific key"))
         self.key_select_row = Adw.ComboRow()
         self.key_select_row.set_title(_("Key selection"))
         self.key_select_row.set_model(key_select_model)
-        # default: Try all available keys
+        # default: Auto (try all available keys)
         self.key_select_row.set_selected(0)
         self.key_select_row.connect("notify::selected", self.on_key_select_changed)
         auth_group.add(self.key_select_row)
