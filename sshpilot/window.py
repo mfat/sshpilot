@@ -10,6 +10,12 @@ from typing import Optional, Dict, Any, List, Tuple
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
+try:
+    gi.require_version('Vte', '3.91')
+    from gi.repository import Vte
+    _HAS_VTE = True
+except Exception:
+    _HAS_VTE = False
 
 from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango
 
@@ -1909,29 +1915,32 @@ class MainWindow(Adw.ApplicationWindow):
                 if idx < 0 or idx >= len(keys):
                     return
                 ssh_key = keys[idx]
-                ok = self.key_manager.copy_key_to_host(ssh_key, connection)
-                if ok:
-                    msg = Adw.MessageDialog(
-                        transient_for=self,
-                        modal=True,
-                        heading=_('Success'),
-                        body=_('Public key copied to {}@{}').format(connection.username, connection.host)
-                    )
-                    msg.add_response('ok', _('OK'))
-                    msg.set_default_response('ok')
-                    msg.set_close_response('ok')
-                    msg.present()
+                if _HAS_VTE:
+                    self._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
                 else:
-                    msg = Adw.MessageDialog(
-                        transient_for=self,
-                        modal=True,
-                        heading=_('Error'),
-                        body=_('Failed to copy the public key. Check logs for details.')
-                    )
-                    msg.add_response('ok', _('OK'))
-                    msg.set_default_response('ok')
-                    msg.set_close_response('ok')
-                    msg.present()
+                    ok = self.key_manager.copy_key_to_host(ssh_key, connection)
+                    if ok:
+                        msg = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_('Success'),
+                            body=_('Public key copied to {}@{}').format(connection.username, connection.host)
+                        )
+                        msg.add_response('ok', _('OK'))
+                        msg.set_default_response('ok')
+                        msg.set_close_response('ok')
+                        msg.present()
+                    else:
+                        msg = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_('Error'),
+                            body=_('Failed to copy the public key. Check logs for details.')
+                        )
+                        msg.add_response('ok', _('OK'))
+                        msg.set_default_response('ok')
+                        msg.set_close_response('ok')
+                        msg.present()
 
             picker.connect('response', _on_pick)
             picker.present()
@@ -1981,6 +1990,262 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as e:
             logger.error(f'Upload dialog failed: {e}')
 
+    def _show_ssh_copy_id_terminal_using_main_widget(self, connection, ssh_key):
+        """Show a window with header bar and embedded terminal running ssh-copy-id.
+
+        Requirements:
+        - Terminal expands horizontally, no borders around it
+        - Header bar contains Cancel and Close buttons
+        """
+        try:
+            target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
+            pub_name = os.path.basename(getattr(ssh_key, 'public_path', '') or '')
+            body_text = _('This will add your public key to the server\'s ~/.ssh/authorized_keys so future logins can use SSH keys.')
+            dlg = Adw.Window()
+            dlg.set_transient_for(self)
+            dlg.set_modal(True)
+            try:
+                dlg.set_title(_('ssh-copy-id'))
+            except Exception:
+                pass
+            try:
+                dlg.set_default_size(920, 520)
+            except Exception:
+                pass
+
+            # Header bar with Cancel
+            header = Adw.HeaderBar()
+            title_widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            title_label = Gtk.Label(label=_('ssh-copy-id'))
+            title_label.set_halign(Gtk.Align.START)
+            subtitle_label = Gtk.Label(label=_('Copying {key} to {target}').format(key=pub_name or _('selected key'), target=target))
+            subtitle_label.set_halign(Gtk.Align.START)
+            try:
+                title_label.add_css_class('title-2')
+                subtitle_label.add_css_class('dim-label')
+            except Exception:
+                pass
+            title_widget.append(title_label)
+            title_widget.append(subtitle_label)
+            header.set_title_widget(title_widget)
+
+            cancel_btn = Gtk.Button(label=_('Cancel'))
+            try:
+                cancel_btn.add_css_class('flat')
+            except Exception:
+                pass
+            header.pack_start(cancel_btn)
+            # Close button is omitted; window has native close (X)
+
+            # Content: TerminalWidget without connecting spinner/banner
+            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            content_box.set_hexpand(True)
+            content_box.set_vexpand(True)
+            try:
+                content_box.set_margin_top(12)
+                content_box.set_margin_bottom(12)
+                content_box.set_margin_start(6)
+                content_box.set_margin_end(6)
+            except Exception:
+                pass
+            # Optional info text under header bar
+            info_lbl = Gtk.Label(label=body_text)
+            info_lbl.set_halign(Gtk.Align.START)
+            try:
+                info_lbl.add_css_class('dim-label')
+                info_lbl.set_wrap(True)
+            except Exception:
+                pass
+            content_box.append(info_lbl)
+
+            term_widget = TerminalWidget(connection, self.config, self.connection_manager)
+            # Hide connecting overlay and suppress disconnect banner for this non-SSH task
+            try:
+                term_widget._set_connecting_overlay_visible(False)
+                setattr(term_widget, '_suppress_disconnect_banner', True)
+                term_widget._set_disconnected_banner_visible(False)
+            except Exception:
+                pass
+            term_widget.set_hexpand(True)
+            term_widget.set_vexpand(True)
+            # No frame: avoid borders around the terminal
+            content_box.append(term_widget)
+
+            # Root container combines header and content
+            root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            root_box.append(header)
+            root_box.append(content_box)
+            try:
+                dlg.set_content(root_box)
+            except Exception:
+                # GTK fallback
+                dlg.set_child(root_box)
+
+            def _on_cancel(_btn):
+                try:
+                    if hasattr(term_widget, 'disconnect'):
+                        term_widget.disconnect()
+                except Exception:
+                    pass
+                dlg.close()
+            cancel_btn.connect('clicked', _on_cancel)
+            # No explicit close button; use window close (X)
+
+            # Build ssh-copy-id command with options derived from connection settings
+            argv = self._build_ssh_copy_id_argv(connection, ssh_key)
+            cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
+            logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
+
+            # Helper to write colored lines into the terminal
+            def _feed_colored_line(text: str, color: str):
+                colors = {
+                    'red': '\x1b[31m',
+                    'green': '\x1b[32m',
+                    'yellow': '\x1b[33m',
+                    'blue': '\x1b[34m',
+                }
+                prefix = colors.get(color, '')
+                try:
+                    term_widget.vte.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
+                except Exception:
+                    pass
+
+            # Initial info line
+            _feed_colored_line(_('Running ssh-copy-id…'), 'yellow')
+
+            try:
+                term_widget.vte.spawn_async(
+                    Vte.PtyFlags.DEFAULT,
+                    os.path.expanduser('~') or '/',
+                    ['bash', '-lc', cmdline],
+                    [f"{k}={v}" for k, v in os.environ.items()],
+                    GLib.SpawnFlags.DEFAULT,
+                    None,
+                    None,
+                    -1,
+                    None,
+                    None
+                )
+
+                # Show result modal when the command finishes
+                def _on_copyid_exited(_vte, status):
+                    # Normalize exit code
+                    exit_code = None
+                    try:
+                        if os.WIFEXITED(status):
+                            exit_code = os.WEXITSTATUS(status)
+                        else:
+                            exit_code = status if 0 <= int(status) < 256 else ((int(status) >> 8) & 0xFF)
+                    except Exception:
+                        try:
+                            exit_code = int(status)
+                        except Exception:
+                            exit_code = status
+
+                    ok = (exit_code == 0)
+                    if ok:
+                        _feed_colored_line(_('Public key was installed successfully.'), 'green')
+                    else:
+                        _feed_colored_line(_('Failed to install the public key.'), 'red')
+
+                    def _present_result_dialog():
+                        msg = Adw.MessageDialog(
+                            transient_for=dlg,
+                            modal=True,
+                            heading=_('Success') if ok else _('Error'),
+                            body=(_('Public key copied to {}@{}').format(connection.username, connection.host)
+                                  if ok else _('Failed to copy the public key. Check logs for details.')),
+                        )
+                        msg.add_response('ok', _('OK'))
+                        msg.set_default_response('ok')
+                        msg.set_close_response('ok')
+                        msg.present()
+                        return False
+
+                    GLib.idle_add(_present_result_dialog)
+
+                try:
+                    term_widget.vte.connect('child-exited', _on_copyid_exited)
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.error(f'Failed to spawn ssh-copy-id in TerminalWidget: {e}')
+                dlg.close()
+                ok = self.key_manager.copy_key_to_host(ssh_key, connection)
+                msg = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_('Success') if ok else _('Error'),
+                    body=(_('Public key copied to {}@{}').format(connection.username, connection.host)
+                         if ok else _('Failed to copy the public key. Check logs for details.'))
+                )
+                msg.add_response('ok', _('OK'))
+                msg.set_default_response('ok')
+                msg.set_close_response('ok')
+                msg.present()
+                return
+
+            dlg.present()
+        except Exception as e:
+            logger.error(f'VTE ssh-copy-id window failed: {e}')
+
+    def _build_ssh_copy_id_argv(self, connection, ssh_key):
+        """Construct argv for ssh-copy-id honoring saved UI auth preferences."""
+        argv = ['ssh-copy-id', '-i', ssh_key.public_path]
+        try:
+            if getattr(connection, 'port', 22) and connection.port != 22:
+                argv += ['-p', str(connection.port)]
+        except Exception:
+            pass
+        # Honor app SSH settings: strict host key checking / auto-add
+        try:
+            cfg = Config()
+            ssh_cfg = cfg.get_ssh_config() if hasattr(cfg, 'get_ssh_config') else {}
+            strict_val = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
+            auto_add = bool(ssh_cfg.get('auto_add_host_keys', True))
+            if strict_val:
+                argv += ['-o', f'StrictHostKeyChecking={strict_val}']
+            elif auto_add:
+                argv += ['-o', 'StrictHostKeyChecking=accept-new']
+        except Exception:
+            argv += ['-o', 'StrictHostKeyChecking=accept-new']
+        # Derive auth prefs from saved config and connection
+        prefer_password = False
+        key_mode = 0
+        keyfile = getattr(connection, 'keyfile', '') or ''
+        try:
+            cfg = Config()
+            meta = cfg.get_connection_meta(connection.nickname) if hasattr(cfg, 'get_connection_meta') else {}
+            if isinstance(meta, dict) and 'auth_method' in meta:
+                prefer_password = int(meta.get('auth_method', 0) or 0) == 1
+        except Exception:
+            try:
+                prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
+            except Exception:
+                prefer_password = False
+        try:
+            # key_select_mode is saved in ssh config, our connection object should have it post-load
+            key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
+        except Exception:
+            key_mode = 0
+        # Validate keyfile path
+        try:
+            keyfile_ok = bool(keyfile) and os.path.isfile(keyfile)
+        except Exception:
+            keyfile_ok = False
+
+        # Priority: if UI selected a specific key and it exists, use it; otherwise fall back to password prefs/try-all
+        if key_mode == 1 and keyfile_ok:
+            argv += ['-o', f'IdentityFile={keyfile}', '-o', 'IdentitiesOnly=yes', '-o', 'IdentityAgent=none']
+        else:
+            # Only force password when user selected password auth
+            if prefer_password:
+                argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password,keyboard-interactive']
+        # Target
+        target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
+        argv.append(target)
+        return argv
+
     def _on_files_chosen(self, chooser, response, connection):
         try:
             if response != Gtk.ResponseType.ACCEPT:
@@ -2020,117 +2285,236 @@ class MainWindow(Adw.ApplicationWindow):
             logger.error(f'File selection failed: {e}')
 
     def _start_scp_upload(self, connection, local_paths, remote_dir):
-        """Run scp and show progress + verbose output."""
+        """Run scp using the same terminal window layout as ssh-copy-id."""
         try:
-            # Build command
-            target = f"{connection.username}@{connection.host}"
-            cmd = ['scp', '-v']  # verbose output for logging
-            if hasattr(connection, 'port') and connection.port and connection.port != 22:
-                cmd.extend(['-P', str(connection.port)])
-            # Add each file
-            cmd.extend(local_paths)
-            cmd.append(f"{target}:{remote_dir}")
-
-            # Progress UI
-            dlg = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_('Uploading…'),
-                body=_('Uploading files to {}').format(target)
-            )
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-            try:
-                box.set_margin_top(12)
-                box.set_margin_bottom(12)
-                box.set_margin_start(12)
-                box.set_margin_end(12)
-            except Exception:
-                pass
-            bar = Gtk.ProgressBar()
-            bar.set_fraction(0)
-            out_view = Gtk.TextView()
-            out_view.set_editable(False)
-            out_view.set_monospace(True)
-            out_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-            sw = Gtk.ScrolledWindow()
-            sw.set_hexpand(True)
-            sw.set_vexpand(True)
-            sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-            sw.set_child(out_view)
-            # Make the dialog content large enough for comfortable reading
-            try:
-                if hasattr(sw, 'set_min_content_width'):
-                    sw.set_min_content_width(800)
-                if hasattr(sw, 'set_min_content_height'):
-                    sw.set_min_content_height(400)
-            except Exception:
-                pass
-            box.append(bar)
-            box.append(sw)
-            dlg.set_extra_child(box)
-            dlg.add_response('ok', _('OK'))
-            dlg.set_default_response('ok')
-            dlg.set_close_response('ok')
-            dlg.present()
-
-            # Spawn scp with a pty-like output (no exact progress %; we simulate)
-            import subprocess, threading
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1
-            )
-
-            buffer = out_view.get_buffer()
-            # Log the command line at the top
-            try:
-                iter_end = buffer.get_end_iter()
-                buffer.insert(iter_end, 'Command: ' + ' '.join(cmd) + '\n')
-            except Exception:
-                pass
-
-            def reader():
-                try:
-                    total_lines = 0
-                    for line in process.stdout:
-                        total_lines += 1
-                        txt = line.rstrip('\n')
-                        def _append():
-                            iter_end = buffer.get_end_iter()
-                            buffer.insert(iter_end, txt + '\n')
-                            # Naive progress: advance a bit each line
-                            new_frac = min(0.95, bar.get_fraction() + 0.01)
-                            bar.set_fraction(new_frac)
-                            # Auto-scroll to bottom for latest output
-                            try:
-                                iter_new_end = buffer.get_end_iter()
-                                out_view.scroll_to_iter(iter_new_end, 0.0, True, 0.0, 1.0)
-                            except Exception:
-                                pass
-                            return False
-                        GLib.idle_add(_append)
-                    process.wait()
-                finally:
-                    def _finish():
-                        success = (process.returncode == 0)
-                        if success:
-                            bar.set_fraction(1.0)
-                            dlg.set_heading(_('Upload complete'))
-                            # Ensure log ends with a success line
-                            iter_end2 = buffer.get_end_iter()
-                            buffer.insert(iter_end2, _('Upload finished successfully.\n'))
-                        else:
-                            dlg.set_heading(_('Upload failed'))
-                            iter_end2 = buffer.get_end_iter()
-                            buffer.insert(iter_end2, _('scp exited with an error. See log above.\n'))
-                        return False
-                    GLib.idle_add(_finish)
-
-            threading.Thread(target=reader, daemon=True).start()
+            self._show_scp_upload_terminal_window(connection, local_paths, remote_dir)
         except Exception as e:
             logger.error(f'scp upload failed to start: {e}')
+
+    def _show_scp_upload_terminal_window(self, connection, local_paths, remote_dir):
+        try:
+            target = f"{connection.username}@{connection.host}"
+            info_text = _('We will use scp to upload file(s) to the selected server.')
+
+            dlg = Adw.Window()
+            dlg.set_transient_for(self)
+            dlg.set_modal(True)
+            try:
+                dlg.set_title(_('Upload files (scp)'))
+            except Exception:
+                pass
+            try:
+                dlg.set_default_size(920, 520)
+            except Exception:
+                pass
+
+            # Header bar with Cancel
+            header = Adw.HeaderBar()
+            title_widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            title_label = Gtk.Label(label=_('Upload files (scp)'))
+            title_label.set_halign(Gtk.Align.START)
+            subtitle_label = Gtk.Label(label=_('Uploading to {target}:{dir}').format(target=target, dir=remote_dir))
+            subtitle_label.set_halign(Gtk.Align.START)
+            try:
+                title_label.add_css_class('title-2')
+                subtitle_label.add_css_class('dim-label')
+            except Exception:
+                pass
+            title_widget.append(title_label)
+            title_widget.append(subtitle_label)
+            header.set_title_widget(title_widget)
+
+            cancel_btn = Gtk.Button(label=_('Cancel'))
+            try:
+                cancel_btn.add_css_class('flat')
+            except Exception:
+                pass
+            header.pack_start(cancel_btn)
+
+            # Content area
+            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            content_box.set_hexpand(True)
+            content_box.set_vexpand(True)
+            try:
+                content_box.set_margin_top(12)
+                content_box.set_margin_bottom(12)
+                content_box.set_margin_start(6)
+                content_box.set_margin_end(6)
+            except Exception:
+                pass
+
+            info_lbl = Gtk.Label(label=info_text)
+            info_lbl.set_halign(Gtk.Align.START)
+            try:
+                info_lbl.add_css_class('dim-label')
+                info_lbl.set_wrap(True)
+            except Exception:
+                pass
+            content_box.append(info_lbl)
+
+            term_widget = TerminalWidget(connection, self.config, self.connection_manager)
+            try:
+                term_widget._set_connecting_overlay_visible(False)
+                setattr(term_widget, '_suppress_disconnect_banner', True)
+                term_widget._set_disconnected_banner_visible(False)
+            except Exception:
+                pass
+            term_widget.set_hexpand(True)
+            term_widget.set_vexpand(True)
+            content_box.append(term_widget)
+
+            root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            root_box.append(header)
+            root_box.append(content_box)
+            try:
+                dlg.set_content(root_box)
+            except Exception:
+                dlg.set_child(root_box)
+
+            def _on_cancel(_btn):
+                try:
+                    if hasattr(term_widget, 'disconnect'):
+                        term_widget.disconnect()
+                except Exception:
+                    pass
+                dlg.close()
+            cancel_btn.connect('clicked', _on_cancel)
+
+            # Build and run scp command in the terminal
+            argv = self._build_scp_argv(connection, local_paths, remote_dir)
+            cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
+
+            # Helper to write colored lines
+            def _feed_colored_line(text: str, color: str):
+                colors = {
+                    'red': '\x1b[31m',
+                    'green': '\x1b[32m',
+                    'yellow': '\x1b[33m',
+                    'blue': '\x1b[34m',
+                }
+                prefix = colors.get(color, '')
+                try:
+                    term_widget.vte.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
+                except Exception:
+                    pass
+
+            _feed_colored_line(_('Starting upload…'), 'yellow')
+
+            try:
+                term_widget.vte.spawn_async(
+                    Vte.PtyFlags.DEFAULT,
+                    os.path.expanduser('~') or '/',
+                    ['bash', '-lc', cmdline],
+                    [f"{k}={v}" for k, v in os.environ.items()],
+                    GLib.SpawnFlags.DEFAULT,
+                    None,
+                    None,
+                    -1,
+                    None,
+                    None
+                )
+
+                def _on_scp_exited(_vte, status):
+                    # Normalize exit code
+                    exit_code = None
+                    try:
+                        if os.WIFEXITED(status):
+                            exit_code = os.WEXITSTATUS(status)
+                        else:
+                            exit_code = status if 0 <= int(status) < 256 else ((int(status) >> 8) & 0xFF)
+                    except Exception:
+                        try:
+                            exit_code = int(status)
+                        except Exception:
+                            exit_code = status
+                    ok = (exit_code == 0)
+                    if ok:
+                        _feed_colored_line(_('Upload finished successfully.'), 'green')
+                    else:
+                        _feed_colored_line(_('Upload failed. See output above.'), 'red')
+
+                    def _present_result_dialog():
+                        msg = Adw.MessageDialog(
+                            transient_for=dlg,
+                            modal=True,
+                            heading=_('Upload complete') if ok else _('Upload failed'),
+                            body=(_('Files uploaded to {target}:{dir}').format(target=target, dir=remote_dir)
+                                  if ok else _('scp exited with an error. Please review the log output.')),
+                        )
+                        msg.add_response('ok', _('OK'))
+                        msg.set_default_response('ok')
+                        msg.set_close_response('ok')
+                        msg.present()
+                        return False
+
+                    GLib.idle_add(_present_result_dialog)
+
+                try:
+                    term_widget.vte.connect('child-exited', _on_scp_exited)
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.error(f'Failed to spawn scp in TerminalWidget: {e}')
+                dlg.close()
+                # Fallback could be implemented here if needed
+                return
+
+            dlg.present()
+        except Exception as e:
+            logger.error(f'Failed to open scp terminal window: {e}')
+
+    def _build_scp_argv(self, connection, local_paths, remote_dir):
+        argv = ['scp', '-v']
+        # Port
+        try:
+            if getattr(connection, 'port', 22) and connection.port != 22:
+                argv += ['-P', str(connection.port)]
+        except Exception:
+            pass
+        # Auth/SSH options similar to ssh-copy-id
+        try:
+            cfg = Config()
+            ssh_cfg = cfg.get_ssh_config() if hasattr(cfg, 'get_ssh_config') else {}
+            strict_val = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
+            auto_add = bool(ssh_cfg.get('auto_add_host_keys', True))
+            if strict_val:
+                argv += ['-o', f'StrictHostKeyChecking={strict_val}']
+            elif auto_add:
+                argv += ['-o', 'StrictHostKeyChecking=accept-new']
+        except Exception:
+            argv += ['-o', 'StrictHostKeyChecking=accept-new']
+        # Prefer password if selected
+        prefer_password = False
+        key_mode = 0
+        keyfile = getattr(connection, 'keyfile', '') or ''
+        try:
+            cfg = Config()
+            meta = cfg.get_connection_meta(connection.nickname) if hasattr(cfg, 'get_connection_meta') else {}
+            if isinstance(meta, dict) and 'auth_method' in meta:
+                prefer_password = int(meta.get('auth_method', 0) or 0) == 1
+        except Exception:
+            try:
+                prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
+            except Exception:
+                prefer_password = False
+        try:
+            key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
+        except Exception:
+            key_mode = 0
+        try:
+            keyfile_ok = bool(keyfile) and os.path.isfile(keyfile)
+        except Exception:
+            keyfile_ok = False
+        if key_mode == 1 and keyfile_ok:
+            argv += ['-i', keyfile, '-o', 'IdentitiesOnly=yes', '-o', 'IdentityAgent=none']
+        elif prefer_password:
+            argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password,keyboard-interactive']
+        # Paths
+        for p in local_paths:
+            argv.append(p)
+        target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
+        argv.append(f"{target}:{remote_dir}")
+        return argv
 
     def on_delete_connection_clicked(self, button):
         """Handle delete connection button click"""

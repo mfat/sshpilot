@@ -70,7 +70,7 @@ class SshPilotApplication(Adw.Application):
             pass
         
         # Create actions with keyboard shortcuts
-        self.create_action('quit', self.quit, ['<primary>q'])
+        self.create_action('quit', self.on_quit_action, ['<primary>q'])
         self.create_action('new-connection', self.on_new_connection, ['<primary>n'])
         self.create_action('toggle-list', self.on_toggle_list, ['<primary>l'])
         self.create_action('new-key', self.on_new_key, ['<primary><shift>k'])
@@ -86,6 +86,29 @@ class SshPilotApplication(Adw.Application):
         # Connect to signals
         self.connect('shutdown', self.on_shutdown)
         self.connect('activate', self.on_activate)
+
+        # Ensure Ctrl+C (SIGINT) follows the SAME path as clicking the window close button
+        try:
+            import signal
+
+            def _handle_sigint(signum, frame):
+                def _close_active_window():
+                    win = self.props.active_window
+                    if win:
+                        try:
+                            win.close()  # triggers MainWindow.on_close_request
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            self.quit()
+                        except Exception:
+                            pass
+                    return False
+                GLib.idle_add(_close_active_window)
+            signal.signal(signal.SIGINT, _handle_sigint)
+        except Exception:
+            pass
         
         # Initialize window reference
         self.window = None
@@ -170,15 +193,15 @@ class SshPilotApplication(Adw.Application):
         if shortcuts:
             self.set_accels_for_action(f"app.{name}", shortcuts)
 
-    def quit(self, action=None, param=None):
-        """Quit the application"""
-        # Get the active window and check for active connections
+    def on_quit_action(self, action=None, param=None):
+        """Handle Ctrl+Q by closing the active window so the exact close flow runs."""
         win = self.props.active_window
-        if win and hasattr(win, 'check_active_connections_before_quit'):
-            # Let the window handle the quit confirmation
-            if not win.check_active_connections_before_quit():
-                return  # User cancelled or there are active connections
-        
+        if win:
+            try:
+                win.close()
+                return
+            except Exception:
+                pass
         super().quit()
 
     def do_activate(self):

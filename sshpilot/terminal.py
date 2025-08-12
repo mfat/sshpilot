@@ -332,6 +332,9 @@ class TerminalWidget(Gtk.Box):
 
     def _set_disconnected_banner_visible(self, visible: bool, message: str = None):
         try:
+            # Allow callers (e.g., ssh-copy-id dialog) to suppress the red banner entirely
+            if getattr(self, '_suppress_disconnect_banner', False):
+                return
             if message:
                 self.disconnected_banner_label.set_text(message)
             if hasattr(self.disconnected_banner, 'set_visible'):
@@ -620,7 +623,7 @@ class TerminalWidget(Gtk.Box):
             # Start the SSH process using VTE's spawn_async with our PTY
             self.vte.spawn_async(
                 Vte.PtyFlags.DEFAULT,
-                os.environ.get('HOME', '/'),
+                os.path.expanduser('~') or '/',
                 ssh_cmd,
                 None,  # Environment (use default)
                 GLib.SpawnFlags.DEFAULT,
@@ -1105,7 +1108,15 @@ class TerminalWidget(Gtk.Box):
                 if status == 0 and root and hasattr(root, 'tab_view'):
                     page = root.tab_view.get_page(self)
                     if page:
-                        root.tab_view.close_page(page)
+                        # Suppress confirmation dialogs during programmatic close
+                        try:
+                            setattr(root, '_suppress_close_confirmation', True)
+                            root.tab_view.close_page(page)
+                        finally:
+                            try:
+                                setattr(root, '_suppress_close_confirmation', False)
+                            except Exception:
+                                pass
                         return
         except Exception:
             pass
@@ -1170,11 +1181,14 @@ class TerminalWidget(Gtk.Box):
             except (ProcessLookupError, OSError):
                 pass
         
-        # Fall back to getting from PTY
+        # Fall back to getting from PTY or VTE helpers
         try:
+            # Prefer PID recorded at spawn complete
+            if getattr(self, 'process_pid', None):
+                return self.process_pid
             pty = self.vte.get_pty()
-            if pty:
-                pid = pty.get_child_pid()
+            if pty and hasattr(pty, 'get_pid'):
+                pid = pty.get_pid()
                 if pid:
                     self.process_pid = pid
                     return pid
@@ -1399,10 +1413,44 @@ class TerminalWidget(Gtk.Box):
     def on_child_exited(self, terminal, status):
         """Handle terminal child process exit"""
         logger.debug(f"Terminal child exited with status: {status}")
-        
+
+        # Normalize exit status: GLib may pass waitpid-style status
+        exit_code = None
+        try:
+            if os.WIFEXITED(status):
+                exit_code = os.WEXITSTATUS(status)
+            else:
+                # If not a normal exit or os.WIF* not applicable, best-effort mapping
+                exit_code = status if 0 <= int(status) < 256 else ((int(status) >> 8) & 0xFF)
+        except Exception:
+            try:
+                exit_code = int(status)
+            except Exception:
+                exit_code = status
+
+        # If user explicitly typed 'exit' (clean status 0), close tab immediately
+        try:
+            if exit_code == 0 and hasattr(self, 'get_root'):
+                root = self.get_root()
+                if root and hasattr(root, 'tab_view'):
+                    page = root.tab_view.get_page(self)
+                    if page:
+                        try:
+                            setattr(root, '_suppress_close_confirmation', True)
+                            root.tab_view.close_page(page)
+                        finally:
+                            try:
+                                setattr(root, '_suppress_close_confirmation', False)
+                            except Exception:
+                                pass
+                        return
+        except Exception:
+            pass
+
+        # Non-zero or unknown exit: treat as connection lost and show banner
         if self.connection:
             self.connection.is_connected = False
-        
+
         self.disconnect()
         self.emit('connection-lost')
         # Show reconnect UI
