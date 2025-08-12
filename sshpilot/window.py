@@ -2942,9 +2942,11 @@ class MainWindow(Adw.ApplicationWindow):
                     # Fallback to dict comparison if formatter fails
                     changed = existing != incoming
 
-                # Extra guard: if key_select_mode differs from the object's current value, force changed
+                # Extra guard: if key_select_mode or auth_method differs from the object's current value, force changed
                 try:
                     if int(connection_data.get('key_select_mode', -1)) != int(getattr(old_connection, 'key_select_mode', -1)):
+                        changed = True
+                    if int(connection_data.get('auth_method', -1)) != int(getattr(old_connection, 'auth_method', -1)):
                         changed = True
                 except Exception:
                     pass
@@ -3006,6 +3008,12 @@ class MainWindow(Adw.ApplicationWindow):
                     self.config.set_connection_meta(meta_key, {
                         'auth_method': connection_data.get('auth_method', 0)
                     })
+                    # After metadata save, reload config so manager picks up new meta immediately
+                    try:
+                        self.connection_manager.load_ssh_config()
+                        self._rebuild_connections_list()
+                    except Exception:
+                        pass
                 except Exception:
                     pass
 
@@ -3052,11 +3060,16 @@ class MainWindow(Adw.ApplicationWindow):
                         self._rebuild_connections_list()
                     except Exception:
                         pass
-                    # Persist per-connection metadata
+                    # Persist per-connection metadata then reload config
                     try:
                         self.config.set_connection_meta(connection.nickname, {
                             'auth_method': connection_data.get('auth_method', 0)
                         })
+                        try:
+                            self.connection_manager.load_ssh_config()
+                            self._rebuild_connections_list()
+                        except Exception:
+                            pass
                     except Exception:
                         pass
                     # Sync forwarding rules from a fresh reload to ensure UI matches disk

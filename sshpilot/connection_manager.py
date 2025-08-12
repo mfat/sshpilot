@@ -145,13 +145,15 @@ class Connection:
             except Exception:
                 pass
             
-            # Add key file if specified
-            if self.keyfile and os.path.exists(self.keyfile):
-                ssh_cmd.extend(['-i', self.keyfile])
-                if self.key_passphrase:
-                    # Note: For passphrase-protected keys, you might need to use ssh-agent
-                    # or expect script in a real implementation
-                    logger.warning("Passphrase-protected keys may require additional setup")
+            # Add key file only when key-based auth and specific key mode
+            try:
+                if int(getattr(self, 'auth_method', 0) or 0) == 0 and int(getattr(self, 'key_select_mode', 0) or 0) == 1:
+                    if self.keyfile and os.path.exists(self.keyfile):
+                        ssh_cmd.extend(['-i', self.keyfile])
+                        if self.key_passphrase:
+                            logger.warning("Passphrase-protected keys may require additional setup")
+            except Exception:
+                pass
             
             # Add host and port
             if self.port != 22:
