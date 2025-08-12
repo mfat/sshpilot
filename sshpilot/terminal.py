@@ -332,6 +332,9 @@ class TerminalWidget(Gtk.Box):
 
     def _set_disconnected_banner_visible(self, visible: bool, message: str = None):
         try:
+            # Allow callers (e.g., ssh-copy-id dialog) to suppress the red banner entirely
+            if getattr(self, '_suppress_disconnect_banner', False):
+                return
             if message:
                 self.disconnected_banner_label.set_text(message)
             if hasattr(self.disconnected_banner, 'set_visible'):

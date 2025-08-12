@@ -10,6 +10,12 @@ from typing import Optional, Dict, Any, List, Tuple
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
+try:
+    gi.require_version('Vte', '3.91')
+    from gi.repository import Vte
+    _HAS_VTE = True
+except Exception:
+    _HAS_VTE = False
 
 from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango
 
@@ -1909,29 +1915,32 @@ class MainWindow(Adw.ApplicationWindow):
                 if idx < 0 or idx >= len(keys):
                     return
                 ssh_key = keys[idx]
-                ok = self.key_manager.copy_key_to_host(ssh_key, connection)
-                if ok:
-                    msg = Adw.MessageDialog(
-                        transient_for=self,
-                        modal=True,
-                        heading=_('Success'),
-                        body=_('Public key copied to {}@{}').format(connection.username, connection.host)
-                    )
-                    msg.add_response('ok', _('OK'))
-                    msg.set_default_response('ok')
-                    msg.set_close_response('ok')
-                    msg.present()
+                if _HAS_VTE:
+                    self._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
                 else:
-                    msg = Adw.MessageDialog(
-                        transient_for=self,
-                        modal=True,
-                        heading=_('Error'),
-                        body=_('Failed to copy the public key. Check logs for details.')
-                    )
-                    msg.add_response('ok', _('OK'))
-                    msg.set_default_response('ok')
-                    msg.set_close_response('ok')
-                    msg.present()
+                    ok = self.key_manager.copy_key_to_host(ssh_key, connection)
+                    if ok:
+                        msg = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_('Success'),
+                            body=_('Public key copied to {}@{}').format(connection.username, connection.host)
+                        )
+                        msg.add_response('ok', _('OK'))
+                        msg.set_default_response('ok')
+                        msg.set_close_response('ok')
+                        msg.present()
+                    else:
+                        msg = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_('Error'),
+                            body=_('Failed to copy the public key. Check logs for details.')
+                        )
+                        msg.add_response('ok', _('OK'))
+                        msg.set_default_response('ok')
+                        msg.set_close_response('ok')
+                        msg.present()
 
             picker.connect('response', _on_pick)
             picker.present()
@@ -1980,6 +1989,194 @@ class MainWindow(Adw.ApplicationWindow):
             intro.present()
         except Exception as e:
             logger.error(f'Upload dialog failed: {e}')
+
+    def _show_ssh_copy_id_terminal_using_main_widget(self, connection, ssh_key):
+        """Show an Adw dialog with header/body and our TerminalWidget running ssh-copy-id (no spinner)."""
+        try:
+            target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
+            pub_name = os.path.basename(getattr(ssh_key, 'public_path', '') or '')
+            body_text = _('This will add your public key to the server\'s ~/.ssh/authorized_keys so future logins can use SSH keys.')
+            dlg = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_('ssh-copy-id'),
+                body=_('Copying {key} to {target}').format(key=pub_name or _('selected key'), target=target) + '\n' + body_text,
+            )
+            # We'll add our own footer button instead of dialog responses to keep a normal-sized button
+            # Make OK button normal-sized by setting it as suggested rather than expanding
+            try:
+                dlg.set_response_appearance('ok', Adw.ResponseAppearance.SUGGESTED)
+            except Exception:
+                pass
+
+            # Content: TerminalWidget without connecting spinner/banner
+            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            try:
+                content_box.set_margin_top(12)
+                content_box.set_margin_bottom(12)
+                content_box.set_margin_start(12)
+                content_box.set_margin_end(12)
+                # Slightly larger so ~10+ lines are visible comfortably
+                content_box.set_size_request(880, 420)
+            except Exception:
+                pass
+            # Enterprise-style top info header
+            header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            header_icon = Gtk.Image.new_from_icon_name('dialog-information-symbolic')
+            header_icon.set_icon_size(Gtk.IconSize.LARGE)
+            header_box.append(header_icon)
+
+            header_texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            title_lbl = Gtk.Label(label=_('ssh-copy-id'))
+            title_lbl.set_halign(Gtk.Align.START)
+            try:
+                title_lbl.add_css_class('title-2')
+            except Exception:
+                pass
+            sub_lbl = Gtk.Label(label=_('This will add your public key to the server\'s authorized_keys for key-based login.'))
+            sub_lbl.set_halign(Gtk.Align.START)
+            try:
+                sub_lbl.add_css_class('dim-label')
+                sub_lbl.set_wrap(True)
+            except Exception:
+                pass
+            header_texts.append(title_lbl)
+            header_texts.append(sub_lbl)
+            header_box.append(header_texts)
+            content_box.append(header_box)
+
+            term_widget = TerminalWidget(connection, self.config, self.connection_manager)
+            # Hide connecting overlay and suppress disconnect banner for this non-SSH task
+            try:
+                term_widget._set_connecting_overlay_visible(False)
+                setattr(term_widget, '_suppress_disconnect_banner', True)
+                term_widget._set_disconnected_banner_visible(False)
+            except Exception:
+                pass
+            term_widget.set_hexpand(True)
+            term_widget.set_vexpand(True)
+            # Frame the terminal like a card for hierarchy
+            term_frame = Gtk.Frame()
+            try:
+                term_frame.add_css_class('card')
+            except Exception:
+                pass
+            term_frame.set_child(term_widget)
+            content_box.append(term_frame)
+            # Footer with a normal-sized OK button aligned to the end
+            footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            footer.set_halign(Gtk.Align.END)
+            ok_btn = Gtk.Button.new_with_label(_('OK'))
+            try:
+                ok_btn.add_css_class('suggested-action')
+            except Exception:
+                pass
+            def _on_ok_clicked(_btn):
+                try:
+                    if hasattr(term_widget, 'disconnect'):
+                        term_widget.disconnect()
+                except Exception:
+                    pass
+                dlg.close()
+            ok_btn.connect('clicked', _on_ok_clicked)
+            footer.append(ok_btn)
+            content_box.append(footer)
+            dlg.set_extra_child(content_box)
+
+            # Build ssh-copy-id command with options derived from connection settings
+            argv = self._build_ssh_copy_id_argv(connection, ssh_key)
+            cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
+            logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
+            try:
+                term_widget.vte.spawn_async(
+                    Vte.PtyFlags.DEFAULT,
+                    None,
+                    ['bash', '-lc', cmdline],
+                    [f"{k}={v}" for k, v in os.environ.items()],
+                    GLib.SpawnFlags.DEFAULT,
+                    None,
+                    None,
+                    -1,
+                    None,
+                    None
+                )
+            except Exception as e:
+                logger.error(f'Failed to spawn ssh-copy-id in TerminalWidget: {e}')
+                dlg.close()
+                ok = self.key_manager.copy_key_to_host(ssh_key, connection)
+                msg = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_('Success') if ok else _('Error'),
+                    body=(_('Public key copied to {}@{}').format(connection.username, connection.host)
+                         if ok else _('Failed to copy the public key. Check logs for details.'))
+                )
+                msg.add_response('ok', _('OK'))
+                msg.set_default_response('ok')
+                msg.set_close_response('ok')
+                msg.present()
+                return
+
+            dlg.present()
+        except Exception as e:
+            logger.error(f'VTE ssh-copy-id window failed: {e}')
+
+    def _build_ssh_copy_id_argv(self, connection, ssh_key):
+        """Construct argv for ssh-copy-id honoring saved UI auth preferences."""
+        argv = ['ssh-copy-id', '-i', ssh_key.public_path]
+        try:
+            if getattr(connection, 'port', 22) and connection.port != 22:
+                argv += ['-p', str(connection.port)]
+        except Exception:
+            pass
+        # Honor app SSH settings: strict host key checking / auto-add
+        try:
+            cfg = Config()
+            ssh_cfg = cfg.get_ssh_config() if hasattr(cfg, 'get_ssh_config') else {}
+            strict_val = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
+            auto_add = bool(ssh_cfg.get('auto_add_host_keys', True))
+            if strict_val:
+                argv += ['-o', f'StrictHostKeyChecking={strict_val}']
+            elif auto_add:
+                argv += ['-o', 'StrictHostKeyChecking=accept-new']
+        except Exception:
+            argv += ['-o', 'StrictHostKeyChecking=accept-new']
+        # Derive auth prefs from saved config and connection
+        prefer_password = False
+        key_mode = 0
+        keyfile = getattr(connection, 'keyfile', '') or ''
+        try:
+            cfg = Config()
+            meta = cfg.get_connection_meta(connection.nickname) if hasattr(cfg, 'get_connection_meta') else {}
+            if isinstance(meta, dict) and 'auth_method' in meta:
+                prefer_password = int(meta.get('auth_method', 0) or 0) == 1
+        except Exception:
+            try:
+                prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
+            except Exception:
+                prefer_password = False
+        try:
+            # key_select_mode is saved in ssh config, our connection object should have it post-load
+            key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
+        except Exception:
+            key_mode = 0
+        # Validate keyfile path
+        try:
+            keyfile_ok = bool(keyfile) and os.path.isfile(keyfile)
+        except Exception:
+            keyfile_ok = False
+
+        # Priority: if UI selected a specific key and it exists, use it; otherwise fall back to password prefs/try-all
+        if key_mode == 1 and keyfile_ok:
+            argv += ['-o', f'IdentityFile={keyfile}', '-o', 'IdentitiesOnly=yes', '-o', 'IdentityAgent=none']
+        else:
+            # Only force password when user selected password auth
+            if prefer_password:
+                argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password,keyboard-interactive']
+        # Target
+        target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
+        argv.append(target)
+        return argv
 
     def _on_files_chosen(self, chooser, response, connection):
         try:
