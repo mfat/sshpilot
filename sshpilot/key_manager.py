@@ -8,6 +8,7 @@ import stat
 import logging
 import subprocess
 from typing import List, Dict, Optional, Tuple
+import threading
 import shutil
 import tempfile
 from pathlib import Path
@@ -427,7 +428,7 @@ class KeyManager(GObject.Object):
             logger.error(f"Password prompt failed: {e}")
             return None
 
-    def _run_ssh_copy_id(self, base_cmd: List[str], accept_new_host_keys: bool = True, password: Optional[str] = None) -> Tuple[bool, str]:
+    def _run_ssh_copy_id(self, base_cmd: List[str], accept_new_host_keys: bool = True, password: Optional[str] = None, extra_ssh_opts: Optional[List[str]] = None) -> Tuple[bool, str]:
         """Run ssh-copy-id with optional non-interactive password using sshpass or askpass fallback.
 
         Returns (success, combined_output).
@@ -437,6 +438,11 @@ class KeyManager(GObject.Object):
             if accept_new_host_keys:
                 # Ensure StrictHostKeyChecking=accept-new to avoid interactive prompt
                 cmd = cmd[:1] + ['-o', 'StrictHostKeyChecking=accept-new'] + cmd[1:]
+            if extra_ssh_opts:
+                # Insert extra ssh -o options before the final target argument
+                if len(cmd) >= 1:
+                    target = cmd[-1]
+                    cmd = cmd[:-1] + list(extra_ssh_opts) + [target]
 
             env = os.environ.copy()
             # Detach from controlling TTY so ssh won't prompt in terminal; we'll use GUI if needed
@@ -503,8 +509,28 @@ class KeyManager(GObject.Object):
                 cmd.extend(['-p', str(connection.port)])
             cmd.append(target)
 
-            # First attempt without password (may succeed if no password or agent works)
-            ok, output = self._run_ssh_copy_id(cmd, accept_new_host_keys=True, password=None)
+            # Determine preferred auth from saved connection config
+            prefer_password = False
+            try:
+                prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
+            except Exception:
+                prefer_password = False
+            extra_opts: List[str] = []
+            # If user prefers password, avoid pubkey attempts to prevent auth flood
+            if prefer_password:
+                extra_opts += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password,keyboard-interactive']
+            else:
+                # If UI selected a specific key, force that identity and avoid agent flood
+                try:
+                    key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
+                except Exception:
+                    key_mode = 0
+                keyfile = getattr(connection, 'keyfile', '') or ''
+                if key_mode == 1 and keyfile and os.path.exists(keyfile):
+                    extra_opts += ['-o', f'IdentityFile={keyfile}', '-o', 'IdentitiesOnly=yes']
+
+            # First attempt without password (may succeed depending on method)
+            ok, output = self._run_ssh_copy_id(cmd, accept_new_host_keys=True, password=None, extra_ssh_opts=extra_opts)
             if ok:
                 self.emit('key-deployed', ssh_key, connection)
                 logger.info(f"Copied SSH key {ssh_key} to {connection} using ssh-copy-id")
@@ -520,15 +546,38 @@ class KeyManager(GObject.Object):
                 return False
 
             # Prompt user for password via GUI and retry
-            password = self._prompt_password_sync(
-                title='Password required',
-                message=f'Enter the password for {target} to install your public key.'
-            )
+            # Use a thread-safe prompt to avoid GTK usage from worker threads
+            if threading.current_thread() is threading.main_thread():
+                password = self._prompt_password_sync(
+                    title='Password required',
+                    message=f'Enter the password for {target} to install your public key.'
+                )
+            else:
+                result_holder: Dict[str, Optional[str]] = {"password": None}
+                done = threading.Event()
+
+                def _ask():
+                    try:
+                        result_holder["password"] = self._prompt_password_sync(
+                            title='Password required',
+                            message=f'Enter the password for {target} to install your public key.'
+                        )
+                    finally:
+                        done.set()
+                    return False
+
+                GLib.idle_add(_ask)
+                done.wait()
+                password = result_holder["password"]
             if not password:
                 logger.info("ssh-copy-id canceled by user (no password entered)")
                 return False
 
-            ok, output2 = self._run_ssh_copy_id(cmd, accept_new_host_keys=True, password=password)
+            # When providing password, force password auth to avoid key attempts first if user prefers password
+            retry_extra = list(extra_opts)
+            if prefer_password and ('-o', 'PubkeyAuthentication=no') not in zip(retry_extra[::2], retry_extra[1::2]):
+                retry_extra += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password,keyboard-interactive']
+            ok, output2 = self._run_ssh_copy_id(cmd, accept_new_host_keys=True, password=password, extra_ssh_opts=retry_extra)
             if ok:
                 self.emit('key-deployed', ssh_key, connection)
                 logger.info(f"Copied SSH key {ssh_key} to {connection} using ssh-copy-id (with password)")
