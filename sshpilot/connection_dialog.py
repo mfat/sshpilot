@@ -276,6 +276,8 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 self.keyfile_btn.set_sensitive(use_specific)
             if hasattr(self, 'keyfile_row'):
                 self.keyfile_row.set_sensitive(use_specific)
+            if hasattr(self, 'key_dropdown'):
+                self.key_dropdown.set_sensitive(use_specific)
         except Exception:
             pass
     
@@ -349,17 +351,27 @@ class ConnectionDialog(Adw.PreferencesDialog):
             if hasattr(self.connection, 'key_passphrase') and self.connection.key_passphrase:
                 self.key_passphrase_row.set_text(self.connection.key_passphrase)
 
-            # Load key selection mode
+            # Load key selection mode (prefer fresh manager copy by nickname)
             try:
                 if hasattr(self, 'key_select_row'):
-                    mode = 0
+                    mode = None
+                    # Prefer fresh parse from manager if available
                     try:
-                        mode = int(getattr(self.connection, 'key_select_mode', 0))
+                        mgr = getattr(self.parent_window, 'connection_manager', None)
+                        if mgr and hasattr(self.connection, 'nickname'):
+                            fresh = mgr.find_connection_by_nickname(self.connection.nickname)
+                            if fresh is not None and hasattr(fresh, 'key_select_mode'):
+                                mode = int(getattr(fresh, 'key_select_mode', 0) or 0)
                     except Exception:
+                        mode = None
+                    if mode is None:
                         try:
-                            mode = int(self.connection.data.get('key_select_mode', 0)) if hasattr(self.connection, 'data') else 0
+                            mode = int(getattr(self.connection, 'key_select_mode', 0) or 0)
                         except Exception:
-                            mode = 0
+                            try:
+                                mode = int(self.connection.data.get('key_select_mode', 0)) if hasattr(self.connection, 'data') else 0
+                            except Exception:
+                                mode = 0
                     self.key_select_row.set_selected(0 if mode != 1 else 1)
                     self.on_key_select_changed(self.key_select_row, None)
             except Exception:
@@ -1000,6 +1012,11 @@ class ConnectionDialog(Adw.PreferencesDialog):
         self.auth_method_row.set_title(_("Authentication Method"))
         self.auth_method_row.set_model(auth_model)
         self.auth_method_row.connect("notify::selected", self.on_auth_method_changed)
+        # Default to key-based for new connections
+        try:
+            self.auth_method_row.set_selected(0)
+        except Exception:
+            pass
         auth_group.add(self.auth_method_row)
 
         # Key selection mode for key-based auth
@@ -1053,6 +1070,14 @@ class ConnectionDialog(Adw.PreferencesDialog):
         self.keyfile_row.add_suffix(box)
         self.keyfile_row.set_activatable(False)
         auth_group.add(self.keyfile_row)
+
+        # Initialize key UI sensitivity for new connections
+        try:
+            # Ensure visibility/sensitivity matches defaults
+            self.on_auth_method_changed(self.auth_method_row, None)
+            self.on_key_select_changed(self.key_select_row, None)
+        except Exception:
+            pass
         
         # Key Passphrase
         self.key_passphrase_row = Adw.PasswordEntryRow(title=_("Key Passphrase"))
@@ -1911,18 +1936,14 @@ class ConnectionDialog(Adw.PreferencesDialog):
             'password_changed': bool(password_changed),
         }
         
-        # Update the connection object with new data if editing
+        # Update the connection object locally when editing (do not persist here; window handles persistence)
         if self.is_editing and self.connection:
-            self.connection.data.update(connection_data)
+            try:
+                self.connection.data.update(connection_data)
+            except Exception:
+                pass
             # Explicitly update forwarding rules to ensure they're fresh
             self.connection.forwarding_rules = forwarding_rules
-            # Perform an immediate write via the manager as a safety net
-            try:
-                if getattr(self, 'parent_window', None) is not None and hasattr(self.parent_window, 'connection_manager'):
-                    logger.info("Saving connection immediately via manager from dialog (rules=%d)", len(forwarding_rules))
-                    self.parent_window.connection_manager.update_connection(self.connection, connection_data)
-            except Exception as e:
-                logger.error(f"Immediate save via manager failed: {e}")
             
         # Emit signal with connection data
         self.emit('connection-saved', connection_data)

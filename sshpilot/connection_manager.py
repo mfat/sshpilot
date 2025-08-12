@@ -1079,6 +1079,16 @@ class ConnectionManager(GObject.Object):
             
             # Reload SSH config to reflect changes
             self.load_ssh_config()
+            # Update the provided connection object from the freshly loaded list to ensure runtime uses the latest
+            try:
+                fresh = self.find_connection_by_nickname(new_data.get('nickname', connection.nickname))
+                if fresh:
+                    # Copy runtime-critical fields (auth/key selection) so active sessions use latest
+                    connection.auth_method = getattr(fresh, 'auth_method', connection.auth_method)
+                    connection.keyfile = getattr(fresh, 'keyfile', connection.keyfile)
+                    connection.key_select_mode = getattr(fresh, 'key_select_mode', getattr(connection, 'key_select_mode', 0))
+            except Exception:
+                pass
             
             # Emit signal
             self.emit('connection-updated', connection)
