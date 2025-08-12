@@ -1991,59 +1991,72 @@ class MainWindow(Adw.ApplicationWindow):
             logger.error(f'Upload dialog failed: {e}')
 
     def _show_ssh_copy_id_terminal_using_main_widget(self, connection, ssh_key):
-        """Show an Adw dialog with header/body and our TerminalWidget running ssh-copy-id (no spinner)."""
+        """Show a window with header bar and embedded terminal running ssh-copy-id.
+
+        Requirements:
+        - Terminal expands horizontally, no borders around it
+        - Header bar contains Cancel and Close buttons
+        """
         try:
             target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
             pub_name = os.path.basename(getattr(ssh_key, 'public_path', '') or '')
             body_text = _('This will add your public key to the server\'s ~/.ssh/authorized_keys so future logins can use SSH keys.')
-            dlg = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_('ssh-copy-id'),
-                body=_('Copying {key} to {target}').format(key=pub_name or _('selected key'), target=target) + '\n' + body_text,
-            )
-            # We'll add our own footer button instead of dialog responses to keep a normal-sized button
-            # Make OK button normal-sized by setting it as suggested rather than expanding
+            dlg = Adw.Window()
+            dlg.set_transient_for(self)
+            dlg.set_modal(True)
             try:
-                dlg.set_response_appearance('ok', Adw.ResponseAppearance.SUGGESTED)
+                dlg.set_title(_('ssh-copy-id'))
             except Exception:
                 pass
+            try:
+                dlg.set_default_size(920, 520)
+            except Exception:
+                pass
+
+            # Header bar with Cancel
+            header = Adw.HeaderBar()
+            title_widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            title_label = Gtk.Label(label=_('ssh-copy-id'))
+            title_label.set_halign(Gtk.Align.START)
+            subtitle_label = Gtk.Label(label=_('Copying {key} to {target}').format(key=pub_name or _('selected key'), target=target))
+            subtitle_label.set_halign(Gtk.Align.START)
+            try:
+                title_label.add_css_class('title-2')
+                subtitle_label.add_css_class('dim-label')
+            except Exception:
+                pass
+            title_widget.append(title_label)
+            title_widget.append(subtitle_label)
+            header.set_title_widget(title_widget)
+
+            cancel_btn = Gtk.Button(label=_('Cancel'))
+            try:
+                cancel_btn.add_css_class('flat')
+            except Exception:
+                pass
+            header.pack_start(cancel_btn)
+            # Close button is omitted; window has native close (X)
 
             # Content: TerminalWidget without connecting spinner/banner
             content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            content_box.set_hexpand(True)
+            content_box.set_vexpand(True)
             try:
                 content_box.set_margin_top(12)
                 content_box.set_margin_bottom(12)
-                content_box.set_margin_start(12)
-                content_box.set_margin_end(12)
-                # Slightly larger so ~10+ lines are visible comfortably
-                content_box.set_size_request(880, 420)
+                content_box.set_margin_start(6)
+                content_box.set_margin_end(6)
             except Exception:
                 pass
-            # Enterprise-style top info header
-            header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            header_icon = Gtk.Image.new_from_icon_name('dialog-information-symbolic')
-            header_icon.set_icon_size(Gtk.IconSize.LARGE)
-            header_box.append(header_icon)
-
-            header_texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            title_lbl = Gtk.Label(label=_('ssh-copy-id'))
-            title_lbl.set_halign(Gtk.Align.START)
+            # Optional info text under header bar
+            info_lbl = Gtk.Label(label=body_text)
+            info_lbl.set_halign(Gtk.Align.START)
             try:
-                title_lbl.add_css_class('title-2')
+                info_lbl.add_css_class('dim-label')
+                info_lbl.set_wrap(True)
             except Exception:
                 pass
-            sub_lbl = Gtk.Label(label=_('This will add your public key to the server\'s authorized_keys for key-based login.'))
-            sub_lbl.set_halign(Gtk.Align.START)
-            try:
-                sub_lbl.add_css_class('dim-label')
-                sub_lbl.set_wrap(True)
-            except Exception:
-                pass
-            header_texts.append(title_lbl)
-            header_texts.append(sub_lbl)
-            header_box.append(header_texts)
-            content_box.append(header_box)
+            content_box.append(info_lbl)
 
             term_widget = TerminalWidget(connection, self.config, self.connection_manager)
             # Hide connecting overlay and suppress disconnect banner for this non-SSH task
@@ -2055,42 +2068,55 @@ class MainWindow(Adw.ApplicationWindow):
                 pass
             term_widget.set_hexpand(True)
             term_widget.set_vexpand(True)
-            # Frame the terminal like a card for hierarchy
-            term_frame = Gtk.Frame()
+            # No frame: avoid borders around the terminal
+            content_box.append(term_widget)
+
+            # Root container combines header and content
+            root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            root_box.append(header)
+            root_box.append(content_box)
             try:
-                term_frame.add_css_class('card')
+                dlg.set_content(root_box)
             except Exception:
-                pass
-            term_frame.set_child(term_widget)
-            content_box.append(term_frame)
-            # Footer with a normal-sized OK button aligned to the end
-            footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-            footer.set_halign(Gtk.Align.END)
-            ok_btn = Gtk.Button.new_with_label(_('OK'))
-            try:
-                ok_btn.add_css_class('suggested-action')
-            except Exception:
-                pass
-            def _on_ok_clicked(_btn):
+                # GTK fallback
+                dlg.set_child(root_box)
+
+            def _on_cancel(_btn):
                 try:
                     if hasattr(term_widget, 'disconnect'):
                         term_widget.disconnect()
                 except Exception:
                     pass
                 dlg.close()
-            ok_btn.connect('clicked', _on_ok_clicked)
-            footer.append(ok_btn)
-            content_box.append(footer)
-            dlg.set_extra_child(content_box)
+            cancel_btn.connect('clicked', _on_cancel)
+            # No explicit close button; use window close (X)
 
             # Build ssh-copy-id command with options derived from connection settings
             argv = self._build_ssh_copy_id_argv(connection, ssh_key)
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
             logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
+
+            # Helper to write colored lines into the terminal
+            def _feed_colored_line(text: str, color: str):
+                colors = {
+                    'red': '\x1b[31m',
+                    'green': '\x1b[32m',
+                    'yellow': '\x1b[33m',
+                    'blue': '\x1b[34m',
+                }
+                prefix = colors.get(color, '')
+                try:
+                    term_widget.vte.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
+                except Exception:
+                    pass
+
+            # Initial info line
+            _feed_colored_line(_('Running ssh-copy-id…'), 'yellow')
+
             try:
                 term_widget.vte.spawn_async(
                     Vte.PtyFlags.DEFAULT,
-                    None,
+                    os.path.expanduser('~') or '/',
                     ['bash', '-lc', cmdline],
                     [f"{k}={v}" for k, v in os.environ.items()],
                     GLib.SpawnFlags.DEFAULT,
@@ -2100,6 +2126,48 @@ class MainWindow(Adw.ApplicationWindow):
                     None,
                     None
                 )
+
+                # Show result modal when the command finishes
+                def _on_copyid_exited(_vte, status):
+                    # Normalize exit code
+                    exit_code = None
+                    try:
+                        if os.WIFEXITED(status):
+                            exit_code = os.WEXITSTATUS(status)
+                        else:
+                            exit_code = status if 0 <= int(status) < 256 else ((int(status) >> 8) & 0xFF)
+                    except Exception:
+                        try:
+                            exit_code = int(status)
+                        except Exception:
+                            exit_code = status
+
+                    ok = (exit_code == 0)
+                    if ok:
+                        _feed_colored_line(_('Public key was installed successfully.'), 'green')
+                    else:
+                        _feed_colored_line(_('Failed to install the public key.'), 'red')
+
+                    def _present_result_dialog():
+                        msg = Adw.MessageDialog(
+                            transient_for=dlg,
+                            modal=True,
+                            heading=_('Success') if ok else _('Error'),
+                            body=(_('Public key copied to {}@{}').format(connection.username, connection.host)
+                                  if ok else _('Failed to copy the public key. Check logs for details.')),
+                        )
+                        msg.add_response('ok', _('OK'))
+                        msg.set_default_response('ok')
+                        msg.set_close_response('ok')
+                        msg.present()
+                        return False
+
+                    GLib.idle_add(_present_result_dialog)
+
+                try:
+                    term_widget.vte.connect('child-exited', _on_copyid_exited)
+                except Exception:
+                    pass
             except Exception as e:
                 logger.error(f'Failed to spawn ssh-copy-id in TerminalWidget: {e}')
                 dlg.close()

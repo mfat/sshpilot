@@ -623,7 +623,7 @@ class TerminalWidget(Gtk.Box):
             # Start the SSH process using VTE's spawn_async with our PTY
             self.vte.spawn_async(
                 Vte.PtyFlags.DEFAULT,
-                os.environ.get('HOME', '/'),
+                os.path.expanduser('~') or '/',
                 ssh_cmd,
                 None,  # Environment (use default)
                 GLib.SpawnFlags.DEFAULT,
@@ -1181,11 +1181,14 @@ class TerminalWidget(Gtk.Box):
             except (ProcessLookupError, OSError):
                 pass
         
-        # Fall back to getting from PTY
+        # Fall back to getting from PTY or VTE helpers
         try:
+            # Prefer PID recorded at spawn complete
+            if getattr(self, 'process_pid', None):
+                return self.process_pid
             pty = self.vte.get_pty()
-            if pty:
-                pid = pty.get_child_pid()
+            if pty and hasattr(pty, 'get_pid'):
+                pid = pty.get_pid()
                 if pid:
                     self.process_pid = pid
                     return pid
