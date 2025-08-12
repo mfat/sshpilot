@@ -251,10 +251,35 @@ class ConnectionDialog(Adw.PreferencesDialog):
             self.keyfile_row.set_visible(is_key_based)
         if hasattr(self, 'key_passphrase_row'):
             self.key_passphrase_row.set_visible(is_key_based)
+        if hasattr(self, 'key_select_row'):
+            self.key_select_row.set_visible(is_key_based)
             
         # Show/hide password field for password-based auth
         if hasattr(self, 'password_row'):
             self.password_row.set_visible(not is_key_based)
+
+        # Also update browse availability per key selection mode
+        try:
+            self.on_key_select_changed(self.key_select_row, None)
+        except Exception:
+            pass
+
+    def on_key_select_changed(self, combo_row, param):
+        """Enable browse button only when 'Use a specific key' is selected."""
+        try:
+            use_specific = (combo_row.get_selected() == 1) if combo_row else False
+        except Exception:
+            use_specific = False
+        # Enable/disable keyfile browse UI
+        try:
+            if hasattr(self, 'keyfile_btn'):
+                self.keyfile_btn.set_sensitive(use_specific)
+            if hasattr(self, 'keyfile_row'):
+                self.keyfile_row.set_sensitive(use_specific)
+            if hasattr(self, 'key_dropdown'):
+                self.key_dropdown.set_sensitive(use_specific)
+        except Exception:
+            pass
     
     def load_connection_data(self):
         """Load connection data into the dialog fields"""
@@ -307,9 +332,50 @@ class ConnectionDialog(Adw.PreferencesDialog):
             
             if hasattr(self.connection, 'password') and self.connection.password:
                 self.password_row.set_text(self.connection.password)
+            else:
+                # Fallback: fetch from keyring so the dialog shows stored password (masked)
+                try:
+                    mgr = getattr(self.parent_window, 'connection_manager', None)
+                    if mgr and hasattr(self.connection, 'host') and hasattr(self.connection, 'username'):
+                        pw = mgr.get_password(self.connection.host, self.connection.username)
+                        if pw:
+                            self.password_row.set_text(pw)
+                except Exception:
+                    pass
+            # Capture original password value to detect user changes later
+            try:
+                self._orig_password = self.password_row.get_text()
+            except Exception:
+                self._orig_password = ""
                 
             if hasattr(self.connection, 'key_passphrase') and self.connection.key_passphrase:
                 self.key_passphrase_row.set_text(self.connection.key_passphrase)
+
+            # Load key selection mode (prefer fresh manager copy by nickname)
+            try:
+                if hasattr(self, 'key_select_row'):
+                    mode = None
+                    # Prefer fresh parse from manager if available
+                    try:
+                        mgr = getattr(self.parent_window, 'connection_manager', None)
+                        if mgr and hasattr(self.connection, 'nickname'):
+                            fresh = mgr.find_connection_by_nickname(self.connection.nickname)
+                            if fresh is not None and hasattr(fresh, 'key_select_mode'):
+                                mode = int(getattr(fresh, 'key_select_mode', 0) or 0)
+                    except Exception:
+                        mode = None
+                    if mode is None:
+                        try:
+                            mode = int(getattr(self.connection, 'key_select_mode', 0) or 0)
+                        except Exception:
+                            try:
+                                mode = int(self.connection.data.get('key_select_mode', 0)) if hasattr(self.connection, 'data') else 0
+                            except Exception:
+                                mode = 0
+                    self.key_select_row.set_selected(0 if mode != 1 else 1)
+                    self.on_key_select_changed(self.key_select_row, None)
+            except Exception:
+                pass
             
             # Set X11 forwarding
             self.x11_row.set_active(getattr(self.connection, 'x11_forwarding', False))
@@ -543,6 +609,12 @@ class ConnectionDialog(Adw.PreferencesDialog):
                     if current_name_norm and n_norm == current_name_norm:
                         continue
                     names.add(str(n))
+            # Ensure fresh names after deletions
+            try:
+                if hasattr(mgr, 'load_ssh_config'):
+                    mgr.load_ssh_config()
+            except Exception:
+                pass
             # Ensure current typed value isn't auto-included incorrectly
             self.validator.set_existing_names(names)
         except Exception:
@@ -770,6 +842,54 @@ class ConnectionDialog(Adw.PreferencesDialog):
         if hasattr(self, 'dynamic_port_row'):
             self._connect_row_validation(self.dynamic_port_row, lambda r: self._validate_port_row(r, _("Local Port")))
 
+    def _populate_detected_keys(self):
+        """Populate key dropdown with detected private keys and a Browse item (reuse KeyManager.discover_keys)."""
+        try:
+            keys = []
+            parent = getattr(self, 'parent_window', None) or None
+            if parent and hasattr(parent, 'key_manager') and parent.key_manager:
+                keys = parent.key_manager.discover_keys() or []
+            names = []
+            paths = []
+            for k in keys:
+                try:
+                    names.append(os.path.basename(k.path))
+                    paths.append(k.path)
+                except Exception:
+                    pass
+            # Add placeholder when none
+            if not names:
+                names.append(_("No keys detected"))
+                paths.append("")
+            # Add browse option
+            names.append(_("Browse…"))
+            paths.append("__BROWSE__")
+            self._key_paths = paths
+            model = Gtk.StringList()
+            for n in names:
+                model.append(n)
+            self.key_dropdown.set_model(model)
+            # Preselect currently set keyfile if present
+            preselect_idx = 0
+            try:
+                current_path = None
+                if hasattr(self, '_selected_keyfile_path') and self._selected_keyfile_path:
+                    current_path = self._selected_keyfile_path
+                elif hasattr(self.keyfile_row, 'get_subtitle'):
+                    current_path = self.keyfile_row.get_subtitle() or None
+                if (not current_path) and hasattr(self, 'connection') and self.connection:
+                    current_path = getattr(self.connection, 'keyfile', None)
+                if current_path and current_path in paths:
+                    preselect_idx = paths.index(current_path)
+            except Exception:
+                preselect_idx = 0
+            try:
+                self.key_dropdown.set_selected(preselect_idx)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.debug(f"Could not populate detected keys: {e}")
+
     def _run_initial_validation(self):
         try:
             if hasattr(self, 'nickname_row'):
@@ -892,26 +1012,72 @@ class ConnectionDialog(Adw.PreferencesDialog):
         self.auth_method_row.set_title(_("Authentication Method"))
         self.auth_method_row.set_model(auth_model)
         self.auth_method_row.connect("notify::selected", self.on_auth_method_changed)
-        auth_group.add(self.auth_method_row)
-        
-        # Keyfile
-        self.keyfile_row = Adw.ActionRow(title=_("SSH Key"), subtitle=_("Select key file or leave empty for auto-detection"))
-        # Compact, icon-only browse button
+        # Default to key-based for new connections
         try:
-            self.keyfile_btn = Gtk.Button.new_from_icon_name('folder-open-symbolic')
-        except Exception:
-            self.keyfile_btn = Gtk.Button.new_from_icon_name('document-open-symbolic')
-        try:
-            self.keyfile_btn.add_css_class('flat')
-            self.keyfile_btn.set_valign(Gtk.Align.CENTER)
-            self.keyfile_btn.set_halign(Gtk.Align.END)
-            self.keyfile_btn.set_tooltip_text(_("Browse"))
+            self.auth_method_row.set_selected(0)
         except Exception:
             pass
-        self.keyfile_btn.connect("clicked", lambda *_: self.browse_for_key_file())
-        self.keyfile_row.add_suffix(self.keyfile_btn)
+        auth_group.add(self.auth_method_row)
+
+        # Key selection mode for key-based auth
+        key_select_model = Gtk.StringList()
+        key_select_model.append(_("Automatic"))
+        key_select_model.append(_("Use a specific key"))
+        self.key_select_row = Adw.ComboRow()
+        self.key_select_row.set_title(_("Key selection"))
+        self.key_select_row.set_model(key_select_model)
+        # default: Auto (try all available keys)
+        self.key_select_row.set_selected(0)
+        self.key_select_row.connect("notify::selected", self.on_key_select_changed)
+        auth_group.add(self.key_select_row)
+        
+        # Keyfile dropdown with detected keys and an inline Browse item
+        self.keyfile_row = Adw.ActionRow(title=_("SSH Key"), subtitle=_("Select key file or leave empty for auto-detection"))
+        # Build dropdown items from detected keys
+        self.key_dropdown = Gtk.DropDown()
+        self.key_dropdown.set_hexpand(True)
+        # Populate via helper
+        self._key_paths = []
+        self._populate_detected_keys()
+
+        def _on_key_selected(drop, _param):
+            try:
+                idx = drop.get_selected()
+                if idx < 0 or idx >= len(getattr(self, '_key_paths', [])):
+                    return
+                path = self._key_paths[idx]
+                if path == "__BROWSE__":
+                    # Revert selection to previous if any
+                    try:
+                        drop.set_selected(0)
+                    except Exception:
+                        pass
+                    self.browse_for_key_file()
+                elif path:
+                    self._selected_keyfile_path = path
+                    if hasattr(self.keyfile_row, 'set_subtitle'):
+                        self.keyfile_row.set_subtitle(path)
+            except Exception:
+                pass
+        try:
+            self.key_dropdown.connect('notify::selected', _on_key_selected)
+        except Exception:
+            pass
+
+        # Pack dropdown and add to row
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        box.append(self.key_dropdown)
+        self.keyfile_row.add_suffix(box)
         self.keyfile_row.set_activatable(False)
         auth_group.add(self.keyfile_row)
+
+        # Initialize key UI sensitivity for new connections
+        try:
+            # Ensure visibility/sensitivity matches defaults
+            self.on_auth_method_changed(self.auth_method_row, None)
+            self.on_key_select_changed(self.key_select_row, None)
+        except Exception:
+            pass
         
         # Key Passphrase
         self.key_passphrase_row = Adw.PasswordEntryRow(title=_("Key Passphrase"))
@@ -1351,20 +1517,7 @@ class ConnectionDialog(Adw.PreferencesDialog):
             except Exception:
                 pass
 
-            # Set filters
-            try:
-                filter_ssh = Gtk.FileFilter()
-                filter_ssh.set_name(_("SSH Private Keys"))
-                for pat in ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "*.pem", "*.key"):
-                    filter_ssh.add_pattern(pat)
-                dialog.add_filter(filter_ssh)
-
-                filter_any = Gtk.FileFilter()
-                filter_any.set_name(_("All Files"))
-                filter_any.add_pattern("*")
-                dialog.add_filter(filter_any)
-            except Exception:
-                pass
+            # No filters: list all files in ~/.ssh
 
             dialog.connect("response", self.on_key_file_selected)
             dialog.show()
@@ -1741,6 +1894,30 @@ class ConnectionDialog(Adw.PreferencesDialog):
         except Exception:
             pass
         
+        # Detect if password text was changed by user during this edit session
+        try:
+            password_changed = (self.password_row.get_text() != getattr(self, '_orig_password', None))
+        except Exception:
+            password_changed = False
+
+        # Resolve keyfile from dropdown/browse/subtitle/existing
+        try:
+            keyfile_value = ''
+            if hasattr(self, 'key_dropdown') and hasattr(self, '_key_paths'):
+                sel = self.key_dropdown.get_selected()
+                if 0 <= sel < len(self._key_paths):
+                    pth = self._key_paths[sel]
+                    if pth and pth != '__BROWSE__':
+                        keyfile_value = pth
+            if (not keyfile_value) and hasattr(self, '_selected_keyfile_path') and self._selected_keyfile_path:
+                keyfile_value = str(self._selected_keyfile_path)
+            if (not keyfile_value) and hasattr(self.keyfile_row, 'get_subtitle'):
+                keyfile_value = self.keyfile_row.get_subtitle() or ''
+            if (not keyfile_value) and self.is_editing and hasattr(self, 'connection') and self.connection:
+                keyfile_value = str(getattr(self.connection, 'keyfile', '') or '')
+        except Exception:
+            keyfile_value = ''
+
         # Gather connection data
         connection_data = {
             'nickname': self.nickname_row.get_text().strip(),
@@ -1748,27 +1925,25 @@ class ConnectionDialog(Adw.PreferencesDialog):
             'username': self.username_row.get_text().strip(),
             'port': int(self.port_row.get_text().strip() or '22'),
             'auth_method': self.auth_method_row.get_selected(),
-            'keyfile': self.keyfile_row.get_subtitle() if hasattr(self.keyfile_row, 'get_subtitle') else "",
+            'keyfile': keyfile_value,
+            'key_select_mode': (self.key_select_row.get_selected() if hasattr(self, 'key_select_row') else 0),
             'key_passphrase': self.key_passphrase_row.get_text(),
             'password': self.password_row.get_text(),
             'x11_forwarding': self.x11_row.get_active(),
             'forwarding_rules': forwarding_rules,
             'local_command': (self.local_command_row.get_text() if hasattr(self, 'local_command_row') else ''),
             'remote_command': (self.remote_command_row.get_text() if hasattr(self, 'remote_command_row') else ''),
+            'password_changed': bool(password_changed),
         }
         
-        # Update the connection object with new data if editing
+        # Update the connection object locally when editing (do not persist here; window handles persistence)
         if self.is_editing and self.connection:
-            self.connection.data.update(connection_data)
+            try:
+                self.connection.data.update(connection_data)
+            except Exception:
+                pass
             # Explicitly update forwarding rules to ensure they're fresh
             self.connection.forwarding_rules = forwarding_rules
-            # Perform an immediate write via the manager as a safety net
-            try:
-                if getattr(self, 'parent_window', None) is not None and hasattr(self.parent_window, 'connection_manager'):
-                    logger.info("Saving connection immediately via manager from dialog (rules=%d)", len(forwarding_rules))
-                    self.parent_window.connection_manager.update_connection(self.connection, connection_data)
-            except Exception as e:
-                logger.error(f"Immediate save via manager failed: {e}")
             
         # Emit signal with connection data
         self.emit('connection-saved', connection_data)

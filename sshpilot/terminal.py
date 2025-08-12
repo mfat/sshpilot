@@ -482,13 +482,19 @@ class TerminalWidget(Gtk.Box):
                 logger.warning(f"Could not check SSH verbosity/debug settings: {e}")
                 # Default to non-verbose on error
             
-            # Add key file only for key-based auth
+            # Add key file/options only for key-based auth
             if not password_auth_selected:
                 if hasattr(self.connection, 'keyfile') and self.connection.keyfile and \
                    os.path.isfile(self.connection.keyfile) and \
                    not self.connection.keyfile.startswith('Select key file'):
                     ssh_cmd.extend(['-i', self.connection.keyfile])
                     logger.debug(f"Using SSH key: {self.connection.keyfile}")
+                    # Enforce using only the specified key when key_select_mode == 1
+                    try:
+                        if int(getattr(self.connection, 'key_select_mode', 0) or 0) == 1:
+                            ssh_cmd.extend(['-o', 'IdentitiesOnly=yes'])
+                    except Exception:
+                        pass
                 else:
                     logger.debug("No valid SSH key specified, using default")
             else:
@@ -1091,6 +1097,18 @@ class TerminalWidget(Gtk.Box):
     
     def on_child_exited(self, widget, status):
         """Called when the child process exits"""
+        # On clean exit, close the tab without confirmation
+        try:
+            if hasattr(self, 'connection_manager') and hasattr(self, 'get_root'):
+                root = self.get_root()
+                # 0 or success-like statuses indicate user exit
+                if status == 0 and root and hasattr(root, 'tab_view'):
+                    page = root.tab_view.get_page(self)
+                    if page:
+                        root.tab_view.close_page(page)
+                        return
+        except Exception:
+            pass
         if self.is_connected:
             self.is_connected = False
             logger.info(f"SSH session ended with status {status}")

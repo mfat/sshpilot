@@ -70,6 +70,12 @@ class Connection:
         # X11 forwarding preference
         self.x11_forwarding = bool(data.get('x11_forwarding', False))
         
+        # Key selection mode: 0 try all, 1 specific key
+        try:
+            self.key_select_mode = int(data.get('key_select_mode', 0) or 0)
+        except Exception:
+            self.key_select_mode = 0
+
         # Port forwarding rules
         self.forwarding_rules = data.get('forwarding_rules', [])
         
@@ -139,13 +145,15 @@ class Connection:
             except Exception:
                 pass
             
-            # Add key file if specified
-            if self.keyfile and os.path.exists(self.keyfile):
-                ssh_cmd.extend(['-i', self.keyfile])
-                if self.key_passphrase:
-                    # Note: For passphrase-protected keys, you might need to use ssh-agent
-                    # or expect script in a real implementation
-                    logger.warning("Passphrase-protected keys may require additional setup")
+            # Add key file only when key-based auth and specific key mode
+            try:
+                if int(getattr(self, 'auth_method', 0) or 0) == 0 and int(getattr(self, 'key_select_mode', 0) or 0) == 1:
+                    if self.keyfile and os.path.exists(self.keyfile):
+                        ssh_cmd.extend(['-i', self.keyfile])
+                        if self.key_passphrase:
+                            logger.warning("Passphrase-protected keys may require additional setup")
+            except Exception:
+                pass
             
             # Add host and port
             if self.port != 22:
@@ -709,6 +717,16 @@ class ConnectionManager(GObject.Object):
                     parsed['request_tty'] = str(config.get('requesttty', '')).strip().lower() in ('yes', 'force', 'true', '1', 'on')
             except Exception:
                 pass
+
+            # Key selection mode: if IdentitiesOnly is set truthy, select specific key
+            try:
+                ident_only = str(config.get('identitiesonly', '')).strip().lower()
+                if ident_only in ('yes', 'true', '1', 'on'):
+                    parsed['key_select_mode'] = 1
+                else:
+                    parsed['key_select_mode'] = 0
+            except Exception:
+                parsed['key_select_mode'] = 0
                 
             return parsed
             
@@ -792,6 +810,31 @@ class ConnectionManager(GObject.Object):
             logger.error(f"Error retrieving password for {username}@{host}: {e}")
             return None
 
+    def delete_password(self, host: str, username: str) -> bool:
+        """Delete stored password for host/user from system keyring"""
+        if not self._ensure_collection():
+            return False
+        try:
+            attributes = {
+                'application': 'sshPilot',
+                'host': host,
+                'username': username
+            }
+            items = list(self.collection.search_items(attributes))
+            removed_any = False
+            for item in items:
+                try:
+                    item.delete()
+                    removed_any = True
+                except Exception:
+                    pass
+            if removed_any:
+                logger.debug(f"Deleted stored password for {username}@{host}")
+            return removed_any
+        except Exception as e:
+            logger.error(f"Error deleting password for {username}@{host}: {e}")
+            return False
+
     def format_ssh_config_entry(self, data: Dict[str, Any]) -> str:
         """Format connection data as SSH config entry"""
         lines = [f"Host {data['nickname']}"]
@@ -805,13 +848,19 @@ class ConnectionManager(GObject.Object):
         if port and port != 22:  # Only add port if it's not the default 22
             lines.append(f"    Port {port}")
         
-        # Add keyfile if specified and not a placeholder
+        # Add IdentityFile/IdentitiesOnly per selection when auth is key-based
         keyfile = data.get('keyfile') or data.get('private_key')
-        if keyfile and keyfile.strip() and not keyfile.strip().lower().startswith('select key file'):
-            # Ensure the keyfile path is properly quoted if it contains spaces
-            if ' ' in keyfile and not (keyfile.startswith('"') and keyfile.endswith('"')):
-                keyfile = f'"{keyfile}"'
-            lines.append(f"    IdentityFile {keyfile}")
+        auth_method = int(data.get('auth_method', 0) or 0)
+        key_select_mode = int(data.get('key_select_mode', 0) or 0)  # 0=try all, 1=specific
+        if auth_method == 0:
+            # Always write IdentityFile if a concrete key path is provided (even in mode 0)
+            if keyfile and keyfile.strip() and not keyfile.strip().lower().startswith('select key file'):
+                if ' ' in keyfile and not (keyfile.startswith('"') and keyfile.endswith('"')):
+                    keyfile = f'"{keyfile}"'
+                lines.append(f"    IdentityFile {keyfile}")
+            # Only enforce exclusive key usage in mode 1
+            if key_select_mode == 1:
+                lines.append("    IdentitiesOnly yes")
         
         # Add X11 forwarding if enabled
         if data.get('x11_forwarding', False):
@@ -994,6 +1043,9 @@ class ConnectionManager(GObject.Object):
                 self.ssh_config_path,
                 len(new_data.get('forwarding_rules', []) or [])
             )
+            # Capture previous identifiers for credential cleanup
+            prev_host = getattr(connection, 'host', '')
+            prev_user = getattr(connection, 'username', '')
             # Update connection data
             connection.data.update(new_data)
             # Ensure forwarding rules stored on the object are updated too
@@ -1005,16 +1057,39 @@ class ConnectionManager(GObject.Object):
             # Update the SSH config file
             self.update_ssh_config_file(connection, new_data)
             
-            # Store password if provided
-            if new_data.get('password'):
-                self.store_password(
-                    new_data['host'],
-                    new_data['username'],
-                    new_data['password']
-                )
+            # Handle password storage/removal
+            if 'password' in new_data:
+                pwd = new_data.get('password') or ''
+                # Determine current identifiers after update
+                curr_host = new_data.get('host') or getattr(connection, 'host', prev_host)
+                curr_user = new_data.get('username') or getattr(connection, 'username', prev_user)
+                if pwd:
+                    self.store_password(curr_host, curr_user, pwd)
+                else:
+                    # Remove any stored passwords for both previous and current identifiers
+                    try:
+                        if prev_host and prev_user:
+                            self.delete_password(prev_host, prev_user)
+                    except Exception:
+                        pass
+                    try:
+                        if curr_host and curr_user and (curr_host != prev_host or curr_user != prev_user):
+                            self.delete_password(curr_host, curr_user)
+                    except Exception:
+                        pass
             
             # Reload SSH config to reflect changes
             self.load_ssh_config()
+            # Update the provided connection object from the freshly loaded list to ensure runtime uses the latest
+            try:
+                fresh = self.find_connection_by_nickname(new_data.get('nickname', connection.nickname))
+                if fresh:
+                    # Copy runtime-critical fields (auth/key selection) so active sessions use latest
+                    connection.auth_method = getattr(fresh, 'auth_method', connection.auth_method)
+                    connection.keyfile = getattr(fresh, 'keyfile', connection.keyfile)
+                    connection.key_select_mode = getattr(fresh, 'key_select_mode', getattr(connection, 'key_select_mode', 0))
+            except Exception:
+                pass
             
             # Emit signal
             self.emit('connection-updated', connection)
@@ -1054,9 +1129,27 @@ class ConnectionManager(GObject.Object):
             except Exception as e:
                 logger.warning(f"Failed to remove SSH config entry for {connection.nickname}: {e}")
             
+            # Remove per-connection metadata (auth method, etc.) to avoid lingering entries
+            try:
+                from .config import Config
+                cfg = Config()
+                meta_all = cfg.get_setting('connections_meta', {}) or {}
+                if isinstance(meta_all, dict) and connection.nickname in meta_all:
+                    del meta_all[connection.nickname]
+                    cfg.set_setting('connections_meta', meta_all)
+                    logger.debug(f"Removed metadata for {connection.nickname}")
+            except Exception as e:
+                logger.debug(f"Could not remove metadata for {connection.nickname}: {e}")
+            
             # Emit signal
             self.emit('connection-removed', connection)
             
+            # Reload connections so in-memory list reflects latest file state
+            try:
+                self.load_ssh_config()
+            except Exception:
+                pass
+
             logger.info(f"Connection removed: {connection}")
             return True
             

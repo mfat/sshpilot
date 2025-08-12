@@ -2907,6 +2907,7 @@ class MainWindow(Adw.ApplicationWindow):
                     'port': int(getattr(old_connection, 'port', 22) or 22),
                     'auth_method': int(getattr(old_connection, 'auth_method', 0) or 0),
                     'keyfile': _norm_str(getattr(old_connection, 'keyfile', '')),
+                    'key_select_mode': int(getattr(old_connection, 'key_select_mode', 0) or 0),
                     'password': _norm_str(getattr(old_connection, 'password', '')),
                     'key_passphrase': _norm_str(getattr(old_connection, 'key_passphrase', '')),
                     'x11_forwarding': bool(getattr(old_connection, 'x11_forwarding', False)),
@@ -2921,6 +2922,7 @@ class MainWindow(Adw.ApplicationWindow):
                     'port': int(connection_data.get('port') or 22),
                     'auth_method': int(connection_data.get('auth_method') or 0),
                     'keyfile': _norm_str(connection_data.get('keyfile')),
+                    'key_select_mode': int(connection_data.get('key_select_mode') or 0),
                     'password': _norm_str(connection_data.get('password')),
                     'key_passphrase': _norm_str(connection_data.get('key_passphrase')),
                     'x11_forwarding': bool(connection_data.get('x11_forwarding', False)),
@@ -2932,11 +2934,22 @@ class MainWindow(Adw.ApplicationWindow):
                 try:
                     existing_block = self.connection_manager.format_ssh_config_entry(existing)
                     incoming_block = self.connection_manager.format_ssh_config_entry(incoming)
-                    # Also include auth_method in change detection (stored outside ssh config)
-                    changed = (existing_block != incoming_block) or (existing['auth_method'] != incoming['auth_method'])
+                    # Also include auth_method/password/key_select_mode delta in change detection
+                    pw_changed_flag = bool(connection_data.get('password_changed', False))
+                    ksm_changed = (existing.get('key_select_mode', 0) != incoming.get('key_select_mode', 0))
+                    changed = (existing_block != incoming_block) or (existing['auth_method'] != incoming['auth_method']) or pw_changed_flag or ksm_changed or (existing['password'] != incoming['password'])
                 except Exception:
                     # Fallback to dict comparison if formatter fails
                     changed = existing != incoming
+
+                # Extra guard: if key_select_mode or auth_method differs from the object's current value, force changed
+                try:
+                    if int(connection_data.get('key_select_mode', -1)) != int(getattr(old_connection, 'key_select_mode', -1)):
+                        changed = True
+                    if int(connection_data.get('auth_method', -1)) != int(getattr(old_connection, 'auth_method', -1)):
+                        changed = True
+                except Exception:
+                    pass
 
                 if not changed:
                     logger.info("No changes detected for '%s'; skipping update and reconnect prompt", existing['nickname'])
@@ -2949,6 +2962,12 @@ class MainWindow(Adw.ApplicationWindow):
                 if not self.connection_manager.update_connection(old_connection, connection_data):
                     logger.error("Failed to update connection in SSH config")
                     return
+                # Reload from SSH config so UI reflects materialized settings (e.g., IdentitiesOnly)
+                try:
+                    self.connection_manager.load_ssh_config()
+                    self._rebuild_connections_list()
+                except Exception:
+                    pass
                 
                 # Update connection attributes in memory (ensure forwarding rules kept)
                 old_connection.nickname = connection_data['nickname']
@@ -2959,6 +2978,11 @@ class MainWindow(Adw.ApplicationWindow):
                 old_connection.password = connection_data['password']
                 old_connection.key_passphrase = connection_data['key_passphrase']
                 old_connection.auth_method = connection_data['auth_method']
+                # Persist key selection mode in-memory so the dialog reflects it without restart
+                try:
+                    old_connection.key_select_mode = int(connection_data.get('key_select_mode', getattr(old_connection, 'key_select_mode', 0)) or 0)
+                except Exception:
+                    pass
                 old_connection.x11_forwarding = connection_data['x11_forwarding']
                 old_connection.forwarding_rules = list(connection_data.get('forwarding_rules', []))
                 # Update commands
@@ -2984,6 +3008,12 @@ class MainWindow(Adw.ApplicationWindow):
                     self.config.set_connection_meta(meta_key, {
                         'auth_method': connection_data.get('auth_method', 0)
                     })
+                    # After metadata save, reload config so manager picks up new meta immediately
+                    try:
+                        self.connection_manager.load_ssh_config()
+                        self._rebuild_connections_list()
+                    except Exception:
+                        pass
                 except Exception:
                     pass
 
@@ -3014,16 +3044,32 @@ class MainWindow(Adw.ApplicationWindow):
                     connection.auth_method = int(connection_data.get('auth_method', 0))
                 except Exception:
                     connection.auth_method = 0
+                # Ensure key selection mode is applied immediately
+                try:
+                    connection.key_select_mode = int(connection_data.get('key_select_mode', 0) or 0)
+                except Exception:
+                    connection.key_select_mode = 0
                 # Add the new connection to the manager's connections list
                 self.connection_manager.connections.append(connection)
                 
                 # Save the connection to SSH config and emit the connection-added signal
                 if self.connection_manager.update_connection(connection, connection_data):
-                    # Persist per-connection metadata
+                    # Reload from SSH config and rebuild list immediately
+                    try:
+                        self.connection_manager.load_ssh_config()
+                        self._rebuild_connections_list()
+                    except Exception:
+                        pass
+                    # Persist per-connection metadata then reload config
                     try:
                         self.config.set_connection_meta(connection.nickname, {
                             'auth_method': connection_data.get('auth_method', 0)
                         })
+                        try:
+                            self.connection_manager.load_ssh_config()
+                            self._rebuild_connections_list()
+                        except Exception:
+                            pass
                     except Exception:
                         pass
                     # Sync forwarding rules from a fresh reload to ensure UI matches disk
@@ -3035,7 +3081,7 @@ class MainWindow(Adw.ApplicationWindow):
                     except Exception:
                         pass
                     # Manually add the connection to the UI since we're not using the signal
-                    self.add_connection_row(connection)
+                    # Row list was rebuilt from config; no manual add required
                     logger.info(f"Created new connection: {connection_data['nickname']}")
                 else:
                     logger.error("Failed to save connection to SSH config")
@@ -3053,6 +3099,22 @@ class MainWindow(Adw.ApplicationWindow):
             )
             error_dialog.present()
     
+    def _rebuild_connections_list(self):
+        """Rebuild the sidebar connections list from manager state, avoiding duplicates."""
+        try:
+            # Clear listbox children
+            child = self.connection_list.get_first_child()
+            while child is not None:
+                nxt = child.get_next_sibling()
+                self.connection_list.remove(child)
+                child = nxt
+            # Clear mapping
+            self.connection_rows.clear()
+            # Re-add from manager
+            for conn in self.connection_manager.get_connections():
+                self.add_connection_row(conn)
+        except Exception:
+            pass
     def _prompt_reconnect(self, connection):
         """Show a dialog asking if user wants to reconnect with new settings"""
         dialog = Gtk.MessageDialog(
