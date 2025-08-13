@@ -18,10 +18,18 @@ from gi.repository import Adw, Gtk, Gio, GLib
 
 # Register resources before importing any UI modules
 def load_resources():
-    # Simplified lookup: prefer installed site-packages path, with one system fallback.
+    # Lookup locations for the compiled GResource bundle
     current_dir = os.path.dirname(os.path.abspath(__file__))
+    # macOS app bundle path when frozen with PyInstaller
+    bundle_res = os.path.normpath(os.path.join(
+        os.path.dirname(sys.executable), '..', 'Resources', 'app', 'sshpilot', 'resources', 'sshpilot.gresource'
+    )) if getattr(sys, 'frozen', False) else None
+    # PyInstaller temporary extraction dir (fallback)
+    meipass_res = os.path.join(getattr(sys, '_MEIPASS', ''), 'sshpilot', 'resources', 'sshpilot.gresource') if getattr(sys, '_MEIPASS', None) else None
     possible_paths = [
         os.path.join(current_dir, 'resources', 'sshpilot.gresource'),
+        bundle_res,
+        meipass_res,
         '/usr/share/io.github.mfat.sshpilot/io.github.mfat.sshpilot.gresource',
     ]
 
