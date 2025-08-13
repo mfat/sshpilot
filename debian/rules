@@ -17,7 +17,7 @@ override_dh_auto_install:
 	cp -a sshpilot/ui/* $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui/
 	# Install desktop file and icon
 	install -D -m 644 io.github.mfat.sshpilot.desktop $(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop
-	install -D -m 644 sshpilot/resources/sshpilot.png $(CURDIR)/debian/sshpilot/usr/share/pixmaps/io.github.mfat.sshpilot.png
+	install -D -m 644 sshpilot/resources/sshpilot.svg $(CURDIR)/debian/sshpilot/usr/share/pixmaps/io.github.mfat.sshpilot.svg
 
 override_dh_auto_test:
 	# Skip tests for now (can be enabled later)
