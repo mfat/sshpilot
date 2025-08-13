@@ -20,7 +20,7 @@ eval "$($(uname -m | grep -q arm64 && echo /opt/homebrew/bin/brew || echo /usr/l
 
 ```bash
 brew update
-brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwaita-icon-theme pkg-config
+brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwaita-icon-theme pkg-config glib graphene icu4c
 ```
 
 ### 3) Install sshpass (required for saved password auto-fill)
@@ -52,7 +52,7 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 7) Ensure tools are on PATH (sshpass, GTK tools)
+### 7) Ensure Homebrew tools are on PATH
 
 Put Homebrew bin first on PATH. This works on both Apple Silicon (/opt/homebrew) and Intel (/usr/local):
 
@@ -60,10 +60,17 @@ Put Homebrew bin first on PATH. This works on both Apple Silicon (/opt/homebrew)
 export PATH="$(brew --prefix)/bin:$PATH"
 ```
 
-If GObject Introspection can’t find GTK/VTE/Adwaita, also set the typelib path:
+### 8) Activate venv and export GTK runtime environment (required on macOS)
+
+Activate your venv and export GI/GTK paths so Python can locate the Homebrew libraries and typelibs:
 
 ```bash
-export GI_TYPELIB_PATH="$(brew --prefix)/lib/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
+source .venv/bin/activate
+
+BREW_PREFIX="$(brew --prefix)"
+export DYLD_FALLBACK_LIBRARY_PATH="$BREW_PREFIX/opt/gtk4/lib:$BREW_PREFIX/opt/glib/lib:$BREW_PREFIX/opt/vte3/lib:$BREW_PREFIX/opt/icu4c/lib:$BREW_PREFIX/opt/graphene/lib:$BREW_PREFIX/lib${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
+export GI_TYPELIB_PATH="$BREW_PREFIX/lib/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
+export XDG_DATA_DIRS="$BREW_PREFIX/share${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
 ```
 
 Quick sanity checks:
@@ -73,7 +80,7 @@ which sshpass && sshpass -V
 python -c 'import gi; gi.require_version("Gtk","4.0"); gi.require_version("Adw","1"); gi.require_version("Vte","3.91"); from gi.repository import Gtk,Adw,Vte; import paramiko, cryptography, keyring; print("Environment OK")'
 ```
 
-### 8) Run the app
+### 9) Run the app
 
 ```bash
 python run.py
@@ -98,7 +105,7 @@ Passwords you save will be stored in macOS Keychain via the Python keyring backe
     ```bash
     brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection
     ```
-  - Export GI_TYPELIB_PATH as shown above, then re-run.
+  - Export the env vars in step 8, then re-run.
 
 - GSettings schema not found (info logs)
   - These are informational; the app will use a JSON config file instead.
@@ -107,5 +114,19 @@ Passwords you save will be stored in macOS Keychain via the Python keyring backe
   - Apple Silicon Homebrew prefix: `/opt/homebrew`
   - Intel Homebrew prefix: `/usr/local`
   - `brew --prefix` returns the correct one; prefer using that in PATH/vars.
+
+### Optional: one-command installer/runner
+
+You can also use the helper script that automates the steps above and writes a wrapper to run with the correct environment:
+
+```bash
+bash scripts/install-run-macos.sh "$HOME/sshpilot"
+```
+
+After the first run you can start the app with:
+
+```bash
+bash scripts/run-macos.sh
+```
 
 
