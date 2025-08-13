@@ -160,7 +160,7 @@ jobs:
         uses: pi-top/debian-package-build-action@master
         with:
           target_architecture: 'amd64'
-          docker_image: 'debian:bookworm-slim'
+          docker_image: 'ubuntu:22.04'
           build_directory: '.'
           # Artifacts will be placed in 'artifacts' directory
 
