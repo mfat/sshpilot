@@ -26,33 +26,238 @@ jobs:
             dh-python \
             python3-all \
             python3-setuptools \
+            python3-pip \
             build-essential \
             git \
-            fakeroot
+            fakeroot \
+            file
 
-      - name: Sync changelog version/date from __init__.py
+      - name: Extract package metadata
+        id: metadata
         run: |
+          # Extract version from __init__.py
           VERSION=$(python3 -c "import re, pathlib; t=pathlib.Path('sshpilot/__init__.py').read_text(); print(re.search(r'__version__\\s*=\\s*\"([^\"]+)\"', t).group(1))")
-          echo "Detected version: ${VERSION}"
-          # Update version (first line like: sshpilot (X.Y.Z-1) ...)
-          sed -i -E "1 s/\(.*\)/(${VERSION}-1) unstable; urgency=medium/" debian/changelog
-          # Update maintainer line date
-          sed -i -E "s/^ -- .*$/ -- mFat <newmfat@gmail.com>  $(LC_ALL=C date -R)/" debian/changelog
-          head -n 5 debian/changelog
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION"
+          
+          # Try to extract description from setup.py, pyproject.toml, or README
+          DESCRIPTION="SSH automation tool"
+          if [ -f "setup.py" ]; then
+            DESCRIPTION=$(python3 -c "
+import re
+try:
+    with open('setup.py', 'r') as f:
+        content = f.read()
+        match = re.search(r'description\\s*=\\s*[\"\\']([^\"\\']*)[\"\\'']', content)
+        if match:
+            print(match.group(1))
+        else:
+            print('SSH automation tool')
+except:
+    print('SSH automation tool')
+            " 2>/dev/null || echo "SSH automation tool")
+          elif [ -f "pyproject.toml" ]; then
+            DESCRIPTION=$(python3 -c "
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib
+    except ImportError:
+        print('SSH automation tool')
+        exit()
+
+try:
+    with open('pyproject.toml', 'rb') as f:
+        data = tomllib.load(f)
+        print(data.get('project', {}).get('description', 'SSH automation tool'))
+except:
+    print('SSH automation tool')
+            " 2>/dev/null || echo "SSH automation tool")
+          fi
+          echo "description=$DESCRIPTION" >> $GITHUB_OUTPUT
+          echo "Detected description: $DESCRIPTION"
+
+      - name: Create debian directory structure
+        run: |
+          mkdir -p debian/source
+          
+          # Create debian/control
+          cat > debian/control << EOF
+Source: sshpilot
+Section: utils
+Priority: optional
+Maintainer: mFat <newmfat@gmail.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Homepage: https://github.com/mfat/sshpilot
+Rules-Requires-Root: no
+
+Package: sshpilot
+Architecture: all
+Depends: \${misc:Depends}, \${python3:Depends},
+         python3,
+         python3-gi,
+         python3-gi-cairo,
+         libgtk-4-1 (>= 4.6), gir1.2-gtk-4.0 (>= 4.6),
+         libadwaita-1-0 (>= 1.4), gir1.2-adw-1 (>= 1.4),
+         libvte-2.91-gtk4-0 (>= 0.70), gir1.2-vte-3.91 (>= 0.70),
+         python3-paramiko,
+         python3-cryptography,
+         python3-secretstorage,
+         python3-matplotlib,
+         sshpass
+Description: SSH connection manager with integrated terminal
+ sshPilot provides SSH connection management, integrated terminal using VTE,
+ tunneling, key management, and tabbed interface.
+EOF
+
+          # Create debian/changelog
+          cat > debian/changelog << EOF
+sshpilot (${{ steps.metadata.outputs.version }}-1) unstable; urgency=medium
+
+  * Automated build from GitHub Actions
+
+ -- mFat <newmfat@gmail.com>  $(LC_ALL=C date -R)
+EOF
+
+          # Create debian/rules
+          cat > debian/rules << 'EOF'
+#!/usr/bin/make -f
+%:
+	dh $@
+override_dh_auto_build:
+	# No build step needed - standalone Python application
+override_dh_auto_install:
+	# Install the main executable (runner)
+	install -D -m 755 run.py $(CURDIR)/debian/sshpilot/usr/bin/sshpilot
+	# Install resources into site-packages so app can import
+	install -d $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot
+	cp -a sshpilot/*.py $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/
+	install -d $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui
+	cp -a sshpilot/resources/* $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources/
+	cp -a sshpilot/ui/* $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui/
+	# Install desktop file and icon
+	install -D -m 644 io.github.mfat.sshpilot.desktop $(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop
+	install -D -m 644 sshpilot/resources/sshpilot.svg $(CURDIR)/debian/sshpilot/usr/share/pixmaps/io.github.mfat.sshpilot.svg
+override_dh_auto_test:
+	# Skip tests for now (can be enabled later)
+override_dh_auto_clean:
+	# Nothing to clean
+EOF
+
+          chmod +x debian/rules
+
+          # Create debian/source/format
+          echo "3.0 (quilt)" > debian/source/format
+
+          # Create debian/copyright
+          cat > debian/copyright << EOF
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: sshpilot
+Source: https://github.com/mfat/sshpilot
+
+Files: *
+Copyright: $(date +%Y) mFat <newmfat@gmail.com>
+License: GPL-3+
+
+Files: debian/*
+Copyright: $(date +%Y) mFat <newmfat@gmail.com>
+License: GPL-3+
+
+License: GPL-3+
+ This program is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+ .
+ This package is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+ .
+ You should have received a copy of the GNU General Public License
+ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ .
+ On Debian systems, the complete text of the GNU General
+ Public License version 3 can be found in "/usr/share/common-licenses/GPL-3".
+EOF
+
+      - name: Validate required files
+        run: |
+          echo "=== Checking required files ==="
+          
+          # Check for main executable
+          if [ ! -f "run.py" ]; then
+            echo "ERROR: run.py not found - this is required as the main executable"
+            exit 1
+          fi
+          echo "✓ run.py found"
+          
+          # Check for sshpilot directory
+          if [ ! -d "sshpilot" ]; then
+            echo "ERROR: sshpilot/ directory not found"
+            exit 1
+          fi
+          echo "✓ sshpilot/ directory found"
+          
+          # Check for desktop file
+          if [ ! -f "io.github.mfat.sshpilot.desktop" ]; then
+            echo "WARNING: io.github.mfat.sshpilot.desktop not found"
+          else
+            echo "✓ Desktop file found"
+          fi
+          
+          # Check for icon
+          if [ ! -f "sshpilot/resources/sshpilot.svg" ]; then
+            echo "WARNING: sshpilot/resources/sshpilot.svg not found"
+          else
+            echo "✓ Icon file found"
+          fi
+          
+          # Show directory structure
+          echo "=== Directory structure ==="
+          find . -type f -name "*.py" | head -10
+          find sshpilot/ -type f | head -20
 
       - name: Build package
         run: |
+          # Show what we're about to build
+          echo "=== Debian control file ==="
+          cat debian/control
+          echo
+          echo "=== Debian changelog ==="
+          head -5 debian/changelog
+          echo
+          
+          # Build the package
           dpkg-buildpackage -us -uc -b
+          
+          # Move packages to artifacts directory
           mkdir -p artifacts
-          mv ../*.deb artifacts/
+          mv ../*.deb artifacts/ 2>/dev/null || true
+          
+          # Also check for packages in current directory (sometimes they end up there)
+          mv *.deb artifacts/ 2>/dev/null || true
 
       - name: List built packages
-        run: ls -l artifacts/*.deb
+        run: |
+          echo "=== Built packages ==="
+          ls -la artifacts/
+          
+          echo "=== Package information ==="
+          for deb in artifacts/*.deb; do
+            if [ -f "$deb" ]; then
+              echo "--- $deb ---"
+              dpkg-deb --info "$deb"
+              echo
+            fi
+          done
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: debian-packages
+          name: debian-packages-${{ steps.metadata.outputs.version }}
           path: artifacts/*.deb
 
       - name: Create Release
@@ -61,6 +266,16 @@ jobs:
         with:
           files: artifacts/*.deb
           name: Release ${{ github.ref_name }}
+          body: |
+            Debian package for sshpilot ${{ steps.metadata.outputs.version }}
+            
+            **Installation:**
+            ```bash
+            # Download the .deb file and install with:
+            sudo dpkg -i sshpilot_${{ steps.metadata.outputs.version }}-1_all.deb
+            
+            # If there are dependency issues, run:
+            sudo apt-get install -f
+            ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
