@@ -19,17 +19,17 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          VERSION=$(python3 -c "
+          VERSION=$(python3 -c '
           import re
           import pathlib
           
-          content = pathlib.Path('sshpilot/__init__.py').read_text()
-          match = re.search(r'__version__\s*=\s*[\"'\''']([^\"'\''']*)[\"\''\'']', content)
+          content = pathlib.Path("sshpilot/__init__.py").read_text()
+          match = re.search(r"__version__\s*=\s*[\"'"'"']([^\"'"'"']*)[\"'"'"']", content)
           if match:
               print(match.group(1))
           else:
-              print('0.0.0')
-          ")
+              print("0.0.0")
+          ')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION"
 
