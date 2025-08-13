@@ -5,3 +5,5 @@
 .history/
 release.sh
 .DS_Store
+/dist
+/build
