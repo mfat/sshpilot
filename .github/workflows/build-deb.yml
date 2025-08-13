@@ -84,31 +84,31 @@ jobs:
 
       - name: Create debian/rules
         run: |
-          {
-            echo "#!/usr/bin/make -f"
-            echo "%:"
-            echo -e "\tdh \$@"
-            echo "override_dh_auto_build:"
-            echo -e "\t# No build step needed - standalone Python application"
-            echo "override_dh_auto_install:"
-            echo -e "\t# Install the main executable (runner)"
-            echo -e "\tinstall -D -m 755 run.py \$(CURDIR)/debian/sshpilot/usr/bin/sshpilot"
-            echo -e "\t# Install resources into site-packages so app can import"
-            echo -e "\tinstall -d \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot"
-            echo -e "\tcp -a sshpilot/*.py \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/"
-            echo -e "\tinstall -d \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui"
-            echo -e "\tcp -a sshpilot/resources/* \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources/"
-            echo -e "\tcp -a sshpilot/ui/* \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui/"
-            echo -e "\t# Install desktop file and icon"
-            echo -e "\tinstall -D -m 644 io.github.mfat.sshpilot.desktop \$(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop"
-            echo -e "\tinstall -D -m 644 sshpilot/resources/sshpilot.svg \$(CURDIR)/debian/sshpilot/usr/share/pixmaps/io.github.mfat.sshpilot.svg"
-            echo "override_dh_auto_test:"
-            echo -e "\t# Skip tests for now (can be enabled later)"
-            echo "override_dh_auto_clean:"
-            echo -e "\t# Nothing to clean"
-            echo "clean:"
-            echo -e "\tdh_clean"
-          } > debian/rules
+          cat << EOF > debian/rules
+#!/usr/bin/make -f
+%:
+	dh \$@
+override_dh_auto_build:
+	# No build step needed - standalone Python application
+override_dh_auto_install:
+	# Install the main executable (runner)
+	install -D -m 755 run.py \$(CURDIR)/debian/sshpilot/usr/bin/sshpilot
+	# Install resources into site-packages so app can import
+	install -d \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot
+	cp -a sshpilot/*.py \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/
+	install -d \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui
+	cp -a sshpilot/resources/* \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources/
+	cp -a sshpilot/ui/* \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui/
+	# Install desktop file and icon
+	install -D -m 644 io.github.mfat.sshpilot.desktop \$(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop
+	install -D -m 644 sshpilot/resources/sshpilot.svg \$(CURDIR)/debian/sshpilot/usr/share/pixmaps/io.github.mfat.sshpilot.svg
+override_dh_auto_test:
+	# Skip tests for now (can be enabled later)
+override_dh_auto_clean:
+	# Nothing to clean
+clean:
+	dh_clean
+EOF
           chmod +x debian/rules
 
       - name: Create other debian files
@@ -152,6 +152,10 @@ jobs:
         run: |
           ls -la debian/rules
           file debian/rules
+
+      - name: Inspect debian/rules
+        run: |
+          cat -T debian/rules
 
       - name: List directory contents
         run: |
