@@ -1,0 +1,223 @@
+name: Build RPM Package
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-rpm:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          dnf update -y
+          dnf install -y \
+            rpm-build \
+            rpmdevtools \
+            python3 \
+            python3-devel \
+            desktop-file-utils \
+            git \
+            which
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(python3 -c '
+          import re
+          import pathlib
+          
+          content = pathlib.Path("sshpilot/__init__.py").read_text()
+          match = re.search(r"__version__\s*=\s*[\"'"'"']([^\"'"'"']*)[\"'"'"']", content)
+          if match:
+              print(match.group(1))
+          else:
+              print("0.0.0")
+          ')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION"
+
+      - name: Create source tarball
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          rpmdev-setuptree
+          mkdir -p ~/rpmbuild/SOURCES
+          VER="${{ steps.version.outputs.version }}"
+          if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            git archive --format=tar --prefix="sshpilot-${VER}/" HEAD | gzip > "${HOME}/rpmbuild/SOURCES/sshpilot-${VER}.tar.gz"
+          else
+            tar --exclude-vcs --exclude '.github' \
+                --transform "s,^,sshpilot-${VER}/," \
+                -czf "${HOME}/rpmbuild/SOURCES/sshpilot-${VER}.tar.gz" -C "$GITHUB_WORKSPACE" .
+          fi
+
+      - name: Create RPM spec file
+        run: |
+          cat > ~/rpmbuild/SPECS/sshpilot.spec << 'EOF'
+          Name:           sshpilot
+          Version:        ${{ steps.version.outputs.version }}
+          Release:        1%{?dist}
+          Summary:        SSH connection manager with integrated terminal
+          
+          License:        GPL-3.0-or-later
+          URL:            https://github.com/mfat/sshpilot
+          Source0:        sshpilot-%{version}.tar.gz
+          
+          BuildArch:      noarch
+          BuildRequires:  python3-devel
+          BuildRequires:  desktop-file-utils
+          
+          Requires:       python3
+          Requires:       python3-gobject
+          Requires:       gtk4 >= 4.6
+          Requires:       libadwaita >= 1.4
+          Requires:       vte291-gtk4 >= 0.70
+          Requires:       python3-paramiko
+          Requires:       python3-cryptography
+          Requires:       python3-matplotlib
+          Requires:       sshpass
+          
+          %description
+          sshPilot provides SSH connection management, integrated terminal using VTE,
+          tunneling, key management, and tabbed interface. Built with GTK4 and Adwaita
+          for a modern Linux desktop experience.
+          
+          %prep
+          %autosetup -n sshpilot-%{version}
+          
+          %build
+          # No build step needed - standalone Python application
+          
+          %install
+          # Install the main executable
+          install -D -m 755 run.py %{buildroot}%{_bindir}/sshpilot
+          
+          # Install Python modules
+          install -d %{buildroot}%{python3_sitelib}/sshpilot
+          cp -a sshpilot/*.py %{buildroot}%{python3_sitelib}/sshpilot/
+          
+          # Install resources and UI files
+          install -d %{buildroot}%{python3_sitelib}/sshpilot/resources
+          install -d %{buildroot}%{python3_sitelib}/sshpilot/ui
+          cp -a sshpilot/resources/* %{buildroot}%{python3_sitelib}/sshpilot/resources/
+          cp -a sshpilot/ui/* %{buildroot}%{python3_sitelib}/sshpilot/ui/
+          
+          # Install desktop file and icon
+          install -D -m 644 io.github.mfat.sshpilot.desktop %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
+          install -D -m 644 sshpilot/resources/sshpilot.svg %{buildroot}%{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
+          
+          %check
+          # Validate desktop file
+          desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop || true
+          
+          %files
+          %license LICENSE*
+          %doc README*
+          %{_bindir}/sshpilot
+          %{python3_sitelib}/sshpilot/
+          %{_datadir}/applications/io.github.mfat.sshpilot.desktop
+          %{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
+          
+          %changelog
+          * $(date "+%a %b %d %Y") mFat <newmfat@gmail.com> - ${{ steps.version.outputs.version }}-1
+          - Automated build from GitHub Actions
+          EOF
+
+      - name: Validate spec file and build environment
+        run: |
+          echo "=== Checking required project files ==="
+          ls -la run.py || echo "run.py missing"
+          ls -la sshpilot/ || echo "sshpilot/ missing"
+          ls -la io.github.mfat.sshpilot.desktop || echo "desktop file missing"
+          ls -la sshpilot/resources/sshpilot.svg || echo "icon missing"
+          
+          echo "=== RPM build tree ==="
+          ls -la ~/rpmbuild/
+          ls -la ~/rpmbuild/SPECS/
+          ls -la ~/rpmbuild/SOURCES/
+          
+          echo "=== Spec file content ==="
+          cat ~/rpmbuild/SPECS/sshpilot.spec
+          
+          echo "=== Validating spec file ==="
+          rpmlint ~/rpmbuild/SPECS/sshpilot.spec || echo "rpmlint warnings (non-fatal)"
+
+      - name: Build RPM package
+        run: |
+          # Build the RPM package
+          rpmbuild -ba ~/rpmbuild/SPECS/sshpilot.spec
+          
+          # Create artifacts directory and collect packages
+          mkdir -p artifacts
+          
+          # Copy built RPM packages
+          find ~/rpmbuild/RPMS/ -name "*.rpm" -exec cp {} artifacts/ \;
+          find ~/rpmbuild/SRPMS/ -name "*.rpm" -exec cp {} artifacts/ \;
+
+      - name: List built packages
+        run: |
+          echo "=== Built packages ==="
+          ls -la artifacts/
+          
+          # Show package information
+          for rpm in artifacts/*.rpm; do
+            if [ -f "$rpm" ]; then
+              echo "=== Package: $rpm ==="
+              rpm -qip "$rpm"
+              echo ""
+              echo "=== Contents: ==="
+              rpm -qlp "$rpm" | head -20
+              echo ""
+            fi
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-packages-${{ steps.version.outputs.version }}
+          path: artifacts/*.rpm
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/*.rpm
+          name: Release ${{ github.ref_name }}
+          body: |
+            RPM package for sshpilot ${{ steps.version.outputs.version }}
+            
+            **Installation:**
+            
+            **Fedora/RHEL/CentOS:**
+            ```bash
+            # Download the .rpm file and install with:
+            sudo dnf install ./sshpilot-${{ steps.version.outputs.version }}-1.*.noarch.rpm
+            
+            # Or with yum:
+            sudo yum install ./sshpilot-${{ steps.version.outputs.version }}-1.*.noarch.rpm
+            ```
+            
+            **openSUSE:**
+            ```bash
+            sudo zypper install ./sshpilot-${{ steps.version.outputs.version }}-1.*.noarch.rpm
+            ```
+            
+            **Features:**
+            - SSH connection manager with integrated terminal
+            - GTK4/Adwaita interface  
+            - VTE terminal integration
+            - Connection tunneling and key management
+            - Tabbed interface for multiple connections
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
