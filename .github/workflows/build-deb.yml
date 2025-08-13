@@ -31,13 +31,12 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          VERSION=$(python3 - <<'PY'
-import re, pathlib
-text = pathlib.Path('sshpilot/__init__.py').read_text()
-m = re.search(r"__version__\s*=\s*['\"]([^'\"]+)['\"]", text)
-print(m.group(1) if m else "")
-PY
-          )
+          VERSION=$(printf '%s\n' \
+            "import re, pathlib" \
+            "t=pathlib.Path('sshpilot/__init__.py').read_text()" \
+            "m=re.search(r\"__version__\\s*=\\s*['\\\"]([^'\\\"]+)['\\\"]\", t)" \
+            "print(m.group(1) if m else '')" \
+          | python3)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION"
 
