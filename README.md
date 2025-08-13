@@ -1,9 +1,8 @@
-
 <p align="center">
-<h3>sshPilot</h3>
+<img width="154" height="154" alt="logo" src="https://github.com/user-attachments/assets/42b73dbf-778c-45ff-9361-22a52988f1b3" />
 </p>
 
-SSH connection manager with integrated terminal, tunneling, tabbed interface and scp upload support. It's a free alternative to Putty and Termius for GNU/Linux.
+**sshPilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS. It's a free alternative to Putty and Termius.
 
 <p align="center">
 <img width="1260" height="833" alt="Main window" src="https://github.com/user-attachments/assets/743bb1fb-22de-4537-ba91-775cea48d57a" />
@@ -18,7 +17,8 @@ SSH connection manager with integrated terminal, tunneling, tabbed interface and
 - Full support for Local, Remote and Dynamic port forwarding 
 - Intuitive, minimal UI with keyboard navigation and shortcuts
 - SCP support for quicly uploading a file to remote server
-- Generate keypairs and add them to remote servers
+- Keypair generation and copying to remote servers (ssh-copy-id)
+- Support for running remote and local commands upon login
 - Secure storage for credentials using libsecret
 - Privacy toggle to show/hide ip addresses/hostnames in the main window
 - Light/Dark interface themes
@@ -28,6 +28,7 @@ SSH connection manager with integrated terminal, tunneling, tabbed interface and
 
 ## Installation 
 
+### Linux
 The app is currently distributed as deb and rpm packages (see releases) and can be installed on recent versions of Debian (testing/unstable), Ubuntu and Fedora. Debian bookworm is not supported due to older libadwaita version.
 
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
