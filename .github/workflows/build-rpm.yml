@@ -46,15 +46,21 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION"
 
-      - name: Setup RPM build environment
+      - name: Create source tarball
+        shell: bash
+        working-directory: ${{ github.workspace }}
         run: |
-          # Create RPM build directory structure
+          set -euo pipefail
           rpmdev-setuptree
-          
-          # Create source tarball
-          mkdir -p sshpilot-${{ steps.version.outputs.version }}
-          cp -r * sshpilot-${{ steps.version.outputs.version }}/
-          tar czf ~/rpmbuild/SOURCES/sshpilot-${{ steps.version.outputs.version }}.tar.gz sshpilot-${{ steps.version.outputs.version }}
+          mkdir -p ~/rpmbuild/SOURCES
+          VER="${{ steps.version.outputs.version }}"
+          if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            git archive --format=tar --prefix="sshpilot-${VER}/" HEAD | gzip > "${HOME}/rpmbuild/SOURCES/sshpilot-${VER}.tar.gz"
+          else
+            tar --exclude-vcs --exclude '.github' \
+                --transform "s,^,sshpilot-${VER}/," \
+                -czf "${HOME}/rpmbuild/SOURCES/sshpilot-${VER}.tar.gz" -C "$GITHUB_WORKSPACE" .
+          fi
 
       - name: Create RPM spec file
         run: |
