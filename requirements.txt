@@ -11,6 +11,7 @@ pycairo>=1.20.0
 paramiko>=3.4
 cryptography>=42.0
 secretstorage>=3.3 ; platform_system=="Linux"
+keyring>=24.3
 
 # Plotting for resource monitor
 matplotlib>=3.8
