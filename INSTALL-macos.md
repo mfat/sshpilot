@@ -1,6 +1,26 @@
 ## macOS Installation and Run Guide
 
-This guide shows how to install system dependencies, clone the project, set up Python, and run sshPilot on macOS (Apple Silicon or Intel).
+This guide shows two ways to run sshPilot on macOS (Apple Silicon or Intel):
+
+### Quick start (one command)
+
+Run the helper script to install dependencies, set up a venv, and launch the app. You can choose a target directory (defaults to `~/sshpilot`).
+
+```bash
+bash scripts/install-run-macos.sh "$HOME/sshpilot"
+```
+
+Next time, launch with:
+
+```bash
+bash scripts/run-macos.sh
+```
+
+— or —
+
+### Manual installation (venv-based)
+
+The steps below show how to install system dependencies, create a venv, export GTK runtime paths, and run the app.
 
 ### 1) Install Homebrew
 
@@ -16,27 +36,27 @@ After the installation, ensure your shell sees Homebrew:
 eval "$($(uname -m | grep -q arm64 && echo /opt/homebrew/bin/brew || echo /usr/local/bin/brew) shellenv)"
 ```
 
-### 2) Install system GTK stack and tools
+### 1) Install system GTK stack and tools
 
 ```bash
 brew update
 brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwaita-icon-theme pkg-config glib graphene icu4c
 ```
 
-### 3) Install sshpass (required for saved password auto-fill)
+### 2) Install sshpass (required for saved password auto-fill)
 
 ```bash
 brew install hudochenkov/sshpass/sshpass
 ```
 
-### 4) Clone the repository
+### 3) Clone the repository
 
 ```bash
 git clone https://github.com/mfat/sshpilot.git
 cd sshpilot
 ```
 
-### 5) Create a Python virtual environment (with system GI visible)
+### 4) Create a Python virtual environment (with system GI visible)
 
 Using system-site-packages lets Python see the GI modules installed by Homebrew.
 
@@ -45,14 +65,14 @@ python3 -m venv .venv --system-site-packages
 source .venv/bin/activate
 ```
 
-### 6) Install Python dependencies
+### 5) Install Python dependencies
 
 ```bash
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 7) Ensure Homebrew tools are on PATH
+### 6) Ensure Homebrew tools are on PATH
 
 Put Homebrew bin first on PATH. This works on both Apple Silicon (/opt/homebrew) and Intel (/usr/local):
 
@@ -60,7 +80,7 @@ Put Homebrew bin first on PATH. This works on both Apple Silicon (/opt/homebrew)
 export PATH="$(brew --prefix)/bin:$PATH"
 ```
 
-### 8) Activate venv and export GTK runtime environment (required on macOS)
+### 7) Activate venv and export GTK runtime environment (required on macOS)
 
 Activate your venv and export GI/GTK paths so Python can locate the Homebrew libraries and typelibs:
 
@@ -80,7 +100,7 @@ which sshpass && sshpass -V
 python -c 'import gi; gi.require_version("Gtk","4.0"); gi.require_version("Adw","1"); gi.require_version("Vte","3.91"); from gi.repository import Gtk,Adw,Vte; import paramiko, cryptography, keyring; print("Environment OK")'
 ```
 
-### 9) Run the app
+### 8) Run the app
 
 ```bash
 python run.py
@@ -115,18 +135,9 @@ Passwords you save will be stored in macOS Keychain via the Python keyring backe
   - Intel Homebrew prefix: `/usr/local`
   - `brew --prefix` returns the correct one; prefer using that in PATH/vars.
 
-### Optional: one-command installer/runner
+### Notes
 
-You can also use the helper script that automates the steps above and writes a wrapper to run with the correct environment:
+- Passwords you save will be stored in macOS Keychain via the Python keyring backend. On Linux, SecretStorage/libsecret is used instead.
 
-```bash
-bash scripts/install-run-macos.sh "$HOME/sshpilot"
-```
-
-After the first run you can start the app with:
-
-```bash
-bash scripts/run-macos.sh
-```
 
 
