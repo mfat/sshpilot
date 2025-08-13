@@ -1,15 +1,15 @@
-sshPilot
-========
 
-<img width="512" height="512" alt="sshpilot" src="https://github.com/user-attachments/assets/ec4654cd-4227-4cbd-8287-d68f0329248b" />
-
+<p align="center">
+<h3>sshPilot</h3>
+</p>
 
 SSH connection manager with integrated terminal, tunneling, tabbed interface and scp upload support. It's a free alternative to Putty and Termius for GNU/Linux.
 
+<p align="center">
 <img width="1260" height="833" alt="Main window" src="https://github.com/user-attachments/assets/743bb1fb-22de-4537-ba91-775cea48d57a" />
 
 <img width="722" height="822" alt="Connection settings" src="https://github.com/user-attachments/assets/55fad9a6-9d4d-4c15-bfac-8c19c6df15c5" />
-
+</p>
 
 
 ## Features
