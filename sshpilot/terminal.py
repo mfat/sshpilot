@@ -626,8 +626,8 @@ class TerminalWidget(Gtk.Box):
                     Vte.PtyFlags.DEFAULT,
                     os.path.expanduser('~') or '/',
                     ssh_cmd,
-                    [],
-                    GLib.SpawnFlags.DEFAULT,
+                    None,  # inherit environment (so PATH is available)
+                    GLib.SpawnFlags.SEARCH_PATH,
                     None,  # child_setup
                     None,  # child_setup_data
                     None,  # cancellable

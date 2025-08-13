@@ -17,6 +17,10 @@ try:
     import secretstorage
 except Exception:
     secretstorage = None
+try:
+    import keyring
+except Exception:
+    keyring = None
 import socket
 import time
 from gi.repository import GObject, GLib
@@ -43,6 +47,7 @@ if os.name == 'posix':
         asyncio.set_event_loop_policy(GLibEventLoopPolicy())
 
 logger = logging.getLogger(__name__)
+_SERVICE_NAME = "sshPilot"
 
 class Connection:
     """Represents an SSH connection"""
@@ -492,7 +497,15 @@ class ConnectionManager(GObject.Object):
             except Exception as e:
                 logger.warning(f"Failed to initialize secure storage: {e}")
         else:
-            logger.info("Secure storage not available on this platform; password storage disabled")
+            # SecretStorage not available (e.g., macOS). Fall back to system keyring if present
+            if keyring is not None:
+                try:
+                    backend = keyring.get_keyring()
+                    logger.info("Using system keyring backend: %s", backend.__class__.__name__)
+                except Exception:
+                    logger.info("Keyring module present but no usable backend; passwords will not be stored")
+            else:
+                logger.info("No SecretStorage or keyring available; password storage disabled")
         return False  # run once
 
     def _ensure_collection(self) -> bool:
@@ -765,83 +778,98 @@ class ConnectionManager(GObject.Object):
 
     def store_password(self, host: str, username: str, password: str):
         """Store password securely in system keyring"""
-        if not self._ensure_collection():
-            logger.warning("Secure storage not available, password not stored")
-            return False
-        
-        try:
-            attributes = {
-                'application': 'sshPilot',
-                'host': host,
-                'username': username
-            }
-            
-            # Delete existing password if any
-            existing_items = list(self.collection.search_items(attributes))
-            for item in existing_items:
-                item.delete()
-            
-            # Store new password
-            self.collection.create_item(
-                f'sshPilot: {username}@{host}',
-                attributes,
-                password.encode()
-            )
-            
-            logger.debug(f"Password stored for {username}@{host}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to store password: {e}")
-            return False
+        # Prefer SecretStorage on Linux when available
+        if self._ensure_collection():
+            try:
+                attributes = {
+                    'application': _SERVICE_NAME,
+                    'host': host,
+                    'username': username
+                }
+                # Delete existing password if any
+                existing_items = list(self.collection.search_items(attributes))
+                for item in existing_items:
+                    item.delete()
+                # Store new password
+                self.collection.create_item(
+                    f'{_SERVICE_NAME}: {username}@{host}',
+                    attributes,
+                    password.encode()
+                )
+                logger.debug(f"Password stored for {username}@{host} via SecretStorage")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to store password (SecretStorage): {e}")
+                # Fall through to keyring attempt
+        # Fallback to cross-platform keyring (macOS Keychain, etc.)
+        if keyring is not None:
+            try:
+                keyring.set_password(_SERVICE_NAME, f"{username}@{host}", password)
+                logger.debug(f"Password stored for {username}@{host} via keyring")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to store password (keyring): {e}")
+        logger.warning("No secure storage backend available; password not stored")
+        return False
 
     def get_password(self, host: str, username: str) -> Optional[str]:
         """Retrieve password from system keyring"""
-        if not self._ensure_collection():
-            return None
-        
-        try:
-            attributes = {
-                'application': 'sshPilot',
-                'host': host,
-                'username': username
-            }
-            
-            items = list(self.collection.search_items(attributes))
-            if items:
-                password = items[0].get_secret().decode()
-                logger.debug(f"Password retrieved for {username}@{host}")
-                return password
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error retrieving password for {username}@{host}: {e}")
-            return None
+        # Try SecretStorage first
+        if self._ensure_collection():
+            try:
+                attributes = {
+                    'application': _SERVICE_NAME,
+                    'host': host,
+                    'username': username
+                }
+                items = list(self.collection.search_items(attributes))
+                if items:
+                    password = items[0].get_secret().decode()
+                    logger.debug(f"Password retrieved for {username}@{host} via SecretStorage")
+                    return password
+            except Exception as e:
+                logger.error(f"Error retrieving password (SecretStorage) for {username}@{host}: {e}")
+        # Fallback to keyring
+        if keyring is not None:
+            try:
+                pw = keyring.get_password(_SERVICE_NAME, f"{username}@{host}")
+                if pw:
+                    logger.debug(f"Password retrieved for {username}@{host} via keyring")
+                return pw
+            except Exception as e:
+                logger.error(f"Error retrieving password (keyring) for {username}@{host}: {e}")
+        return None
 
     def delete_password(self, host: str, username: str) -> bool:
         """Delete stored password for host/user from system keyring"""
-        if not self._ensure_collection():
-            return False
-        try:
-            attributes = {
-                'application': 'sshPilot',
-                'host': host,
-                'username': username
-            }
-            items = list(self.collection.search_items(attributes))
-            removed_any = False
-            for item in items:
-                try:
-                    item.delete()
-                    removed_any = True
-                except Exception:
-                    pass
-            if removed_any:
-                logger.debug(f"Deleted stored password for {username}@{host}")
-            return removed_any
-        except Exception as e:
-            logger.error(f"Error deleting password for {username}@{host}: {e}")
-            return False
+        removed_any = False
+        # Try SecretStorage first
+        if self._ensure_collection():
+            try:
+                attributes = {
+                    'application': _SERVICE_NAME,
+                    'host': host,
+                    'username': username
+                }
+                items = list(self.collection.search_items(attributes))
+                for item in items:
+                    try:
+                        item.delete()
+                        removed_any = True
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.error(f"Error deleting password (SecretStorage) for {username}@{host}: {e}")
+        # Also attempt keyring cleanup so both stores are cleared if both were used
+        if keyring is not None:
+            try:
+                keyring.delete_password(_SERVICE_NAME, f"{username}@{host}")
+                removed_any = True or removed_any
+            except Exception:
+                pass
+        if removed_any:
+            logger.debug(f"Deleted stored password for {username}@{host}")
+        return removed_any
 
     def format_ssh_config_entry(self, data: Dict[str, Any]) -> str:
         """Format connection data as SSH config entry"""
@@ -1116,19 +1144,11 @@ class ConnectionManager(GObject.Object):
             if connection in self.connections:
                 self.connections.remove(connection)
             
-            # Remove password from keyring
-            if self.collection:
-                try:
-                    attributes = {
-                        'application': 'sshPilot',
-                        'host': connection.host,
-                        'username': connection.username
-                    }
-                    items = list(self.collection.search_items(attributes))
-                    for item in items:
-                        item.delete()
-                except Exception as e:
-                    logger.warning(f"Failed to remove password from keyring: {e}")
+            # Remove password from secure storage
+            try:
+                self.delete_password(connection.host, connection.username)
+            except Exception as e:
+                logger.warning(f"Failed to remove password from storage: {e}")
             
             # Remove from SSH config file
             try:
