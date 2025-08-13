@@ -41,40 +41,7 @@ jobs:
           echo "Detected version: $VERSION"
           
           # Try to extract description from setup.py, pyproject.toml, or README
-          DESCRIPTION="SSH automation tool"
-          if [ -f "setup.py" ]; then
-            DESCRIPTION=$(python3 -c "
-import re
-try:
-    with open('setup.py', 'r') as f:
-        content = f.read()
-        match = re.search(r'description\\s*=\\s*[\"\\']([^\"\\']*)[\"\\'']', content)
-        if match:
-            print(match.group(1))
-        else:
-            print('SSH automation tool')
-except:
-    print('SSH automation tool')
-            " 2>/dev/null || echo "SSH automation tool")
-          elif [ -f "pyproject.toml" ]; then
-            DESCRIPTION=$(python3 -c "
-try:
-    import tomllib
-except ImportError:
-    try:
-        import tomli as tomllib
-    except ImportError:
-        print('SSH automation tool')
-        exit()
-
-try:
-    with open('pyproject.toml', 'rb') as f:
-        data = tomllib.load(f)
-        print(data.get('project', {}).get('description', 'SSH automation tool'))
-except:
-    print('SSH automation tool')
-            " 2>/dev/null || echo "SSH automation tool")
-          fi
+          DESCRIPTION="SSH connection manager with integrated terminal"
           echo "description=$DESCRIPTION" >> $GITHUB_OUTPUT
           echo "Detected description: $DESCRIPTION"
 
