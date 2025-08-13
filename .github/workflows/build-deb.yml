@@ -50,7 +50,7 @@ jobs:
           mkdir -p debian/source
           
           # Create debian/control
-          cat > debian/control << EOF
+          cat > debian/control << 'EOF'
 Source: sshpilot
 Section: utils
 Priority: optional
@@ -62,7 +62,7 @@ Rules-Requires-Root: no
 
 Package: sshpilot
 Architecture: all
-Depends: \${misc:Depends}, \${python3:Depends},
+Depends: ${misc:Depends}, ${python3:Depends},
          python3,
          python3-gi,
          python3-gi-cairo,
