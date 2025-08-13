@@ -248,20 +248,19 @@ class WelcomePage(Gtk.Box):
         self.set_margin_bottom(48)
         
         # Welcome icon
-        icon = Gtk.Image.new_from_icon_name('network-workgroup-symbolic')
-        icon.set_icon_size(Gtk.IconSize.LARGE)
-        icon.set_pixel_size(64)
+        try:
+            texture = Gdk.Texture.new_from_resource('/io/github/mfat/sshpilot/sshpilot.svg')
+            icon = Gtk.Image.new_from_paintable(texture)
+            icon.set_pixel_size(128)
+        except Exception:
+            icon = Gtk.Image.new_from_icon_name('network-workgroup-symbolic')
+            icon.set_icon_size(Gtk.IconSize.LARGE)
+            icon.set_pixel_size(128)
         self.append(icon)
-        
-        # Welcome title
-        title = Gtk.Label()
-        title.set_markup('<span size="x-large"><b>Welcome to sshPilot</b></span>')
-        title.set_halign(Gtk.Align.CENTER)
-        self.append(title)
         
         # Welcome message
         message = Gtk.Label()
-        message.set_text('Select a host from the list to connect')
+        message.set_text('Select a host from the list, double-click or press Enter to connect')
         message.set_halign(Gtk.Align.CENTER)
         message.add_css_class('dim-label')
         self.append(message)
@@ -281,6 +280,7 @@ class WelcomePage(Gtk.Box):
             ('Alt+Right', 'Next Tab'),
             ('Alt+Left', 'Previous Tab'),
             ('Ctrl+F4', 'Close Tab'),
+            ('Ctrl+,', 'Preferences'),
         ]
         
         for shortcut, description in shortcuts:
@@ -1510,7 +1510,7 @@ class MainWindow(Adw.ApplicationWindow):
         about.set_comments('SSH connection manager with integrated terminal')
         about.set_website('https://github.com/mfat/sshpilot')
         # Gtk.AboutDialog in GTK4 has no set_issue_url; include issue link in website label
-        about.set_website_label('Project homepage (issues linked there)')
+        about.set_website_label('Project homepage')
         about.set_license_type(Gtk.License.GPL_3_0)
         about.set_authors(['mFat <newmfat@gmail.com>'])
         
@@ -1518,7 +1518,7 @@ class MainWindow(Adw.ApplicationWindow):
         logo_texture = None
         # 1) From GResource bundle
         for resource_path in (
-            '/io/github/mfat/sshpilot/sshpilot.png',
+            '/io/github/mfat/sshpilot/sshpilot.svg',
         ):
             try:
                 logo_texture = Gdk.Texture.new_from_resource(resource_path)
@@ -1541,11 +1541,11 @@ class MainWindow(Adw.ApplicationWindow):
                         break
                     repo_root = parent
                 candidate_files.extend([
-                    os.path.join(repo_root, 'io.github.mfat.sshpilot.png'),
-                    os.path.join(repo_root, 'sshpilot.png'),
+                    os.path.join(repo_root, 'io.github.mfat.sshpilot.svg'),
+                    os.path.join(repo_root, 'sshpilot.svg'),
                 ])
                 # package resources folder (when running from source)
-                candidate_files.append(os.path.join(os.path.dirname(__file__), 'resources', 'sshpilot.png'))
+                candidate_files.append(os.path.join(os.path.dirname(__file__), 'resources', 'sshpilot.svg'))
             except Exception:
                 pass
             for png_path in candidate_files:
