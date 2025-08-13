@@ -31,7 +31,7 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          VERSION=$(python3 -c "import re, pathlib; t=pathlib.Path('sshpilot/__init__.py').read_text(); print(re.search(r'__version__\\s*=\\s*[\"\\']([^\"\\']*)[\"\\'']', t).group(1))")
+          VERSION=$(python3 -c "import re, pathlib; t=pathlib.Path('sshpilot/__init__.py').read_text(); print(re.search(r'__version__\s*=\s*[\'\"]([^\'\"]+)[\'\"]', t).group(1))")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION"
 
