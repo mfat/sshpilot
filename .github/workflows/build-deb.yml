@@ -16,6 +16,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            devscripts \
+            debhelper \
+            build-essential \
+            python3 \
+            python3-dev \
+            fakeroot \
+            lintian
+
       - name: Extract version
         id: version
         run: |
@@ -152,46 +164,49 @@ jobs:
           
           echo "=== Control file content ==="
           cat debian/control
-          
-          echo "=== Changelog content ==="
-          cat debian/changelog
 
-      - name: Build Debian package
-        uses: pi-top/debian-package-build-action@master
-        with:
-          target_architecture: 'amd64'
-          docker_image: 'ubuntu:22.04'
-          build_directory: '.'
-          # Artifacts will be placed in 'artifacts' directory
+      - name: Build package
+        run: |
+          # Build the package
+          dpkg-buildpackage -us -uc -b
+          
+          # Create artifacts directory and collect packages
+          mkdir -p artifacts
+          
+          # Find and move .deb files
+          find .. -maxdepth 1 -name "*.deb" -exec mv {} artifacts/ \;
+          
+          # Also check current directory just in case
+          find . -maxdepth 1 -name "*.deb" -exec mv {} artifacts/ \;
 
       - name: List built packages
         run: |
           echo "=== Built packages ==="
-          find . -name "*.deb" -type f
-          ls -la artifacts/ || echo "No artifacts directory"
+          ls -la artifacts/
           
-          # Find .deb files and show their info
-          for deb in $(find . -name "*.deb" -type f); do
-            echo "=== Package: $deb ==="
-            dpkg-deb --info "$deb"
-            echo ""
+          # Show package information
+          for deb in artifacts/*.deb; do
+            if [ -f "$deb" ]; then
+              echo "=== Package: $deb ==="
+              dpkg-deb --info "$deb"
+              echo ""
+              echo "=== Contents: ==="
+              dpkg-deb --contents "$deb" | head -20
+              echo ""
+            fi
           done
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: debian-packages-${{ steps.version.outputs.version }}
-          path: |
-            artifacts/*.deb
-            **/*.deb
+          path: artifacts/*.deb
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            artifacts/*.deb
-            **/*.deb
+          files: artifacts/*.deb
           name: Release ${{ github.ref_name }}
           body: |
             Debian package for sshpilot ${{ steps.version.outputs.version }}
@@ -207,7 +222,7 @@ jobs:
             
             **Features:**
             - SSH connection manager with integrated terminal
-            - GTK4/Adwaita interface
+            - GTK4/Adwaita interface  
             - VTE terminal integration
             - Connection tunneling and key management
             - Tabbed interface for multiple connections
