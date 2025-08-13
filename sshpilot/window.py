@@ -260,7 +260,7 @@ class WelcomePage(Gtk.Box):
         
         # Welcome message
         message = Gtk.Label()
-        message.set_text('Select a host from the list to connect')
+        message.set_text('Select a host from the list, double-click or press Enter to connect')
         message.set_halign(Gtk.Align.CENTER)
         message.add_css_class('dim-label')
         self.append(message)
@@ -280,6 +280,7 @@ class WelcomePage(Gtk.Box):
             ('Alt+Right', 'Next Tab'),
             ('Alt+Left', 'Previous Tab'),
             ('Ctrl+F4', 'Close Tab'),
+            ('Ctrl+,', 'Preferences'),
         ]
         
         for shortcut, description in shortcuts:
