@@ -1,3 +1,4 @@
+
 name: Build Debian Package
 
 on:
@@ -12,31 +13,14 @@ permissions:
 jobs:
   build-deb:
     runs-on: ubuntu-latest
-    container: ubuntu:22.04
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build dependencies
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            devscripts \
-            debhelper \
-            build-essential \
-            git \
-            fakeroot \
-            python3
-
       - name: Extract version
         id: version
         run: |
-          VERSION=$(printf '%s\n' \
-            "import re, pathlib" \
-            "t=pathlib.Path('sshpilot/__init__.py').read_text()" \
-            "m=re.search(r\"__version__\\s*=\\s*['\\\"]([^'\\\"]+)['\\\"]\", t)" \
-            "print(m.group(1) if m else '')" \
-          | python3)
+          VERSION=$(python3 -c "import re, pathlib; t=pathlib.Path('sshpilot/__init__.py').read_text(); print(re.search(r'__version__\\s*=\\s*[\"\\']([^\"\\']*)[\"\\'']', t).group(1))")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION"
 
@@ -146,51 +130,77 @@ jobs:
             echo " Public License version 3 can be found in \"/usr/share/common-licenses/GPL-3\"."
           } > debian/copyright
 
-      - name: Validate files
+      - name: Validate debian files
         run: |
-          echo "=== Checking required files ==="
+          echo "=== Checking required project files ==="
           ls -la run.py || echo "run.py missing"
           ls -la sshpilot/ || echo "sshpilot/ missing"
           ls -la io.github.mfat.sshpilot.desktop || echo "desktop file missing"
           ls -la sshpilot/resources/sshpilot.svg || echo "icon missing"
           
-          echo "=== Debian files created ==="
+          echo "=== Debian packaging files created ==="
           ls -la debian/
+          
+          echo "=== Control file content ==="
           cat debian/control
+          
+          echo "=== Changelog content ==="
+          cat debian/changelog
 
-      - name: Build package
-        run: |
-          dpkg-buildpackage -us -uc -b
-          mkdir -p artifacts
-          find .. -name "*.deb" -exec mv {} artifacts/ \;
+      - name: Build Debian package
+        uses: pi-top/debian-package-build-action@master
+        with:
+          target_architecture: 'all'
+          docker_image: 'debian:bookworm-slim'
+          build_directory: '.'
+          # Artifacts will be placed in 'artifacts' directory
 
-      - name: List artifacts
+      - name: List built packages
         run: |
-          ls -la artifacts/
-          for deb in artifacts/*.deb; do
-            echo "=== $deb ==="
+          echo "=== Built packages ==="
+          find . -name "*.deb" -type f
+          ls -la artifacts/ || echo "No artifacts directory"
+          
+          # Find .deb files and show their info
+          for deb in $(find . -name "*.deb" -type f); do
+            echo "=== Package: $deb ==="
             dpkg-deb --info "$deb"
+            echo ""
           done
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: debian-packages-${{ steps.version.outputs.version }}
-          path: artifacts/*.deb
+          path: |
+            artifacts/*.deb
+            **/*.deb
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/*.deb
+          files: |
+            artifacts/*.deb
+            **/*.deb
           name: Release ${{ github.ref_name }}
           body: |
             Debian package for sshpilot ${{ steps.version.outputs.version }}
             
             **Installation:**
             ```bash
+            # Download the .deb file and install with:
             sudo dpkg -i sshpilot_${{ steps.version.outputs.version }}-1_all.deb
+            
+            # If there are dependency issues, run:
             sudo apt-get install -f
             ```
+            
+            **Features:**
+            - SSH connection manager with integrated terminal
+            - GTK4/Adwaita interface
+            - VTE terminal integration
+            - Connection tunneling and key management
+            - Tabbed interface for multiple connections
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
