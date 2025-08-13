@@ -28,6 +28,11 @@ jobs:
             fakeroot \
             python3
 
+      - name: Check debhelper version
+        run: |
+          apt-cache policy debhelper
+          dh --version
+
       - name: Extract version
         id: version
         run: |
@@ -101,6 +106,8 @@ jobs:
             echo -e "\t# Skip tests for now (can be enabled later)"
             echo "override_dh_auto_clean:"
             echo -e "\t# Nothing to clean"
+            echo "clean:"
+            echo -e "\tdh_clean"
           } > debian/rules
           chmod +x debian/rules
 
@@ -141,6 +148,20 @@ jobs:
             echo " Public License version 3 can be found in \"/usr/share/common-licenses/GPL-3\"."
           } > debian/copyright
 
+      - name: Verify debian/rules permissions
+        run: |
+          ls -la debian/rules
+          file debian/rules
+
+      - name: List directory contents
+        run: |
+          ls -laR .
+
+      - name: Run dh_clean
+        run: |
+          dh_clean
+        working-directory: .
+
       - name: Validate files
         run: |
           echo "=== Checking required files ==="
@@ -155,7 +176,7 @@ jobs:
 
       - name: Build package
         run: |
-          dpkg-buildpackage -us -uc -b
+          dpkg-buildpackage -us -uc -b --verbose
           mkdir -p artifacts
           find .. -name "*.deb" -exec mv {} artifacts/ \;
 
