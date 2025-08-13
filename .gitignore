@@ -4,7 +4,4 @@
 /sshpilot/__pycache__
 .history/
 release.sh
-/debian
-debian/sshpilot/DEBIAN/md5sums
-/.flatpak-builder
-/repo
+.DS_Store
