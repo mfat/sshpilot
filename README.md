@@ -29,7 +29,16 @@
 ## Installation 
 
 ### Linux
-The app is currently distributed as deb and rpm packages (see releases) and can be installed on recent versions of Debian (testing/unstable), Ubuntu and Fedora. Debian bookworm is not supported due to older libadwaita version.
+The app is currently distributed as deb and rpm packages (see releases) and can be installed on recent versions of Debian (testing/unstable), Ubuntu and Fedora. Debian bookworm is not supported due to older libadwaita version. 
+A Flatpak is also planned for future.
+
+### macOS
+
+(WIP) On the [Mac branch](https://github.com/mfat/sshpilot/tree/mac) there are [instructions](https://github.com/mfat/sshpilot/blob/mac/INSTALL-macos.md) for running sshPilot on macOS
+
+
+
+## Download
 
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
 
@@ -38,7 +47,7 @@ You can also run the app from source. Install the modules listed in requirements
 `
 python3 run.py
 `
-A Flatpak is also planned for future.
+
 
 
 
