@@ -48,10 +48,19 @@ jobs:
 
       - name: Create source tarball
         shell: bash
+        working-directory: ${{ github.workspace }}
         run: |
+          set -euo pipefail
           rpmdev-setuptree
           mkdir -p ~/rpmbuild/SOURCES
-          git archive --format=tar --prefix=sshpilot-2.3.2/ HEAD | gzip > ~/rpmbuild/SOURCES/sshpilot-2.3.2.tar.gz
+          VER="${{ steps.version.outputs.version }}"
+          if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            git archive --format=tar --prefix="sshpilot-${VER}/" HEAD | gzip > "${HOME}/rpmbuild/SOURCES/sshpilot-${VER}.tar.gz"
+          else
+            tar --exclude-vcs --exclude '.github' \
+                --transform "s,^,sshpilot-${VER}/," \
+                -czf "${HOME}/rpmbuild/SOURCES/sshpilot-${VER}.tar.gz" -C "$GITHUB_WORKSPACE" .
+          fi
 
       - name: Create RPM spec file
         run: |
