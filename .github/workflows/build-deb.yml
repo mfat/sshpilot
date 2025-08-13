@@ -35,124 +35,122 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION"
 
-      - name: Create debian directory
+      - name: Create debian files
         run: |
           mkdir -p debian/source
           
-      - name: Create debian/control
-        run: |
-          cat > debian/control << 'EOF'
-          Source: sshpilot
-          Section: utils
-          Priority: optional
-          Maintainer: mFat <newmfat@gmail.com>
-          Build-Depends: debhelper-compat (= 13)
-          Standards-Version: 4.6.2
-          Homepage: https://github.com/mfat/sshpilot
-          Rules-Requires-Root: no
-          
-          Package: sshpilot
-          Architecture: all
-          Depends: ${misc:Depends}, ${python3:Depends},
-                   python3,
-                   python3-gi,
-                   python3-gi-cairo,
-                   libgtk-4-1 (>= 4.6), gir1.2-gtk-4.0 (>= 4.6),
-                   libadwaita-1-0 (>= 1.4), gir1.2-adw-1 (>= 1.4),
-                   libvte-2.91-gtk4-0 (>= 0.70), gir1.2-vte-3.91 (>= 0.70),
-                   python3-paramiko,
-                   python3-cryptography,
-                   python3-secretstorage,
-                   python3-matplotlib,
-                   sshpass
-          Description: SSH connection manager with integrated terminal
-           sshPilot provides SSH connection management, integrated terminal using VTE,
-           tunneling, key management, and tabbed interface.
-          EOF
+          # Create control file
+          echo "Source: sshpilot" > debian/control
+          echo "Section: utils" >> debian/control
+          echo "Priority: optional" >> debian/control
+          echo "Maintainer: mFat <newmfat@gmail.com>" >> debian/control
+          echo "Build-Depends: debhelper-compat (= 13)" >> debian/control
+          echo "Standards-Version: 4.6.2" >> debian/control
+          echo "Homepage: https://github.com/mfat/sshpilot" >> debian/control
+          echo "Rules-Requires-Root: no" >> debian/control
+          echo "" >> debian/control
+          echo "Package: sshpilot" >> debian/control
+          echo "Architecture: all" >> debian/control
+          {
+            echo "Depends: \${misc:Depends}, \${python3:Depends},"
+            echo "         python3,"
+            echo "         python3-gi,"
+            echo "         python3-gi-cairo,"
+            echo "         libgtk-4-1 (>= 4.6), gir1.2-gtk-4.0 (>= 4.6),"
+            echo "         libadwaita-1-0 (>= 1.4), gir1.2-adw-1 (>= 1.4),"
+            echo "         libvte-2.91-gtk4-0 (>= 0.70), gir1.2-vte-3.91 (>= 0.70),"
+            echo "         python3-paramiko,"
+            echo "         python3-cryptography,"
+            echo "         python3-secretstorage,"
+            echo "         python3-matplotlib,"
+            echo "         sshpass"
+          } >> debian/control
+          echo "Description: SSH connection manager with integrated terminal" >> debian/control
+          echo " sshPilot provides SSH connection management, integrated terminal using VTE," >> debian/control
+          echo " tunneling, key management, and tabbed interface." >> debian/control
 
       - name: Create debian/changelog
         run: |
-          cat > debian/changelog << 'EOF'
-          sshpilot (${{ steps.version.outputs.version }}-1) unstable; urgency=medium
-          
-            * Automated build from GitHub Actions
-          
-           -- mFat <newmfat@gmail.com>  $(date -R)
-          EOF
+          echo "sshpilot (${{ steps.version.outputs.version }}-1) unstable; urgency=medium" > debian/changelog
+          echo "" >> debian/changelog
+          echo "  * Automated build from GitHub Actions" >> debian/changelog
+          echo "" >> debian/changelog
+          echo " -- mFat <newmfat@gmail.com>  $(date -R)" >> debian/changelog
 
       - name: Create debian/rules
         run: |
-          cat > debian/rules << 'EOF'
-          #!/usr/bin/make -f
-          %:
-          	dh $@
-          override_dh_auto_build:
-          	# No build step needed - standalone Python application
-          override_dh_auto_install:
-          	# Install the main executable (runner)
-          	install -D -m 755 run.py $(CURDIR)/debian/sshpilot/usr/bin/sshpilot
-          	# Install resources into site-packages so app can import
-          	install -d $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot
-          	cp -a sshpilot/*.py $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/
-          	install -d $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui
-          	cp -a sshpilot/resources/* $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources/
-          	cp -a sshpilot/ui/* $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui/
-          	# Install desktop file and icon
-          	install -D -m 644 io.github.mfat.sshpilot.desktop $(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop
-          	install -D -m 644 sshpilot/resources/sshpilot.svg $(CURDIR)/debian/sshpilot/usr/share/pixmaps/io.github.mfat.sshpilot.svg
-          override_dh_auto_test:
-          	# Skip tests for now (can be enabled later)
-          override_dh_auto_clean:
-          	# Nothing to clean
-          EOF
+          {
+            echo "#!/usr/bin/make -f"
+            echo "%:"
+            echo -e "\tdh \$@"
+            echo "override_dh_auto_build:"
+            echo -e "\t# No build step needed - standalone Python application"
+            echo "override_dh_auto_install:"
+            echo -e "\t# Install the main executable (runner)"
+            echo -e "\tinstall -D -m 755 run.py \$(CURDIR)/debian/sshpilot/usr/bin/sshpilot"
+            echo -e "\t# Install resources into site-packages so app can import"
+            echo -e "\tinstall -d \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot"
+            echo -e "\tcp -a sshpilot/*.py \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/"
+            echo -e "\tinstall -d \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui"
+            echo -e "\tcp -a sshpilot/resources/* \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources/"
+            echo -e "\tcp -a sshpilot/ui/* \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui/"
+            echo -e "\t# Install desktop file and icon"
+            echo -e "\tinstall -D -m 644 io.github.mfat.sshpilot.desktop \$(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop"
+            echo -e "\tinstall -D -m 644 sshpilot/resources/sshpilot.svg \$(CURDIR)/debian/sshpilot/usr/share/pixmaps/io.github.mfat.sshpilot.svg"
+            echo "override_dh_auto_test:"
+            echo -e "\t# Skip tests for now (can be enabled later)"
+            echo "override_dh_auto_clean:"
+            echo -e "\t# Nothing to clean"
+          } > debian/rules
           chmod +x debian/rules
 
-      - name: Create debian/source/format
+      - name: Create other debian files
         run: |
+          # Create source format
           echo "3.0 (quilt)" > debian/source/format
-
-      - name: Create debian/copyright
-        run: |
-          cat > debian/copyright << 'COPYRIGHT_EOF'
-Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: sshpilot
-Source: https://github.com/mfat/sshpilot
-
-Files: *
-Copyright: 2025 mFat <newmfat@gmail.com>
-License: GPL-3+
-
-Files: debian/*
-Copyright: 2025 mFat <newmfat@gmail.com>
-License: GPL-3+
-
-License: GPL-3+
- This program is free software: you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation, either version 3 of the License, or
- (at your option) any later version.
- .
- This package is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
- .
- You should have received a copy of the GNU General Public License
- along with this program. If not, see <https://www.gnu.org/licenses/>.
- .
- On Debian systems, the complete text of the GNU General
- Public License version 3 can be found in "/usr/share/common-licenses/GPL-3".
-COPYRIGHT_EOF
+          
+          # Create copyright file
+          {
+            echo "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/"
+            echo "Upstream-Name: sshpilot"
+            echo "Source: https://github.com/mfat/sshpilot"
+            echo ""
+            echo "Files: *"
+            echo "Copyright: 2025 mFat <newmfat@gmail.com>"
+            echo "License: GPL-3+"
+            echo ""
+            echo "Files: debian/*"
+            echo "Copyright: 2025 mFat <newmfat@gmail.com>"
+            echo "License: GPL-3+"
+            echo ""
+            echo "License: GPL-3+"
+            echo " This program is free software: you can redistribute it and/or modify"
+            echo " it under the terms of the GNU General Public License as published by"
+            echo " the Free Software Foundation, either version 3 of the License, or"
+            echo " (at your option) any later version."
+            echo " ."
+            echo " This package is distributed in the hope that it will be useful,"
+            echo " but WITHOUT ANY WARRANTY; without even the implied warranty of"
+            echo " MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the"
+            echo " GNU General Public License for more details."
+            echo " ."
+            echo " You should have received a copy of the GNU General Public License"
+            echo " along with this program. If not, see <https://www.gnu.org/licenses/>."
+            echo " ."
+            echo " On Debian systems, the complete text of the GNU General"
+            echo " Public License version 3 can be found in \"/usr/share/common-licenses/GPL-3\"."
+          } > debian/copyright
 
       - name: Validate files
         run: |
           echo "=== Checking required files ==="
-          ls -la run.py sshpilot/ io.github.mfat.sshpilot.desktop sshpilot/resources/sshpilot.svg || echo "Some files missing"
+          ls -la run.py || echo "run.py missing"
+          ls -la sshpilot/ || echo "sshpilot/ missing"
+          ls -la io.github.mfat.sshpilot.desktop || echo "desktop file missing"
+          ls -la sshpilot/resources/sshpilot.svg || echo "icon missing"
           
           echo "=== Debian files created ==="
           ls -la debian/
-          
-          echo "=== Control file ==="
           cat debian/control
 
       - name: Build package
