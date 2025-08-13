@@ -620,20 +620,26 @@ class TerminalWidget(Gtk.Box):
             # Create a new PTY for the terminal
             pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
             
-            # Start the SSH process using VTE's spawn_async with our PTY
-            self.vte.spawn_async(
-                Vte.PtyFlags.DEFAULT,
-                os.path.expanduser('~') or '/',
-                ssh_cmd,
-                None,  # Environment (use default)
-                GLib.SpawnFlags.DEFAULT,
-                None,  # Child setup function
-                None,  # Child setup data
-                -1,    # Timeout (-1 = default)
-                None,  # Cancellable
-                self._on_spawn_complete,
-                None   # User data
-            )
+            # Start the SSH process using VTE; prefer spawn_sync to avoid GI signature pitfalls
+            try:
+                ok, pid = self.vte.spawn_sync(
+                    Vte.PtyFlags.DEFAULT,
+                    os.path.expanduser('~') or '/',
+                    ssh_cmd,
+                    [],
+                    GLib.SpawnFlags.DEFAULT,
+                    None,  # child_setup
+                    None,  # child_setup_data
+                    None,  # cancellable
+                )
+                if not ok:
+                    raise RuntimeError('VTE spawn failed')
+                # Emulate async completion callback
+                self._on_spawn_complete(self.vte, pid, None, None)
+            except Exception as e:
+                logger.error(f"Failed to spawn SSH in VTE: {e}")
+                self._on_connection_failed(str(e))
+                return
             
             # Store the PTY for later cleanup
             self.pty = pty
@@ -672,7 +678,7 @@ class TerminalWidget(Gtk.Box):
                 pass
             self._on_connection_failed(str(error))
             return
-            
+
         logger.debug(f"Terminal spawned with PID: {pid}")
         self.process_pid = pid
         

@@ -13,7 +13,10 @@ import shlex
 import signal
 from typing import Dict, List, Optional, Any, Tuple, Union
 
-import secretstorage
+try:
+    import secretstorage
+except Exception:
+    secretstorage = None
 import socket
 import time
 from gi.repository import GObject, GLib
@@ -480,17 +483,22 @@ class ConnectionManager(GObject.Object):
             logger.debug(f"SSH key scan skipped/failed: {e}")
         
         # Initialize secure storage (can be slow)
-        try:
-            self.bus = secretstorage.dbus_init()
-            self.collection = secretstorage.get_default_collection(self.bus)
-            logger.info("Secure storage initialized")
-        except Exception as e:
-            logger.warning(f"Failed to initialize secure storage: {e}")
-            self.collection = None
+        self.collection = None
+        if secretstorage:
+            try:
+                self.bus = secretstorage.dbus_init()
+                self.collection = secretstorage.get_default_collection(self.bus)
+                logger.info("Secure storage initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize secure storage: {e}")
+        else:
+            logger.info("Secure storage not available on this platform; password storage disabled")
         return False  # run once
 
     def _ensure_collection(self) -> bool:
         """Ensure secretstorage collection is initialized and unlocked."""
+        if not secretstorage:
+            return False
         try:
             if getattr(self, 'collection', None) is None:
                 try:
