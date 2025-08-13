@@ -1,6 +1,6 @@
 
 <p align="center">
-### sshPilot
+<h3>sshPilot</h3>
 </p>
 
 SSH connection manager with integrated terminal, tunneling, tabbed interface and scp upload support. It's a free alternative to Putty and Termius for GNU/Linux.
