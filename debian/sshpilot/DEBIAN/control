@@ -1,26 +1,12 @@
-Source: sshpilot
+Package: sshpilot
+Version: 2.3.1-1
+Architecture: all
+Maintainer: mFat <newmfat@gmail.com>
+Installed-Size: 727
+Depends: python3, python3-gi, python3-gi-cairo, libgtk-4-1 (>= 4.6), gir1.2-gtk-4.0 (>= 4.6), libadwaita-1-0 (>= 1.4), gir1.2-adw-1 (>= 1.4), libvte-2.91-gtk4-0 (>= 0.70), gir1.2-vte-3.91 (>= 0.70), python3-paramiko, python3-cryptography, python3-secretstorage, python3-matplotlib, sshpass
 Section: utils
 Priority: optional
-Maintainer: mFat <newmfat@gmail.com>
-Build-Depends: debhelper-compat (= 13)
-Standards-Version: 4.6.2
 Homepage: https://github.com/mfat/sshpilot
-Rules-Requires-Root: no
-
-Package: sshpilot
-Architecture: all
-Depends: ${misc:Depends}, ${python3:Depends},
-         python3,
-         python3-gi,
-         python3-gi-cairo,
-         libgtk-4-1 (>= 4.6), gir1.2-gtk-4.0 (>= 4.6),
-         libadwaita-1-0 (>= 1.4), gir1.2-adw-1 (>= 1.4),
-         libvte-2.91-gtk4-0 (>= 0.70), gir1.2-vte-3.91 (>= 0.70),
-         python3-paramiko,
-         python3-cryptography,
-         python3-secretstorage,
-         python3-matplotlib,
-         sshpass
 Description: SSH connection manager with integrated terminal
  sshPilot provides SSH connection management, integrated terminal using VTE,
  tunneling, key management, and tabbed interface.

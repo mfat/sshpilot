@@ -5,3 +5,4 @@
 .history/
 release.sh
 /debian
+debian/sshpilot/DEBIAN/md5sums

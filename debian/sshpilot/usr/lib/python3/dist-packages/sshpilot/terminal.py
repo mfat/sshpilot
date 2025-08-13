@@ -332,6 +332,9 @@ class TerminalWidget(Gtk.Box):
 
     def _set_disconnected_banner_visible(self, visible: bool, message: str = None):
         try:
+            # Allow callers (e.g., ssh-copy-id dialog) to suppress the red banner entirely
+            if getattr(self, '_suppress_disconnect_banner', False):
+                return
             if message:
                 self.disconnected_banner_label.set_text(message)
             if hasattr(self.disconnected_banner, 'set_visible'):
@@ -412,6 +415,7 @@ class TerminalWidget(Gtk.Box):
             keepalive_interval = int(ssh_cfg.get('keepalive_interval', 30)) if apply_adv else None
             keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3)) if apply_adv else None
             strict_host = str(ssh_cfg.get('strict_host_key_checking', '')) if apply_adv else ''
+            auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
             batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
             compression = bool(ssh_cfg.get('compression', True)) if apply_adv else False
 
@@ -441,8 +445,22 @@ class TerminalWidget(Gtk.Box):
                 if compression:
                     ssh_cmd.append('-C')
 
+            # Apply auto-add host keys policy even when advanced block is off, unless user explicitly set a policy
+            try:
+                if (not strict_host) and auto_add_host_keys:
+                    ssh_cmd.extend(['-o', 'StrictHostKeyChecking=accept-new'])
+            except Exception:
+                pass
+
             # Ensure SSH exits immediately on failure rather than waiting in background
             ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
+            
+            # Default to accepting new host keys non-interactively on fresh installs
+            try:
+                if (not strict_host) and auto_add_host_keys:
+                    ssh_cmd.extend(['-o', 'StrictHostKeyChecking=accept-new'])
+            except Exception:
+                pass
             
             # Only add verbose flag if explicitly enabled in config
             try:
@@ -467,13 +485,19 @@ class TerminalWidget(Gtk.Box):
                 logger.warning(f"Could not check SSH verbosity/debug settings: {e}")
                 # Default to non-verbose on error
             
-            # Add key file only for key-based auth
+            # Add key file/options only for key-based auth
             if not password_auth_selected:
                 if hasattr(self.connection, 'keyfile') and self.connection.keyfile and \
                    os.path.isfile(self.connection.keyfile) and \
                    not self.connection.keyfile.startswith('Select key file'):
                     ssh_cmd.extend(['-i', self.connection.keyfile])
                     logger.debug(f"Using SSH key: {self.connection.keyfile}")
+                    # Enforce using only the specified key when key_select_mode == 1
+                    try:
+                        if int(getattr(self.connection, 'key_select_mode', 0) or 0) == 1:
+                            ssh_cmd.extend(['-o', 'IdentitiesOnly=yes'])
+                    except Exception:
+                        pass
                 else:
                     logger.debug("No valid SSH key specified, using default")
             else:
@@ -504,6 +528,34 @@ class TerminalWidget(Gtk.Box):
             if hasattr(self.connection, 'x11_forwarding') and self.connection.x11_forwarding:
                 ssh_cmd.append('-X')
             
+            # Prepare command-related options (must appear before host)
+            remote_cmd = ''
+            local_cmd = ''
+            try:
+                if hasattr(self.connection, 'remote_command'):
+                    remote_cmd = (self.connection.remote_command or '').strip()
+                if not remote_cmd and hasattr(self.connection, 'data'):
+                    remote_cmd = (self.connection.data.get('remote_command') or '').strip()
+            except Exception:
+                remote_cmd = ''
+            try:
+                if hasattr(self.connection, 'local_command'):
+                    local_cmd = (self.connection.local_command or '').strip()
+                if not local_cmd and hasattr(self.connection, 'data'):
+                    local_cmd = (self.connection.data.get('local_command') or '').strip()
+            except Exception:
+                local_cmd = ''
+
+            # If remote command is specified, request a TTY (twice for force allocation)
+            if remote_cmd:
+                ssh_cmd.extend(['-t', '-t'])
+
+            # If local command specified, allow and set it via options
+            if local_cmd:
+                ssh_cmd.extend(['-o', 'PermitLocalCommand=yes'])
+                # Pass exactly as user provided, letting ssh parse quoting
+                ssh_cmd.extend(['-o', f'LocalCommand={local_cmd}'])
+
             # Add port forwarding rules
             if hasattr(self.connection, 'forwarding_rules'):
                 for rule in self.connection.forwarding_rules:
@@ -543,10 +595,16 @@ class TerminalWidget(Gtk.Box):
             
             # Add host and user
             ssh_cmd.append(f"{self.connection.username}@{self.connection.host}" if hasattr(self.connection, 'username') and self.connection.username else self.connection.host)
-            
-            # Add port if not default
+
+            # Add port if not default (ideally before host, but keep consistent with existing behavior)
             if hasattr(self.connection, 'port') and self.connection.port != 22:
                 ssh_cmd.extend(['-p', str(self.connection.port)])
+
+            # Append remote command last so ssh treats it as the command to run, ensure shell remains active
+            if remote_cmd:
+                final_remote_cmd = remote_cmd if 'exec $SHELL' in remote_cmd else f"{remote_cmd} ; exec $SHELL -l"
+                # Append as single argument; let shell on remote parse quotes. Keep as-is to allow user quoting.
+                ssh_cmd.append(final_remote_cmd)
             
             # Avoid logging password when sshpass is used
             try:
@@ -565,7 +623,7 @@ class TerminalWidget(Gtk.Box):
             # Start the SSH process using VTE's spawn_async with our PTY
             self.vte.spawn_async(
                 Vte.PtyFlags.DEFAULT,
-                os.environ.get('HOME', '/'),
+                os.path.expanduser('~') or '/',
                 ssh_cmd,
                 None,  # Environment (use default)
                 GLib.SpawnFlags.DEFAULT,
@@ -1042,6 +1100,26 @@ class TerminalWidget(Gtk.Box):
     
     def on_child_exited(self, widget, status):
         """Called when the child process exits"""
+        # On clean exit, close the tab without confirmation
+        try:
+            if hasattr(self, 'connection_manager') and hasattr(self, 'get_root'):
+                root = self.get_root()
+                # 0 or success-like statuses indicate user exit
+                if status == 0 and root and hasattr(root, 'tab_view'):
+                    page = root.tab_view.get_page(self)
+                    if page:
+                        # Suppress confirmation dialogs during programmatic close
+                        try:
+                            setattr(root, '_suppress_close_confirmation', True)
+                            root.tab_view.close_page(page)
+                        finally:
+                            try:
+                                setattr(root, '_suppress_close_confirmation', False)
+                            except Exception:
+                                pass
+                        return
+        except Exception:
+            pass
         if self.is_connected:
             self.is_connected = False
             logger.info(f"SSH session ended with status {status}")
@@ -1103,11 +1181,14 @@ class TerminalWidget(Gtk.Box):
             except (ProcessLookupError, OSError):
                 pass
         
-        # Fall back to getting from PTY
+        # Fall back to getting from PTY or VTE helpers
         try:
+            # Prefer PID recorded at spawn complete
+            if getattr(self, 'process_pid', None):
+                return self.process_pid
             pty = self.vte.get_pty()
-            if pty:
-                pid = pty.get_child_pid()
+            if pty and hasattr(pty, 'get_pid'):
+                pid = pty.get_pid()
                 if pid:
                     self.process_pid = pid
                     return pid
@@ -1332,10 +1413,44 @@ class TerminalWidget(Gtk.Box):
     def on_child_exited(self, terminal, status):
         """Handle terminal child process exit"""
         logger.debug(f"Terminal child exited with status: {status}")
-        
+
+        # Normalize exit status: GLib may pass waitpid-style status
+        exit_code = None
+        try:
+            if os.WIFEXITED(status):
+                exit_code = os.WEXITSTATUS(status)
+            else:
+                # If not a normal exit or os.WIF* not applicable, best-effort mapping
+                exit_code = status if 0 <= int(status) < 256 else ((int(status) >> 8) & 0xFF)
+        except Exception:
+            try:
+                exit_code = int(status)
+            except Exception:
+                exit_code = status
+
+        # If user explicitly typed 'exit' (clean status 0), close tab immediately
+        try:
+            if exit_code == 0 and hasattr(self, 'get_root'):
+                root = self.get_root()
+                if root and hasattr(root, 'tab_view'):
+                    page = root.tab_view.get_page(self)
+                    if page:
+                        try:
+                            setattr(root, '_suppress_close_confirmation', True)
+                            root.tab_view.close_page(page)
+                        finally:
+                            try:
+                                setattr(root, '_suppress_close_confirmation', False)
+                            except Exception:
+                                pass
+                        return
+        except Exception:
+            pass
+
+        # Non-zero or unknown exit: treat as connection lost and show banner
         if self.connection:
             self.connection.is_connected = False
-        
+
         self.disconnect()
         self.emit('connection-lost')
         # Show reconnect UI
