@@ -41,70 +41,70 @@ jobs:
           
       - name: Create debian/control
         run: |
-          cat > debian/control << 'CONTROL_EOF'
-Source: sshpilot
-Section: utils
-Priority: optional
-Maintainer: mFat <newmfat@gmail.com>
-Build-Depends: debhelper-compat (= 13)
-Standards-Version: 4.6.2
-Homepage: https://github.com/mfat/sshpilot
-Rules-Requires-Root: no
-
-Package: sshpilot
-Architecture: all
-Depends: ${misc:Depends}, ${python3:Depends},
-         python3,
-         python3-gi,
-         python3-gi-cairo,
-         libgtk-4-1 (>= 4.6), gir1.2-gtk-4.0 (>= 4.6),
-         libadwaita-1-0 (>= 1.4), gir1.2-adw-1 (>= 1.4),
-         libvte-2.91-gtk4-0 (>= 0.70), gir1.2-vte-3.91 (>= 0.70),
-         python3-paramiko,
-         python3-cryptography,
-         python3-secretstorage,
-         python3-matplotlib,
-         sshpass
-Description: SSH connection manager with integrated terminal
- sshPilot provides SSH connection management, integrated terminal using VTE,
- tunneling, key management, and tabbed interface.
-CONTROL_EOF
+          cat > debian/control << 'EOF'
+          Source: sshpilot
+          Section: utils
+          Priority: optional
+          Maintainer: mFat <newmfat@gmail.com>
+          Build-Depends: debhelper-compat (= 13)
+          Standards-Version: 4.6.2
+          Homepage: https://github.com/mfat/sshpilot
+          Rules-Requires-Root: no
+          
+          Package: sshpilot
+          Architecture: all
+          Depends: ${misc:Depends}, ${python3:Depends},
+                   python3,
+                   python3-gi,
+                   python3-gi-cairo,
+                   libgtk-4-1 (>= 4.6), gir1.2-gtk-4.0 (>= 4.6),
+                   libadwaita-1-0 (>= 1.4), gir1.2-adw-1 (>= 1.4),
+                   libvte-2.91-gtk4-0 (>= 0.70), gir1.2-vte-3.91 (>= 0.70),
+                   python3-paramiko,
+                   python3-cryptography,
+                   python3-secretstorage,
+                   python3-matplotlib,
+                   sshpass
+          Description: SSH connection manager with integrated terminal
+           sshPilot provides SSH connection management, integrated terminal using VTE,
+           tunneling, key management, and tabbed interface.
+          EOF
 
       - name: Create debian/changelog
         run: |
-          cat > debian/changelog << 'CHANGELOG_EOF'
-sshpilot (${{ steps.version.outputs.version }}-1) unstable; urgency=medium
-
-  * Automated build from GitHub Actions
-
- -- mFat <newmfat@gmail.com>  $(date -R)
-CHANGELOG_EOF
+          cat > debian/changelog << 'EOF'
+          sshpilot (${{ steps.version.outputs.version }}-1) unstable; urgency=medium
+          
+            * Automated build from GitHub Actions
+          
+           -- mFat <newmfat@gmail.com>  $(date -R)
+          EOF
 
       - name: Create debian/rules
         run: |
-          cat > debian/rules << 'RULES_EOF'
-#!/usr/bin/make -f
-%:
-	dh $@
-override_dh_auto_build:
-	# No build step needed - standalone Python application
-override_dh_auto_install:
-	# Install the main executable (runner)
-	install -D -m 755 run.py $(CURDIR)/debian/sshpilot/usr/bin/sshpilot
-	# Install resources into site-packages so app can import
-	install -d $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot
-	cp -a sshpilot/*.py $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/
-	install -d $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui
-	cp -a sshpilot/resources/* $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources/
-	cp -a sshpilot/ui/* $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui/
-	# Install desktop file and icon
-	install -D -m 644 io.github.mfat.sshpilot.desktop $(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop
-	install -D -m 644 sshpilot/resources/sshpilot.svg $(CURDIR)/debian/sshpilot/usr/share/pixmaps/io.github.mfat.sshpilot.svg
-override_dh_auto_test:
-	# Skip tests for now (can be enabled later)
-override_dh_auto_clean:
-	# Nothing to clean
-RULES_EOF
+          cat > debian/rules << 'EOF'
+          #!/usr/bin/make -f
+          %:
+          	dh $@
+          override_dh_auto_build:
+          	# No build step needed - standalone Python application
+          override_dh_auto_install:
+          	# Install the main executable (runner)
+          	install -D -m 755 run.py $(CURDIR)/debian/sshpilot/usr/bin/sshpilot
+          	# Install resources into site-packages so app can import
+          	install -d $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot
+          	cp -a sshpilot/*.py $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/
+          	install -d $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui
+          	cp -a sshpilot/resources/* $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources/
+          	cp -a sshpilot/ui/* $(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui/
+          	# Install desktop file and icon
+          	install -D -m 644 io.github.mfat.sshpilot.desktop $(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop
+          	install -D -m 644 sshpilot/resources/sshpilot.svg $(CURDIR)/debian/sshpilot/usr/share/pixmaps/io.github.mfat.sshpilot.svg
+          override_dh_auto_test:
+          	# Skip tests for now (can be enabled later)
+          override_dh_auto_clean:
+          	# Nothing to clean
+          EOF
           chmod +x debian/rules
 
       - name: Create debian/source/format
