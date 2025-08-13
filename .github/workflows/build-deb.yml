@@ -159,7 +159,7 @@ jobs:
       - name: Build Debian package
         uses: pi-top/debian-package-build-action@master
         with:
-          target_architecture: 'all'
+          target_architecture: 'amd64'
           docker_image: 'debian:bookworm-slim'
           build_directory: '.'
           # Artifacts will be placed in 'artifacts' directory
