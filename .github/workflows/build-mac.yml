@@ -4,15 +4,20 @@ on: [push, pull_request]
 
 jobs:
   build:
-    runs-on: macos-15  # Latest macOS runner as of August 2025
+    runs-on: macos-15
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: mac
 
       - name: Install Homebrew dependencies
         run: |
           brew update
           brew install python gtk4 libadwaita vte3 adwaita-icon-theme gobject-introspection pygobject3 sshpass
+          # Ensure Homebrew paths are available
+          echo "/opt/homebrew/bin" >> $GITHUB_PATH
+          echo "/opt/homebrew/lib" >> $GITHUB_PATH
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -22,11 +27,20 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install paramiko cryptography secretstorage matplotlib
-          pip install py2app
+          pip install paramiko cryptography secretstorage matplotlib py2app
+          # Explicitly install PyGObject to ensure it's available
+          pip install pygobject
+
+      - name: Set up environment for PyGObject
+        run: |
+          # Set environment variables for GObject Introspection
+          export GI_TYPELIB_PATH=/opt/homebrew/lib/girepository-1.0
+          export DYLD_LIBRARY_PATH=/opt/homebrew/lib:$DYLD_LIBRARY_PATH
+          echo "GI_TYPELIB_PATH=/opt/homebrew/lib/girepository-1.0" >> $GITHUB_ENV
+          echo "DYLD_LIBRARY_PATH=/opt/homebrew/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
 
       - name: Build app bundle
-        run: python setup.py py2app
+        run: python setup.py py2app --debug
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
