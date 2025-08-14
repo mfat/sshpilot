@@ -80,7 +80,7 @@ jobs:
           pip list
           
           # Build app bundle for native architecture (no universal binary)
-          pyinstaller --clean --debug all sshPilot.spec
+          pyinstaller --clean sshPilot.spec
 
       # Step 7: Package the.app bundle into a zip archive for easier download
       - name: Archive the application bundle

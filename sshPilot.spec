@@ -57,7 +57,7 @@ exe = EXE(
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=True,  # Enable macOS argv emulation
-    target_arch='arm64',  # Explicitly target ARM64 for GitHub Actions runner
+    target_arch='universal2',  # Build universal binary for both Intel and ARM
     codesign_identity=None,
     entitlements_file=None,
 )
