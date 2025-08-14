@@ -1,4 +1,4 @@
-name: Build macOS Binary 2
+name: Build macOS Binary
 
 on: [push, pull_request]
 
@@ -59,6 +59,7 @@ PY
           pkg-config --modversion gobject-introspection-1.0
           ls -l /opt/homebrew/lib/girepository-1.0
           ls -l /opt/homebrew/share/glib-2.0/schemas
+          ls -l /opt/homebrew/opt/*/lib/*.dylib
 
       - name: Build app bundle
         run: PYTHONVERBOSE=1 python setup.py py2app
@@ -66,11 +67,15 @@ PY
       - name: Copy additional GTK libraries
         run: |
           mkdir -p dist/sshpilot.app/Contents/Frameworks
-          cp -r /opt/homebrew/opt/gtk4/lib/*.dylib dist/sshpilot.app/Contents/Frameworks/
-          cp -r /opt/homebrew/opt/glib/lib/*.dylib dist/sshpilot.app/Contents/Frameworks/
-          cp -r /opt/homebrew/opt/vte3/lib/*.dylib dist/sshpilot.app/Contents/Frameworks/
-          cp -r /opt/homebrew/opt/icu4c/lib/*.dylib dist/sshpilot.app/Contents/Frameworks/
-          cp -r /opt/homebrew/opt/graphene/lib/*.dylib dist/sshpilot.app/Contents/Frameworks/
+          cp /opt/homebrew/opt/gtk4/lib/libgtk-4.1.dylib dist/sshpilot.app/Contents/Frameworks/
+          cp /opt/homebrew/opt/glib/lib/libglib-2.0.0.dylib dist/sshpilot.app/Contents/Frameworks/
+          cp /opt/homebrew/opt/vte3/lib/libvte-2.91-gtk4.0.dylib dist/sshpilot.app/Contents/Frameworks/
+          cp /opt/homebrew/opt/icu4c/lib/libicudata.75.dylib dist/sshpilot.app/Contents/Frameworks/
+          cp /opt/homebrew/opt/icu4c/lib/libicui18n.75.dylib dist/sshpilot.app/Contents/Frameworks/
+          cp /opt/homebrew/opt/icu4c/lib/libicuio.75.dylib dist/sshpilot.app/Contents/Frameworks/
+          cp /opt/homebrew/opt/icu4c/lib/libicutu.75.dylib dist/sshpilot.app/Contents/Frameworks/
+          cp /opt/homebrew/opt/icu4c/lib/libicuuc.75.dylib dist/sshpilot.app/Contents/Frameworks/
+          cp /opt/homebrew/opt/graphene/lib/libgraphene-1.0.0.dylib dist/sshpilot.app/Contents/Frameworks/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
