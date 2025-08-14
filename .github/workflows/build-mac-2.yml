@@ -1,0 +1,111 @@
+name: Build macOS Binary 2 - Updated
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: mac
+
+      - name: Install Homebrew dependencies
+        run: |
+          brew update
+          brew install python gtk4 libadwaita vte3 adwaita-icon-theme gobject-introspection pygobject3 sshpass
+          # Ensure Homebrew paths are available
+          echo "/opt/homebrew/bin" >> $GITHUB_PATH
+          echo "/opt/homebrew/lib" >> $GITHUB_PATH
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Install py2app first to avoid conflicts
+          pip install py2app
+          # Install other dependencies (excluding matplotlib to avoid numpy conflicts)
+          # Note: pygobject will be provided by Homebrew (universal binary)
+          pip install paramiko cryptography secretstorage
+          # Install specific setuptools version that works well with py2app
+          pip install 'setuptools==69.5.1' wheel
+      - name: Set up environment for PyGObject
+        run: |
+          # Set environment variables for GObject Introspection
+          export GI_TYPELIB_PATH=/opt/homebrew/lib/girepository-1.0
+          export DYLD_LIBRARY_PATH=/opt/homebrew/lib:$DYLD_LIBRARY_PATH
+          echo "GI_TYPELIB_PATH=/opt/homebrew/lib/girepository-1.0" >> $GITHUB_ENV
+          echo "DYLD_LIBRARY_PATH=/opt/homebrew/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
+      - name: Verify PyGObject installation
+        run: |
+          # Set up environment for PyGObject
+          export PYTHONPATH="/opt/homebrew/lib/python3.12/site-packages:$PYTHONPATH"
+          export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH"
+          
+          # Test PyGObject import
+          python -c "import sys; sys.path.insert(0, '/opt/homebrew/lib/python3.12/site-packages'); import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk; print('GTK version:', Gtk.get_major_version())" || echo "PyGObject not available via system path"
+          
+          # Check system components
+          pkg-config --modversion gobject-introspection-1.0
+          ls -l /opt/homebrew/lib/girepository-1.0 || echo "GI typelib directory not found"
+          ls -l /opt/homebrew/share/glib-2.0/schemas || echo "GLib schemas not found"
+          echo "Checking for icon theme paths:"
+          ls -la /opt/homebrew/share/ | grep -i adwaita || echo "No adwaita directory found"
+          ls -la /opt/homebrew/share/icons/ | head -10 || echo "No icons directory found"
+          
+      - name: Clean build environment
+        run: |
+          # Remove any existing build artifacts
+          rm -rf build dist *.egg-info
+          # Clear Python cache
+          find . -name "*.pyc" -delete
+          find . -name "__pycache__" -type d -exec rm -rf {} + || true
+          
+      - name: Generate setup.py and build app bundle
+        run: |
+          # Generate setup.py dynamically
+          cat > setup.py << 'EOF'
+          from setuptools import setup
+          
+          APP = ['run.py']
+          OPTIONS = {
+              'argv_emulation': True,
+              'packages': ['paramiko', 'cryptography', 'secretstorage'],
+              'excludes': ['PIL', 'Pillow', 'PIL.*', 'matplotlib', 'numpy', 'matplotlib.*', 'numpy.*'],
+              # Note: gi (PyGObject) will be loaded from system Homebrew installation
+              'includes': [],
+              'resources': [
+                  '/opt/homebrew/share/glib-2.0/schemas',
+                  '/opt/homebrew/share/icons',
+                  '/opt/homebrew/lib/girepository-1.0'
+              ],
+              'plist': {
+                  'CFBundleDevelopmentRegion': 'English',
+                  'CFBundleIdentifier': 'io.github.mfat.sshpilot',
+                  'NSHumanReadableCopyright': 'Copyright 2025 sshpilot contributors'
+              }
+          }
+          
+          setup(
+              app=APP,
+              options={'py2app': OPTIONS},
+              setup_requires=['py2app']
+          )
+          EOF
+          
+          # Ensure system PyGObject is available
+          export PYTHONPATH="/opt/homebrew/lib/python3.12/site-packages:$PYTHONPATH"
+          
+          # Build with explicit cleanup and architecture flags
+          ARCHFLAGS="-arch x86_64 -arch arm64" python setup.py py2app --no-chdir
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: dist/*.app
