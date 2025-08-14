@@ -632,7 +632,7 @@ class TerminalWidget(Gtk.Box):
                 -1,    # Timeout (-1 = default)
                 None,  # Cancellable
                 self._on_spawn_complete,
-                None   # User data
+                ()     # User data - empty tuple for Flatpak VTE compatibility
             )
             
             # Store the PTY for later cleanup
@@ -661,7 +661,7 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Failed to setup SSH terminal: {e}")
             self._on_connection_failed(str(e))
     
-    def _on_spawn_complete(self, terminal, pid, error, user_data):
+    def _on_spawn_complete(self, terminal, pid, error, user_data=None):
         """Called when terminal spawn is complete"""
         if error:
             logger.error(f"Terminal spawn failed: {error}")

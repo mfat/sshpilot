@@ -32,7 +32,7 @@ modules:
       - '-Dvapi=false'
       - '-Dgir=true'
       - '-Ddocs=false'
-      - '-Dgnutls=false'
+      - '-Dgnutls=true'
       - '-Dgtk3=false'
       - '-Dgtk4=true'
     sources:
