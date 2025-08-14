@@ -1,0 +1,210 @@
+name: Build with Nuitka
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Check-out repository
+        uses: actions/checkout@v4
+        with:
+          ref: mac
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: 'x64'
+          cache: 'pip'
+
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install python gtk4 libadwaita vte3 adwaita-icon-theme gobject-introspection pygobject3 sshpass pkg-config glib graphene icu4c
+
+      - name: Install system dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-vte-3.91 sshpass
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Install essential dependencies only (no matplotlib to avoid conflicts)
+          pip install paramiko cryptography secretstorage keyring
+
+      - name: Patch secretstorage for macOS compatibility
+        if: runner.os == 'macOS'
+        run: |
+          if ! python -c "import secretstorage" >/dev/null 2>&1; then
+            if grep -q "^import secretstorage$" sshpilot/connection_manager.py 2>/dev/null; then
+              echo "Patching secretstorage import for macOS..."
+              python - <<'PY'
+          from pathlib import Path
+          p = Path('sshpilot/connection_manager.py')
+          s = p.read_text()
+          s = s.replace('import secretstorage', 'try:\n    import secretstorage\nexcept Exception:\n    secretstorage = None')
+          p.write_text(s)
+          print('Patched', p)
+          PY
+            fi
+          fi
+
+      - name: Build Executable
+        uses: Nuitka/Nuitka-Action@main
+        with:
+          nuitka-version: main
+          script-name: run.py
+          mode: standalone
+          enable-plugins: |
+            anti-bloat
+            no-qt
+          disable-plugins: |
+            matplotlib
+            numpy
+          include-data-dir: |
+            sshpilot/resources=sshpilot/resources
+            sshpilot/ui=sshpilot/ui
+          exclude-modules: |
+            matplotlib
+            numpy
+            PIL
+            Pillow
+            tkinter
+            test
+            unittest
+          onefile: ${{ runner.os == 'Windows' }}
+          output-dir: dist
+          output-filename: sshpilot${{ runner.os == 'Windows' && '.exe' || '' }}
+
+      - name: Set executable permissions (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          find dist -name "sshpilot*" -type f -exec chmod +x {} \;
+
+      - name: Create App Bundle (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          # Create proper macOS app bundle structure
+          mkdir -p "dist/sshPilot.app/Contents/MacOS"
+          mkdir -p "dist/sshPilot.app/Contents/Resources"
+          
+          # Move executable to app bundle
+          if [ -f "dist/sshpilot" ]; then
+            mv "dist/sshpilot" "dist/sshPilot.app/Contents/MacOS/sshPilot"
+          fi
+          
+          # Create Info.plist
+          cat > "dist/sshPilot.app/Contents/Info.plist" << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleDevelopmentRegion</key>
+              <string>English</string>
+              <key>CFBundleExecutable</key>
+              <string>sshPilot</string>
+              <key>CFBundleIdentifier</key>
+              <string>io.github.mfat.sshpilot</string>
+              <key>CFBundleInfoDictionaryVersion</key>
+              <string>6.0</string>
+              <key>CFBundleName</key>
+              <string>sshPilot</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>CFBundleVersion</key>
+              <string>1</string>
+              <key>NSPrincipalClass</key>
+              <string>NSApplication</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+              <key>LSMinimumSystemVersion</key>
+              <string>10.15.0</string>
+              <key>NSHumanReadableCopyright</key>
+              <string>Copyright 2025 sshpilot contributors</string>
+          </dict>
+          </plist>
+          EOF
+          
+          # Set executable permissions
+          chmod +x "dist/sshPilot.app/Contents/MacOS/sshPilot"
+
+      - name: Create distribution archive
+        run: |
+          cd dist
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            # Create DMG-style archive for macOS
+            tar -czf "sshpilot-${{ runner.os }}-$(date +%Y%m%d).tar.gz" sshPilot.app
+          elif [ "${{ runner.os }}" = "Windows" ]; then
+            # Create zip for Windows
+            7z a "sshpilot-${{ runner.os }}-$(date +%Y%m%d).zip" sshpilot.exe
+          else
+            # Create tar.gz for Linux
+            tar -czf "sshpilot-${{ runner.os }}-$(date +%Y%m%d).tar.gz" sshpilot
+          fi
+        shell: bash
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshpilot-${{ runner.os }}-build
+          path: |
+            dist/*.exe
+            dist/sshpilot
+            dist/*.app/**/*
+            dist/*.tar.gz
+            dist/*.zip
+          include-hidden-files: true
+          retention-days: 30
+
+  # Create a combined release with all platforms
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -la artifacts/
+
+      - name: Create Release Info
+        run: |
+          echo "# sshPilot Multi-Platform Build" > release-notes.md
+          echo "" >> release-notes.md
+          echo "Built from commit: ${{ github.sha }}" >> release-notes.md
+          echo "Build date: $(date)" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "## Platforms:" >> release-notes.md
+          echo "- **macOS**: sshPilot.app bundle" >> release-notes.md
+          echo "- **Windows**: sshpilot.exe executable" >> release-notes.md
+          echo "- **Linux**: sshpilot binary" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "## Installation Requirements:" >> release-notes.md
+          echo "- **macOS**: Install GTK4 via Homebrew: \`brew install gtk4 libadwaita pygobject3\`" >> release-notes.md
+          echo "- **Linux**: Install via package manager: \`apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1\`" >> release-notes.md
+          echo "- **Windows**: Portable executable (no additional requirements)" >> release-notes.md
+
+      - name: Upload Combined Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshpilot-multiplatform-release
+          path: |
+            artifacts/**/*
+            release-notes.md
+          retention-days: 90

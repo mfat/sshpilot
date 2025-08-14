@@ -2,10 +2,6 @@ name: Gemini Build macOS Application
 
 # Controls when the workflow will run
 on:
-  # Triggers the workflow on push events but only for the "mac" branch
-  push:
-    branches: [ "mac" ]
-  
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
@@ -18,6 +14,8 @@ jobs:
       # Step 1: Check out the repository code
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: mac
 
       # Step 2: Set up the Python environment
       - name: Set up Python
