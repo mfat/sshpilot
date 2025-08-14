@@ -9,7 +9,7 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        os: [macos-13, ubuntu-latest, windows-latest]  # macos-13 for Intel x86_64 compatibility
 
     runs-on: ${{ matrix.os }}
 

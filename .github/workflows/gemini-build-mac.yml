@@ -177,5 +177,5 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sshpilot-macos-app
-          path: dist/sshpilot-macos.zip# Force recognition Thu Aug 14 18:00:02 +0330 2025
+          name: macos-intel-app-pyinstaller
+          path: dist/sshpilot-macos.zip
