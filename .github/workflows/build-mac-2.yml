@@ -108,4 +108,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-app
-          path: dist/*.app# Force recognition Thu Aug 14 17:59:55 +0330 2025
+          path: dist/*.app
