@@ -4,24 +4,16 @@ This guide shows two ways to run sshPilot on macOS (Apple Silicon or Intel):
 
 ### Quick start (one command)
 
-Run the helper script to install dependencies, set up a venv, and launch the app. It is saved to `~/sshpilot`.
-
-Download and run directly:
+Run the helper script to install dependencies, set up a venv, and launch the app. You can choose a target directory (defaults to `~/sshpilot`).
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/mfat/sshpilot/mac/scripts/install-run-macos.sh)
-```
-
-Optionally choose a target directory:
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/mfat/sshpilot/mac/scripts/install-run-macos.sh) "$HOME/sshpilot"
+bash scripts/install-run-macos.sh "$HOME/sshpilot"
 ```
 
 Next time, launch with:
 
 ```bash
-bash "$HOME/sshpilot/scripts/run-macos.sh"
+bash scripts/run-macos.sh
 ```
 
 — or —
@@ -57,13 +49,11 @@ brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwa
 brew install hudochenkov/sshpass/sshpass
 ```
 
-### 3) Clone the repository (mac branch)
+### 3) Clone the repository
 
 ```bash
-git clone --branch mac --single-branch https://github.com/mfat/sshpilot.git
+git clone https://github.com/mfat/sshpilot.git
 cd sshpilot
-# If you already have a clone, switch to the mac branch:
-# git fetch origin && git checkout mac && git pull --rebase
 ```
 
 ### 4) Create a Python virtual environment (with system GI visible)
