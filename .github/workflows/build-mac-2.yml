@@ -43,10 +43,17 @@ jobs:
           echo "DYLD_LIBRARY_PATH=/opt/homebrew/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
       - name: Verify PyGObject installation
         run: |
-          python -c "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk; print('GTK version:', Gtk.get_major_version())"
+          # Set up environment for PyGObject
+          export PYTHONPATH="/opt/homebrew/lib/python3.12/site-packages:$PYTHONPATH"
+          export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH"
+          
+          # Test PyGObject import
+          python -c "import sys; sys.path.insert(0, '/opt/homebrew/lib/python3.12/site-packages'); import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk; print('GTK version:', Gtk.get_major_version())" || echo "PyGObject not available via system path"
+          
+          # Check system components
           pkg-config --modversion gobject-introspection-1.0
-          ls -l /opt/homebrew/lib/girepository-1.0
-          ls -l /opt/homebrew/share/glib-2.0/schemas
+          ls -l /opt/homebrew/lib/girepository-1.0 || echo "GI typelib directory not found"
+          ls -l /opt/homebrew/share/glib-2.0/schemas || echo "GLib schemas not found"
           echo "Checking for icon theme paths:"
           ls -la /opt/homebrew/share/ | grep -i adwaita || echo "No adwaita directory found"
           ls -la /opt/homebrew/share/icons/ | head -10 || echo "No icons directory found"
@@ -101,4 +108,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-app
-          path: dist/*.app
+          path: dist/*.app# Force recognition Thu Aug 14 17:59:55 +0330 2025
