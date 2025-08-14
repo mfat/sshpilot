@@ -29,7 +29,8 @@ jobs:
           # Install py2app first to avoid conflicts
           pip install py2app
           # Install other dependencies (excluding matplotlib to avoid numpy conflicts)
-          pip install paramiko cryptography secretstorage pygobject
+          # Note: pygobject will be provided by Homebrew (universal binary)
+          pip install paramiko cryptography secretstorage
           # Install specific setuptools version that works well with py2app
           pip install 'setuptools==69.5.1' wheel
       - name: Set up environment for PyGObject
@@ -57,8 +58,41 @@ jobs:
           find . -name "*.pyc" -delete
           find . -name "__pycache__" -type d -exec rm -rf {} + || true
           
-      - name: Build app bundle
+      - name: Generate setup.py and build app bundle
         run: |
+          # Generate setup.py dynamically
+          cat > setup.py << 'EOF'
+          from setuptools import setup
+          
+          APP = ['run.py']
+          OPTIONS = {
+              'argv_emulation': True,
+              'packages': ['paramiko', 'cryptography', 'secretstorage'],
+              'excludes': ['PIL', 'Pillow', 'PIL.*', 'matplotlib', 'numpy', 'matplotlib.*', 'numpy.*'],
+              # Note: gi (PyGObject) will be loaded from system Homebrew installation
+              'includes': [],
+              'resources': [
+                  '/opt/homebrew/share/glib-2.0/schemas',
+                  '/opt/homebrew/share/icons',
+                  '/opt/homebrew/lib/girepository-1.0'
+              ],
+              'plist': {
+                  'CFBundleDevelopmentRegion': 'English',
+                  'CFBundleIdentifier': 'io.github.mfat.sshpilot',
+                  'NSHumanReadableCopyright': 'Copyright 2025 sshpilot contributors'
+              }
+          }
+          
+          setup(
+              app=APP,
+              options={'py2app': OPTIONS},
+              setup_requires=['py2app']
+          )
+          EOF
+          
+          # Ensure system PyGObject is available
+          export PYTHONPATH="/opt/homebrew/lib/python3.12/site-packages:$PYTHONPATH"
+          
           # Build with explicit cleanup and architecture flags
           ARCHFLAGS="-arch x86_64 -arch arm64" python setup.py py2app --no-chdir
 
