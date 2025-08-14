@@ -1,4 +1,4 @@
-name: Build macOS Binary 2
+name: Build macOS Binary 2 - Updated
 
 on:
   workflow_dispatch:
