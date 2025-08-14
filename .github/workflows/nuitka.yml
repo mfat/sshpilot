@@ -1,6 +1,8 @@
 name: Build with Nuitka
 
 on:
+  push:
+    branches: [ "mac" ]
   workflow_dispatch:
 
 jobs:

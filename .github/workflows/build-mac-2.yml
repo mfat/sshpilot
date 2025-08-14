@@ -1,6 +1,8 @@
 name: Build macOS Binary 2 - Updated
 
 on:
+  push:
+    branches: [ "mac" ]
   workflow_dispatch:
 
 jobs:
