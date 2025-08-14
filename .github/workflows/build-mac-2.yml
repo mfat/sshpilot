@@ -28,8 +28,8 @@ jobs:
           python -m pip install --upgrade pip
           # Install py2app first to avoid conflicts
           pip install py2app
-          # Install other dependencies
-          pip install paramiko cryptography secretstorage matplotlib pygobject
+          # Install other dependencies (excluding matplotlib to avoid numpy conflicts)
+          pip install paramiko cryptography secretstorage pygobject
           # Install specific setuptools version that works well with py2app
           pip install 'setuptools==69.5.1' wheel
       - name: Set up environment for PyGObject
@@ -60,7 +60,7 @@ jobs:
       - name: Build app bundle
         run: |
           # Build with explicit cleanup and architecture flags
-          ARCHFLAGS="-arch x86_64 -arch arm64" python setup.py py2app --clean --no-chdir
+          ARCHFLAGS="-arch x86_64 -arch arm64" python setup.py py2app --no-chdir
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

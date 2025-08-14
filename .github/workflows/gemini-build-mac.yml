@@ -43,9 +43,11 @@ jobs:
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          # Install dependencies excluding matplotlib to avoid universal binary issues
-          pip install paramiko cryptography secretstorage pygobject
+          # Install only essential dependencies to avoid numpy/matplotlib universal binary issues
+          pip install paramiko cryptography secretstorage pygobject keyring
           pip install pyinstaller
+          # Verify numpy/matplotlib are not installed
+          pip list | grep -E "(numpy|matplotlib)" || echo "Good: numpy/matplotlib not installed"
 
       # Step 5.5: Patch secretstorage for macOS compatibility
       - name: Patch secretstorage for macOS
@@ -64,7 +66,7 @@ jobs:
             fi
           fi
 
-      # Step 6: Set up environment and build universal binary
+      # Step 6: Set up environment and build app bundle
       - name: Build macOS App Bundle
         run: |
           # Set up environment for PyInstaller
@@ -73,8 +75,12 @@ jobs:
           export DYLD_FALLBACK_LIBRARY_PATH="$BREW_PREFIX/opt/gtk4/lib:$BREW_PREFIX/opt/glib/lib:$BREW_PREFIX/opt/vte3/lib:$BREW_PREFIX/opt/icu4c/lib:$BREW_PREFIX/opt/graphene/lib:$BREW_PREFIX/lib"
           export XDG_DATA_DIRS="$BREW_PREFIX/share"
           
-          # Build universal binary
-          pyinstaller --clean sshPilot.spec
+          # Debug: Check what Python packages are available
+          echo "Installed Python packages:"
+          pip list
+          
+          # Build app bundle for native architecture (no universal binary)
+          pyinstaller --clean --debug all sshPilot.spec
 
       # Step 7: Package the.app bundle into a zip archive for easier download
       - name: Archive the application bundle
