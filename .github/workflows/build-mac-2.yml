@@ -1,4 +1,4 @@
-name: Build macOS Binary
+name: Build macOS Binary 2
 
 on: [push, pull_request]
 
@@ -40,6 +40,9 @@ jobs:
           pkg-config --modversion gobject-introspection-1.0
           ls -l /opt/homebrew/lib/girepository-1.0
           ls -l /opt/homebrew/share/glib-2.0/schemas
+          echo "Checking for icon theme paths:"
+          ls -la /opt/homebrew/share/ | grep -i adwaita || echo "No adwaita directory found"
+          ls -la /opt/homebrew/share/icons/ | head -10 || echo "No icons directory found"
       - name: Build app bundle
         run: ARCHFLAGS="-arch x86_64 -arch arm64" python setup.py py2app
 

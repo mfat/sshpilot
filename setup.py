@@ -12,8 +12,7 @@ OPTIONS = {
     'resources': [
         '/opt/homebrew/share/glib-2.0/schemas',
         '/opt/homebrew/share/icons',
-        '/opt/homebrew/lib/girepository-1.0',
-        '/opt/homebrew/share/adwaita-icon-theme'
+        '/opt/homebrew/lib/girepository-1.0'
     ],
     'plist': {
         'CFBundleDevelopmentRegion': 'English',
