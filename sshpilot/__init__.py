@@ -3,7 +3,7 @@
 # Licensed under GPL-3.0
 
 
-__version__ = "2.3.3"
+__version__ = "2.3.4"
 
 
 __author__ = "mFat"
