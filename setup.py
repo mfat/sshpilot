@@ -3,7 +3,7 @@ from setuptools import setup
 APP = ['run.py']
 OPTIONS = {
     'argv_emulation': True,
-    'packages': ['gi', 'paramiko', 'cryptography', 'secretstorage', 'matplotlib'],
+    'packages': ['gi', 'paramiko', 'cryptography', 'secretstorage', 'matplotlib', 'PIL'],
     'includes': [
         'gi.repository.Gtk', 'gi.repository.Adw', 'gi.repository.Vte',
         'gi.repository.GLib', 'gi.repository.GObject', 'gi.repository.Gdk',
