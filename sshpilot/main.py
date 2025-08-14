@@ -186,7 +186,6 @@ class SshPilotApplication(Adw.Application):
             verbose = False
         logging.getLogger('asyncio').setLevel(logging.DEBUG if verbose else logging.INFO)
         logging.getLogger('gi').setLevel(logging.INFO if verbose else logging.WARNING)
-        logging.getLogger('PIL').setLevel(logging.INFO if verbose else logging.WARNING)
         
         # App module logging: DEBUG if debug_enabled, else INFO
         app_level = logging.DEBUG if verbose else logging.INFO
