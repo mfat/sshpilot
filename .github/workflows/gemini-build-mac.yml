@@ -11,7 +11,7 @@ on:
 jobs:
   build-macos:
     # The type of runner that the job will run on
-    runs-on: macos-latest
+    runs-on: macos-13
 
     steps:
       # Step 1: Check out the repository code
