@@ -43,7 +43,8 @@ jobs:
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          # Install dependencies excluding matplotlib to avoid universal binary issues
+          pip install paramiko cryptography secretstorage pygobject
           pip install pyinstaller
 
       # Step 5.5: Patch secretstorage for macOS compatibility

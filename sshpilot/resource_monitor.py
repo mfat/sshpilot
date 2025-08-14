@@ -10,10 +10,18 @@ import threading
 from collections import deque
 from typing import Dict, List, Optional, Tuple, Any
 
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-from matplotlib.backends.backend_gtk4agg import FigureCanvasGTK4Agg as FigureCanvas
-from matplotlib.figure import Figure
+try:
+    import matplotlib.pyplot as plt
+    import matplotlib.animation as animation
+    from matplotlib.backends.backend_gtk4agg import FigureCanvasGTK4Agg as FigureCanvas
+    from matplotlib.figure import Figure
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    plt = None
+    animation = None
+    FigureCanvas = None
+    Figure = None
+    MATPLOTLIB_AVAILABLE = False
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -459,29 +467,42 @@ class ResourceView(Gtk.Box):
         # Create header
         self.create_header()
         
-        # Create matplotlib figure
-        self.figure = Figure(figsize=(12, 8), dpi=100)
-        self.figure.patch.set_facecolor('white')
+        # Create matplotlib figure if available
+        if MATPLOTLIB_AVAILABLE:
+            self.figure = Figure(figsize=(12, 8), dpi=100)
+            self.figure.patch.set_facecolor('white')
+            
+            # Create subplots
+            self.ax_cpu = self.figure.add_subplot(2, 2, 1)
+            self.ax_memory = self.figure.add_subplot(2, 2, 2)
+            self.ax_disk = self.figure.add_subplot(2, 2, 3)
+            self.ax_network = self.figure.add_subplot(2, 2, 4)
+        else:
+            self.figure = None
+            self.ax_cpu = None
+            self.ax_memory = None
+            self.ax_disk = None
+            self.ax_network = None
+            # Show a message that matplotlib is not available
+            label = Gtk.Label(label="Resource monitoring charts require matplotlib to be installed.")
+            self.append(label)
         
-        # Create subplots
-        self.ax_cpu = self.figure.add_subplot(2, 2, 1)
-        self.ax_memory = self.figure.add_subplot(2, 2, 2)
-        self.ax_disk = self.figure.add_subplot(2, 2, 3)
-        self.ax_network = self.figure.add_subplot(2, 2, 4)
-        
-        # Configure subplots
-        self.setup_plots()
-        
-        # Create canvas
-        self.canvas = FigureCanvas(self.figure)
-        self.canvas.set_size_request(800, 600)
-        
-        # Add canvas to scrolled window
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_child(self.canvas)
-        
-        self.append(scrolled)
+        if MATPLOTLIB_AVAILABLE:
+            # Configure subplots
+            self.setup_plots()
+            
+            # Create canvas
+            self.canvas = FigureCanvas(self.figure)
+            self.canvas.set_size_request(800, 600)
+            
+            # Add canvas to scrolled window
+            scrolled = Gtk.ScrolledWindow()
+            scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            scrolled.set_child(self.canvas)
+            
+            self.append(scrolled)
+        else:
+            self.canvas = None
         
         # Connect to resource monitor signals
         self.resource_monitor.connect('data-updated', self.on_data_updated)
@@ -522,6 +543,8 @@ class ResourceView(Gtk.Box):
 
     def setup_plots(self):
         """Set up matplotlib subplots"""
+        if not MATPLOTLIB_AVAILABLE:
+            return
         # CPU usage plot
         self.ax_cpu.set_title('CPU Usage (%)')
         self.ax_cpu.set_ylim(0, 100)
@@ -556,7 +579,7 @@ class ResourceView(Gtk.Box):
 
     def update_charts(self):
         """Update charts with latest data"""
-        if not self.resource_data or not self.resource_data.timestamps:
+        if not MATPLOTLIB_AVAILABLE or not self.resource_data or not self.resource_data.timestamps:
             return True
         
         try:

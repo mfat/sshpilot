@@ -39,7 +39,6 @@ a = Analysis(
         'paramiko',
         'cryptography',
         'secretstorage',
-        'matplotlib',
     ],
     hookspath=[],
     hooksconfig={},
@@ -63,7 +62,7 @@ exe = EXE(
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=True,  # Enable macOS argv emulation
-    target_arch='universal2',  # Build universal binary for both Intel and ARM
+    target_arch=None,  # Let PyInstaller use the native architecture
     codesign_identity=None,
     entitlements_file=None,
 )
