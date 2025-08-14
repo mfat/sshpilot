@@ -27,9 +27,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install paramiko cryptography secretstorage matplotlib py2app
-          # Explicitly install PyGObject to ensure it's available
-          pip install pygobject
+          pip install paramiko cryptography secretstorage matplotlib py2app pygobject
 
       - name: Set up environment for PyGObject
         run: |
@@ -39,8 +37,13 @@ jobs:
           echo "GI_TYPELIB_PATH=/opt/homebrew/lib/girepository-1.0" >> $GITHUB_ENV
           echo "DYLD_LIBRARY_PATH=/opt/homebrew/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
 
+      - name: Verify PyGObject installation
+        run: |
+          python -c "import gi; print(gi.__version__)"
+          pkg-config --modversion gobject-introspection-1.0
+
       - name: Build app bundle
-        run: python setup.py py2app --debug
+        run: python setup.py py2app
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
