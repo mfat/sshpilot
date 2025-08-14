@@ -632,7 +632,7 @@ class TerminalWidget(Gtk.Box):
                 -1,    # Timeout (-1 = default)
                 None,  # Cancellable
                 self._on_spawn_complete,
-                None   # User data
+                ()     # User data - empty tuple for Flatpak VTE compatibility
             )
             
             # Store the PTY for later cleanup
@@ -661,7 +661,7 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Failed to setup SSH terminal: {e}")
             self._on_connection_failed(str(e))
     
-    def _on_spawn_complete(self, terminal, pid, error, user_data):
+    def _on_spawn_complete(self, terminal, pid, error, user_data=None):
         """Called when terminal spawn is complete"""
         if error:
             logger.error(f"Terminal spawn failed: {error}")
@@ -1413,6 +1413,27 @@ class TerminalWidget(Gtk.Box):
     def on_child_exited(self, terminal, status):
         """Handle terminal child process exit"""
         logger.debug(f"Terminal child exited with status: {status}")
+
+        # Clean up process tracking immediately since the process has already exited
+        try:
+            pid = self._get_terminal_pid()
+            if pid:
+                with process_manager.lock:
+                    if pid in process_manager.processes:
+                        logger.debug(f"Removing exited process {pid} from tracking")
+                        del process_manager.processes[pid]
+            
+            # Also remove this terminal from the process manager's terminal tracking
+            with process_manager.lock:
+                if self in process_manager.terminals:
+                    logger.debug(f"Removing exited terminal {id(self)} from tracking")
+                    process_manager.terminals.remove(self)
+            
+            # Clear process PID to prevent further cleanup attempts
+            if hasattr(self, 'process_pid'):
+                self.process_pid = None
+        except Exception as e:
+            logger.debug(f"Error cleaning up exited process tracking: {e}")
 
         # Normalize exit status: GLib may pass waitpid-style status
         exit_code = None
