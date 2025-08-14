@@ -924,44 +924,43 @@ class ConnectionManager(GObject.Object):
                 logger.error(f"Failed to read SSH config: {e}")
                 raise
             
-            # Find and update the connection's Host block
+            # Find and update the connection's Host block (alias-aware and indentation-robust)
             updated_lines = []
-            in_target_host = False
-            # Handle rename: replace by old nickname when present, otherwise by new nickname
             old_name = str(getattr(connection, 'nickname', '') or '')
             new_name = str(new_data.get('nickname') or old_name)
             host_found = False
-            
+            replaced_once = False
+
+            # Only consider exact full-value matches or exact alias token matches; do not split the
+            # nickname into tokens for matching, to avoid cross-matching on common words (e.g. "host").
+            candidate_names = {old_name, new_name}
+
             i = 0
             while i < len(lines):
                 raw_line = lines[i]
-                line = raw_line.strip()
                 lstripped = raw_line.lstrip()
-                # Check if this is the start of our target host block (robust to leading spaces)
-                if lstripped.startswith('Host '):
-                    parts = lstripped.split()
-                    current_name = parts[1] if len(parts) > 1 else ''
-                else:
-                    current_name = ''
 
-                # Replace when encountering either the old or the new name to avoid duplicates on rename
-                if current_name and (current_name == old_name or current_name == new_name):
-                    host_found = True
-                    in_target_host = True
-                    # Write the updated host block
-                    updated_config = self.format_ssh_config_entry(new_data)
-                    updated_lines.append(updated_config + '\n')
-                    
-                    # Skip all lines until the next Host or end of file
-                    i += 1
-                    while i < len(lines) and not lines[i].lstrip().startswith('Host '):
+                if lstripped.startswith('Host '):
+                    full_value = lstripped[len('Host '):].strip()
+                    parts = lstripped.split()
+                    current_names = parts[1:] if len(parts) > 1 else []
+                else:
+                    full_value = ''
+                    current_names = []
+
+                if full_value or current_names:
+                    if (full_value in candidate_names) or any(name in candidate_names for name in current_names):
+                        host_found = True
+                        if not replaced_once:
+                            updated_config = self.format_ssh_config_entry(new_data)
+                            updated_lines.append(updated_config + '\n')
+                            replaced_once = True
                         i += 1
-                    in_target_host = False
-                    continue
-                
-                if not in_target_host:
-                    updated_lines.append(raw_line)
-                
+                        while i < len(lines) and not lines[i].lstrip().startswith('Host '):
+                            i += 1
+                        continue
+
+                updated_lines.append(raw_line)
                 i += 1
             
             # If host not found, append the new config (new or old name not present)
@@ -1005,17 +1004,21 @@ class ConnectionManager(GObject.Object):
             updated_lines = []
             i = 0
             removed = False
+            # Alias-aware and indentation-robust deletion
+            # Only match exact full value or exact alias token equal to the nickname
+            candidate_names = {host_nickname}
+
             while i < len(lines):
                 raw_line = lines[i]
-                line = raw_line.strip()
-                if line.startswith('Host '):
-                    parts = line.split()
-                    name = parts[1] if len(parts) > 1 else ''
-                    if name == host_nickname:
-                        # Skip this host block
+                lstripped = raw_line.lstrip()
+                if lstripped.startswith('Host '):
+                    full_value = lstripped[len('Host '):].strip()
+                    parts = lstripped.split()
+                    current_names = parts[1:] if len(parts) > 1 else []
+                    if (full_value in candidate_names) or any(name in candidate_names for name in current_names):
                         removed = True
                         i += 1
-                        while i < len(lines) and not lines[i].startswith('Host '):
+                        while i < len(lines) and not lines[i].lstrip().startswith('Host '):
                             i += 1
                         continue
                 # Keep line
