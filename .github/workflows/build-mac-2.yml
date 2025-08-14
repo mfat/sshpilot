@@ -26,7 +26,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install paramiko cryptography secretstorage matplotlib py2app pygobject 'setuptools<75'
+          pip install paramiko cryptography secretstorage matplotlib py2app pygobject setuptools wheel
       - name: Set up environment for PyGObject
         run: |
           # Set environment variables for GObject Introspection
@@ -44,9 +44,7 @@ jobs:
           ls -la /opt/homebrew/share/ | grep -i adwaita || echo "No adwaita directory found"
           ls -la /opt/homebrew/share/icons/ | head -10 || echo "No icons directory found"
       - name: Build app bundle
-        run: |
-          export SETUPTOOLS_USE_DISTUTILS=stdlib
-          ARCHFLAGS="-arch x86_64 -arch arm64" python setup.py py2app --no-chdir
+        run: ARCHFLAGS="-arch x86_64 -arch arm64" python setup.py py2app --no-chdir
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
