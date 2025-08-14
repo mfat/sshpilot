@@ -12,13 +12,8 @@ a = Analysis(
     ['run.py'],
     pathex=[],
     binaries=[
-        # Include GTK and GObject libraries
-        (f'{brew_prefix}/lib/libgtk-4.1.dylib', '.'),
-        (f'{brew_prefix}/lib/libglib-2.0.0.dylib', '.'),
-        (f'{brew_prefix}/lib/libgobject-2.0.0.dylib', '.'),
-        (f'{brew_prefix}/lib/libgio-2.0.0.dylib', '.'),
-        (f'{brew_prefix}/lib/libadwaita-1.0.dylib', '.'),
-        (f'{brew_prefix}/lib/libvte-2.91-gtk4.0.dylib', '.'),
+        # Note: Reduced binary inclusions to avoid architecture conflicts
+        # GTK libraries will be loaded dynamically from system
     ],
     datas=[
         # Include GTK schemas and icons
@@ -43,7 +38,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['PIL', 'Pillow'],
+    excludes=['PIL', 'Pillow', 'matplotlib', 'numpy', 'matplotlib.*', 'numpy.*'],
     noarchive=False,
     optimize=0,
 )
@@ -62,7 +57,7 @@ exe = EXE(
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=True,  # Enable macOS argv emulation
-    target_arch=None,  # Let PyInstaller use the native architecture
+    target_arch='arm64',  # Explicitly target ARM64 for GitHub Actions runner
     codesign_identity=None,
     entitlements_file=None,
 )
