@@ -8,10 +8,10 @@ OPTIONS = {
         'gi.repository.Gtk', 'gi.repository.Adw', 'gi.repository.Vte',
         'gi.repository.GLib', 'gi.repository.GObject', 'gi.repository.Gdk'
     ],
-    'data_files': [
-        ('share/glib-2.0/schemas', ['/opt/homebrew/share/glib-2.0/schemas']),
-        ('share/icons', ['/opt/homebrew/share/icons']),
-        ('lib', ['/opt/homebrew/lib/girepository-1.0'])
+    'resources': [
+        '/opt/homebrew/share/glib-2.0/schemas',
+        '/opt/homebrew/share/icons',
+        '/opt/homebrew/lib/girepository-1.0'
     ],
     'plist': {
         'CFBundleDevelopmentRegion': 'English',
