@@ -99,15 +99,9 @@ jobs:
           
           a = Analysis(
               ['run.py'],
-              pathex=[f'{brew_prefix}/lib/python3.12/site-packages'],  # Include Homebrew PyGObject path
+              pathex=[],  # Don't include PyGObject path - use system installation
               binaries=[
-                  # Include essential GTK4 libraries for PyGObject
-                  (f'{brew_prefix}/lib/libgirepository-1.0.dylib', '.'),
-                  (f'{brew_prefix}/lib/libgobject-2.0.dylib', '.'),
-                  (f'{brew_prefix}/lib/libglib-2.0.dylib', '.'),
-                  (f'{brew_prefix}/lib/libgio-2.0.dylib', '.'),
-                  (f'{brew_prefix}/lib/libgtk-4.dylib', '.'),
-                  (f'{brew_prefix}/lib/libadwaita-1.dylib', '.'),
+                  # Minimal binary inclusions - let system provide GTK libraries
               ],
               datas=[
                   # Include essential GTK data files
@@ -120,19 +114,14 @@ jobs:
                   'cryptography',
                   'secretstorage',
                   'keyring',
-                  'gi',
-                  'gi.repository',
-                  'gi.repository.Gtk',
-                  'gi.repository.Adw',
-                  'gi.repository.GLib',
-                  'gi.repository.Gio',
-                  'gi.repository.GObject',
-                  'gi.repository.Vte',
               ],
               hookspath=[],
               hooksconfig={},
               runtime_hooks=[],
-              excludes=['PIL', 'Pillow', 'matplotlib', 'numpy', 'matplotlib.*', 'numpy.*', '_cffi_backend'],
+              excludes=[
+                  'PIL', 'Pillow', 'matplotlib', 'numpy', 'matplotlib.*', 'numpy.*', '_cffi_backend',
+                  'gi', 'gi.*', 'PyGObject', 'pygobject', '_gi', '_gi_cairo'
+              ],
               noarchive=False,
               optimize=0,
           )
@@ -183,13 +172,38 @@ jobs:
           )
           EOF
           
-          # Set up environment for PyGObject
-          export PYTHONPATH="/opt/homebrew/lib/python3.12/site-packages:$PYTHONPATH"
-          export GI_TYPELIB_PATH="/opt/homebrew/lib/girepository-1.0"
-          export DYLD_LIBRARY_PATH="/opt/homebrew/lib:$DYLD_LIBRARY_PATH"
+          # Set up environment for PyGObject using dynamic Homebrew prefix
+          export PYTHONPATH="$BREW_PREFIX/lib/python3.12/site-packages:$PYTHONPATH"
+          export GI_TYPELIB_PATH="$BREW_PREFIX/lib/girepository-1.0"
+          export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_LIBRARY_PATH"
           
           # Build app bundle for native architecture (x86_64 on macos-13)
           pyinstaller --clean sshpilot-dynamic.spec
+          
+          # Create a launcher script that sets up PyGObject environment
+          cat > dist/sshpilot.app/Contents/MacOS/sshpilot_launcher << 'EOF'
+          #!/bin/bash
+          
+          # Get the directory where this script is located
+          SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          APP_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
+          
+          # Set up environment for PyGObject
+          export BREW_PREFIX="$(brew --prefix 2>/dev/null || echo "/usr/local")"
+          export PYTHONPATH="$BREW_PREFIX/lib/python3.12/site-packages:$PYTHONPATH"
+          export GI_TYPELIB_PATH="$BREW_PREFIX/lib/girepository-1.0"
+          export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_LIBRARY_PATH"
+          export XDG_DATA_DIRS="$BREW_PREFIX/share:$XDG_DATA_DIRS"
+          
+          # Run the actual application
+          exec "$SCRIPT_DIR/sshPilot" "$@"
+          EOF
+          
+          # Make launcher script executable
+          chmod +x dist/sshpilot.app/Contents/MacOS/sshpilot_launcher
+          
+          # Update Info.plist to use launcher script
+          /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable sshpilot_launcher" dist/sshpilot.app/Contents/Info.plist
 
       # Step 7: Package the.app bundle into a zip archive for easier download
       - name: Archive the application bundle
