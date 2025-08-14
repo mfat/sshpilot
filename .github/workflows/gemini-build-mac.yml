@@ -2,9 +2,9 @@ name: Gemini Build macOS Application
 
 # Controls when the workflow will run
 on:
-  # Triggers the workflow on push events but only for the "main" branch
+  # Triggers the workflow on push events but only for the "mac" branch
   push:
-    branches: [ "main" ]
+    branches: [ "mac" ]
   
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
@@ -30,7 +30,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/Library/Caches/Homebrew
-          key: ${{ runner.os }}-brew-${{ hashFiles('**/macos-build.yml') }}
+          key: ${{ runner.os }}-brew-${{ hashFiles('.github/workflows/gemini-build-mac.yml') }}
           restore-keys: |
             ${{ runner.os }}-brew-
 
@@ -48,7 +48,7 @@ jobs:
 
       # Step 6: Run the PyInstaller build using the custom spec file
       - name: Build macOS App Bundle
-        run: pyinstaller sshpilot.spec
+        run: pyinstaller sshPilot.spec
 
       # Step 7: Package the.app bundle into a zip archive for easier download
       - name: Archive the application bundle
