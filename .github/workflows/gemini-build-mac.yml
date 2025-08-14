@@ -123,6 +123,8 @@ jobs:
                   'cryptography',
                   'secretstorage',
                   'keyring',
+                  'cairo',
+                  '_cairo',
               ],
               hookspath=[],
               hooksconfig={},
