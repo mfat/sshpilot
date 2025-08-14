@@ -87,7 +87,7 @@ jobs:
           APP = ['run.py']
           OPTIONS = {
               'argv_emulation': True,
-              'packages': ['paramiko', 'cryptography', 'secretstorage'],
+              'packages': ['paramiko', 'cryptography', 'secretstorage', 'cairo'],
               'excludes': [
                   'PIL', 'Pillow', 'PIL.*', 
                   'matplotlib', 'numpy', 'matplotlib.*', 'numpy.*',
