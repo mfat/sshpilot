@@ -1,6 +1,7 @@
 name: Build macOS Binary 2
 
-on: [push, pull_request]
+on:
+  workflow_dispatch:
 
 jobs:
   build:
