@@ -78,9 +78,15 @@ jobs:
           OPTIONS = {
               'argv_emulation': True,
               'packages': ['paramiko', 'cryptography', 'secretstorage'],
-              'excludes': ['PIL', 'Pillow', 'PIL.*', 'matplotlib', 'numpy', 'matplotlib.*', 'numpy.*'],
+              'excludes': [
+                  'PIL', 'Pillow', 'PIL.*', 
+                  'matplotlib', 'numpy', 'matplotlib.*', 'numpy.*',
+                  'gi', 'gi.*', 'PyGObject', 'pygobject',
+                  '_gi', '_gi_cairo'
+              ],
               # Note: gi (PyGObject) will be loaded from system Homebrew installation
               'includes': [],
+              'site_packages': False,  # Don't include site-packages
               'resources': [
                   '/opt/homebrew/share/glib-2.0/schemas',
                   '/opt/homebrew/share/icons',
@@ -89,7 +95,12 @@ jobs:
               'plist': {
                   'CFBundleDevelopmentRegion': 'English',
                   'CFBundleIdentifier': 'io.github.mfat.sshpilot',
-                  'NSHumanReadableCopyright': 'Copyright 2025 sshpilot contributors'
+                  'NSHumanReadableCopyright': 'Copyright 2025 sshpilot contributors',
+                  'LSEnvironment': {
+                      'PYTHONPATH': '/opt/homebrew/lib/python3.12/site-packages',
+                      'GI_TYPELIB_PATH': '/opt/homebrew/lib/girepository-1.0',
+                      'DYLD_LIBRARY_PATH': '/opt/homebrew/lib'
+                  }
               }
           }
           
