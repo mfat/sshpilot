@@ -4,8 +4,7 @@ APP = ['run.py']
 OPTIONS = {
     'argv_emulation': True,
     'packages': ['gi', 'paramiko', 'cryptography', 'secretstorage', 'matplotlib'],
-    'excludes': ['PIL', 'Pillow'],
-    'recipe_plugins': [],  # Disable all recipe plugins to avoid PIL auto-inclusion
+    'excludes': ['PIL', 'Pillow', 'PIL.*'],
     'includes': [
         'gi.repository.Gtk', 'gi.repository.Adw', 'gi.repository.Vte',
         'gi.repository.GLib', 'gi.repository.GObject', 'gi.repository.Gdk',
