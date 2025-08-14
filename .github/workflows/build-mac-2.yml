@@ -26,7 +26,12 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install paramiko cryptography secretstorage matplotlib py2app pygobject setuptools wheel
+          # Install py2app first to avoid conflicts
+          pip install py2app
+          # Install other dependencies
+          pip install paramiko cryptography secretstorage matplotlib pygobject
+          # Install specific setuptools version that works well with py2app
+          pip install 'setuptools==69.5.1' wheel
       - name: Set up environment for PyGObject
         run: |
           # Set environment variables for GObject Introspection
@@ -43,8 +48,19 @@ jobs:
           echo "Checking for icon theme paths:"
           ls -la /opt/homebrew/share/ | grep -i adwaita || echo "No adwaita directory found"
           ls -la /opt/homebrew/share/icons/ | head -10 || echo "No icons directory found"
+          
+      - name: Clean build environment
+        run: |
+          # Remove any existing build artifacts
+          rm -rf build dist *.egg-info
+          # Clear Python cache
+          find . -name "*.pyc" -delete
+          find . -name "__pycache__" -type d -exec rm -rf {} + || true
+          
       - name: Build app bundle
-        run: ARCHFLAGS="-arch x86_64 -arch arm64" python setup.py py2app --no-chdir
+        run: |
+          # Build with explicit cleanup and architecture flags
+          ARCHFLAGS="-arch x86_64 -arch arm64" python setup.py py2app --clean --no-chdir
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
