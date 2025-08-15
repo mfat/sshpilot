@@ -4,11 +4,15 @@
 
 **sshPilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS. It's a free alternative to Putty and Termius.
 
-<p align="center">
-<img width="1260" height="833" alt="Main window" src="https://github.com/user-attachments/assets/743bb1fb-22de-4537-ba91-775cea48d57a" />
+<img width="1212" height="778" alt="Screenshot From 2025-08-15 01-21-40" src="https://github.com/user-attachments/assets/9cf2a0bb-9ca8-46cc-ae33-17111ac157fe" />
 
-<img width="722" height="822" alt="Connection settings" src="https://github.com/user-attachments/assets/55fad9a6-9d4d-4c15-bfac-8c19c6df15c5" />
-</p>
+<img width="1212" height="778" alt="Screenshot From 2025-08-15 01-22-02" src="https://github.com/user-attachments/assets/6b79a06a-d900-49eb-969f-a8f7a4c31b02" />
+
+<img width="762" height="995" alt="Screenshot From 2025-08-15 01-18-57" src="https://github.com/user-attachments/assets/aec20f9a-1fb5-44bb-a13a-bb5a36445431" />
+
+<img width="722" height="622" alt="Screenshot From 2025-08-15 01-17-38" src="https://github.com/user-attachments/assets/b72fe4df-f5ac-48e2-9ba0-af728901e1c8" />
+
+<img width="1193" height="804" alt="Screenshot From 2025-08-15 01-16-09" src="https://github.com/user-attachments/assets/624e46b1-53bb-493d-aee9-cc76716f6753" />
 
 
 ## Features
