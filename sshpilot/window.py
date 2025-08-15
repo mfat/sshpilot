@@ -3335,12 +3335,16 @@ class MainWindow(Adw.ApplicationWindow):
                 except Exception:
                     pass
 
-                if not changed:
+                # Force update if forwarding rules are present (even if other changes not detected)
+                has_forwarding_rules = bool(connection_data.get('forwarding_rules'))
+                if not changed and not has_forwarding_rules:
                     logger.info("No changes detected for '%s'; skipping update and reconnect prompt", existing['nickname'])
                     # Ensure the UI stays in sync just in case
                     if old_connection in self.connection_rows:
                         self.connection_rows[old_connection].update_display()
                     return
+                elif not changed and has_forwarding_rules:
+                    logger.info("No changes detected for '%s' but forwarding rules present; forcing update", existing['nickname'])
 
                 # Update connection in manager first
                 if not self.connection_manager.update_connection(old_connection, connection_data):
