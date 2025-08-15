@@ -43,16 +43,15 @@ class SSHProcessManager:
     
     def _start_cleanup_thread(self):
         """Start background cleanup thread"""
-        if self.cleanup_thread is None or not self.cleanup_thread.is_alive():
-            self.cleanup_thread = threading.Thread(target=self._cleanup_loop, daemon=True)
-            self.cleanup_thread.start()
-            logger.debug("Started SSH cleanup thread")
+        # Disable automatic cleanup thread to prevent race conditions
+        # Manual cleanup will happen on app shutdown via cleanup_all()
+        logger.debug("Automatic SSH cleanup thread disabled to prevent race conditions")
     
     def _cleanup_loop(self):
         """Background cleanup loop"""
         while True:
             try:
-                time.sleep(30)
+                time.sleep(60)  # Increased from 30s to 60s to reduce interference
                 self._cleanup_orphaned_processes()
             except Exception as e:
                 logger.error(f"Error in cleanup loop: {e}")
@@ -63,15 +62,51 @@ class SSHProcessManager:
             active_pids = set()
             for terminal in list(self.terminals):
                 try:
-                    pid = terminal._get_terminal_pid()
+                    # Use stored PID instead of calling _get_terminal_pid() which can hang
+                    pid = getattr(terminal, 'process_pid', None)
                     if pid:
                         active_pids.add(pid)
+                        logger.debug(f"Terminal {id(terminal)} has active PID {pid}")
                 except Exception as e:
-                    logger.error(f"Error getting PID from terminal: {e}")
+                    logger.debug(f"Error getting stored PID from terminal: {e}")
+            
+            # Only clean up processes that are definitely orphaned AND old enough
+            import time
+            current_time = time.time()
+            orphaned_pids = []
             
             for pid in list(self.processes.keys()):
                 if pid not in active_pids:
-                    self._terminate_process_by_pid(pid)
+                    # Check if process is old enough to be considered orphaned (10+ minutes)
+                    process_info = self.processes.get(pid, {})
+                    start_time = process_info.get('start_time')
+                    if start_time and hasattr(start_time, 'timestamp'):
+                        process_age = current_time - start_time.timestamp()
+                        if process_age < 600:  # Less than 10 minutes old - be very conservative
+                            logger.debug(f"Process {pid} is only {process_age:.1f}s old, skipping cleanup")
+                            continue
+                    else:
+                        # If we don't have start time info, assume it's recent and skip cleanup
+                        logger.debug(f"Process {pid} has no start_time info, skipping cleanup")
+                        continue
+                    
+                    # Double-check: make sure the process actually exists before trying to kill it
+                    try:
+                        os.kill(pid, 0)  # Test if process exists
+                        orphaned_pids.append(pid)
+                        logger.debug(f"Found orphaned process {pid} (age: {process_age:.1f}s)")
+                    except ProcessLookupError:
+                        # Process already gone, just remove from tracking
+                        logger.debug(f"Process {pid} already gone, removing from tracking")
+                        if pid in self.processes:
+                            del self.processes[pid]
+                    except Exception as e:
+                        logger.debug(f"Error checking process {pid}: {e}")
+            
+            # Clean up confirmed orphaned processes
+            for pid in orphaned_pids:
+                logger.info(f"Cleaning up orphaned process {pid}")
+                self._terminate_process_by_pid(pid)
     
     def _terminate_process_by_pid(self, pid):
         """Terminate a process by PID"""
@@ -315,9 +350,9 @@ class TerminalWidget(Gtk.Box):
         self.vte.set_hexpand(True)
         self.vte.set_vexpand(True)
         
-        # Connect terminal signals
-        self.vte.connect('child-exited', self.on_child_exited)
-        self.vte.connect('window-title-changed', self.on_title_changed)
+        # Connect terminal signals and store handler IDs for cleanup
+        self._child_exited_handler = self.vte.connect('child-exited', self.on_child_exited)
+        self._title_changed_handler = self.vte.connect('window-title-changed', self.on_title_changed)
         
         # Apply theme
         self.force_style_refresh()
@@ -661,7 +696,7 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Failed to setup SSH terminal: {e}")
             self._on_connection_failed(str(e))
     
-    def _on_spawn_complete(self, terminal, pid, error, user_data=None):
+    def _on_spawn_complete(self, terminal, pid, error, user_data):
         """Called when terminal spawn is complete"""
         if error:
             logger.error(f"Terminal spawn failed: {error}")
@@ -1201,6 +1236,18 @@ class TerminalWidget(Gtk.Box):
         """Handle widget destruction"""
         logger.debug(f"Terminal widget {self.session_id} being destroyed")
         
+        # Disconnect VTE signal handlers first to prevent callbacks on destroyed objects
+        if hasattr(self, 'vte') and self.vte:
+            try:
+                if hasattr(self, '_child_exited_handler'):
+                    self.vte.disconnect(self._child_exited_handler)
+                    logger.debug("Disconnected child-exited signal handler")
+                if hasattr(self, '_title_changed_handler'):
+                    self.vte.disconnect(self._title_changed_handler)
+                    logger.debug("Disconnected title-changed signal handler")
+            except Exception as e:
+                logger.error(f"Error disconnecting VTE signals: {e}")
+        
         # Disconnect from connection manager signals
         if hasattr(self, '_connection_updated_handler') and hasattr(self.connection_manager, 'disconnect'):
             try:
@@ -1316,8 +1363,12 @@ class TerminalWidget(Gtk.Box):
                 GLib.idle_add(self.connection_manager.emit, 'connection-status-changed', self.connection, False)
         
         try:
-            # Try to get the terminal's child PID
-            pid = self._get_terminal_pid()
+            # Try to get the terminal's child PID (with timeout protection)
+            pid = None
+            try:
+                pid = self._get_terminal_pid()
+            except Exception as e:
+                logger.debug(f"Error getting terminal PID during disconnect: {e}")
             
             # Collect all PIDs that need to be cleaned up
             pids_to_clean = set()
@@ -1330,18 +1381,24 @@ class TerminalWidget(Gtk.Box):
             if hasattr(self, 'process_pgid') and self.process_pgid:
                 pids_to_clean.add(self.process_pgid)
             
-            # Add any PIDs from the process manager
-            with process_manager.lock:
-                for proc_pid, proc_info in list(process_manager.processes.items()):
-                    if proc_info.get('terminal')() is self:
-                        pids_to_clean.add(proc_pid)
-                        if 'pgid' in proc_info:
-                            pids_to_clean.add(proc_info['pgid'])
+            # Add any PIDs from the process manager (with lock timeout)
+            try:
+                with process_manager.lock:
+                    for proc_pid, proc_info in list(process_manager.processes.items()):
+                        if proc_info.get('terminal')() is self:
+                            pids_to_clean.add(proc_pid)
+                            if 'pgid' in proc_info:
+                                pids_to_clean.add(proc_info['pgid'])
+            except Exception as e:
+                logger.debug(f"Error accessing process manager during disconnect: {e}")
             
-            # Clean up all collected PIDs
+            # Clean up all collected PIDs (with error handling for each)
             for cleanup_pid in pids_to_clean:
                 if cleanup_pid:
-                    self._cleanup_process(cleanup_pid)
+                    try:
+                        self._cleanup_process(cleanup_pid)
+                    except Exception as e:
+                        logger.debug(f"Error cleaning up PID {cleanup_pid}: {e}")
             
             # Clean up PTY if it exists
             if hasattr(self, 'pty') and self.pty:
@@ -1413,27 +1470,46 @@ class TerminalWidget(Gtk.Box):
     def on_child_exited(self, terminal, status):
         """Handle terminal child process exit"""
         logger.debug(f"Terminal child exited with status: {status}")
-
+        
+        # Defer the heavy work to avoid blocking the signal handler
+        # This prevents potential deadlocks with the UI thread
+        def _handle_exit_cleanup():
+            try:
+                self._handle_child_exit_cleanup(status)
+            except Exception as e:
+                logger.error(f"Error in exit cleanup: {e}")
+            return False  # Don't repeat
+        
+        # Schedule cleanup on the main thread
+        GLib.idle_add(_handle_exit_cleanup)
+    
+    def _handle_child_exit_cleanup(self, status):
+        """Handle the actual cleanup work for child process exit (called from main thread)"""
+        logger.debug(f"Starting exit cleanup for status {status}")
+        
         # Clean up process tracking immediately since the process has already exited
         try:
-            pid = self._get_terminal_pid()
-            if pid:
-                with process_manager.lock:
-                    if pid in process_manager.processes:
-                        logger.debug(f"Removing exited process {pid} from tracking")
-                        del process_manager.processes[pid]
+            # Skip getting PID since process is already dead - just clear our tracking
+            logger.debug("Clearing process tracking for dead process")
             
-            # Also remove this terminal from the process manager's terminal tracking
+            # Clear our stored PID first to prevent any attempts to interact with dead process
+            old_pid = getattr(self, 'process_pid', None)
+            self.process_pid = None
+            
+            # Clean up process manager tracking
             with process_manager.lock:
+                if old_pid and old_pid in process_manager.processes:
+                    logger.debug(f"Removing dead process {old_pid} from tracking")
+                    del process_manager.processes[old_pid]
+                
+                # Remove this terminal from tracking
                 if self in process_manager.terminals:
-                    logger.debug(f"Removing exited terminal {id(self)} from tracking")
+                    logger.debug(f"Removing terminal {id(self)} from tracking")
                     process_manager.terminals.remove(self)
             
-            # Clear process PID to prevent further cleanup attempts
-            if hasattr(self, 'process_pid'):
-                self.process_pid = None
+            logger.debug("Process tracking cleanup completed")
         except Exception as e:
-            logger.debug(f"Error cleaning up exited process tracking: {e}")
+            logger.error(f"Error cleaning up exited process tracking: {e}")
 
         # Normalize exit status: GLib may pass waitpid-style status
         exit_code = None
@@ -1469,14 +1545,37 @@ class TerminalWidget(Gtk.Box):
             pass
 
         # Non-zero or unknown exit: treat as connection lost and show banner
+        logger.debug("Updating connection status after process exit")
         if self.connection:
             self.connection.is_connected = False
 
-        self.disconnect()
-        self.emit('connection-lost')
-        # Show reconnect UI
-        self._set_connecting_overlay_visible(False)
-        self._set_disconnected_banner_visible(True, _('Session ended.'))
+        # Don't call disconnect() here since the process has already exited
+        # Just update the connection status and emit signals
+        self.is_connected = False
+        
+        # Update connection manager status
+        logger.debug("Scheduling connection manager status update")
+        if hasattr(self, 'connection_manager') and self.connection_manager and self.connection:
+            GLib.idle_add(self.connection_manager.emit, 'connection-status-changed', self.connection, False)
+        
+        # Defer all signal emissions and UI updates to prevent deadlocks
+        def _finalize_exit_cleanup():
+            try:
+                logger.debug("Emitting connection-lost signal")
+                self.emit('connection-lost')
+                
+                # Show reconnect UI
+                logger.debug("Updating UI elements")
+                self._set_connecting_overlay_visible(False)
+                self._set_disconnected_banner_visible(True, _('Session ended.'))
+                
+                logger.debug("Exit cleanup completed successfully")
+            except Exception as e:
+                logger.error(f"Error in final exit cleanup: {e}")
+            return False
+        
+        # Schedule final cleanup on next idle cycle
+        GLib.idle_add(_finalize_exit_cleanup)
 
     def on_title_changed(self, terminal):
         """Handle terminal title change"""

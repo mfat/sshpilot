@@ -3537,16 +3537,24 @@ class MainWindow(Adw.ApplicationWindow):
         self._show_reconnecting_message(connection)
         
         try:
-            # Disconnect first
+            # Disconnect first (defer to avoid blocking)
             logger.debug("Disconnecting terminal before reconnection")
-            terminal.disconnect()
+            def _safe_disconnect():
+                try:
+                    terminal.disconnect()
+                    logger.debug("Terminal disconnected, scheduling reconnect")
+                    # Store the connection temporarily in active_terminals if not present
+                    if connection not in self.active_terminals:
+                        self.active_terminals[connection] = terminal
+                    # Reconnect after disconnect completes
+                    GLib.timeout_add(1000, self._reconnect_terminal, connection)  # Increased delay
+                except Exception as e:
+                    logger.error(f"Error during disconnect: {e}")
+                    GLib.idle_add(self._show_reconnect_error, connection, str(e))
+                return False
             
-            # Store the connection temporarily in active_terminals if not present
-            if connection not in self.active_terminals:
-                self.active_terminals[connection] = terminal
-            
-            # Reconnect after a short delay to allow disconnection to complete
-            GLib.timeout_add(500, self._reconnect_terminal, connection)
+            # Defer disconnect to avoid blocking the UI thread
+            GLib.idle_add(_safe_disconnect)
             
         except Exception as e:
             logger.error(f"Error during reconnection: {e}")
