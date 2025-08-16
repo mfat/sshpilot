@@ -195,31 +195,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: artifacts/*.rpm
-          name: Release ${{ github.ref_name }}
-          body: |
-            RPM package for sshpilot ${{ steps.version.outputs.version }}
-            
-            **Installation:**
-            
-            **Fedora/RHEL/CentOS:**
-            ```bash
-            # Download the .rpm file and install with:
-            sudo dnf install ./sshpilot-${{ steps.version.outputs.version }}-1.*.noarch.rpm
-            
-            # Or with yum:
-            sudo yum install ./sshpilot-${{ steps.version.outputs.version }}-1.*.noarch.rpm
-            ```
-            
-            **openSUSE:**
-            ```bash
-            sudo zypper install ./sshpilot-${{ steps.version.outputs.version }}-1.*.noarch.rpm
-            ```
-            
-            **Features:**
-            - SSH connection manager with integrated terminal
-            - GTK4/Adwaita interface  
-            - VTE terminal integration
-            - Connection tunneling and key management
-            - Tabbed interface for multiple connections
+          generate_release_notes: false
+          body: ""
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -549,9 +549,23 @@ class TerminalWidget(Gtk.Box):
                 except Exception:
                     password_value = None
 
-                if password_value and shutil.which('sshpass'):
+                # Check for sshpass in multiple locations for Flatpak compatibility
+                sshpass_path = None
+                if shutil.which('sshpass'):
+                    sshpass_path = 'sshpass'
+                elif os.path.exists('/app/bin/sshpass'):
+                    sshpass_path = '/app/bin/sshpass'
+                # If we're in Flatpak and sshpass exists at /app/bin/sshpass, use the full path
+                elif os.environ.get('SSHPILOT_FLATPAK') and os.path.exists('/app/bin/sshpass'):
+                    sshpass_path = '/app/bin/sshpass'
+                
+                # In Flatpak environment, always use the full path to sshpass if it exists
+                if os.environ.get('SSHPILOT_FLATPAK') and os.path.exists('/app/bin/sshpass'):
+                    sshpass_path = '/app/bin/sshpass'
+                
+                if password_value and sshpass_path:
                     # Prepend sshpass and move current ssh_cmd after it
-                    ssh_cmd = ['sshpass', '-p', str(password_value), 'ssh'] + ssh_cmd[1:]
+                    ssh_cmd = [sshpass_path, '-p', str(password_value), 'ssh'] + ssh_cmd[1:]
                     # Do not log plaintext password
                     try:
                         masked = [part if part != str(password_value) else '******' for part in ssh_cmd]
@@ -643,7 +657,7 @@ class TerminalWidget(Gtk.Box):
             
             # Avoid logging password when sshpass is used
             try:
-                if ssh_cmd[:2] == ['sshpass', '-p'] and len(ssh_cmd) > 2:
+                if len(ssh_cmd) > 2 and ssh_cmd[1] == '-p' and (ssh_cmd[0] == 'sshpass' or ssh_cmd[0] == '/app/bin/sshpass'):
                     masked_cmd = ssh_cmd.copy()
                     masked_cmd[2] = '******'
                     logger.debug(f"SSH command: {' '.join(masked_cmd)}")
@@ -656,11 +670,29 @@ class TerminalWidget(Gtk.Box):
             pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
             
             # Start the SSH process using VTE's spawn_async with our PTY
+            logger.debug(f"Flatpak debug: About to spawn SSH with command: {ssh_cmd}")
+            
+            # Ensure proper environment for Flatpak
+            env = os.environ.copy()
+            env['TERM'] = env.get('TERM', 'xterm-256color')
+            env['SHELL'] = env.get('SHELL', '/bin/bash')
+            env['SSHPILOT_FLATPAK'] = '1'
+            # Add /app/bin to PATH for Flatpak compatibility
+            if os.path.exists('/app/bin'):
+                current_path = env.get('PATH', '')
+                if '/app/bin' not in current_path:
+                    env['PATH'] = f"/app/bin:{current_path}"
+            
+            # Convert environment dict to list format expected by VTE
+            env_list = []
+            for key, value in env.items():
+                env_list.append(f"{key}={value}")
+            
             self.vte.spawn_async(
                 Vte.PtyFlags.DEFAULT,
                 os.path.expanduser('~') or '/',
                 ssh_cmd,
-                None,  # Environment (use default)
+                env_list,  # Use environment list for Flatpak
                 GLib.SpawnFlags.DEFAULT,
                 None,  # Child setup function
                 None,  # Child setup data
@@ -690,14 +722,19 @@ class TerminalWidget(Gtk.Box):
             # Focus the terminal
             self.vte.grab_focus()
             
+            # Add fallback timer to hide spinner if spawn completion doesn't fire
+            GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
+            
             logger.info(f"SSH terminal connected to {self.connection}")
             
         except Exception as e:
             logger.error(f"Failed to setup SSH terminal: {e}")
             self._on_connection_failed(str(e))
     
-    def _on_spawn_complete(self, terminal, pid, error, user_data):
+    def _on_spawn_complete(self, terminal, pid, error, user_data=None):
         """Called when terminal spawn is complete"""
+        logger.debug(f"Flatpak debug: _on_spawn_complete called with pid={pid}, error={error}, user_data={user_data}")
+        
         if error:
             logger.error(f"Terminal spawn failed: {error}")
             # Ensure theme is applied before showing error so bg doesn't flash white
@@ -742,6 +779,20 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.error(f"Error in spawn complete: {e}")
             self._on_connection_failed(str(e))
+    
+    def _fallback_hide_spinner(self):
+        """Fallback method to hide spinner if spawn completion doesn't fire"""
+        logger.debug("Flatpak debug: Fallback hide spinner called")
+        if not self.is_connected:
+            logger.warning("Flatpak: Spawn completion callback didn't fire, forcing connection state")
+            self.is_connected = True
+            self.emit('connection-established')
+            self._set_connecting_overlay_visible(False)
+            try:
+                self._set_disconnected_banner_visible(False)
+            except Exception:
+                pass
+        return False  # Don't repeat the timer
     
     def _on_connection_failed(self, error_message):
         """Handle connection failure (called from main thread)"""

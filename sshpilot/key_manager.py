@@ -457,8 +457,15 @@ class KeyManager(GObject.Object):
                 # Split out target so -o options are placed before it
                 target = cmd[-1] if cmd else ''
                 before_target = cmd[:-1]
+                # Check for sshpass in multiple locations for Flatpak compatibility
+                sshpass_path = None
                 if shutil.which('sshpass'):
-                    composed = ['sshpass', '-p', password] + before_target + ['-o', 'BatchMode=no', '-o', 'NumberOfPasswordPrompts=1', target]
+                    sshpass_path = 'sshpass'
+                elif os.path.exists('/app/bin/sshpass'):
+                    sshpass_path = '/app/bin/sshpass'
+                
+                if sshpass_path:
+                    composed = [sshpass_path, '-p', password] + before_target + ['-o', 'BatchMode=no', '-o', 'NumberOfPasswordPrompts=1', target]
                     result = subprocess.run(composed, stdin=subprocess.DEVNULL, env=env, **run_kwargs)
                     out = (result.stdout or '') + (result.stderr or '')
                     return (result.returncode == 0, out)
