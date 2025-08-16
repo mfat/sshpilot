@@ -327,6 +327,8 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 if keyfile_path and keyfile_path.lower() not in ['select key file or leave empty for auto-detection', '']:
                     logger.debug(f"Setting keyfile path in UI: {keyfile_path}")
                     self.keyfile_row.set_subtitle(keyfile_path)
+                    # Sync the dropdown to match the loaded keyfile
+                    self._sync_key_dropdown_with_current_keyfile()
                 else:
                     logger.debug(f"Skipping invalid keyfile path: {keyfile_path}")
             
@@ -889,6 +891,31 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 pass
         except Exception as e:
             logger.debug(f"Could not populate detected keys: {e}")
+                
+    def _sync_key_dropdown_with_current_keyfile(self):
+        """Sync the key dropdown selection with the current keyfile path"""
+        try:
+            if not hasattr(self, 'key_dropdown') or not hasattr(self, '_key_paths'):
+                return
+                
+            # Get current keyfile path
+            current_path = None
+            if hasattr(self, '_selected_keyfile_path') and self._selected_keyfile_path:
+                current_path = self._selected_keyfile_path
+            elif hasattr(self.keyfile_row, 'get_subtitle'):
+                current_path = self.keyfile_row.get_subtitle() or None
+            if (not current_path) and hasattr(self, 'connection') and self.connection:
+                current_path = getattr(self.connection, 'keyfile', None)
+                
+            # Find matching index in dropdown
+            if current_path and current_path in self._key_paths:
+                preselect_idx = self._key_paths.index(current_path)
+                logger.debug(f"Syncing dropdown to keyfile: {current_path} (index {preselect_idx})")
+                self.key_dropdown.set_selected(preselect_idx)
+            else:
+                logger.debug(f"Could not find keyfile '{current_path}' in dropdown paths")
+        except Exception as e:
+            logger.debug(f"Failed to sync key dropdown: {e}")
 
     def _run_initial_validation(self):
         try:
@@ -1881,16 +1908,14 @@ class ConnectionDialog(Adw.PreferencesDialog):
         if not hasattr(self, 'forwarding_rules') or self.forwarding_rules is None:
             self.forwarding_rules = []
         
-        # Persist exactly what is in the editor list (enabled rules only) and sanitize
-        forwarding_rules = self._sanitize_forwarding_rules(
-            [dict(r) for r in self.forwarding_rules if r.get('enabled', True)]
-        )
+        # Persist exactly what is in the editor list (enabled rules only) - no sanitization
+        forwarding_rules = [dict(r) for r in self.forwarding_rules if r.get('enabled', True)]
         try:
             logger.info(
-                "ConnectionDialog save: %d forwarding rules before sanitize, %d after sanitize",
-                len(self.forwarding_rules or []), len(forwarding_rules or [])
+                "ConnectionDialog save: %d forwarding rules collected, keyfile: '%s'",
+                len(forwarding_rules or []), keyfile_value
             )
-            logger.debug("Forwarding rules (sanitized): %s", forwarding_rules)
+            logger.debug("Forwarding rules: %s", forwarding_rules)
         except Exception:
             pass
         
