@@ -3335,12 +3335,8 @@ class MainWindow(Adw.ApplicationWindow):
                 except Exception:
                     pass
 
-                if not changed:
-                    logger.info("No changes detected for '%s'; skipping update and reconnect prompt", existing['nickname'])
-                    # Ensure the UI stays in sync just in case
-                    if old_connection in self.connection_rows:
-                        self.connection_rows[old_connection].update_display()
-                    return
+                # Always force update when editing connections - skip change detection entirely for forwarding rules
+                logger.info("Editing connection '%s' - forcing update to ensure forwarding rules are synced", existing['nickname'])
 
                 # Update connection in manager first
                 if not self.connection_manager.update_connection(old_connection, connection_data):
