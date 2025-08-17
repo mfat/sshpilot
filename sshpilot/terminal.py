@@ -525,6 +525,19 @@ class TerminalWidget(Gtk.Box):
                 if hasattr(self.connection, 'keyfile') and self.connection.keyfile and \
                    os.path.isfile(self.connection.keyfile) and \
                    not self.connection.keyfile.startswith('Select key file'):
+                    
+                    # Prepare key for connection (add to ssh-agent if needed)
+                    if hasattr(self, 'connection_manager') and self.connection_manager:
+                        try:
+                            if hasattr(self.connection_manager, 'prepare_key_for_connection'):
+                                key_prepared = self.connection_manager.prepare_key_for_connection(self.connection.keyfile)
+                                if key_prepared:
+                                    logger.debug(f"Key prepared for connection: {self.connection.keyfile}")
+                                else:
+                                    logger.warning(f"Failed to prepare key for connection: {self.connection.keyfile}")
+                        except Exception as e:
+                            logger.warning(f"Error preparing key for connection: {e}")
+                    
                     ssh_cmd.extend(['-i', self.connection.keyfile])
                     logger.debug(f"Using SSH key: {self.connection.keyfile}")
                     # Enforce using only the specified key when key_select_mode == 1

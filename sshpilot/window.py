@@ -1365,7 +1365,7 @@ class MainWindow(Adw.ApplicationWindow):
         logger.info(f"Show connection dialog for: {connection}")
         
         # Create connection dialog
-        dialog = ConnectionDialog(self, connection)
+        dialog = ConnectionDialog(self, connection, self.connection_manager)
         dialog.connect('connection-saved', self.on_connection_saved)
         dialog.present()
 
