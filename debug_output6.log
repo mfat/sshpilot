@@ -1,0 +1,1907 @@
+2025-08-18 01:57:17 - sshpilot.config - INFO - Using GSettings for configuration
+2025-08-18 01:57:17 - sshpilot.config - INFO - Using GSettings for configuration
+2025-08-18 01:57:17 - root - INFO - sshPilot application initialized
+2025-08-18 01:57:17 - asyncio - DEBUG - Using selector: EpollSelector
+2025-08-18 01:57:17 - sshpilot.config - INFO - Using GSettings for configuration
+2025-08-18 01:57:17 - sshpilot.config - INFO - Using GSettings for configuration
+2025-08-18 01:57:17 - sshpilot.config - INFO - Using GSettings for configuration
+2025-08-18 01:57:17 - sshpilot.config - INFO - Using GSettings for configuration
+2025-08-18 01:57:17 - sshpilot.config - INFO - Using GSettings for configuration
+2025-08-18 01:57:17 - sshpilot.connection_manager - INFO - Loaded 5 connections from SSH config
+2025-08-18 01:57:17 - sshpilot.config - INFO - Using GSettings for configuration
+2025-08-18 01:57:17 - sshpilot.window - INFO - Loading UI from resources...
+2025-08-18 01:57:17 - sshpilot.window - WARNING - Failed to load from resources: gtk-builder-error-quark: .:7:1 Template declaration (class 'MainWindow', parent 'AdwApplicationWindow') where templates aren't supported (1)
+2025-08-18 01:57:17 - sshpilot.window - INFO - Loading UI from local file...
+2025-08-18 01:57:17 - sshpilot.window - INFO - Successfully loaded UI from local file
+2025-08-18 01:57:17 - sshpilot.window - INFO - Connecting signals...
+2025-08-18 01:57:17 - sshpilot.window - INFO - Connecting add_button signal
+2025-08-18 01:57:17 - sshpilot.window - INFO - Connecting edit_button signal
+2025-08-18 01:57:17 - sshpilot.window - INFO - Connecting delete_button signal
+2025-08-18 01:57:17 - sshpilot.window - INFO - Connecting menu_button signal
+2025-08-18 01:57:17 - sshpilot.window - INFO - Signal connections completed
+2025-08-18 01:57:17 - sshpilot.window - INFO - Tab view is ready
+2025-08-18 01:57:17 - sshpilot.window - DEBUG - Updating status for NL: is_connected=False
+2025-08-18 01:57:17 - sshpilot.window - DEBUG - Set status icon to disconnected for NL
+2025-08-18 01:57:17 - sshpilot.window - DEBUG - Updating status for Racknerd: is_connected=False
+2025-08-18 01:57:17 - sshpilot.window - DEBUG - Set status icon to disconnected for Racknerd
+2025-08-18 01:57:17 - sshpilot.window - DEBUG - Updating status for GulloDE: is_connected=False
+2025-08-18 01:57:17 - sshpilot.window - DEBUG - Set status icon to disconnected for GulloDE
+2025-08-18 01:57:17 - sshpilot.window - DEBUG - Updating status for localhost: is_connected=False
+2025-08-18 01:57:17 - sshpilot.window - DEBUG - Set status icon to disconnected for localhost
+2025-08-18 01:57:17 - sshpilot.window - DEBUG - Updating status for router: is_connected=False
+2025-08-18 01:57:17 - sshpilot.window - DEBUG - Set status icon to disconnected for router
+2025-08-18 01:57:17 - sshpilot.window - INFO - Main window initialized
+2025-08-18 01:57:18 - sshpilot.connection_manager - INFO - Found 9 SSH keys: ['/home/mahdi/.ssh/t4', '/home/mahdi/.ssh/test2', '/home/mahdi/.ssh/id_ed25519', '/home/mahdi/.ssh/id_rsa', '/home/mahdi/.ssh/t6', '/home/mahdi/.ssh/id_dsa', '/home/mahdi/.ssh/t5', '/home/mahdi/.ssh/SecureKey', '/home/mahdi/.ssh/testkey']
+2025-08-18 01:57:18 - sshpilot.connection_manager - INFO - Secure storage initialized
+2025-08-18 01:57:19 - sshpilot.window - INFO - Click detected: n_press=1, x=120.99999237060547, y=26.000001907348633
+2025-08-18 01:57:19 - sshpilot.window - INFO - Single click detected - selecting connection
+2025-08-18 01:57:19 - sshpilot.window - INFO - Connection selected: <window.ConnectionRow object at 0x79634189ea40 (sshpilot+window+ConnectionRow at 0x2a0c92a0)>
+2025-08-18 01:57:19 - sshpilot.window - INFO - Connection selected: router
+2025-08-18 01:57:20 - sshpilot.window - INFO - Click detected: n_press=1, x=117.99999237060547, y=20.000001907348633
+2025-08-18 01:57:20 - sshpilot.window - INFO - Single click detected - selecting connection
+2025-08-18 01:57:20 - sshpilot.window - INFO - Connection selected: <window.ConnectionRow object at 0x79634189ea40 (sshpilot+window+ConnectionRow at 0x2a0c92a0)>
+2025-08-18 01:57:20 - sshpilot.window - INFO - Connection selected: router
+2025-08-18 01:57:22 - sshpilot.window - INFO - Click detected: n_press=1, x=117.99999237060547, y=19.000001907348633
+2025-08-18 01:57:22 - sshpilot.window - INFO - Single click detected - selecting connection
+2025-08-18 01:57:22 - sshpilot.window - INFO - Connection selected: <window.ConnectionRow object at 0x79634189ea40 (sshpilot+window+ConnectionRow at 0x2a0c92a0)>
+2025-08-18 01:57:22 - sshpilot.window - INFO - Connection selected: router
+2025-08-18 01:57:22 - sshpilot.window - INFO - Click detected: n_press=2, x=117.99999237060547, y=19.000001907348633
+2025-08-18 01:57:22 - sshpilot.window - INFO - Double click detected - activating connection
+2025-08-18 01:57:22 - sshpilot.window - INFO - Connection activated: <window.ConnectionRow object at 0x79634189ea40 (sshpilot+window+ConnectionRow at 0x2a0c92a0)>
+2025-08-18 01:57:22 - sshpilot.window - INFO - Connection activated: router
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Registered terminal 133467724750848
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Connected to connection-updated signal
+2025-08-18 01:57:22 - sshpilot.terminal - INFO - Setting up terminal...
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Set word char exceptions using VTE 0.60+ API
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Set cursor color
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Set highlight color
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Set highlight foreground color
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Enabled mouse autohide
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Set terminal encoding to UTF-8
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Enabled bold text
+2025-08-18 01:57:22 - sshpilot.terminal - INFO - Terminal setup complete
+2025-08-18 01:57:22 - sshpilot.terminal - INFO - Terminal setup complete
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:57:22 - sshpilot.terminal - INFO - Terminal widget created: <terminal.TerminalWidget object at 0x79636052a000 (TerminalWidget at 0x2a5846e0)>
+2025-08-18 01:57:22 - sshpilot.terminal - INFO - VTE terminal created: <Vte.Terminal object at 0x7963240316c0 (VteTerminal at 0x29baa4d0)>
+2025-08-18 01:57:22 - sshpilot.terminal - INFO - Scrolled window created: <Gtk.ScrolledWindow object at 0x7963418a4800 (GtkScrolledWindow at 0x2a3eccb0)>
+2025-08-18 01:57:22 - sshpilot.terminal - INFO - Overlay created: <Gtk.Overlay object at 0x796324041a80 (GtkOverlay at 0x2a0849f0)>
+2025-08-18 01:57:22 - sshpilot.terminal - INFO - Terminal widget container_box added to main widget
+2025-08-18 01:57:22 - sshpilot.terminal - INFO - Container box child count: <Gtk.Overlay object at 0x796324041a80 (GtkOverlay at 0x2a0849f0)>
+2025-08-18 01:57:22 - sshpilot.terminal - INFO - Overlay child count: <Gtk.ScrolledWindow object at 0x7963418a4800 (GtkScrolledWindow at 0x2a3eccb0)>
+2025-08-18 01:57:22 - sshpilot.terminal - INFO - Scrolled window child count: <Vte.Terminal object at 0x7963240316c0 (VteTerminal at 0x29baa4d0)>
+2025-08-18 01:57:22 - sshpilot.terminal - INFO - Added CSS classes to terminal widget for visibility
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Terminal widget initialized
+2025-08-18 01:57:22 - sshpilot.window - INFO - Terminal widget created successfully: <terminal.TerminalWidget object at 0x79636052a000 (TerminalWidget at 0x2a5846e0)>
+2025-08-18 01:57:22 - sshpilot.window - INFO - Terminal added to tab view successfully
+2025-08-18 01:57:22 - sshpilot.window - INFO - Added terminal to tab view: <terminal.TerminalWidget object at 0x79636052a000 (TerminalWidget at 0x2a5846e0)>
+2025-08-18 01:57:22 - sshpilot.window - INFO - Tab page created: <Adw.TabPage object at 0x796341822ac0 (AdwTabPage at 0x2b075660)>
+2025-08-18 01:57:22 - sshpilot.window - INFO - Terminal widget visible: True
+2025-08-18 01:57:22 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:22 - sshpilot.window - INFO - Terminal widget realized: False
+2025-08-18 01:57:22 - sshpilot.window - INFO - Terminal widget allocated: 4x4
+2025-08-18 01:57:22 - sshpilot.window - INFO - Showing tab view
+2025-08-18 01:57:22 - sshpilot.window - INFO - Tab view pages count: 1
+2025-08-18 01:57:22 - sshpilot.window - INFO - Selected page: <Adw.TabPage object at 0x796341822ac0 (AdwTabPage at 0x2b075660)>
+2025-08-18 01:57:22 - sshpilot.window - INFO - Tab view visible: True
+2025-08-18 01:57:22 - sshpilot.window - INFO - Tab view mapped: False
+2025-08-18 01:57:22 - sshpilot.window - INFO - Tab view allocated: 0x0
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - SSH verbosity configured: -v x 1, LogLevel set
+2025-08-18 01:57:22 - sshpilot.connection_manager - DEBUG - Retrieved key passphrase for /home/mahdi/.ssh/SecureKey
+2025-08-18 01:57:22 - sshpilot.connection_manager - DEBUG - SSH agent already running
+2025-08-18 01:57:22 - sshpilot.connection_manager - DEBUG - Created SSH_ASKPASS script: /tmp/ssh_askpass_rhlhbgpt.sh
+2025-08-18 01:57:22 - sshpilot.connection_manager - DEBUG - Cleaned up SSH_ASKPASS script: /tmp/ssh_askpass_rhlhbgpt.sh
+2025-08-18 01:57:22 - sshpilot.connection_manager - DEBUG - Successfully added key to ssh-agent: /home/mahdi/.ssh/SecureKey
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Key prepared for connection: /home/mahdi/.ssh/SecureKey
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Using SSH key: /home/mahdi/.ssh/SecureKey
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - SSH command: ssh -o ConnectTimeout=30 -o ConnectionAttempts=1 -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -C -o StrictHostKeyChecking=accept-new -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=accept-new -v -o LogLevel=VERBOSE -i /home/mahdi/.ssh/SecureKey -o IdentitiesOnly=yes root@asus.lan
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Flatpak debug: About to spawn SSH with command: ['ssh', '-o', 'ConnectTimeout=30', '-o', 'ConnectionAttempts=1', '-o', 'ServerAliveInterval=60', '-o', 'ServerAliveCountMax=3', '-C', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ExitOnForwardFailure=yes', '-o', 'StrictHostKeyChecking=accept-new', '-v', '-o', 'LogLevel=VERBOSE', '-i', '/home/mahdi/.ssh/SecureKey', '-o', 'IdentitiesOnly=yes', 'root@asus.lan']
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:57:22 - sshpilot.terminal - INFO - SSH terminal connected to router (root@asus.lan)
+
+(python3:297550): Gtk-WARNING **: 01:57:22.766: Calling gtk_widget_realize() on a widget that isn't inside a toplevel window is not going to work very well. Widgets must be inside a toplevel container before realizing them.
+
+(python3:297550): Gdk-CRITICAL **: 01:57:22.766: gdk_surface_get_frame_clock: assertion 'GDK_IS_SURFACE (surface)' failed
+2025-08-18 01:57:22 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:22 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:22 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:22 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:22 - sshpilot.window - INFO - Forced tab view and terminal allocation
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Flatpak debug: _on_spawn_complete called with pid=297623, error=None, user_data=()
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Terminal spawned with PID: 297623
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Process group ID: 297623
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:57:22 - sshpilot.connection_manager - DEBUG - Connection manager updated status for router: Connected
+2025-08-18 01:57:22 - sshpilot.terminal - DEBUG - Terminal 133467724750848 updated connection status to connected
+2025-08-18 01:57:22 - sshpilot.window - DEBUG - Updating status for router: is_connected=True
+2025-08-18 01:57:22 - sshpilot.window - DEBUG - Set status icon to connected for router
+2025-08-18 01:57:22 - sshpilot.window - INFO - Terminal connected: router (root@asus.lan)
+2025-08-18 01:57:22 - sshpilot.window - DEBUG - Connection status changed: router - Connected
+2025-08-18 01:57:22 - sshpilot.window - DEBUG - Updating status for router: is_connected=True
+2025-08-18 01:57:22 - sshpilot.window - DEBUG - Set status icon to connected for router
+
+(python3:297550): Gdk-CRITICAL **: 01:57:22.863: gdk_surface_get_frame_clock: assertion 'GDK_IS_SURFACE (surface)' failed
+2025-08-18 01:57:22 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:22 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:22 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:22 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:22 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:22 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:22 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:22 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:23 - sshpilot.window - INFO - Click detected: n_press=1, x=143.0, y=9.999985694885254
+2025-08-18 01:57:23 - sshpilot.window - INFO - Single click detected - selecting connection
+2025-08-18 01:57:23 - sshpilot.window - INFO - Connection selected: <window.ConnectionRow object at 0x79634189e680 (sshpilot+window+ConnectionRow at 0x29c5c480)>
+2025-08-18 01:57:23 - sshpilot.window - INFO - Connection selected: localhost
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:23 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:23 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:23 - sshpilot.window - INFO - Click detected: n_press=1, x=138.0, y=7.000000476837158
+2025-08-18 01:57:23 - sshpilot.window - INFO - Single click detected - selecting connection
+2025-08-18 01:57:23 - sshpilot.window - INFO - Connection selected: <window.ConnectionRow object at 0x79634189e680 (sshpilot+window+ConnectionRow at 0x29c5c480)>
+2025-08-18 01:57:23 - sshpilot.window - INFO - Connection selected: localhost
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:23 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:23 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:23 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:23 - sshpilot.window - INFO - Tab view pages count after delay: 1
+2025-08-18 01:57:23 - sshpilot.window - INFO - Selected page after delay: <Adw.TabPage object at 0x79632404e500 (AdwTabPage at 0x2b075660)>
+2025-08-18 01:57:23 - sshpilot.window - INFO - Selected page title: router
+2025-08-18 01:57:23 - sshpilot.window - INFO - Selected page child: <terminal.TerminalWidget object at 0x79636052a000 (TerminalWidget at 0x2a5846e0)>
+2025-08-18 01:57:23 - sshpilot.window - INFO - Selected page child visible: True
+2025-08-18 01:57:23 - sshpilot.window - INFO - Selected page child allocated: 4x4
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:23 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:23 - sshpilot.window - INFO - Click detected: n_press=1, x=138.0, y=8.000000953674316
+2025-08-18 01:57:23 - sshpilot.window - INFO - Single click detected - selecting connection
+2025-08-18 01:57:23 - sshpilot.window - INFO - Connection selected: <window.ConnectionRow object at 0x79634189e680 (sshpilot+window+ConnectionRow at 0x29c5c480)>
+2025-08-18 01:57:23 - sshpilot.window - INFO - Connection selected: localhost
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:23 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:23 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:23 - sshpilot.window - INFO - Click detected: n_press=2, x=138.0, y=8.000000953674316
+2025-08-18 01:57:23 - sshpilot.window - INFO - Double click detected - activating connection
+2025-08-18 01:57:23 - sshpilot.window - INFO - Connection activated: <window.ConnectionRow object at 0x79634189e680 (sshpilot+window+ConnectionRow at 0x29c5c480)>
+2025-08-18 01:57:23 - sshpilot.window - INFO - Connection activated: localhost
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Registered terminal 133466713021632
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Connected to connection-updated signal
+2025-08-18 01:57:23 - sshpilot.terminal - INFO - Setting up terminal...
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Set word char exceptions using VTE 0.60+ API
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Set cursor color
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Set highlight color
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Set highlight foreground color
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Enabled mouse autohide
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Set terminal encoding to UTF-8
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Enabled bold text
+2025-08-18 01:57:23 - sshpilot.terminal - INFO - Terminal setup complete
+2025-08-18 01:57:23 - sshpilot.terminal - INFO - Terminal setup complete
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:57:23 - sshpilot.terminal - INFO - Terminal widget created: <terminal.TerminalWidget object at 0x79632404dcc0 (TerminalWidget at 0x2b095b90)>
+2025-08-18 01:57:23 - sshpilot.terminal - INFO - VTE terminal created: <Vte.Terminal object at 0x79634186c2c0 (VteTerminal at 0x2b0959d0)>
+2025-08-18 01:57:23 - sshpilot.terminal - INFO - Scrolled window created: <Gtk.ScrolledWindow object at 0x79632404ddc0 (GtkScrolledWindow at 0x29a40380)>
+2025-08-18 01:57:23 - sshpilot.terminal - INFO - Overlay created: <Gtk.Overlay object at 0x79632404e480 (GtkOverlay at 0x29aad440)>
+2025-08-18 01:57:23 - sshpilot.terminal - INFO - Terminal widget container_box added to main widget
+2025-08-18 01:57:23 - sshpilot.terminal - INFO - Container box child count: <Gtk.Overlay object at 0x79632404e480 (GtkOverlay at 0x29aad440)>
+2025-08-18 01:57:23 - sshpilot.terminal - INFO - Overlay child count: <Gtk.ScrolledWindow object at 0x79632404ddc0 (GtkScrolledWindow at 0x29a40380)>
+2025-08-18 01:57:23 - sshpilot.terminal - INFO - Scrolled window child count: <Vte.Terminal object at 0x79634186c2c0 (VteTerminal at 0x2b0959d0)>
+2025-08-18 01:57:23 - sshpilot.terminal - INFO - Added CSS classes to terminal widget for visibility
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Terminal widget initialized
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget created successfully: <terminal.TerminalWidget object at 0x79632404dcc0 (TerminalWidget at 0x2b095b90)>
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal added to tab view successfully
+2025-08-18 01:57:23 - sshpilot.window - INFO - Added terminal to tab view: <terminal.TerminalWidget object at 0x79632404dcc0 (TerminalWidget at 0x2b095b90)>
+2025-08-18 01:57:23 - sshpilot.window - INFO - Tab page created: <Adw.TabPage object at 0x79632404c0c0 (AdwTabPage at 0x2b174740)>
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget visible: True
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget realized: False
+
+(python3:297550): Gdk-CRITICAL **: 01:57:23.862: gdk_surface_get_frame_clock: assertion 'GDK_IS_SURFACE (surface)' failed
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget allocated: 4x4
+2025-08-18 01:57:23 - sshpilot.window - INFO - Showing tab view
+2025-08-18 01:57:23 - sshpilot.window - INFO - Tab view pages count: 2
+2025-08-18 01:57:23 - sshpilot.window - INFO - Selected page: <Adw.TabPage object at 0x79632404c0c0 (AdwTabPage at 0x2b174740)>
+2025-08-18 01:57:23 - sshpilot.window - INFO - Tab view visible: True
+2025-08-18 01:57:23 - sshpilot.window - INFO - Tab view mapped: False
+2025-08-18 01:57:23 - sshpilot.window - INFO - Tab view allocated: 0x0
+
+(python3:297550): Gdk-CRITICAL **: 01:57:23.864: gdk_surface_get_frame_clock: assertion 'GDK_IS_SURFACE (surface)' failed
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:23 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - SSH verbosity configured: -v x 1, LogLevel set
+2025-08-18 01:57:23 - sshpilot.connection_manager - DEBUG - Password retrieved for mahdi@localhost
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Using sshpass with command: sshpass -p ****** ssh -o ConnectTimeout=30 -o ConnectionAttempts=1 -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -C -o StrictHostKeyChecking=accept-new -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=accept-new -v -o LogLevel=VERBOSE -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - SSH command: sshpass -p ****** ssh -o ConnectTimeout=30 -o ConnectionAttempts=1 -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -C -o StrictHostKeyChecking=accept-new -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=accept-new -v -o LogLevel=VERBOSE -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -X -o PermitLocalCommand=yes -o LocalCommand=notify-send "Connected to LocalHost" mahdi@localhost
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Flatpak debug: About to spawn SSH with command: ['sshpass', '-p', '147633', 'ssh', '-o', 'ConnectTimeout=30', '-o', 'ConnectionAttempts=1', '-o', 'ServerAliveInterval=60', '-o', 'ServerAliveCountMax=3', '-C', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ExitOnForwardFailure=yes', '-o', 'StrictHostKeyChecking=accept-new', '-v', '-o', 'LogLevel=VERBOSE', '-o', 'PreferredAuthentications=password,keyboard-interactive', '-o', 'PubkeyAuthentication=no', '-X', '-o', 'PermitLocalCommand=yes', '-o', 'LocalCommand=notify-send "Connected to LocalHost"', 'mahdi@localhost']
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:57:23 - sshpilot.terminal - INFO - SSH terminal connected to localhost (mahdi@localhost)
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Flatpak debug: _on_spawn_complete called with pid=297640, error=None, user_data=()
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Terminal spawned with PID: 297640
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Process group ID: 297640
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:57:23 - sshpilot.connection_manager - DEBUG - Connection manager updated status for localhost: Connected
+2025-08-18 01:57:23 - sshpilot.terminal - DEBUG - Terminal 133466713021632 updated connection status to connected
+2025-08-18 01:57:23 - sshpilot.window - DEBUG - Updating status for localhost: is_connected=True
+2025-08-18 01:57:23 - sshpilot.window - DEBUG - Set status icon to connected for localhost
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal connected: localhost (mahdi@localhost)
+2025-08-18 01:57:23 - sshpilot.window - DEBUG - Connection status changed: localhost - Connected
+2025-08-18 01:57:23 - sshpilot.window - DEBUG - Updating status for localhost: is_connected=True
+2025-08-18 01:57:23 - sshpilot.window - DEBUG - Set status icon to connected for localhost
+
+(python3:297550): Gdk-CRITICAL **: 01:57:23.963: gdk_surface_get_frame_clock: assertion 'GDK_IS_SURFACE (surface)' failed
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:23 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+
+(python3:297550): Gdk-CRITICAL **: 01:57:23.964: gdk_surface_get_frame_clock: assertion 'GDK_IS_SURFACE (surface)' failed
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:23 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:23 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Click detected: n_press=3, x=138.0, y=8.000000953674316
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Forced tab view and terminal allocation
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Tab view pages count after delay: 2
+2025-08-18 01:57:24 - sshpilot.window - INFO - Selected page after delay: <Adw.TabPage object at 0x79632404fdc0 (AdwTabPage at 0x2b174740)>
+2025-08-18 01:57:24 - sshpilot.window - INFO - Selected page title: localhost
+2025-08-18 01:57:24 - sshpilot.window - INFO - Selected page child: <terminal.TerminalWidget object at 0x79632404dcc0 (TerminalWidget at 0x2b095b90)>
+2025-08-18 01:57:24 - sshpilot.window - INFO - Selected page child visible: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Selected page child allocated: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:24 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:24 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:25 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:25 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:26 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:26 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.terminal - DEBUG - Flatpak debug: Fallback hide spinner called
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:27 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:27 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.terminal - DEBUG - Flatpak debug: Fallback hide spinner called
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:28 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:28 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:29 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:29 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:30 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:30 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+
+(python3:297550): Gtk-WARNING **: 01:57:31.721: Trying to measure GtkLabel 0x2b19ee80 for width of 252, but it needs at least 265
+
+(python3:297550): Gtk-WARNING **: 01:57:31.722: Trying to measure GtkLabel 0x2b19ee80 for width of 100, but it needs at least 265
+
+(python3:297550): Gtk-WARNING **: 01:57:31.722: Trying to measure GtkLabel 0x2b19ee80 for width of 248, but it needs at least 265
+
+(python3:297550): Gtk-WARNING **: 01:57:31.722: Trying to measure GtkLabel 0x2b19ee80 for width of 174, but it needs at least 265
+
+(python3:297550): Gtk-WARNING **: 01:57:31.722: Trying to measure GtkLabel 0x2b19ee80 for width of 211, but it needs at least 265
+
+(python3:297550): Gtk-WARNING **: 01:57:31.722: Trying to measure GtkLabel 0x2b19ee80 for width of 230, but it needs at least 265
+
+(python3:297550): Gtk-WARNING **: 01:57:31.722: Trying to measure GtkLabel 0x2b19ee80 for width of 221, but it needs at least 265
+
+(python3:297550): Gtk-WARNING **: 01:57:31.722: Trying to measure GtkLabel 0x2b19ee80 for width of 226, but it needs at least 265
+
+(python3:297550): Gtk-WARNING **: 01:57:31.722: Trying to measure GtkLabel 0x2b19ee80 for width of 228, but it needs at least 265
+
+(python3:297550): Gtk-WARNING **: 01:57:31.722: Trying to measure GtkLabel 0x2b19ee80 for width of 229, but it needs at least 265
+
+(python3:297550): Gtk-WARNING **: 01:57:31.723: Trying to measure GtkLabel 0x2b19ee80 for width of 17, but it needs at least 265
+
+(python3:297550): Gtk-WARNING **: 01:57:31.724: Trying to measure GtkLabel 0x2b19ee80 for width of 82, but it needs at least 265
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:31 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:31 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:32 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:32 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:32 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:32 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:32 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:32 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:32 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:32 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:32 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:32 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:32 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:32 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:32 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:32 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:32 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:32 - sshpilot.terminal - DEBUG - Disconnecting SSH session 133467724750848...
+2025-08-18 01:57:32 - sshpilot.terminal - DEBUG - Sent SIGTERM to process 297623 (PGID: 297623)
+2025-08-18 01:57:33 - sshpilot.terminal - DEBUG - Process 297623 still running, sending SIGKILL
+2025-08-18 01:57:33 - sshpilot.terminal - DEBUG - Cleaned up 1 processes for session 133467724750848
+2025-08-18 01:57:33 - sshpilot.window - DEBUG - Updating status for router: is_connected=False
+2025-08-18 01:57:33 - sshpilot.window - DEBUG - Set status icon to disconnected for router
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal disconnected: router (root@asus.lan)
+2025-08-18 01:57:33 - sshpilot.terminal - DEBUG - SSH session 133467724750848 disconnected
+
+(python3:297550): Gtk-WARNING **: 01:57:33.207: Calling gtk_widget_realize() on a widget that isn't inside a toplevel window is not going to work very well. Widgets must be inside a toplevel container before realizing them.
+
+(python3:297550): Gdk-CRITICAL **: 01:57:33.207: gdk_surface_get_frame_clock: assertion 'GDK_IS_SURFACE (surface)' failed
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:33 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+
+(python3:297550): Gdk-CRITICAL **: 01:57:33.207: gdk_surface_get_frame_clock: assertion 'GDK_IS_SURFACE (surface)' failed
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:33 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:33 - sshpilot.window - DEBUG - Connection status changed: router - Disconnected
+2025-08-18 01:57:33 - sshpilot.window - DEBUG - Updating status for router: is_connected=False
+2025-08-18 01:57:33 - sshpilot.window - DEBUG - Set status icon to disconnected for router
+2025-08-18 01:57:33 - sshpilot.terminal - DEBUG - Terminal child exited with status: 65280
+2025-08-18 01:57:33 - sshpilot.terminal - DEBUG - Starting exit cleanup for status 65280
+2025-08-18 01:57:33 - sshpilot.terminal - DEBUG - Clearing process tracking for dead process
+2025-08-18 01:57:33 - sshpilot.terminal - DEBUG - Removing terminal 133467724750848 from tracking
+2025-08-18 01:57:33 - sshpilot.terminal - DEBUG - Process tracking cleanup completed
+2025-08-18 01:57:33 - sshpilot.terminal - DEBUG - Updating connection status after process exit
+2025-08-18 01:57:33 - sshpilot.terminal - DEBUG - Scheduling connection manager status update
+2025-08-18 01:57:33 - sshpilot.window - DEBUG - Connection status changed: router - Disconnected
+2025-08-18 01:57:33 - sshpilot.window - DEBUG - Updating status for router: is_connected=False
+2025-08-18 01:57:33 - sshpilot.window - DEBUG - Set status icon to disconnected for router
+2025-08-18 01:57:33 - sshpilot.terminal - DEBUG - Emitting connection-lost signal
+2025-08-18 01:57:33 - sshpilot.window - DEBUG - Updating status for router: is_connected=False
+2025-08-18 01:57:33 - sshpilot.window - DEBUG - Set status icon to disconnected for router
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal disconnected: router (root@asus.lan)
+2025-08-18 01:57:33 - sshpilot.terminal - DEBUG - Updating UI elements
+2025-08-18 01:57:33 - sshpilot.terminal - DEBUG - Exit cleanup completed successfully
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:33 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:33 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:33 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:33 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:33 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:33 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:33 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:33 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:33 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:33 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:33 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:33 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:33 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:33 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:33 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:34 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:34 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:35 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:35 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:36 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:36 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:37 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:37 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:38 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:38 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:39 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:39 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:40 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:40 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:41 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:41 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:42 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:42 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:43 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:43 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:43 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:43 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:43 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:43 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:43 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:43 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:43 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:43 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:43 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:43 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:43 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:43 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:43 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:43 - sshpilot.window - INFO - Starting cleanup before quit...
+2025-08-18 01:57:43 - sshpilot.window - DEBUG - Disconnecting localhost (1/1)
+2025-08-18 01:57:43 - sshpilot.terminal - DEBUG - Disconnecting SSH session 133466713021632...
+2025-08-18 01:57:43 - sshpilot.terminal - DEBUG - Sent SIGTERM to process 297640 (PGID: 297640)
+2025-08-18 01:57:44 - sshpilot.terminal - DEBUG - Process 297640 still running, sending SIGKILL
+2025-08-18 01:57:44 - sshpilot.terminal - DEBUG - Cleaned up 1 processes for session 133466713021632
+2025-08-18 01:57:44 - sshpilot.window - DEBUG - Updating status for localhost: is_connected=False
+2025-08-18 01:57:44 - sshpilot.window - DEBUG - Set status icon to disconnected for localhost
+2025-08-18 01:57:44 - sshpilot.window - INFO - Terminal disconnected: localhost (mahdi@localhost)
+2025-08-18 01:57:44 - sshpilot.terminal - DEBUG - SSH session 133466713021632 disconnected
+2025-08-18 01:57:44 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:44 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:44 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:44 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:44 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:57:44 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:57:44 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:57:44 - sshpilot.window - WARNING - Terminal widget still not properly sized, retrying...
+2025-08-18 01:57:44 - sshpilot.window - DEBUG - Connection status changed: localhost - Disconnected
+2025-08-18 01:57:44 - sshpilot.window - DEBUG - Updating status for localhost: is_connected=False
+2025-08-18 01:57:44 - sshpilot.window - DEBUG - Set status icon to disconnected for localhost
+2025-08-18 01:57:44 - sshpilot.window - INFO - Quitting application
+2025-08-18 01:57:44 - sshpilot.config - DEBUG - Configuration saved to JSON file
+2025-08-18 01:57:44 - sshpilot.window - DEBUG - Setting changed: ui.window_width = 1807
+2025-08-18 01:57:44 - sshpilot.config - DEBUG - Setting ui.window_width = 1807
+2025-08-18 01:57:44 - sshpilot.config - DEBUG - Configuration saved to JSON file
+2025-08-18 01:57:44 - sshpilot.window - DEBUG - Setting changed: ui.window_height = 702
+2025-08-18 01:57:44 - sshpilot.config - DEBUG - Setting ui.window_height = 702
+2025-08-18 01:57:44 - sshpilot.config - DEBUG - Configuration saved to JSON file
+2025-08-18 01:57:44 - sshpilot.window - DEBUG - Setting changed: ui.sidebar_width = 250
+2025-08-18 01:57:44 - sshpilot.config - DEBUG - Setting ui.sidebar_width = 250
+2025-08-18 01:57:44 - sshpilot.window - DEBUG - Saved window geometry: 1807x702, sidebar: 250
+2025-08-18 01:57:44 - root - INFO - Application shutdown initiated, cleaning up...
+2025-08-18 01:57:44 - sshpilot.terminal - INFO - Cleaning up all SSH processes...
+2025-08-18 01:57:44 - sshpilot.terminal - INFO - SSH process cleanup completed
+2025-08-18 01:57:44 - root - INFO - Cleanup completed
+Loaded resources from: /home/mahdi/GitHub/sshpilot/sshpilot/resources/sshpilot.gresource

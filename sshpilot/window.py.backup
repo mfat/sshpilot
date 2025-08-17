@@ -33,70 +33,62 @@ from .connection_dialog import ConnectionDialog
 
 logger = logging.getLogger(__name__)
 
-class ConnectionRow(Adw.ActionRow):
+class ConnectionRow(Gtk.ListBoxRow):
     """Row widget for connection list"""
     
     def __init__(self, connection: Connection):
         super().__init__()
         self.connection = connection
-        self.is_selected = False
         
-        # Set title and subtitle
-        self.set_title(connection.nickname)
+        # Create main box
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        box.set_margin_start(12)
+        box.set_margin_end(12)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
+        
+        # Connection icon
+        icon = Gtk.Image.new_from_icon_name('computer-symbolic')
+        icon.set_icon_size(Gtk.IconSize.NORMAL)
+        box.append(icon)
+        
+        # Connection info
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        info_box.set_hexpand(True)
+        
+        # Nickname label
+        self.nickname_label = Gtk.Label()
+        self.nickname_label.set_markup(f"<b>{connection.nickname}</b>")
+        self.nickname_label.set_halign(Gtk.Align.START)
+        info_box.append(self.nickname_label)
+        
+        # Host info label (may be hidden based on user setting)
+        self.host_label = Gtk.Label()
+        self.host_label.set_halign(Gtk.Align.START)
+        self.host_label.add_css_class('dim-label')
         self._apply_host_label_text()
+        info_box.append(self.host_label)
         
-        # Set icon
-        self.set_icon_name('computer-symbolic')
+        box.append(info_box)
         
-        # Create port forwarding indicators (L/R/D)
+        # Port forwarding indicators (L/R/D)
         self.indicator_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.indicator_box.set_halign(Gtk.Align.CENTER)
         self.indicator_box.set_valign(Gtk.Align.CENTER)
-        
+        box.append(self.indicator_box)
+
         # Connection status indicator
         self.status_icon = Gtk.Image.new_from_icon_name('network-offline-symbolic')
-        self.status_icon.set_pixel_size(16)
+        self.status_icon.set_pixel_size(16)  # GTK4 uses pixel size instead of IconSize
+        box.append(self.status_icon)
         
-        # Add indicators to the row
-        self.add_suffix(self.indicator_box)
-        self.add_suffix(self.status_icon)
-        
-        # Set up gestures for single and double click
-        self._setup_gestures()
+        self.set_child(box)
+        self.set_selectable(True)  # Make the row selectable for keyboard navigation
         
         # Update status
         self.update_status()
         # Update forwarding indicators
         self._update_forwarding_indicators()
-    
-    def _setup_gestures(self):
-        """Set up gesture recognition for single and double clicks"""
-        # Single gesture for both single and double click
-        gesture = Gtk.GestureClick.new()
-        gesture.set_button(1)  # Left mouse button
-        gesture.connect('pressed', self._on_click)
-        self.add_controller(gesture)
-    
-    def _on_click(self, gesture, n_press, x, y):
-        """Handle click events"""
-        window = self.get_root()
-        logger.info(f"Click detected: n_press={n_press}, x={x}, y={y}")
-        if n_press == 1:  # Single click
-            logger.info("Single click detected - selecting connection")
-            window.on_connection_selected(self)
-        elif n_press == 2:  # Double click
-            logger.info("Double click detected - activating connection")
-            window.on_connection_activated(self)
-    
-    def set_selected(self, selected: bool):
-        """Set the selection state of this row"""
-        self.is_selected = selected
-        if selected:
-            self.add_css_class('selected')
-            self.add_css_class('selection-highlight')
-        else:
-            self.remove_css_class('selected')
-            self.remove_css_class('selection-highlight')
 
     @staticmethod
     def _install_pf_css():
@@ -114,18 +106,6 @@ class ConnectionRow(Adw.ActionRow):
             .pf-local { color: #E01B24; }
             .pf-remote { color: #2EC27E; }
             .pf-dynamic { color: #3584E4; }
-            .selection-highlight {
-                background-color: @accent_bg_color; /* Use accent color for highlight */
-                border-radius: 12px; /* Rounded corners */
-                margin-left: 6px;
-                margin-right: 6px;
-                margin-top: 3px;
-                margin-bottom: 3px;
-                transition: background-color 0.1s ease-in-out; /* Smooth transition */
-            }
-            .selection-highlight:hover {
-                background-color: shade(@accent_bg_color, 0.9); /* Slightly darker on hover */
-            }
             """
             provider.load_from_data(css.encode('utf-8'))
             Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -181,9 +161,9 @@ class ConnectionRow(Adw.ActionRow):
         except Exception:
             hide = False
         if hide:
-            self.set_subtitle('••••••••••')
+            self.host_label.set_text('••••••••••')
         else:
-            self.set_subtitle(f"{self.connection.username}@{self.connection.host}")
+            self.host_label.set_text(f"{self.connection.username}@{self.connection.host}")
 
     def apply_hide_hosts(self, hide: bool):
         """Called by window when hide/show toggles."""
@@ -232,13 +212,13 @@ class ConnectionRow(Adw.ActionRow):
     
     def update_display(self):
         """Update the display with current connection data"""
-        # Update the title and subtitle with current connection data
-        if hasattr(self.connection, 'nickname'):
-            self.set_title(self.connection.nickname)
+        # Update the labels with current connection data
+        if hasattr(self.connection, 'nickname') and hasattr(self, 'nickname_label'):
+            self.nickname_label.set_markup(f"<b>{self.connection.nickname}</b>")
         
-        if hasattr(self.connection, 'username') and hasattr(self.connection, 'host'):
+        if hasattr(self.connection, 'username') and hasattr(self.connection, 'host') and hasattr(self, 'host_label'):
             port_text = f":{self.connection.port}" if hasattr(self.connection, 'port') and self.connection.port != 22 else ""
-            self.set_subtitle(f"{self.connection.username}@{self.connection.host}{port_text}")
+            self.host_label.set_text(f"{self.connection.username}@{self.connection.host}{port_text}")
         # Refresh forwarding indicators if rules changed
         self._update_forwarding_indicators()
         
@@ -816,7 +796,6 @@ class MainWindow(Adw.ApplicationWindow):
         self.connection_to_terminals: Dict[Connection, List[TerminalWidget]] = {}
         self.terminal_to_connection: Dict[TerminalWidget, Connection] = {}
         self.connection_rows = {}   # connection -> row_widget
-        self.selected_connection = None  # Currently selected connection
         # Hide hosts toggle state
         try:
             self._hide_hosts = bool(self.config.get_setting('ui.hide_hosts', False))
@@ -919,61 +898,48 @@ class MainWindow(Adw.ApplicationWindow):
 
     def setup_ui(self):
         """Set up the user interface"""
-        logger.info("Loading UI from resources...")
+        # Create main container
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         
-        # Try to load from resources first
-        try:
-            self.builder = Gtk.Builder()
-            self.builder.add_from_resource("/io/github/mfat/sshpilot/ui/main_window.ui")
-            logger.info("Successfully loaded UI from resources")
-        except Exception as e:
-            logger.warning(f"Failed to load from resources: {e}")
-            # Fallback to local file
-            logger.info("Loading UI from local file...")
+        # Create header bar
+        self.header_bar = Adw.HeaderBar()
+        self.header_bar.set_title_widget(Gtk.Label(label="sshPilot"))
+        
+        # Add window controls (minimize, maximize, close)
+        self.header_bar.set_show_start_title_buttons(True)
+        self.header_bar.set_show_end_title_buttons(True)
+        
+        # Add header bar to main container
+        main_box.append(self.header_bar)
+        
+        # Create main layout (fallback if OverlaySplitView is unavailable)
+        if HAS_OVERLAY_SPLIT:
+            self.split_view = Adw.OverlaySplitView()
             try:
-                self.builder = Gtk.Builder()
-                self.builder.add_from_file("sshpilot/ui/main_window.ui")
-                logger.info("Successfully loaded UI from local file")
-            except Exception as e2:
-                logger.error(f"Failed to load UI file: {e2}")
-                self._create_fallback_ui()
-                return
+                self.split_view.set_sidebar_width_fraction(0.25)
+                self.split_view.set_min_sidebar_width(200)
+                self.split_view.set_max_sidebar_width(400)
+            except Exception:
+                pass
+            self.split_view.set_vexpand(True)
+            self._split_variant = 'overlay'
+        else:
+            self.split_view = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
+            self.split_view.set_wide_handle(True)
+            self.split_view.set_vexpand(True)
+            self._split_variant = 'paned'
         
-        # Get UI objects
-        try:
-            self.split_view = self.builder.get_object("split_view")
-            self.connection_list = self.builder.get_object("connection_list")
-            self.add_button = self.builder.get_object("add_button")
-            self.edit_button = self.builder.get_object("edit_button")
-            self.delete_button = self.builder.get_object("delete_button")
-            self.menu_button = self.builder.get_object("menu_button")
-            self.tab_view = self.builder.get_object("tab_view")
-            self.tab_bar = self.builder.get_object("tab_bar")
-        except Exception as e:
-            logger.error(f"Failed to get UI objects: {e}")
-            self._create_fallback_ui()
-            return
+        # Create sidebar
+        self.setup_sidebar()
         
-        # Connect signals
-        logger.info("Connecting signals...")
-        try:
-            logger.info("Connecting add_button signal")
-            self.add_button.connect('activated', self.on_add_connection_clicked)
-            logger.info("Connecting edit_button signal")
-            self.edit_button.connect('activated', self.on_edit_connection_clicked)
-            logger.info("Connecting delete_button signal")
-            self.delete_button.connect('activated', self.on_delete_connection_clicked)
-            logger.info("Connecting menu_button signal")
-            self.menu_button.connect('activated', self.on_menu_button_clicked)
-            logger.info("Signal connections completed")
-        except Exception as e:
-            logger.error(f"Failed to connect signals: {e}")
-        
-        # Set up content area
+        # Create main content area
         self.setup_content_area()
         
-        # Set the main content
-        self.set_content(self.split_view)
+        # Add split view to main container
+        main_box.append(self.split_view)
+
+        # Set main content (no toasts preferred)
+        self.set_content(main_box)
 
     def _set_sidebar_widget(self, widget: Gtk.Widget) -> None:
         if HAS_OVERLAY_SPLIT:
@@ -1214,108 +1180,86 @@ class MainWindow(Adw.ApplicationWindow):
         self._set_sidebar_widget(sidebar_box)
 
     def setup_content_area(self):
-        """Set up the main content area with tab view"""
-        # The tab view and tab bar are now loaded from the UI file
-        if hasattr(self, 'tab_view') and self.tab_view:
-            self.tab_view.connect('close-page', self.on_tab_close)
-            self.tab_view.connect('page-attached', self.on_tab_attached)
-            self.tab_view.connect('page-detached', self.on_tab_detached)
-        if hasattr(self, 'tab_bar') and self.tab_bar and hasattr(self, 'tab_view') and self.tab_view:
-            self.tab_bar.set_view(self.tab_view)
-        # No longer creating a Gtk.Stack here, as the tab_view is directly in the UI
-        logger.info("Tab view is ready")
-
-    def _create_fallback_ui(self):
-        """Create a fallback UI if the UI file cannot be loaded"""
-        logger.warning("Creating fallback UI")
+        """Set up the main content area with stack for tabs and welcome view"""
+        # Create stack to switch between welcome view and tab view
+        self.content_stack = Gtk.Stack()
+        self.content_stack.set_hexpand(True)
+        self.content_stack.set_vexpand(True)
         
-        # Create basic layout
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        # Create welcome/help view
+        self.welcome_view = WelcomePage()
+        self.content_stack.add_named(self.welcome_view, "welcome")
         
-        # Create header bar
-        header_bar = Adw.HeaderBar()
-        header_bar.set_title_widget(Gtk.Label(label="sshPilot"))
-        header_bar.set_show_start_title_buttons(True)
-        header_bar.set_show_end_title_buttons(True)
-        main_box.append(header_bar)
-        
-        # Create split view
-        self.split_view = Adw.OverlaySplitView()
-        self.split_view.set_sidebar_width_fraction(0.25)
-        self.split_view.set_min_sidebar_width(200)
-        self.split_view.set_max_sidebar_width(400)
-        
-        # Create sidebar
-        sidebar = Adw.PreferencesPage()
-        sidebar.set_title("Connections")
-        
-        # Create connection list
-        self.connection_list = Adw.PreferencesGroup()
-        self.connection_list.set_title("Connections")
-        sidebar.add(self.connection_list)
-        
-        # Create action buttons
-        actions_group = Adw.PreferencesGroup()
-        
-        self.add_button = Adw.ActionRow()
-        self.add_button.set_title("Add Connection")
-        self.add_button.set_subtitle("Create a new SSH connection")
-        self.add_button.set_icon_name("list-add-symbolic")
-        self.add_button.set_activatable(True)
-        self.add_button.connect('activated', self.on_add_connection_clicked)
-        actions_group.add(self.add_button)
-        
-        self.edit_button = Adw.ActionRow()
-        self.edit_button.set_title("Edit Connection")
-        self.edit_button.set_subtitle("Modify selected connection")
-        self.edit_button.set_icon_name("document-edit-symbolic")
-        self.edit_button.set_activatable(True)
-        self.edit_button.set_sensitive(False)
-        self.edit_button.connect('activated', self.on_edit_connection_clicked)
-        actions_group.add(self.edit_button)
-        
-        self.delete_button = Adw.ActionRow()
-        self.delete_button.set_title("Delete Connection")
-        self.delete_button.set_subtitle("Remove selected connection")
-        self.delete_button.set_icon_name("user-trash-symbolic")
-        self.delete_button.set_activatable(True)
-        self.delete_button.set_sensitive(False)
-        self.delete_button.connect('activated', self.on_delete_connection_clicked)
-        actions_group.add(self.delete_button)
-        
-        self.menu_button = Adw.ActionRow()
-        self.menu_button.set_title("Menu")
-        self.menu_button.set_subtitle("Application menu")
-        self.menu_button.set_icon_name("open-menu-symbolic")
-        self.menu_button.set_activatable(True)
-        self.menu_button.connect('activated', self.on_menu_button_clicked)
-        actions_group.add(self.menu_button)
-        
-        sidebar.add(actions_group)
-        
-        # Set sidebar
-        self.split_view.set_sidebar(sidebar)
-        
-        # Create content area
+        # Create tab view
         self.tab_view = Adw.TabView()
-        self.tab_view.set_vexpand(True)
         self.tab_view.set_hexpand(True)
+        self.tab_view.set_vexpand(True)
+        
+        # Connect tab signals
         self.tab_view.connect('close-page', self.on_tab_close)
         self.tab_view.connect('page-attached', self.on_tab_attached)
         self.tab_view.connect('page-detached', self.on_tab_detached)
+
+        # Whenever the window layout changes, propagate toolbar height to
+        # any TerminalWidget so the reconnect banner exactly matches.
+        try:
+            # Capture the toolbar variable from this scope for measurement
+            local_toolbar = locals().get('toolbar', None)
+            def _sync_banner_heights(*_args):
+                try:
+                    # Re-measure toolbar height in case style/theme changed
+                    try:
+                        if local_toolbar is not None:
+                            min_h, nat_h, min_baseline, nat_baseline = local_toolbar.measure(Gtk.Orientation.VERTICAL, -1)
+                            self._toolbar_row_height = max(min_h, nat_h)
+                    except Exception:
+                        pass
+                    # Push exact allocated height to all terminal widgets (+5px)
+                    for terms in self.connection_to_terminals.values():
+                        for term in terms:
+                            if hasattr(term, 'set_banner_height'):
+                                term.set_banner_height(getattr(self, '_toolbar_row_height', 37) + 55)
+                except Exception:
+                    pass
+            # Call once after UI is built and again after a short delay
+            def _push_now():
+                try:
+                    height = getattr(self, '_toolbar_row_height', 36)
+                    for terms in self.connection_to_terminals.values():
+                        for term in terms:
+                            if hasattr(term, 'set_banner_height'):
+                                term.set_banner_height(height + 55)
+                except Exception:
+                    pass
+                return False
+            GLib.idle_add(_sync_banner_heights)
+            GLib.timeout_add(200, _sync_banner_heights)
+            GLib.idle_add(_push_now)
+        except Exception:
+            pass
         
+        # Create tab bar
         self.tab_bar = Adw.TabBar()
         self.tab_bar.set_view(self.tab_view)
-        self.tab_bar.set_autohide(True)
+        self.tab_bar.set_autohide(False)
         
-        # Set content
-        self.split_view.set_content(self.tab_view)
-        self.split_view.set_overlay(self.tab_bar)
+        # Create tab content box
+        tab_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        tab_content_box.append(self.tab_bar)
+        tab_content_box.append(self.tab_view)
+        # Ensure background matches terminal theme to avoid white flash
+        if hasattr(tab_content_box, 'add_css_class'):
+            tab_content_box.add_css_class('terminal-bg')
         
-        main_box.append(self.split_view)
-        self.set_content(main_box)
+        self.content_stack.add_named(tab_content_box, "tabs")
+        # Also color the stack background
+        if hasattr(self.content_stack, 'add_css_class'):
+            self.content_stack.add_css_class('terminal-bg')
         
-        logger.info("Fallback UI created")
+        # Start with welcome view visible
+        self.content_stack.set_visible_child_name("welcome")
+        
+        self._set_content_widget(self.content_stack)
 
     def setup_connection_list_dnd(self):
         """Set up drag and drop for connection list reordering"""
@@ -1342,10 +1286,13 @@ class MainWindow(Adw.ApplicationWindow):
         for connection in connections:
             self.add_connection_row(connection)
         
-        # For AdwPreferencesGroup, we can't easily select the first row
-        # Just ensure the connection list has focus
+        # Select first connection if available
         if connections:
-            GLib.idle_add(self._focus_connection_list_first_row)
+            first_row = self.connection_list.get_row_at_index(0)
+            if first_row:
+                self.connection_list.select_row(first_row)
+                # Defer focus to the list to ensure keyboard navigation works immediately
+                GLib.idle_add(self._focus_connection_list_first_row)
 
     def setup_signals(self):
         """Connect to manager signals"""
@@ -1360,7 +1307,7 @@ class MainWindow(Adw.ApplicationWindow):
     def add_connection_row(self, connection: Connection):
         """Add a connection row to the list"""
         row = ConnectionRow(connection)
-        self.connection_list.add(row)
+        self.connection_list.append(row)
         self.connection_rows[connection] = row
         # Apply current hide-hosts setting to new row
         if hasattr(row, 'apply_hide_hosts'):
@@ -1368,19 +1315,35 @@ class MainWindow(Adw.ApplicationWindow):
 
     def show_welcome_view(self):
         """Show the welcome/help view when no connections are active"""
-        # The welcome view is no longer used since we have a direct tab view
-        # Just ensure the tab view is visible
-        logger.info("Welcome view not implemented in new UI")
+        # Remove terminal background styling so welcome uses app theme colors
+        if hasattr(self.content_stack, 'remove_css_class'):
+            try:
+                self.content_stack.remove_css_class('terminal-bg')
+            except Exception:
+                pass
+        # Ensure welcome fills the pane
+        if hasattr(self, 'welcome_view'):
+            try:
+                self.welcome_view.set_hexpand(True)
+                self.welcome_view.set_vexpand(True)
+            except Exception:
+                pass
+        self.content_stack.set_visible_child_name("welcome")
+        logger.info("Showing welcome view")
 
     def _focus_connection_list_first_row(self):
         """Focus the connection list and ensure the first row is selected."""
         try:
             if not hasattr(self, 'connection_list') or self.connection_list is None:
                 return False
-            # For AdwPreferencesGroup, we can't easily select the first row
-            # Just ensure the connection list has focus
+            # If the list has no selection, select the first row
+            selected = self.connection_list.get_selected_row() if hasattr(self.connection_list, 'get_selected_row') else None
+            first_row = self.connection_list.get_row_at_index(0)
+            if not selected and first_row:
+                self.connection_list.select_row(first_row)
+            # If no widget currently has focus in the window, give it to the list
             focus_widget = self.get_focus() if hasattr(self, 'get_focus') else None
-            if focus_widget is None:
+            if focus_widget is None and first_row:
                 self.connection_list.grab_focus()
         except Exception:
             pass
@@ -1388,9 +1351,13 @@ class MainWindow(Adw.ApplicationWindow):
     
     def show_tab_view(self):
         """Show the tab view when connections are active"""
-        # The tab view is always visible now since it's directly in the UI
-        # Don't apply terminal-bg to the tab view itself
-        pass
+        # Re-apply terminal background when switching back to tabs
+        if hasattr(self.content_stack, 'add_css_class'):
+            try:
+                self.content_stack.add_css_class('terminal-bg')
+            except Exception:
+                pass
+        self.content_stack.set_visible_child_name("tabs")
         logger.info("Showing tab view")
 
     def show_connection_dialog(self, connection: Connection = None):
@@ -1664,14 +1631,7 @@ class MainWindow(Adw.ApplicationWindow):
                     return
         
         # Create new terminal
-        try:
-            terminal = TerminalWidget(connection, self.config, self.connection_manager)
-            logger.info(f"Terminal widget created successfully: {terminal}")
-        except Exception as e:
-            logger.error(f"Failed to create terminal widget: {e}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return
+        terminal = TerminalWidget(connection, self.config, self.connection_manager)
         
         # Connect signals
         terminal.connect('connection-established', self.on_terminal_connected)
@@ -1680,34 +1640,9 @@ class MainWindow(Adw.ApplicationWindow):
         terminal.connect('title-changed', self.on_terminal_title_changed)
         
         # Add to tab view
-        try:
-            page = self.tab_view.append(terminal)
-            page.set_title(connection.nickname)
-            page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
-            logger.info(f"Terminal added to tab view successfully")
-            
-            # Ensure the terminal widget is properly configured for expansion
-            terminal.set_hexpand(True)
-            terminal.set_vexpand(True)
-            terminal.set_size_request(600, 400)
-            
-            # Ensure the tab view is properly configured
-            self.tab_view.set_hexpand(True)
-            self.tab_view.set_vexpand(True)
-            
-        except Exception as e:
-            logger.error(f"Failed to add terminal to tab view: {e}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return
-        
-        # Debug: Check if terminal is properly added
-        logger.info(f"Added terminal to tab view: {terminal}")
-        logger.info(f"Tab page created: {page}")
-        logger.info(f"Terminal widget visible: {terminal.get_visible()}")
-        logger.info(f"Terminal widget mapped: {terminal.get_mapped()}")
-        logger.info(f"Terminal widget realized: {terminal.get_realized()}")
-        logger.info(f"Terminal widget allocated: {terminal.get_allocated_width()}x{terminal.get_allocated_height()}")
+        page = self.tab_view.append(terminal)
+        page.set_title(connection.nickname)
+        page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
         
         # Store references for multi-tab tracking
         self.connection_to_terminals.setdefault(connection, []).append(terminal)
@@ -1719,42 +1654,6 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Activate the new tab
         self.tab_view.set_selected_page(page)
-        
-        # Simple terminal visibility check
-        def _check_terminal_visibility():
-            try:
-                logger.info(f"Terminal widget allocated: {terminal.get_allocated_width()}x{terminal.get_allocated_height()}")
-                logger.info(f"Terminal widget visible: {terminal.get_visible()}")
-                logger.info(f"Terminal widget mapped: {terminal.get_mapped()}")
-            except Exception as e:
-                logger.error(f"Error checking terminal visibility: {e}")
-        
-        # Schedule the visibility check
-        GLib.timeout_add(500, _check_terminal_visibility)
-        
-        # Debug: Check tab view state
-        logger.info(f"Tab view pages count: {self.tab_view.get_n_pages()}")
-        logger.info(f"Selected page: {self.tab_view.get_selected_page()}")
-        logger.info(f"Tab view visible: {self.tab_view.get_visible()}")
-        logger.info(f"Tab view mapped: {self.tab_view.get_mapped()}")
-        logger.info(f"Tab view allocated: {self.tab_view.get_allocated_width()}x{self.tab_view.get_allocated_height()}")
-        
-        # Check if the tab view is properly showing the terminal
-        def _check_tab_view_display():
-            try:
-                logger.info(f"Tab view pages count after delay: {self.tab_view.get_n_pages()}")
-                selected_page = self.tab_view.get_selected_page()
-                logger.info(f"Selected page after delay: {selected_page}")
-                if selected_page:
-                    logger.info(f"Selected page title: {selected_page.get_title()}")
-                    logger.info(f"Selected page child: {selected_page.get_child()}")
-                    logger.info(f"Selected page child visible: {selected_page.get_child().get_visible() if selected_page.get_child() else 'No child'}")
-                    logger.info(f"Selected page child allocated: {selected_page.get_child().get_allocated_width()}x{selected_page.get_child().get_allocated_height() if selected_page.get_child() else 'No child'}")
-            except Exception as e:
-                logger.error(f"Error checking tab view display: {e}")
-        
-        # Schedule the check to run after a short delay
-        GLib.timeout_add(1000, _check_tab_view_display)
         
         # Force set colors after the terminal is added to the UI
         def _set_terminal_colors():
@@ -1870,37 +1769,30 @@ class MainWindow(Adw.ApplicationWindow):
             self._cycle_connection_tabs_or_open(row.connection)
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
 
-    def on_connection_activated(self, action_row):
-        """Handle connection activation (double-click on AdwActionRow)"""
-        logger.info(f"Connection activated: {action_row}")
-        if hasattr(action_row, 'connection') and action_row.connection:
-            logger.info(f"Connection activated: {action_row.connection.nickname}")
-            # Open connection
-            self._cycle_connection_tabs_or_open(action_row.connection)
-        else:
-            logger.warning("Connection activated but no connection found in action_row")
-    
-    def on_connection_selected(self, action_row):
-        """Handle connection selection (single-click on AdwActionRow)"""
-        logger.info(f"Connection selected: {action_row}")
-        if hasattr(action_row, 'connection') and action_row.connection:
-            logger.info(f"Connection selected: {action_row.connection.nickname}")
-            # Clear previous selection
-            if hasattr(self, 'selected_connection') and self.selected_connection and self.selected_connection in self.connection_rows:
-                previous_row = self.connection_rows[self.selected_connection]
-                previous_row.set_selected(False)
+    def on_connection_activated(self, list_box, row):
+        """Handle connection activation (Enter key)"""
+        if row:
+            self._cycle_connection_tabs_or_open(row.connection)
+            
 
-            # Update selection
-            self.selected_connection = action_row.connection
-            action_row.set_selected(True)
-            self._update_button_sensitivity()
-        else:
-            logger.warning("Connection selected but no connection found in action_row")
+        
+    def on_connection_activate(self, list_box, row):
+        """Handle connection activation (Enter key or double-click)"""
+        if row:
+            self._cycle_connection_tabs_or_open(row.connection)
+            return True  # Stop event propagation
+        return False
         
     def on_activate_connection(self, action, param):
         """Handle the activate-connection action"""
-        if self.selected_connection:
-            self._cycle_connection_tabs_or_open(self.selected_connection)
+        row = self.connection_list.get_selected_row()
+        if row:
+            self._cycle_connection_tabs_or_open(row.connection)
+            
+    def on_connection_activated(self, list_box, row):
+        """Handle connection activation (double-click)"""
+        if row:
+            self._cycle_connection_tabs_or_open(row.connection)
 
     def _cycle_connection_tabs_or_open(self, connection: Connection):
         """If there are open tabs for this server, cycle to the next one (wrap).
@@ -1944,9 +1836,9 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as e:
             logger.error(f"Failed to cycle or open for {getattr(connection, 'nickname', '')}: {e}")
 
-    def _update_button_sensitivity(self):
-        """Update button sensitivity based on selection"""
-        has_selection = self.selected_connection is not None
+    def on_connection_selected(self, list_box, row):
+        """Handle connection list selection change"""
+        has_selection = row is not None
         self.edit_button.set_sensitive(has_selection)
         if hasattr(self, 'copy_key_button'):
             self.copy_key_button.set_sensitive(has_selection)
@@ -1956,45 +1848,23 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_add_connection_clicked(self, button):
         """Handle add connection button click"""
-        logger.info("Add connection button clicked!")
         self.show_connection_dialog()
-    
-    def on_menu_button_clicked(self, button):
-        """Handle menu button click"""
-        self._show_application_menu()
-    
-    def _show_application_menu(self):
-        """Show the application menu"""
-        try:
-            # Create a simple popover menu
-            popover = Gtk.PopoverMenu()
-            popover.set_pointing_to(self.menu_button)
-            popover.set_position(Gtk.PositionType.BOTTOM)
-            
-            # Create menu model
-            menu = Gio.Menu()
-            menu.append('New Connection', 'app.new-connection')
-            menu.append('Generate SSH Key', 'app.new-key')
-            menu.append('Preferences', 'app.preferences')
-            menu.append('About', 'app.about')
-            menu.append('Quit', 'app.quit')
-            
-            popover.set_menu_model(menu)
-            popover.popup()
-        except Exception as e:
-            logger.error(f"Failed to show application menu: {e}")
 
     def on_edit_connection_clicked(self, button):
         """Handle edit connection button click"""
-        if self.selected_connection:
-            self.show_connection_dialog(self.selected_connection)
+        selected_row = self.connection_list.get_selected_row()
+        if selected_row:
+            self.show_connection_dialog(selected_row.connection)
 
     def on_copy_key_to_server_clicked(self, button):
         """Copy selected SSH public key to selected server using ssh-copy-id"""
         try:
-            if not self.selected_connection:
+            selected_row = self.connection_list.get_selected_row()
+            if not selected_row:
                 return
-            connection = self.selected_connection
+            connection = getattr(selected_row, 'connection', None)
+            if not connection:
+                return
 
             # Discover keys
             keys = self.key_manager.discover_keys() if hasattr(self, 'key_manager') else []
@@ -2080,9 +1950,10 @@ class MainWindow(Adw.ApplicationWindow):
     def on_upload_file_clicked(self, button):
         """Show SCP intro dialog and start upload to selected server."""
         try:
-            if not self.selected_connection:
+            selected_row = self.connection_list.get_selected_row()
+            if not selected_row:
                 return
-            connection = self.selected_connection
+            connection = getattr(selected_row, 'connection', None)
             if not connection:
                 return
 
@@ -2647,10 +2518,11 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_delete_connection_clicked(self, button):
         """Handle delete connection button click"""
-        if not self.selected_connection:
+        selected_row = self.connection_list.get_selected_row()
+        if not selected_row:
             return
         
-        connection = self.selected_connection
+        connection = selected_row.connection
         
         # If host has active connections/tabs, warn about closing them first
         has_active_terms = bool(self.connection_to_terminals.get(connection, []))
@@ -3148,8 +3020,9 @@ class MainWindow(Adw.ApplicationWindow):
         try:
             connection = getattr(self, '_context_menu_connection', None)
             if connection is None:
-                # Fallback to selected connection if any
-                connection = self.selected_connection
+                # Fallback to selected row if any
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
             if connection is None:
                 return
             self.connect_to_host(connection, force_new=True)

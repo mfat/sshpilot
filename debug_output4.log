@@ -1,0 +1,179 @@
+2025-08-18 01:53:03 - sshpilot.config - INFO - Using GSettings for configuration
+2025-08-18 01:53:03 - sshpilot.config - INFO - Using GSettings for configuration
+2025-08-18 01:53:03 - root - INFO - sshPilot application initialized
+2025-08-18 01:53:03 - asyncio - DEBUG - Using selector: EpollSelector
+2025-08-18 01:53:03 - sshpilot.config - INFO - Using GSettings for configuration
+2025-08-18 01:53:03 - sshpilot.config - INFO - Using GSettings for configuration
+2025-08-18 01:53:03 - sshpilot.config - INFO - Using GSettings for configuration
+2025-08-18 01:53:03 - sshpilot.config - INFO - Using GSettings for configuration
+2025-08-18 01:53:03 - sshpilot.config - INFO - Using GSettings for configuration
+2025-08-18 01:53:03 - sshpilot.connection_manager - INFO - Loaded 5 connections from SSH config
+2025-08-18 01:53:03 - sshpilot.config - INFO - Using GSettings for configuration
+2025-08-18 01:53:03 - sshpilot.window - INFO - Loading UI from resources...
+2025-08-18 01:53:03 - sshpilot.window - WARNING - Failed to load from resources: gtk-builder-error-quark: .:7:1 Template declaration (class 'MainWindow', parent 'AdwApplicationWindow') where templates aren't supported (1)
+2025-08-18 01:53:03 - sshpilot.window - INFO - Loading UI from local file...
+2025-08-18 01:53:03 - sshpilot.window - INFO - Successfully loaded UI from local file
+2025-08-18 01:53:03 - sshpilot.window - INFO - Connecting signals...
+2025-08-18 01:53:03 - sshpilot.window - INFO - Connecting add_button signal
+2025-08-18 01:53:03 - sshpilot.window - INFO - Connecting edit_button signal
+2025-08-18 01:53:03 - sshpilot.window - INFO - Connecting delete_button signal
+2025-08-18 01:53:03 - sshpilot.window - INFO - Connecting menu_button signal
+2025-08-18 01:53:03 - sshpilot.window - INFO - Signal connections completed
+2025-08-18 01:53:03 - sshpilot.window - INFO - Tab view is ready
+2025-08-18 01:53:03 - sshpilot.window - DEBUG - Updating status for NL: is_connected=False
+2025-08-18 01:53:03 - sshpilot.window - DEBUG - Set status icon to disconnected for NL
+2025-08-18 01:53:03 - sshpilot.window - DEBUG - Updating status for Racknerd: is_connected=False
+2025-08-18 01:53:03 - sshpilot.window - DEBUG - Set status icon to disconnected for Racknerd
+2025-08-18 01:53:03 - sshpilot.window - DEBUG - Updating status for GulloDE: is_connected=False
+2025-08-18 01:53:03 - sshpilot.window - DEBUG - Set status icon to disconnected for GulloDE
+2025-08-18 01:53:03 - sshpilot.window - DEBUG - Updating status for localhost: is_connected=False
+2025-08-18 01:53:03 - sshpilot.window - DEBUG - Set status icon to disconnected for localhost
+2025-08-18 01:53:03 - sshpilot.window - DEBUG - Updating status for router: is_connected=False
+2025-08-18 01:53:03 - sshpilot.window - DEBUG - Set status icon to disconnected for router
+2025-08-18 01:53:03 - sshpilot.window - INFO - Main window initialized
+2025-08-18 01:53:03 - sshpilot.connection_manager - INFO - Found 9 SSH keys: ['/home/mahdi/.ssh/t4', '/home/mahdi/.ssh/test2', '/home/mahdi/.ssh/id_ed25519', '/home/mahdi/.ssh/id_rsa', '/home/mahdi/.ssh/t6', '/home/mahdi/.ssh/id_dsa', '/home/mahdi/.ssh/t5', '/home/mahdi/.ssh/SecureKey', '/home/mahdi/.ssh/testkey']
+2025-08-18 01:53:03 - sshpilot.connection_manager - INFO - Secure storage initialized
+2025-08-18 01:53:06 - sshpilot.window - INFO - Click detected: n_press=1, x=76.0, y=16.000001907348633
+2025-08-18 01:53:06 - sshpilot.window - INFO - Single click detected - selecting connection
+2025-08-18 01:53:06 - sshpilot.window - INFO - Connection selected: <window.ConnectionRow object at 0x7a9fe4cee5c0 (sshpilot+window+ConnectionRow at 0x3a9aa740)>
+2025-08-18 01:53:06 - sshpilot.window - INFO - Connection selected: router
+2025-08-18 01:53:06 - sshpilot.window - INFO - Click detected: n_press=1, x=70.0, y=13.000000953674316
+2025-08-18 01:53:06 - sshpilot.window - INFO - Single click detected - selecting connection
+2025-08-18 01:53:06 - sshpilot.window - INFO - Connection selected: <window.ConnectionRow object at 0x7a9fe4cee5c0 (sshpilot+window+ConnectionRow at 0x3a9aa740)>
+2025-08-18 01:53:06 - sshpilot.window - INFO - Connection selected: router
+2025-08-18 01:53:08 - sshpilot.window - INFO - Click detected: n_press=1, x=202.0, y=18.99998664855957
+2025-08-18 01:53:08 - sshpilot.window - INFO - Single click detected - selecting connection
+2025-08-18 01:53:08 - sshpilot.window - INFO - Connection selected: <window.ConnectionRow object at 0x7a9fe4cee380 (sshpilot+window+ConnectionRow at 0x3a618870)>
+2025-08-18 01:53:08 - sshpilot.window - INFO - Connection selected: localhost
+2025-08-18 01:53:08 - sshpilot.window - INFO - Click detected: n_press=1, x=196.0, y=16.000001907348633
+2025-08-18 01:53:08 - sshpilot.window - INFO - Single click detected - selecting connection
+2025-08-18 01:53:08 - sshpilot.window - INFO - Connection selected: <window.ConnectionRow object at 0x7a9fe4cee380 (sshpilot+window+ConnectionRow at 0x3a618870)>
+2025-08-18 01:53:08 - sshpilot.window - INFO - Connection selected: localhost
+2025-08-18 01:53:09 - sshpilot.window - INFO - Click detected: n_press=1, x=232.0, y=37.000003814697266
+2025-08-18 01:53:09 - sshpilot.window - INFO - Single click detected - selecting connection
+2025-08-18 01:53:09 - sshpilot.window - INFO - Connection selected: <window.ConnectionRow object at 0x7a9fe4c66340 (sshpilot+window+ConnectionRow at 0x3a571ca0)>
+2025-08-18 01:53:09 - sshpilot.window - INFO - Connection selected: GulloDE
+2025-08-18 01:53:09 - sshpilot.window - INFO - Click detected: n_press=1, x=226.0, y=34.000003814697266
+2025-08-18 01:53:09 - sshpilot.window - INFO - Single click detected - selecting connection
+2025-08-18 01:53:09 - sshpilot.window - INFO - Connection selected: <window.ConnectionRow object at 0x7a9fe4c66340 (sshpilot+window+ConnectionRow at 0x3a571ca0)>
+2025-08-18 01:53:09 - sshpilot.window - INFO - Connection selected: GulloDE
+2025-08-18 01:53:10 - sshpilot.window - INFO - Click detected: n_press=1, x=186.0, y=19.000001907348633
+2025-08-18 01:53:10 - sshpilot.window - INFO - Single click detected - selecting connection
+2025-08-18 01:53:10 - sshpilot.window - INFO - Connection selected: <window.ConnectionRow object at 0x7a9fe4cee5c0 (sshpilot+window+ConnectionRow at 0x3a9aa740)>
+2025-08-18 01:53:10 - sshpilot.window - INFO - Connection selected: router
+2025-08-18 01:53:10 - sshpilot.window - INFO - Click detected: n_press=1, x=181.0, y=22.000001907348633
+2025-08-18 01:53:10 - sshpilot.window - INFO - Single click detected - selecting connection
+2025-08-18 01:53:10 - sshpilot.window - INFO - Connection selected: <window.ConnectionRow object at 0x7a9fe4cee5c0 (sshpilot+window+ConnectionRow at 0x3a9aa740)>
+2025-08-18 01:53:10 - sshpilot.window - INFO - Connection selected: router
+2025-08-18 01:53:32 - sshpilot.window - INFO - Click detected: n_press=1, x=212.0, y=35.9999885559082
+2025-08-18 01:53:32 - sshpilot.window - INFO - Single click detected - selecting connection
+2025-08-18 01:53:32 - sshpilot.window - INFO - Connection selected: <window.ConnectionRow object at 0x7a9fe4cee380 (sshpilot+window+ConnectionRow at 0x3a618870)>
+2025-08-18 01:53:32 - sshpilot.window - INFO - Connection selected: localhost
+2025-08-18 01:53:32 - sshpilot.window - INFO - Click detected: n_press=1, x=206.0, y=33.000003814697266
+2025-08-18 01:53:32 - sshpilot.window - INFO - Single click detected - selecting connection
+2025-08-18 01:53:32 - sshpilot.window - INFO - Connection selected: <window.ConnectionRow object at 0x7a9fe4cee380 (sshpilot+window+ConnectionRow at 0x3a618870)>
+2025-08-18 01:53:32 - sshpilot.window - INFO - Connection selected: localhost
+2025-08-18 01:53:32 - sshpilot.window - INFO - Click detected: n_press=1, x=206.0, y=33.000003814697266
+2025-08-18 01:53:32 - sshpilot.window - INFO - Single click detected - selecting connection
+2025-08-18 01:53:32 - sshpilot.window - INFO - Connection selected: <window.ConnectionRow object at 0x7a9fe4cee380 (sshpilot+window+ConnectionRow at 0x3a618870)>
+2025-08-18 01:53:32 - sshpilot.window - INFO - Connection selected: localhost
+2025-08-18 01:53:32 - sshpilot.window - INFO - Click detected: n_press=2, x=206.0, y=33.000003814697266
+2025-08-18 01:53:32 - sshpilot.window - INFO - Double click detected - activating connection
+2025-08-18 01:53:32 - sshpilot.window - INFO - Connection activated: <window.ConnectionRow object at 0x7a9fe4cee380 (sshpilot+window+ConnectionRow at 0x3a618870)>
+2025-08-18 01:53:32 - sshpilot.window - INFO - Connection activated: localhost
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Registered terminal 134827157157248
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Connected to connection-updated signal
+2025-08-18 01:53:32 - sshpilot.terminal - INFO - Setting up terminal...
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Set word char exceptions using VTE 0.60+ API
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Set cursor color
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Set highlight color
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Set highlight foreground color
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Enabled mouse autohide
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Set terminal encoding to UTF-8
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Enabled bold text
+2025-08-18 01:53:32 - sshpilot.terminal - INFO - Terminal setup complete
+2025-08-18 01:53:32 - sshpilot.terminal - INFO - Terminal setup complete
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:53:32 - sshpilot.terminal - INFO - Terminal widget created: <terminal.TerminalWidget object at 0x7a9fe4cef580 (TerminalWidget at 0x3b0bed60)>
+2025-08-18 01:53:32 - sshpilot.terminal - INFO - VTE terminal created: <Vte.Terminal object at 0x7aa0169e1980 (VteTerminal at 0x3a67ca50)>
+2025-08-18 01:53:32 - sshpilot.terminal - INFO - Scrolled window created: <Gtk.ScrolledWindow object at 0x7a9fe4cf4540 (GtkScrolledWindow at 0x3afa6420)>
+2025-08-18 01:53:32 - sshpilot.terminal - INFO - Overlay created: <Gtk.Overlay object at 0x7a9fc9d05800 (GtkOverlay at 0x3a9cbf90)>
+2025-08-18 01:53:32 - sshpilot.terminal - INFO - Terminal widget container_box added to main widget
+2025-08-18 01:53:32 - sshpilot.terminal - INFO - Container box child count: <Gtk.Overlay object at 0x7a9fc9d05800 (GtkOverlay at 0x3a9cbf90)>
+2025-08-18 01:53:32 - sshpilot.terminal - INFO - Overlay child count: <Gtk.ScrolledWindow object at 0x7a9fe4cf4540 (GtkScrolledWindow at 0x3afa6420)>
+2025-08-18 01:53:32 - sshpilot.terminal - INFO - Scrolled window child count: <Vte.Terminal object at 0x7aa0169e1980 (VteTerminal at 0x3a67ca50)>
+2025-08-18 01:53:32 - sshpilot.terminal - INFO - Added CSS classes to terminal widget for visibility
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Terminal widget initialized
+2025-08-18 01:53:32 - sshpilot.window - INFO - Terminal widget created successfully: <terminal.TerminalWidget object at 0x7a9fe4cef580 (TerminalWidget at 0x3b0bed60)>
+2025-08-18 01:53:32 - sshpilot.window - INFO - Terminal added to tab view successfully
+2025-08-18 01:53:32 - sshpilot.window - INFO - Added terminal to tab view: <terminal.TerminalWidget object at 0x7a9fe4cef580 (TerminalWidget at 0x3b0bed60)>
+2025-08-18 01:53:32 - sshpilot.window - INFO - Tab page created: <Adw.TabPage object at 0x7a9fc9d07240 (AdwTabPage at 0x3b9d1070)>
+2025-08-18 01:53:32 - sshpilot.window - INFO - Terminal widget visible: True
+2025-08-18 01:53:32 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:53:32 - sshpilot.window - INFO - Terminal widget realized: False
+2025-08-18 01:53:32 - sshpilot.window - INFO - Terminal widget allocated: 4x4
+2025-08-18 01:53:32 - sshpilot.window - INFO - Showing tab view
+2025-08-18 01:53:32 - sshpilot.window - INFO - Tab view pages count: 1
+2025-08-18 01:53:32 - sshpilot.window - INFO - Selected page: <Adw.TabPage object at 0x7a9fc9d07240 (AdwTabPage at 0x3b9d1070)>
+2025-08-18 01:53:32 - sshpilot.window - INFO - Tab view visible: True
+2025-08-18 01:53:32 - sshpilot.window - INFO - Tab view mapped: False
+2025-08-18 01:53:32 - sshpilot.window - INFO - Tab view allocated: 0x0
+
+(python3:294605): Gtk-WARNING **: 01:53:32.881: Calling gtk_widget_realize() on a widget that isn't inside a toplevel window is not going to work very well. Widgets must be inside a toplevel container before realizing them.
+
+(python3:294605): Gdk-CRITICAL **: 01:53:32.881: gdk_surface_get_frame_clock: assertion 'GDK_IS_SURFACE (surface)' failed
+2025-08-18 01:53:32 - sshpilot.window - INFO - Terminal widget after allocation: 4x4
+2025-08-18 01:53:32 - sshpilot.window - INFO - Terminal widget realized: True
+2025-08-18 01:53:32 - sshpilot.window - INFO - Terminal widget mapped: False
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - SSH verbosity configured: -v x 1, LogLevel set
+2025-08-18 01:53:32 - sshpilot.connection_manager - DEBUG - Password retrieved for mahdi@localhost
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Using sshpass with command: sshpass -p ****** ssh -o ConnectTimeout=30 -o ConnectionAttempts=1 -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -C -o StrictHostKeyChecking=accept-new -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=accept-new -v -o LogLevel=VERBOSE -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - SSH command: sshpass -p ****** ssh -o ConnectTimeout=30 -o ConnectionAttempts=1 -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -C -o StrictHostKeyChecking=accept-new -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=accept-new -v -o LogLevel=VERBOSE -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -X -o PermitLocalCommand=yes -o LocalCommand=notify-send "Connected to LocalHost" mahdi@localhost
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Flatpak debug: About to spawn SSH with command: ['sshpass', '-p', '147633', 'ssh', '-o', 'ConnectTimeout=30', '-o', 'ConnectionAttempts=1', '-o', 'ServerAliveInterval=60', '-o', 'ServerAliveCountMax=3', '-C', '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ExitOnForwardFailure=yes', '-o', 'StrictHostKeyChecking=accept-new', '-v', '-o', 'LogLevel=VERBOSE', '-o', 'PreferredAuthentications=password,keyboard-interactive', '-o', 'PubkeyAuthentication=no', '-X', '-o', 'PermitLocalCommand=yes', '-o', 'LocalCommand=notify-send "Connected to LocalHost"', 'mahdi@localhost']
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:53:32 - sshpilot.terminal - INFO - SSH terminal connected to localhost (mahdi@localhost)
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Flatpak debug: _on_spawn_complete called with pid=295238, error=None, user_data=()
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Terminal spawned with PID: 295238
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Process group ID: 295238
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Applied terminal theme: material_dark
+2025-08-18 01:53:32 - sshpilot.connection_manager - DEBUG - Connection manager updated status for localhost: Connected
+2025-08-18 01:53:32 - sshpilot.terminal - DEBUG - Terminal 134827157157248 updated connection status to connected
+2025-08-18 01:53:32 - sshpilot.window - DEBUG - Updating status for localhost: is_connected=True
+2025-08-18 01:53:32 - sshpilot.window - DEBUG - Set status icon to connected for localhost
+2025-08-18 01:53:32 - sshpilot.window - INFO - Terminal connected: localhost (mahdi@localhost)
+2025-08-18 01:53:32 - sshpilot.window - DEBUG - Connection status changed: localhost - Connected
+2025-08-18 01:53:32 - sshpilot.window - DEBUG - Updating status for localhost: is_connected=True
+2025-08-18 01:53:32 - sshpilot.window - DEBUG - Set status icon to connected for localhost
+2025-08-18 01:53:37 - sshpilot.terminal - DEBUG - Flatpak debug: Fallback hide spinner called
+2025-08-18 01:53:40 - sshpilot.window - INFO - Starting cleanup before quit...
+2025-08-18 01:53:40 - sshpilot.window - DEBUG - Disconnecting localhost (1/1)
+2025-08-18 01:53:40 - sshpilot.terminal - DEBUG - Disconnecting SSH session 134827157157248...
+2025-08-18 01:53:40 - sshpilot.terminal - DEBUG - Sent SIGTERM to process 295238 (PGID: 295238)
+2025-08-18 01:53:41 - sshpilot.terminal - DEBUG - Process 295238 still running, sending SIGKILL
+2025-08-18 01:53:41 - sshpilot.terminal - DEBUG - Cleaned up 1 processes for session 134827157157248
+2025-08-18 01:53:41 - sshpilot.window - DEBUG - Updating status for localhost: is_connected=False
+2025-08-18 01:53:41 - sshpilot.window - DEBUG - Set status icon to disconnected for localhost
+2025-08-18 01:53:41 - sshpilot.window - INFO - Terminal disconnected: localhost (mahdi@localhost)
+2025-08-18 01:53:41 - sshpilot.terminal - DEBUG - SSH session 134827157157248 disconnected
+2025-08-18 01:53:41 - sshpilot.window - DEBUG - Connection status changed: localhost - Disconnected
+2025-08-18 01:53:41 - sshpilot.window - DEBUG - Updating status for localhost: is_connected=False
+2025-08-18 01:53:41 - sshpilot.window - DEBUG - Set status icon to disconnected for localhost
+2025-08-18 01:53:41 - sshpilot.window - INFO - Quitting application
+2025-08-18 01:53:41 - sshpilot.config - DEBUG - Configuration saved to JSON file
+2025-08-18 01:53:41 - sshpilot.window - DEBUG - Setting changed: ui.window_width = 1807
+2025-08-18 01:53:41 - sshpilot.config - DEBUG - Setting ui.window_width = 1807
+2025-08-18 01:53:41 - sshpilot.config - DEBUG - Configuration saved to JSON file
+2025-08-18 01:53:41 - sshpilot.window - DEBUG - Setting changed: ui.window_height = 702
+2025-08-18 01:53:41 - sshpilot.config - DEBUG - Setting ui.window_height = 702
+2025-08-18 01:53:41 - sshpilot.config - DEBUG - Configuration saved to JSON file
+2025-08-18 01:53:41 - sshpilot.window - DEBUG - Setting changed: ui.sidebar_width = 250
+2025-08-18 01:53:41 - sshpilot.config - DEBUG - Setting ui.sidebar_width = 250
+2025-08-18 01:53:41 - sshpilot.window - DEBUG - Saved window geometry: 1807x702, sidebar: 250
+2025-08-18 01:53:41 - root - INFO - Application shutdown initiated, cleaning up...
+2025-08-18 01:53:41 - sshpilot.terminal - INFO - Cleaning up all SSH processes...
+2025-08-18 01:53:41 - sshpilot.terminal - INFO - SSH process cleanup completed
+2025-08-18 01:53:41 - root - INFO - Cleanup completed
+Loaded resources from: /home/mahdi/GitHub/sshpilot/sshpilot/resources/sshpilot.gresource

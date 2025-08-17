@@ -217,6 +217,12 @@ class TerminalWidget(Gtk.Box):
         self.scrolled_window.set_child(self.vte)
         self.overlay = Gtk.Overlay()
         self.overlay.set_child(self.scrolled_window)
+        
+        # Debug: Check terminal widget setup
+        logger.info(f"Terminal widget created: {self}")
+        logger.info(f"VTE terminal created: {self.vte}")
+        logger.info(f"Scrolled window created: {self.scrolled_window}")
+        logger.info(f"Overlay created: {self.overlay}")
 
         # Connecting overlay elements
         self.connecting_bg = Gtk.Box()
@@ -344,11 +350,60 @@ class TerminalWidget(Gtk.Box):
 
         self.append(self.container_box)
         
+        # Debug: Check widget hierarchy
+        logger.info(f"Terminal widget container_box added to main widget")
+        logger.info(f"Container box child count: {self.container_box.get_first_child()}")
+        logger.info(f"Overlay child count: {self.overlay.get_first_child()}")
+        logger.info(f"Scrolled window child count: {self.scrolled_window.get_first_child()}")
+        
         # Set expansion properties
         self.scrolled_window.set_hexpand(True)
         self.scrolled_window.set_vexpand(True)
         self.vte.set_hexpand(True)
         self.vte.set_vexpand(True)
+        
+        # Set minimum size for the terminal widget
+        self.set_size_request(400, 300)
+        self.scrolled_window.set_size_request(400, 300)
+        self.vte.set_size_request(400, 300)
+        
+        # Ensure the terminal widget expands to fill available space
+        self.set_hexpand(True)
+        self.set_vexpand(True)
+        self.container_box.set_hexpand(True)
+        self.container_box.set_vexpand(True)
+        self.overlay.set_hexpand(True)
+        self.overlay.set_vexpand(True)
+        self.scrolled_window.set_hexpand(True)
+        self.scrolled_window.set_vexpand(True)
+        self.vte.set_hexpand(True)
+        self.vte.set_vexpand(True)
+        
+        # Add CSS to ensure terminal widget is visible
+        try:
+            provider = Gtk.CssProvider()
+            provider.load_from_data(b"""
+                .terminal-widget {
+                    background-color: #000000;
+                    color: #ffffff;
+                }
+                .terminal-widget scrolledwindow {
+                    background-color: #000000;
+                }
+                .terminal-widget vte {
+                    background-color: #000000;
+                    color: #ffffff;
+                }
+            """)
+            display = Gdk.Display.get_default()
+            if display:
+                Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            self.add_css_class('terminal-widget')
+            self.scrolled_window.add_css_class('terminal-widget')
+            self.vte.add_css_class('terminal-widget')
+            logger.info("Added CSS classes to terminal widget for visibility")
+        except Exception as e:
+            logger.error(f"Failed to add CSS to terminal widget: {e}")
         
         # Connect terminal signals and store handler IDs for cleanup
         self._child_exited_handler = self.vte.connect('child-exited', self.on_child_exited)
