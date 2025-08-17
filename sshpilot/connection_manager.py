@@ -446,6 +446,41 @@ class Connection:
                 await self.process.wait()
             raise
 
+    def update_data(self, new_data: Dict[str, Any]):
+        """Update connection data while preserving object identity"""
+        self.data.update(new_data)
+        self._update_properties_from_data(self.data)
+    
+    def _update_properties_from_data(self, data: Dict[str, Any]):
+        """Update instance properties from data dictionary"""
+        self.nickname = data.get('nickname', data.get('host', 'Unknown'))
+        self.host = data.get('host', '')
+        self.username = data.get('username', '')
+        self.port = data.get('port', 22)
+        self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
+        self.password = data.get('password', '')
+        self.key_passphrase = data.get('key_passphrase', '')
+        self.local_command = data.get('local_command', '')
+        self.remote_command = data.get('remote_command', '')
+        
+        # Authentication method: 0 = key-based, 1 = password
+        try:
+            self.auth_method = int(data.get('auth_method', 0))
+        except Exception:
+            self.auth_method = 0
+            
+        # X11 forwarding preference
+        self.x11_forwarding = bool(data.get('x11_forwarding', False))
+        
+        # Key selection mode: 0 try all, 1 specific key
+        try:
+            self.key_select_mode = int(data.get('key_select_mode', 0) or 0)
+        except Exception:
+            self.key_select_mode = 0
+
+        # Port forwarding rules
+        self.forwarding_rules = data.get('forwarding_rules', [])
+
 class ConnectionManager(GObject.Object):
     """Manages SSH connections and configuration"""
     
@@ -516,6 +551,9 @@ class ConnectionManager(GObject.Object):
     def load_ssh_config(self):
         """Load connections from SSH config file"""
         try:
+            # Store existing connections by nickname for identity preservation
+            existing_by_nickname = {conn.nickname: conn for conn in self.connections}
+            
             # Reset current list to reflect latest config on each load
             self.connections = []
             if not os.path.exists(self.ssh_config_path):
@@ -546,17 +584,25 @@ class ConnectionManager(GObject.Object):
                             if current_host and current_config:
                                 connection_data = self.parse_host_config(current_config)
                                 if connection_data:
-                                    # Build connection and apply per-connection metadata (e.g., auth_method)
-                                    conn = Connection(connection_data)
-                                    try:
-                                        from .config import Config
-                                        cfg = Config()
-                                        meta = cfg.get_connection_meta(conn.nickname)
-                                        if isinstance(meta, dict) and 'auth_method' in meta:
-                                            conn.auth_method = meta['auth_method']
-                                    except Exception:
-                                        pass
-                                    self.connections.append(conn)
+                                    nickname = connection_data.get('nickname', '')
+                                    existing = existing_by_nickname.get(nickname)
+                                    
+                                    if existing:
+                                        # Update existing connection with new data
+                                        existing.update_data(connection_data)
+                                        self.connections.append(existing)
+                                    else:
+                                        # Create new connection only if none exists
+                                        conn = Connection(connection_data)
+                                        try:
+                                            from .config import Config
+                                            cfg = Config()
+                                            meta = cfg.get_connection_meta(conn.nickname)
+                                            if isinstance(meta, dict) and 'auth_method' in meta:
+                                                conn.auth_method = meta['auth_method']
+                                        except Exception:
+                                            pass
+                                        self.connections.append(conn)
                             
                             # Start new host
                             current_host = value
@@ -574,18 +620,27 @@ class ConnectionManager(GObject.Object):
             if current_host and current_config:
                 connection_data = self.parse_host_config(current_config)
                 if connection_data:
-                    conn = Connection(connection_data)
-                    # Apply per-connection metadata from app config (auth method, etc.)
-                    try:
-                        from .config import Config
-                        cfg = Config()
-                        meta = cfg.get_connection_meta(conn.nickname)
-                        if isinstance(meta, dict):
-                            if 'auth_method' in meta:
-                                conn.auth_method = meta['auth_method']
-                    except Exception:
-                        pass
-                    self.connections.append(conn)
+                    nickname = connection_data.get('nickname', '')
+                    existing = existing_by_nickname.get(nickname)
+                    
+                    if existing:
+                        # Update existing connection with new data
+                        existing.update_data(connection_data)
+                        self.connections.append(existing)
+                    else:
+                        # Create new connection only if none exists
+                        conn = Connection(connection_data)
+                        # Apply per-connection metadata from app config (auth method, etc.)
+                        try:
+                            from .config import Config
+                            cfg = Config()
+                            meta = cfg.get_connection_meta(conn.nickname)
+                            if isinstance(meta, dict):
+                                if 'auth_method' in meta:
+                                    conn.auth_method = meta['auth_method']
+                        except Exception:
+                            pass
+                        self.connections.append(conn)
             
             logger.info(f"Loaded {len(self.connections)} connections from SSH config")
             
@@ -615,6 +670,8 @@ class ConnectionManager(GObject.Object):
                 'keyfile': os.path.expanduser(_unwrap(config.get('identityfile'))) if config.get('identityfile') else None,
                 'forwarding_rules': []
             }
+            
+
             # Map ForwardX11 yes/no → x11_forwarding boolean
             try:
                 fwd_x11 = str(config.get('forwardx11', 'no')).strip().lower()
@@ -901,7 +958,7 @@ class ConnectionManager(GObject.Object):
         
         return '\n'.join(lines)
 
-    def update_ssh_config_file(self, connection: Connection, new_data: Dict[str, Any]):
+    def update_ssh_config_file(self, connection: Connection, new_data: Dict[str, Any], original_nickname: str = None):
         """Update SSH config file with new connection data"""
         try:
             if not os.path.exists(self.ssh_config_path):
@@ -924,16 +981,19 @@ class ConnectionManager(GObject.Object):
                 logger.error(f"Failed to read SSH config: {e}")
                 raise
             
-            # Find and update the connection's Host block (alias-aware and indentation-robust)
+            # Find and update the connection's Host block using nickname matching
             updated_lines = []
-            old_name = str(getattr(connection, 'nickname', '') or '')
-            new_name = str(new_data.get('nickname') or old_name)
+            new_name = str(new_data.get('nickname') or '')
             host_found = False
             replaced_once = False
 
-            # Only consider exact full-value matches or exact alias token matches; do not split the
-            # nickname into tokens for matching, to avoid cross-matching on common words (e.g. "host").
-            candidate_names = {old_name, new_name}
+            # For renaming, we need to find the existing block by the original nickname
+            # The connection object might already have the new nickname, so we need to be smarter
+            candidate_names = {new_name}
+            
+            # Add the original nickname to candidate names for proper matching during renames
+            if original_nickname:
+                candidate_names.add(original_nickname)
 
             i = 0
             while i < len(lines):
@@ -944,26 +1004,29 @@ class ConnectionManager(GObject.Object):
                     full_value = lstripped[len('Host '):].strip()
                     parts = lstripped.split()
                     current_names = parts[1:] if len(parts) > 1 else []
-                else:
-                    full_value = ''
-                    current_names = []
-
-                if full_value or current_names:
+                    
+                    # Check if this Host block matches our candidate names
                     if (full_value in candidate_names) or any(name in candidate_names for name in current_names):
                         host_found = True
                         if not replaced_once:
                             updated_config = self.format_ssh_config_entry(new_data)
                             updated_lines.append(updated_config + '\n')
                             replaced_once = True
+                        # Skip this Host line and all subsequent lines until next Host block
                         i += 1
                         while i < len(lines) and not lines[i].lstrip().startswith('Host '):
                             i += 1
                         continue
-
-                updated_lines.append(raw_line)
+                    else:
+                        # This is a different Host block, keep it
+                        updated_lines.append(raw_line)
+                else:
+                    # Not a Host line, keep it
+                    updated_lines.append(raw_line)
+                
                 i += 1
             
-            # If host not found, append the new config (new or old name not present)
+            # If host not found, append the new config
             if not host_found:
                 updated_config = self.format_ssh_config_entry(new_data)
                 updated_lines.append('\n' + updated_config + '\n')
@@ -1049,16 +1112,13 @@ class ConnectionManager(GObject.Object):
             # Capture previous identifiers for credential cleanup
             prev_host = getattr(connection, 'host', '')
             prev_user = getattr(connection, 'username', '')
-            # Update connection data
-            connection.data.update(new_data)
-            # Ensure forwarding rules stored on the object are updated too
-            try:
-                connection.forwarding_rules = list(new_data.get('forwarding_rules', connection.forwarding_rules or []))
-            except Exception:
-                pass
+            original_nickname = getattr(connection, 'nickname', '')
             
-            # Update the SSH config file
-            self.update_ssh_config_file(connection, new_data)
+            # Update existing object IN-PLACE instead of creating new ones
+            connection.update_data(new_data)
+            
+            # Update the SSH config file with original nickname for proper matching
+            self.update_ssh_config_file(connection, new_data, original_nickname)
             
             # Handle password storage/removal
             if 'password' in new_data:
@@ -1081,20 +1141,9 @@ class ConnectionManager(GObject.Object):
                     except Exception:
                         pass
             
-            # Reload SSH config to reflect changes
-            self.load_ssh_config()
-            # Update the provided connection object from the freshly loaded list to ensure runtime uses the latest
-            try:
-                fresh = self.find_connection_by_nickname(new_data.get('nickname', connection.nickname))
-                if fresh:
-                    # Copy runtime-critical fields (auth/key selection) so active sessions use latest
-                    connection.auth_method = getattr(fresh, 'auth_method', connection.auth_method)
-                    connection.keyfile = getattr(fresh, 'keyfile', connection.keyfile)
-                    connection.key_select_mode = getattr(fresh, 'key_select_mode', getattr(connection, 'key_select_mode', 0))
-            except Exception:
-                pass
+            # DO NOT call load_ssh_config() here - it breaks object references
             
-            # Emit signal
+            # Emit signal with SAME connection object
             self.emit('connection-updated', connection)
             
             logger.info(f"Connection updated: {connection}")
@@ -1240,6 +1289,25 @@ class ConnectionManager(GObject.Object):
         except Exception as e:
             logger.error(f"Failed to disconnect from {connection}: {e}", exc_info=True)
             raise
+
+    def update_connection_status(self, connection: Connection, is_connected: bool):
+        """Update connection status in the manager
+        
+        This method is called by terminals to update the connection manager's
+        tracking of connection status, especially after reconnections.
+        """
+        try:
+            # Update the connection's status
+            connection.is_connected = is_connected
+            
+            # For terminal-based connections (not async), we don't use active_connections
+            # but we still need to emit the status change signal
+            GLib.idle_add(self.emit, 'connection-status-changed', connection, is_connected)
+            
+            logger.debug(f"Connection manager updated status for {connection.nickname}: {'Connected' if is_connected else 'Disconnected'}")
+            
+        except Exception as e:
+            logger.error(f"Failed to update connection status: {e}")
 
     def get_connections(self) -> List[Connection]:
         """Get list of all connections"""

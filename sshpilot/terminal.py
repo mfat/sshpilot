@@ -768,6 +768,17 @@ class TerminalWidget(Gtk.Box):
 
             # Spawn succeeded; mark as connected and hide overlay
             self.is_connected = True
+            
+            # Update connection status in the connection manager
+            if hasattr(self, 'connection') and self.connection:
+                if hasattr(self, 'connection_manager') and self.connection_manager:
+                    self.connection_manager.update_connection_status(self.connection, True)
+                    logger.debug(f"Terminal {self.session_id} updated connection status to connected")
+                else:
+                    logger.warning(f"Terminal {self.session_id} has no connection manager")
+            else:
+                logger.warning(f"Terminal {self.session_id} has no connection object to update")
+            
             self.emit('connection-established')
             self._set_connecting_overlay_visible(False)
             # Ensure any reconnect/disconnected banner is hidden upon successful spawn
@@ -786,6 +797,17 @@ class TerminalWidget(Gtk.Box):
         if not self.is_connected:
             logger.warning("Flatpak: Spawn completion callback didn't fire, forcing connection state")
             self.is_connected = True
+            
+            # Update connection status in the connection manager
+            if hasattr(self, 'connection') and self.connection:
+                if hasattr(self, 'connection_manager') and self.connection_manager:
+                    self.connection_manager.update_connection_status(self.connection, True)
+                    logger.debug(f"Terminal {self.session_id} updated connection status to connected (fallback)")
+                else:
+                    logger.warning(f"Terminal {self.session_id} has no connection manager (fallback)")
+            else:
+                logger.warning(f"Terminal {self.session_id} has no connection object to update (fallback)")
+            
             self.emit('connection-established')
             self._set_connecting_overlay_visible(False)
             try:
@@ -1184,51 +1206,6 @@ class TerminalWidget(Gtk.Box):
             self._set_connecting_overlay_visible(False)
             self._set_disconnected_banner_visible(True, _('Connection lost.'))
     
-    def on_child_exited(self, widget, status):
-        """Called when the child process exits"""
-        # On clean exit, close the tab without confirmation
-        try:
-            if hasattr(self, 'connection_manager') and hasattr(self, 'get_root'):
-                root = self.get_root()
-                # 0 or success-like statuses indicate user exit
-                if status == 0 and root and hasattr(root, 'tab_view'):
-                    page = root.tab_view.get_page(self)
-                    if page:
-                        # Suppress confirmation dialogs during programmatic close
-                        try:
-                            setattr(root, '_suppress_close_confirmation', True)
-                            root.tab_view.close_page(page)
-                        finally:
-                            try:
-                                setattr(root, '_suppress_close_confirmation', False)
-                            except Exception:
-                                pass
-                        return
-        except Exception:
-            pass
-        if self.is_connected:
-            self.is_connected = False
-            logger.info(f"SSH session ended with status {status}")
-            self.emit('connection-lost')
-            # Show reconnect UI
-            self._set_connecting_overlay_visible(False)
-            self._set_disconnected_banner_visible(True, _('Session ended.'))
-        else:
-            # Early exit without connection; if forwarding was requested, show dialog
-            try:
-                if getattr(self.connection, 'forwarding_rules', None):
-                    import time
-                    fast_fail = (getattr(self, '_spawn_start_time', None) and (time.time() - self._spawn_start_time) < 5)
-                    if fast_fail:
-                        self._show_forwarding_error_dialog("SSH failed to start with requested port forwarding. Check if ports are available.")
-                        # Also print red hint
-                        try:
-                            self.vte.feed(b"\r\n\x1b[31mPort forwarding failed.\x1b[0m\r\n")
-                        except Exception:
-                            pass
-            except Exception as e:
-                logger.debug(f"Error handling early child exit: {e}")
-    
     def _on_terminal_input(self, widget, text, size):
         """Handle input from the terminal (handled automatically by VTE)"""
         pass
@@ -1576,9 +1553,19 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 exit_code = status
 
-        # If user explicitly typed 'exit' (clean status 0), close tab immediately
+        # If user explicitly typed 'exit' (clean status 0), update status and close tab immediately
         try:
             if exit_code == 0 and hasattr(self, 'get_root'):
+                # Update connection status BEFORE closing the tab
+                logger.debug("Clean exit detected, updating connection status before closing tab")
+                if self.connection:
+                    self.connection.is_connected = False
+                self.is_connected = False
+                
+                # Emit connection status change signal
+                if hasattr(self, 'connection_manager') and self.connection_manager and self.connection:
+                    GLib.idle_add(self.connection_manager.emit, 'connection-status-changed', self.connection, False)
+                
                 root = self.get_root()
                 if root and hasattr(root, 'tab_view'):
                     page = root.tab_view.get_page(self)
@@ -1595,6 +1582,16 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             pass
 
+        # Check if this is a controlled reconnect to avoid interfering with the reconnection process
+        try:
+            if hasattr(self, 'get_root') and self.get_root():
+                root = self.get_root()
+                if hasattr(root, '_is_controlled_reconnect') and root._is_controlled_reconnect:
+                    logger.debug("Controlled reconnect in progress, skipping connection status update")
+                    return
+        except Exception:
+            pass
+        
         # Non-zero or unknown exit: treat as connection lost and show banner
         logger.debug("Updating connection status after process exit")
         if self.connection:
