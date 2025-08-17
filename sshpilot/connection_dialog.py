@@ -9,6 +9,7 @@ import gettext
 import re
 import ipaddress
 import socket
+import subprocess
 from typing import Optional, Dict, Any
 
 from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk
@@ -177,6 +178,29 @@ class SSHConnectionValidator:
         if username.lower() in ['admin', 'administrator', 'user', 'guest']:
             return ValidationResult(True, _("Common username - consider more specific"), "warning")
         return ValidationResult(True, _("Valid username"))
+
+    def verify_key_passphrase(self, key_path: str, passphrase: str) -> bool:
+        """Verify that the passphrase matches the private key using ssh-keygen -y"""
+        if not key_path or not os.path.exists(key_path):
+            return False
+        
+        try:
+            # Run ssh-keygen -y to test the passphrase
+            result = subprocess.run([
+                'ssh-keygen', '-y', '-P', passphrase, '-f', key_path
+            ], capture_output=True, text=True, timeout=10)
+            
+            # Exit code 0 means the passphrase is valid
+            return result.returncode == 0
+        except subprocess.TimeoutExpired:
+            logger.error(f"Timeout verifying passphrase for key: {key_path}")
+            return False
+        except subprocess.CalledProcessError:
+            # This shouldn't happen since we're capturing output, but handle it
+            return False
+        except Exception as e:
+            logger.error(f"Error verifying passphrase for key {key_path}: {e}")
+            return False
 
 class ConnectionDialog(Adw.PreferencesDialog):
     """Dialog for adding/editing SSH connections using PreferencesDialog layout"""
@@ -1957,14 +1981,22 @@ class ConnectionDialog(Adw.PreferencesDialog):
         except Exception:
             keyfile_value = ''
 
-        # Store key passphrase in secret storage if provided
+        # Verify passphrase before proceeding with save
         key_passphrase = self.key_passphrase_row.get_text()
+        
+        if keyfile_value and keyfile_value != "Select key file" and key_passphrase:
+            # Verify the passphrase matches the private key
+            if not self.validator.verify_key_passphrase(keyfile_value, key_passphrase):
+                self.show_error(_("The passphrase you entered is invalid for this key. Please try again."))
+                return
+
+        # Store key passphrase in secret storage if provided
         if keyfile_value and keyfile_value != "Select key file":
             try:
                 if hasattr(self, 'connection_manager') and self.connection_manager:
                     if hasattr(self.connection_manager, 'store_key_passphrase'):
                         if key_passphrase:
-                            # Store new or modified passphrase
+                            # Store new or modified passphrase (already verified above)
                             self.connection_manager.store_key_passphrase(keyfile_value, key_passphrase)
                         elif hasattr(self.connection_manager, 'delete_key_passphrase'):
                             # User cleared the field - remove stored passphrase
@@ -2151,8 +2183,11 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 self.present()
         except Exception:
             pass
+        
+        # Use the parent window as the transient parent for the error dialog
+        parent_window = self.parent_window if hasattr(self, 'parent_window') else None
         dialog = Adw.MessageDialog.new(
-            self,
+            parent_window,
             _("Error"),
             message
         )
