@@ -1553,9 +1553,19 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 exit_code = status
 
-        # If user explicitly typed 'exit' (clean status 0), close tab immediately
+        # If user explicitly typed 'exit' (clean status 0), update status and close tab immediately
         try:
             if exit_code == 0 and hasattr(self, 'get_root'):
+                # Update connection status BEFORE closing the tab
+                logger.debug("Clean exit detected, updating connection status before closing tab")
+                if self.connection:
+                    self.connection.is_connected = False
+                self.is_connected = False
+                
+                # Emit connection status change signal
+                if hasattr(self, 'connection_manager') and self.connection_manager and self.connection:
+                    GLib.idle_add(self.connection_manager.emit, 'connection-status-changed', self.connection, False)
+                
                 root = self.get_root()
                 if root and hasattr(root, 'tab_view'):
                     page = root.tab_view.get_page(self)
