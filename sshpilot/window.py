@@ -71,22 +71,27 @@ class ConnectionRow(Adw.ActionRow):
     
     def _setup_gestures(self):
         """Set up gesture recognition for single and double clicks"""
-        # Single gesture for both single and double click
-        gesture = Gtk.GestureClick.new()
-        gesture.set_button(1)  # Left mouse button
-        gesture.connect('pressed', self._on_click)
-        self.add_controller(gesture)
+        # Use standard GTK double-click timing with activated signal
+        self.set_activatable(True)
+        self.connect('activated', self._on_activated)
+        
+        # Use single click gesture for selection
+        single_gesture = Gtk.GestureClick.new()
+        single_gesture.set_button(1)  # Left mouse button
+        single_gesture.connect('pressed', self._on_single_click)
+        self.add_controller(single_gesture)
     
-    def _on_click(self, gesture, n_press, x, y):
-        """Handle click events"""
+    def _on_single_click(self, gesture, n_press, x, y):
+        """Handle single click events for selection"""
         window = self.get_root()
-        logger.info(f"Click detected: n_press={n_press}, x={x}, y={y}")
-        if n_press == 1:  # Single click
-            logger.info("Single click detected - selecting connection")
-            window.on_connection_selected(self)
-        elif n_press == 2:  # Double click
-            logger.info("Double click detected - activating connection")
-            window.on_connection_activated(self)
+        logger.info(f"Single click detected: n_press={n_press}, x={x}, y={y}")
+        window.on_connection_selected(self)
+    
+    def _on_activated(self, action_row):
+        """Handle double click activation (uses GTK's default double-click timing)"""
+        window = self.get_root()
+        logger.info("Double click activated - connecting to host")
+        window.on_connection_activated(self)
     
     def set_selected(self, selected: bool):
         """Set the selection state of this row"""
