@@ -1229,6 +1229,10 @@ class MainWindow(Adw.ApplicationWindow):
             self.tab_bar.set_view(self.tab_view)
         # No longer creating a Gtk.Stack here, as the tab_view is directly in the UI
         logger.info("Tab view is ready")
+        
+        # Initialize welcome tab if no tabs are present
+        if hasattr(self, 'tab_view') and self.tab_view and self.tab_view.get_n_pages() == 0:
+            self._ensure_welcome_tab()
 
     def _create_fallback_ui(self):
         """Create a fallback UI if the UI file cannot be loaded"""
@@ -1329,6 +1333,10 @@ class MainWindow(Adw.ApplicationWindow):
         main_box.append(self.split_view)
         self.set_content(main_box)
         
+        # Initialize welcome tab if no tabs are present
+        if self.tab_view.get_n_pages() == 0:
+            self._ensure_welcome_tab()
+        
         logger.info("Fallback UI created")
 
     def setup_connection_list_dnd(self):
@@ -1382,9 +1390,31 @@ class MainWindow(Adw.ApplicationWindow):
 
     def show_welcome_view(self):
         """Show the welcome/help view when no connections are active"""
-        # The welcome view is no longer used since we have a direct tab view
-        # Just ensure the tab view is visible
-        logger.info("Welcome view not implemented in new UI")
+        # Create and show the welcome tab
+        self._ensure_welcome_tab()
+        logger.info("Welcome view shown")
+
+    def _ensure_welcome_tab(self):
+        """Ensure the welcome tab is shown when no other tabs are present"""
+        if not hasattr(self, 'tab_view') or not self.tab_view:
+            return
+            
+        # Check if we already have a welcome tab
+        if hasattr(self, '_welcome_page') and self._welcome_page:
+            # If welcome tab exists, make sure it's visible
+            if self.tab_view.get_n_pages() == 0:
+                self.tab_view.append(self._welcome_page)
+            return
+            
+        # Create welcome tab if it doesn't exist
+        if self.tab_view.get_n_pages() == 0:
+            self._welcome_page = WelcomePage()
+            page = self.tab_view.append(self._welcome_page)
+            page.set_title("Welcome")
+            page.set_icon(Gio.ThemedIcon.new('network-workgroup-symbolic'))
+            # Note: AdwTabPage doesn't have set_closable method
+            # The welcome tab will be managed programmatically
+            logger.info("Welcome tab created and shown")
 
     def _focus_connection_list_first_row(self):
         """Focus the connection list and ensure the first row is selected."""
@@ -1695,6 +1725,15 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Add to tab view
         try:
+            # Hide welcome tab if it's the only tab present
+            if (self.tab_view.get_n_pages() == 1 and 
+                hasattr(self, '_welcome_page') and self._welcome_page and
+                self.tab_view.get_page(self._welcome_page) is not None):
+                # Remove the welcome tab before adding the new terminal tab
+                welcome_page = self.tab_view.get_page(self._welcome_page)
+                self.tab_view.close_page(welcome_page)
+                logger.info("Welcome tab hidden as new connection is being opened")
+            
             page = self.tab_view.append(terminal)
             page.set_title(connection.nickname)
             page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
@@ -2768,6 +2807,14 @@ class MainWindow(Adw.ApplicationWindow):
         # close behavior to proceed.
         if getattr(self, '_suppress_close_confirmation', False):
             return False
+            
+        # Prevent closing the welcome tab
+        if hasattr(page, 'get_child'):
+            child = page.get_child()
+            if hasattr(self, '_welcome_page') and child == self._welcome_page:
+                logger.info("Preventing welcome tab from being closed")
+                return True  # Prevent the close
+        
         # Get the connection for this tab
         connection = None
         terminal = None
@@ -2833,7 +2880,7 @@ class MainWindow(Adw.ApplicationWindow):
             
             # Check if this was the last tab and show welcome screen if needed
             if tab_view.get_n_pages() == 0:
-                self.show_welcome_view()
+                self._ensure_welcome_tab()
         else:
             # User cancelled, so we reject the close request.
             # This is the critical step that makes the close button work again.
