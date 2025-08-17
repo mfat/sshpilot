@@ -187,11 +187,12 @@ class ConnectionDialog(Adw.PreferencesDialog):
         'connection-saved': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
     }
     
-    def __init__(self, parent, connection=None):
+    def __init__(self, parent, connection=None, connection_manager=None):
         super().__init__()
         
         self.parent_window = parent
         self.connection = connection
+        self.connection_manager = connection_manager
         self.is_editing = connection is not None
         
         self.set_title('Edit Connection' if self.is_editing else 'New Connection')
@@ -350,8 +351,18 @@ class ConnectionDialog(Adw.PreferencesDialog):
             except Exception:
                 self._orig_password = ""
                 
+            # Load key passphrase from connection object or from secure storage
             if hasattr(self.connection, 'key_passphrase') and self.connection.key_passphrase:
                 self.key_passphrase_row.set_text(self.connection.key_passphrase)
+            else:
+                # Try to load from secure storage if we have a keyfile
+                try:
+                    if hasattr(self, 'connection_manager') and self.connection_manager and keyfile:
+                        stored_passphrase = self.connection_manager.get_key_passphrase(keyfile)
+                        if stored_passphrase:
+                            self.key_passphrase_row.set_text(stored_passphrase)
+                except Exception as e:
+                    logger.debug(f"Failed to load stored passphrase: {e}")
 
             # Load key selection mode (prefer fresh manager copy by nickname)
             try:
@@ -1084,6 +1095,9 @@ class ConnectionDialog(Adw.PreferencesDialog):
                     self._selected_keyfile_path = path
                     if hasattr(self.keyfile_row, 'set_subtitle'):
                         self.keyfile_row.set_subtitle(path)
+                    
+                    # Update passphrase field for the selected key
+                    self._update_passphrase_for_key(path)
             except Exception:
                 pass
         try:
@@ -1943,6 +1957,21 @@ class ConnectionDialog(Adw.PreferencesDialog):
         except Exception:
             keyfile_value = ''
 
+        # Store key passphrase in secret storage if provided
+        key_passphrase = self.key_passphrase_row.get_text()
+        if keyfile_value and keyfile_value != "Select key file":
+            try:
+                if hasattr(self, 'connection_manager') and self.connection_manager:
+                    if hasattr(self.connection_manager, 'store_key_passphrase'):
+                        if key_passphrase:
+                            # Store new or modified passphrase
+                            self.connection_manager.store_key_passphrase(keyfile_value, key_passphrase)
+                        elif hasattr(self.connection_manager, 'delete_key_passphrase'):
+                            # User cleared the field - remove stored passphrase
+                            self.connection_manager.delete_key_passphrase(keyfile_value)
+            except Exception as e:
+                logger.warning(f"Failed to store/delete key passphrase: {e}")
+
         # Gather connection data
         connection_data = {
             'nickname': self.nickname_row.get_text().strip(),
@@ -2131,3 +2160,25 @@ class ConnectionDialog(Adw.PreferencesDialog):
         dialog.set_default_response("ok")
         dialog.set_close_response("ok")
         dialog.present()
+
+    def _update_passphrase_for_key(self, key_path):
+        """Update the passphrase field when a different key is selected"""
+        try:
+            if not key_path or not hasattr(self, 'key_passphrase_row'):
+                return
+            
+            # Clear the passphrase field first
+            self.key_passphrase_row.set_text("")
+            
+            # Try to load passphrase from secure storage for the selected key
+            if hasattr(self, 'connection_manager') and self.connection_manager:
+                stored_passphrase = self.connection_manager.get_key_passphrase(key_path)
+                if stored_passphrase:
+                    self.key_passphrase_row.set_text(stored_passphrase)
+                    logger.debug(f"Loaded passphrase for key: {key_path}")
+                else:
+                    logger.debug(f"No stored passphrase for key: {key_path}")
+            else:
+                logger.debug(f"No connection manager available for key: {key_path}")
+        except Exception as e:
+            logger.debug(f"Failed to update passphrase for key {key_path}: {e}")

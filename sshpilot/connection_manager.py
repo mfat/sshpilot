@@ -892,6 +892,225 @@ class ConnectionManager(GObject.Object):
             logger.error(f"Error deleting password for {username}@{host}: {e}")
             return False
 
+    def store_key_passphrase(self, key_path: str, passphrase: str) -> bool:
+        """Store key passphrase securely in system keyring"""
+        if not self._ensure_collection():
+            return False
+        try:
+            # Create unique identifier for this key
+            key_id = f"key_passphrase_{os.path.basename(key_path)}_{hash(key_path)}"
+            
+            attributes = {
+                'application': 'sshPilot',
+                'type': 'key_passphrase',
+                'key_path': key_path,
+                'key_id': key_id
+            }
+            
+            # Store the passphrase
+            self.collection.create_item(
+                f"SSH Key Passphrase: {os.path.basename(key_path)}",
+                attributes,
+                passphrase.encode('utf-8'),
+                replace=True
+            )
+            logger.debug(f"Stored key passphrase for {key_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Error storing key passphrase for {key_path}: {e}")
+            return False
+
+    def get_key_passphrase(self, key_path: str) -> Optional[str]:
+        """Retrieve key passphrase from system keyring"""
+        if not self._ensure_collection():
+            return None
+        try:
+            attributes = {
+                'application': 'sshPilot',
+                'type': 'key_passphrase',
+                'key_path': key_path
+            }
+            
+            items = list(self.collection.search_items(attributes))
+            if items:
+                passphrase = items[0].get_secret().decode('utf-8')
+                logger.debug(f"Retrieved key passphrase for {key_path}")
+                return passphrase
+            return None
+        except Exception as e:
+            logger.error(f"Error retrieving key passphrase for {key_path}: {e}")
+            return None
+
+    def delete_key_passphrase(self, key_path: str) -> bool:
+        """Delete stored key passphrase from system keyring"""
+        if not self._ensure_collection():
+            return False
+        try:
+            attributes = {
+                'application': 'sshPilot',
+                'type': 'key_passphrase',
+                'key_path': key_path
+            }
+            
+            items = list(self.collection.search_items(attributes))
+            removed_any = False
+            for item in items:
+                try:
+                    item.delete()
+                    removed_any = True
+                except Exception:
+                    pass
+            if removed_any:
+                logger.debug(f"Deleted stored key passphrase for {key_path}")
+            return removed_any
+        except Exception as e:
+            logger.error(f"Error deleting key passphrase for {key_path}: {e}")
+            return False
+
+    def _ensure_ssh_agent(self) -> bool:
+        """Ensure ssh-agent is running and export environment variables"""
+        try:
+            # Check if ssh-agent is already running
+            if os.environ.get('SSH_AUTH_SOCK'):
+                logger.debug("SSH agent already running")
+                return True
+            
+            # Start a new ssh-agent
+            logger.debug("Starting new ssh-agent")
+            result = subprocess.run(
+                ['ssh-agent', '-s'],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode != 0:
+                logger.error(f"Failed to start ssh-agent: {result.stderr}")
+                return False
+            
+            # Parse the output to extract environment variables
+            for line in result.stdout.split('\n'):
+                if line.startswith('export '):
+                    # Extract variable name and value
+                    var_part = line[7:]  # Remove 'export '
+                    if '=' in var_part:
+                        name, value = var_part.split('=', 1)
+                        # Remove quotes if present
+                        value = value.strip().strip('"\'')
+                        os.environ[name] = value
+            
+            logger.debug("SSH agent started successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error ensuring ssh-agent is running: {e}")
+            return False
+
+    def add_key_to_agent(self, key_path: str) -> bool:
+        """Add SSH key to ssh-agent using temporary SSH_ASKPASS script"""
+        if not os.path.isfile(key_path):
+            logger.error(f"Key file not found: {key_path}")
+            return False
+        
+        # Get the passphrase from secure storage
+        passphrase = self.get_key_passphrase(key_path)
+        if not passphrase:
+            logger.debug(f"No stored passphrase for key: {key_path}")
+            return False
+        
+        # Ensure ssh-agent is running
+        if not self._ensure_ssh_agent():
+            logger.error("Failed to ensure ssh-agent is running")
+            return False
+        
+        # Create temporary SSH_ASKPASS script
+        import tempfile
+        import stat
+        
+        try:
+            # Create temporary script file
+            script_fd, script_path = tempfile.mkstemp(prefix='ssh_askpass_', suffix='.sh')
+            
+            # Write the script content
+            script_content = f"""#!/bin/bash
+echo "{passphrase}"
+"""
+            os.write(script_fd, script_content.encode('utf-8'))
+            os.close(script_fd)
+            
+            # Make the script executable
+            os.chmod(script_path, stat.S_IRWXU)
+            
+            logger.debug(f"Created SSH_ASKPASS script: {script_path}")
+            
+            # Set up environment variables for ssh-add
+            env = os.environ.copy()
+            env['SSH_ASKPASS'] = script_path
+            env['SSH_ASKPASS_REQUIRE'] = 'force'
+            env['DISPLAY'] = ':0'  # Dummy display to satisfy ssh-add
+            
+            # Run ssh-add
+            result = subprocess.run(
+                ['ssh-add', key_path],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            # Clean up the script immediately
+            try:
+                os.unlink(script_path)
+                logger.debug(f"Cleaned up SSH_ASKPASS script: {script_path}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up SSH_ASKPASS script: {e}")
+            
+            if result.returncode == 0:
+                logger.debug(f"Successfully added key to ssh-agent: {key_path}")
+                return True
+            else:
+                logger.error(f"Failed to add key to ssh-agent: {result.stderr}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error adding key to ssh-agent: {e}")
+            # Clean up script if it exists
+            try:
+                if 'script_path' in locals():
+                    os.unlink(script_path)
+            except Exception:
+                pass
+            return False
+
+    def prepare_key_for_connection(self, key_path: str) -> bool:
+        """Prepare SSH key for connection by adding it to ssh-agent"""
+        try:
+            if not key_path or not os.path.isfile(key_path):
+                logger.debug("No valid key path provided")
+                return False
+            
+            # Check if key is already in ssh-agent
+            if os.environ.get('SSH_AUTH_SOCK'):
+                try:
+                    result = subprocess.run(
+                        ['ssh-add', '-l'],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if result.returncode == 0 and key_path in result.stdout:
+                        logger.debug(f"Key already in ssh-agent: {key_path}")
+                        return True
+                except Exception:
+                    pass
+            
+            # Add key to ssh-agent
+            return self.add_key_to_agent(key_path)
+            
+        except Exception as e:
+            logger.error(f"Error preparing key for connection: {e}")
+            return False
+
     def format_ssh_config_entry(self, data: Dict[str, Any]) -> str:
         """Format connection data as SSH config entry"""
         lines = [f"Host {data['nickname']}"]
