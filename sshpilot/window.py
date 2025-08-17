@@ -963,13 +963,13 @@ class MainWindow(Adw.ApplicationWindow):
         logger.info("Connecting signals...")
         try:
             logger.info("Connecting add_button signal")
-            self.add_button.connect('activated', self.on_add_connection_clicked)
+            self.add_button.connect('clicked', self.on_add_connection_clicked)
             logger.info("Connecting edit_button signal")
-            self.edit_button.connect('activated', self.on_edit_connection_clicked)
+            self.edit_button.connect('clicked', self.on_edit_connection_clicked)
             logger.info("Connecting delete_button signal")
-            self.delete_button.connect('activated', self.on_delete_connection_clicked)
+            self.delete_button.connect('clicked', self.on_delete_connection_clicked)
             logger.info("Connecting menu_button signal")
-            self.menu_button.connect('activated', self.on_menu_button_clicked)
+            self.menu_button.connect('clicked', self.on_menu_button_clicked)
             logger.info("Signal connections completed")
         except Exception as e:
             logger.error(f"Failed to connect signals: {e}")
@@ -1261,40 +1261,49 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Create action buttons
         actions_group = Adw.PreferencesGroup()
+        action_row = Adw.ActionRow()
+        action_row.set_title("Actions")
         
-        self.add_button = Adw.ActionRow()
-        self.add_button.set_title("Add Connection")
-        self.add_button.set_subtitle("Create a new SSH connection")
+        # Create horizontal box for buttons
+        action_buttons_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        action_buttons_box.set_halign(Gtk.Align.START)
+        
+        # Add button
+        self.add_button = Gtk.Button()
         self.add_button.set_icon_name("list-add-symbolic")
-        self.add_button.set_activatable(True)
-        self.add_button.connect('activated', self.on_add_connection_clicked)
-        actions_group.add(self.add_button)
+        self.add_button.set_tooltip_text("Add Connection")
+        self.add_button.add_css_class("flat")
+        self.add_button.connect('clicked', self.on_add_connection_clicked)
+        action_buttons_box.append(self.add_button)
         
-        self.edit_button = Adw.ActionRow()
-        self.edit_button.set_title("Edit Connection")
-        self.edit_button.set_subtitle("Modify selected connection")
+        # Edit button
+        self.edit_button = Gtk.Button()
         self.edit_button.set_icon_name("document-edit-symbolic")
-        self.edit_button.set_activatable(True)
+        self.edit_button.set_tooltip_text("Edit Connection")
+        self.edit_button.add_css_class("flat")
         self.edit_button.set_sensitive(False)
-        self.edit_button.connect('activated', self.on_edit_connection_clicked)
-        actions_group.add(self.edit_button)
+        self.edit_button.connect('clicked', self.on_edit_connection_clicked)
+        action_buttons_box.append(self.edit_button)
         
-        self.delete_button = Adw.ActionRow()
-        self.delete_button.set_title("Delete Connection")
-        self.delete_button.set_subtitle("Remove selected connection")
+        # Delete button
+        self.delete_button = Gtk.Button()
         self.delete_button.set_icon_name("user-trash-symbolic")
-        self.delete_button.set_activatable(True)
+        self.delete_button.set_tooltip_text("Delete Connection")
+        self.delete_button.add_css_class("flat")
         self.delete_button.set_sensitive(False)
-        self.delete_button.connect('activated', self.on_delete_connection_clicked)
-        actions_group.add(self.delete_button)
+        self.delete_button.connect('clicked', self.on_delete_connection_clicked)
+        action_buttons_box.append(self.delete_button)
         
-        self.menu_button = Adw.ActionRow()
-        self.menu_button.set_title("Menu")
-        self.menu_button.set_subtitle("Application menu")
+        # Menu button
+        self.menu_button = Gtk.Button()
         self.menu_button.set_icon_name("open-menu-symbolic")
-        self.menu_button.set_activatable(True)
-        self.menu_button.connect('activated', self.on_menu_button_clicked)
-        actions_group.add(self.menu_button)
+        self.menu_button.set_tooltip_text("Application Menu")
+        self.menu_button.add_css_class("flat")
+        self.menu_button.connect('clicked', self.on_menu_button_clicked)
+        action_buttons_box.append(self.menu_button)
+        
+        action_row.add_suffix(action_buttons_box)
+        actions_group.add(action_row)
         
         sidebar.add(actions_group)
         

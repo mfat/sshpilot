@@ -10,55 +10,67 @@
     
     <!-- Sidebar -->
     <property name="sidebar">
-      <object class="AdwPreferencesPage">
-        <property name="title">Connections</property>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="vexpand">true</property>
+        <property name="hexpand">true</property>
         
         <!-- Connection List -->
         <child>
-          <object class="AdwPreferencesGroup" id="connection_list">
+          <object class="AdwPreferencesPage">
             <property name="title">Connections</property>
-            <property name="description">Manage your SSH connections</property>
+            <property name="vexpand">true</property>
+            
+            <child>
+              <object class="AdwPreferencesGroup" id="connection_list">
+                <property name="title">Connections</property>
+                <property name="description">Manage your SSH connections</property>
+              </object>
+            </child>
           </object>
         </child>
         
-        <!-- Action Buttons -->
+        <!-- Action Buttons at Bottom -->
         <child>
-          <object class="AdwPreferencesGroup">
+          <object class="GtkBox" id="action_buttons_box">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">6</property>
+            <property name="halign">start</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-bottom">12</property>
+            
             <child>
-              <object class="AdwActionRow" id="add_button">
-                <property name="title">Add Connection</property>
-                <property name="subtitle">Create a new SSH connection</property>
+              <object class="GtkButton" id="add_button">
                 <property name="icon-name">list-add-symbolic</property>
-                <property name="activatable">true</property>
+                <property name="tooltip-text">Add Connection</property>
+                <property name="css-classes">flat</property>
               </object>
             </child>
             
             <child>
-              <object class="AdwActionRow" id="edit_button">
-                <property name="title">Edit Connection</property>
-                <property name="subtitle">Modify selected connection</property>
+              <object class="GtkButton" id="edit_button">
                 <property name="icon-name">document-edit-symbolic</property>
-                <property name="activatable">true</property>
+                <property name="tooltip-text">Edit Connection</property>
+                <property name="css-classes">flat</property>
                 <property name="sensitive">false</property>
               </object>
             </child>
             
             <child>
-              <object class="AdwActionRow" id="delete_button">
-                <property name="title">Delete Connection</property>
-                <property name="subtitle">Remove selected connection</property>
+              <object class="GtkButton" id="delete_button">
                 <property name="icon-name">user-trash-symbolic</property>
-                <property name="activatable">true</property>
+                <property name="tooltip-text">Delete Connection</property>
+                <property name="css-classes">flat</property>
                 <property name="sensitive">false</property>
               </object>
             </child>
             
             <child>
-              <object class="AdwActionRow" id="menu_button">
-                <property name="title">Menu</property>
-                <property name="subtitle">Application menu</property>
+              <object class="GtkButton" id="menu_button">
                 <property name="icon-name">open-menu-symbolic</property>
-                <property name="activatable">true</property>
+                <property name="tooltip-text">Application Menu</property>
+                <property name="css-classes">flat</property>
               </object>
             </child>
           </object>
