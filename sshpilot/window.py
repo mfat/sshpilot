@@ -1365,7 +1365,7 @@ class MainWindow(Adw.ApplicationWindow):
         logger.info(f"Show connection dialog for: {connection}")
         
         # Create connection dialog
-        dialog = ConnectionDialog(self, connection)
+        dialog = ConnectionDialog(self, connection, self.connection_manager)
         dialog.connect('connection-saved', self.on_connection_saved)
         dialog.present()
 
@@ -3338,16 +3338,12 @@ class MainWindow(Adw.ApplicationWindow):
                 # Always force update when editing connections - skip change detection entirely for forwarding rules
                 logger.info("Editing connection '%s' - forcing update to ensure forwarding rules are synced", existing['nickname'])
 
+                logger.debug(f"Updating connection '{old_connection.nickname}'")
+                
                 # Update connection in manager first
                 if not self.connection_manager.update_connection(old_connection, connection_data):
                     logger.error("Failed to update connection in SSH config")
                     return
-                # Reload from SSH config so UI reflects materialized settings (e.g., IdentitiesOnly)
-                try:
-                    self.connection_manager.load_ssh_config()
-                    self._rebuild_connections_list()
-                except Exception:
-                    pass
                 
                 # Update connection attributes in memory (ensure forwarding rules kept)
                 old_connection.nickname = connection_data['nickname']
@@ -3372,15 +3368,8 @@ class MainWindow(Adw.ApplicationWindow):
                 except Exception:
                     pass
                 
-                # Sync from reloaded manager copy to ensure persistence reflects UI immediately
-                try:
-                    reloaded = self.connection_manager.find_connection_by_nickname(old_connection.nickname) or \
-                               self.connection_manager.find_connection_by_nickname(connection_data.get('nickname', ''))
-                    if reloaded:
-                        old_connection.forwarding_rules = list(reloaded.forwarding_rules or [])
-                        logger.info("Reloaded %d forwarding rules from disk for '%s'", len(old_connection.forwarding_rules), old_connection.nickname)
-                except Exception:
-                    pass
+                # The connection has already been updated in-place, so we don't need to reload from disk
+                # The forwarding rules are already updated in the connection_data
                 
                 # Persist per-connection metadata not stored in SSH config (auth method, etc.)
                 try:
@@ -3388,12 +3377,6 @@ class MainWindow(Adw.ApplicationWindow):
                     self.config.set_connection_meta(meta_key, {
                         'auth_method': connection_data.get('auth_method', 0)
                     })
-                    # After metadata save, reload config so manager picks up new meta immediately
-                    try:
-                        self.connection_manager.load_ssh_config()
-                        self._rebuild_connections_list()
-                    except Exception:
-                        pass
                 except Exception:
                     pass
 
@@ -3407,6 +3390,9 @@ class MainWindow(Adw.ApplicationWindow):
                     self.connection_rows[old_connection] = row
                     # Update the display
                     row.update_display()
+                else:
+                    # If the connection is not in the rows, rebuild the list
+                    self._rebuild_connections_list()
                 
                 logger.info(f"Updated connection: {old_connection.nickname}")
                 
@@ -3431,6 +3417,8 @@ class MainWindow(Adw.ApplicationWindow):
                     connection.key_select_mode = 0
                 # Add the new connection to the manager's connections list
                 self.connection_manager.connections.append(connection)
+                
+
                 
                 # Save the connection to SSH config and emit the connection-added signal
                 if self.connection_manager.update_connection(connection, connection_data):
