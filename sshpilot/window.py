@@ -2408,6 +2408,13 @@ class MainWindow(Adw.ApplicationWindow):
             argv = self._build_scp_argv(connection, local_paths, remote_dir)
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
 
+            # Ensure askpass exists and merge env so scp can fetch the password from keyring
+            ensure_askpass_script()  # creates ~/.local/bin/sshpilot-askpass if missing
+            askpass_env = get_ssh_env_with_askpass_for_password(connection.host, connection.username)
+            child_env = os.environ.copy()
+            child_env.update(askpass_env)
+            envv = [f"{k}={v}" for k, v in child_env.items()]
+
             # Helper to write colored lines
             def _feed_colored_line(text: str, color: str):
                 colors = {
@@ -2429,7 +2436,7 @@ class MainWindow(Adw.ApplicationWindow):
                     Vte.PtyFlags.DEFAULT,
                     os.path.expanduser('~') or '/',
                     ['bash', '-lc', cmdline],
-                    [f"{k}={v}" for k, v in os.environ.items()],
+                    envv,  # <— use merged env (ASKPASS + DISPLAY + SSHPILOT_* )
                     GLib.SpawnFlags.DEFAULT,
                     None,
                     None,
