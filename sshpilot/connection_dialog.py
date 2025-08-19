@@ -890,8 +890,8 @@ class ConnectionDialog(Adw.PreferencesDialog):
             paths = []
             for k in keys:
                 try:
-                    names.append(os.path.basename(k.path))
-                    paths.append(k.path)
+                    names.append(os.path.basename(k.private_path))
+                    paths.append(k.private_path)
                 except Exception:
                     pass
             # Add placeholder when none

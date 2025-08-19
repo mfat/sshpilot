@@ -91,7 +91,14 @@ class KeyManager(GObject.Object):
 
             key_path = self.ssh_dir / key_name
             if key_path.exists():
-                raise FileExistsError(f"A key named '{key_name}' already exists at {key_path}")
+                # Suggest alternative names
+                base_name = key_name
+                counter = 1
+                while (self.ssh_dir / f"{base_name}_{counter}").exists():
+                    counter += 1
+                suggestion = f"{base_name}_{counter}"
+                
+                raise FileExistsError(f"A key named '{key_name}' already exists. Try '{suggestion}' instead.")
 
             kt = (key_type or "").lower().strip()
             if kt not in ("ed25519", "rsa"):

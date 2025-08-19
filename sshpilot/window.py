@@ -34,6 +34,331 @@ from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_p
 
 logger = logging.getLogger(__name__)
 
+
+# =========================
+# SSH Copy-ID Full Window
+# =========================
+class SshCopyIdWindow(Adw.Window):
+    """
+    Full Adwaita-styled window for installing a public key on a server.
+    - Shows selected server nickname
+    - Two modes:
+        1) Use existing key (DropDown)
+        2) Generate new key (embedded key-generator form)
+    - Pressing OK triggers:
+        - Either copy selected existing key
+        - Or generate a new key, then copy it
+    - Uses your existing terminal flow:
+        parent._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
+    """
+
+    def __init__(self, parent, connection, key_manager, connection_manager):
+        logger.info("SshCopyIdWindow: Initializing window")
+        try:
+            super().__init__(transient_for=parent, modal=False)
+            self.set_title("Install Public Key on Server")
+            self.set_resizable(False)
+
+            self._parent = parent
+            self._conn = connection
+            self._km = key_manager
+            self._cm = connection_manager
+            
+            logger.info(f"SshCopyIdWindow: Window initialized for connection {getattr(connection, 'nickname', 'unknown')}")
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Failed to initialize window: {e}")
+            raise
+
+        # ---------- Outer layout ----------
+        logger.info("SshCopyIdWindow: Creating outer layout")
+        try:
+            tv = Adw.ToolbarView()
+            self.set_content(tv)
+            
+            # ---------- Header Bar ----------
+            logger.info("SshCopyIdWindow: Creating header bar")
+            hb = Adw.HeaderBar()
+            tv.add_top_bar(hb)
+
+            # Cancel button
+            btn_cancel = Gtk.Button(label="Cancel")
+            btn_cancel.connect("clicked", self._on_close_clicked)
+            hb.pack_start(btn_cancel)
+
+            self.btn_ok = Gtk.Button(label="OK")
+            self.btn_ok.add_css_class("suggested-action")
+            self.btn_ok.connect("clicked", self._on_ok_clicked)
+            hb.pack_end(self.btn_ok)
+            logger.info("SshCopyIdWindow: Header bar created successfully")
+
+            content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            content.set_margin_top(18); content.set_margin_bottom(18)
+            content.set_margin_start(18); content.set_margin_end(18)
+            tv.set_content(content)
+
+            # ---------- Intro text ----------
+            server_name = getattr(self._conn, "nickname", None) or \
+                          f"{getattr(self._conn, 'username', 'user')}@{getattr(self._conn, 'host', 'host')}"
+            
+            # Create a simple label instead of StatusPage for normal font size
+            intro_label = Gtk.Label()
+            intro_label.set_markup(f'Copy your public key to "{server_name}".')
+            intro_label.set_halign(Gtk.Align.CENTER)
+            intro_label.set_margin_bottom(12)
+            content.append(intro_label)
+            logger.info(f"SshCopyIdWindow: Intro text created for server: {server_name}")
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Failed to create outer layout: {e}")
+            raise
+
+        # ---------- Options group ----------
+        logger.info("SshCopyIdWindow: Creating options group")
+        try:
+            group = Adw.PreferencesGroup(title="Choose how to install the key")
+
+            # Radio option 1: Use existing key (using CheckButton with group for radio behavior)
+            self.radio_existing = Gtk.CheckButton(label="Copy existing key")
+            self.radio_generate = Gtk.CheckButton(label="Generate new key")
+
+            # Make them behave like radio buttons (GTK4)
+            self.radio_generate.set_group(self.radio_existing)
+            self.radio_existing.set_active(True)
+            logger.info("SshCopyIdWindow: Radio buttons created successfully")
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Failed to create radio buttons: {e}")
+            raise
+
+        # Existing key row with dropdown
+        logger.info("SshCopyIdWindow: Creating existing key dropdown")
+        try:
+            existing_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            existing_box.set_margin_start(12)
+            existing_box.set_margin_bottom(6)
+            self.dropdown_existing = Gtk.DropDown()
+            existing_box.append(Gtk.Label(label="Select key:", xalign=0))
+            existing_box.append(self.dropdown_existing)
+
+            # Fill dropdown with discovered keys
+            self._reload_existing_keys()
+            logger.info("SshCopyIdWindow: Existing key dropdown created successfully")
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Failed to create existing key dropdown: {e}")
+            raise
+
+        # Generate form (embedded)
+        logger.info("SshCopyIdWindow: Creating key generation form")
+        try:
+            self.generate_revealer = Gtk.Revealer()
+            self.generate_revealer.set_reveal_child(False)
+            self.generate_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+
+            gen_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            gen_box.set_margin_start(12)
+            gen_box.set_margin_top(6)
+
+            # Key name
+            self.row_key_name = Adw.EntryRow()
+            self.row_key_name.set_title("Key file name")
+            self.row_key_name.set_text("id_ed25519")
+            gen_box.append(self.row_key_name)
+
+            # Key type
+            self.type_row = Adw.ComboRow()
+            self.type_row.set_title("Key type")
+            self._types_model = Gtk.StringList.new(["ed25519", "rsa"])
+            self.type_row.set_model(self._types_model)
+            self.type_row.set_selected(0)
+            gen_box.append(self.type_row)
+
+            # Passphrase toggle + entries
+            self.row_pass_toggle = Adw.SwitchRow()
+            self.row_pass_toggle.set_title("Encrypt with passphrase")
+            gen_box.append(self.row_pass_toggle)
+
+            pass_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            self.pass1 = Gtk.PasswordEntry()
+            self.pass1.set_property("placeholder-text", "Passphrase")
+            self.pass2 = Gtk.PasswordEntry()
+            self.pass2.set_property("placeholder-text", "Confirm passphrase")
+            pass_box.append(self.pass1); pass_box.append(self.pass2)
+            pass_box.set_visible(False)
+            gen_box.append(pass_box)
+
+            def _on_pass_toggle(*_):
+                pass_box.set_visible(self.row_pass_toggle.get_active())
+            self.row_pass_toggle.connect("notify::active", _on_pass_toggle)
+
+            self.generate_revealer.set_child(gen_box)
+            logger.info("SshCopyIdWindow: Key generation form created successfully")
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Failed to create key generation form: {e}")
+            raise
+
+        # Pack into PreferencesGroup
+        logger.info("SshCopyIdWindow: Packing UI elements")
+        try:
+            # Row 1: Existing
+            existing_row = Adw.ActionRow()
+            existing_row.add_prefix(self.radio_existing)
+            existing_row.add_suffix(existing_box)
+            group.add(existing_row)
+
+            # Row 2: Generate
+            generate_row = Adw.ActionRow()
+            generate_row.add_prefix(self.radio_generate)
+            group.add(generate_row)
+            # Embedded generator UI under row 2
+            group.add(self.generate_revealer)
+
+            content.append(group)
+
+            # Radio change behavior
+            self.radio_existing.connect("toggled", self._on_mode_toggled)
+            self.radio_generate.connect("toggled", self._on_mode_toggled)
+
+            logger.info("SshCopyIdWindow: UI elements packed successfully")
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Failed to pack UI elements: {e}")
+            raise
+
+        logger.info("SshCopyIdWindow: Window construction completed, presenting")
+        self.present()
+
+    # ---------- Helpers ----------
+
+    def _on_mode_toggled(self, *_):
+        # Reveal generator only when "Generate new key" is selected
+        logger.info(f"SshCopyIdWindow: Mode toggled, generate active: {self.radio_generate.get_active()}")
+        self.generate_revealer.set_reveal_child(self.radio_generate.get_active())
+
+    def _reload_existing_keys(self):
+        logger.info("SshCopyIdWindow: Reloading existing keys")
+        try:
+            keys = self._km.discover_keys()
+            logger.info(f"SshCopyIdWindow: Discovered {len(keys)} keys")
+            names = [os.path.basename(k.private_path) for k in keys] or ["No keys found"]
+            dd = Gtk.DropDown.new_from_strings(names)
+            if keys:
+                dd.set_selected(0)
+            self.dropdown_existing.set_model(dd.get_model())
+            self.dropdown_existing.set_selected(dd.get_selected())
+            # keep a cached list to resolve on OK
+            self._existing_keys_cache = keys
+            logger.info(f"SshCopyIdWindow: Dropdown populated with {len(names)} items")
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Failed to load existing keys: {e}")
+            self._existing_keys_cache = []
+            dd = Gtk.DropDown.new_from_strings(["Error loading keys"])
+            self.dropdown_existing.set_model(dd.get_model())
+            self.dropdown_existing.set_selected(0)
+
+    def _info(self, title, body):
+        try:
+            md = Adw.MessageDialog(transient_for=self, modal=True, heading=title, body=body)
+            md.add_response("ok", "OK")
+            md.set_default_response("ok")
+            md.set_close_response("ok")
+            md.present()
+        except Exception:
+            pass
+
+    def _error(self, title, body, detail=""):
+        try:
+            text = body + (f"\n\n{detail}" if detail else "")
+            md = Adw.MessageDialog(transient_for=self, modal=True, heading=title, body=text)
+            md.add_response("close", "Close")
+            md.set_default_response("close")
+            md.set_close_response("close")
+            md.present()
+        except Exception:
+            logger.error("%s: %s | %s", title, body, detail)
+
+    def _on_close_clicked(self, *_):
+        logger.info("SshCopyIdWindow: Close button clicked")
+        self.close()
+
+    # ---------- OK (main action) ----------
+    def _on_ok_clicked(self, *_):
+        logger.info("SshCopyIdWindow: OK button clicked")
+        try:
+            if self.radio_existing.get_active():
+                logger.info("SshCopyIdWindow: Copying existing key")
+                self._do_copy_existing()
+            else:
+                logger.info("SshCopyIdWindow: Generating new key and copying")
+                self._do_generate_and_copy()
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Operation failed: {e}")
+            self._error("Operation failed", "Could not start the requested action.", str(e))
+
+    # ---------- Mode: existing ----------
+    def _do_copy_existing(self):
+        logger.info("SshCopyIdWindow: Starting copy existing key operation")
+        try:
+            keys = getattr(self, "_existing_keys_cache", []) or []
+            logger.info(f"SshCopyIdWindow: Found {len(keys)} cached keys")
+            if not keys:
+                raise RuntimeError("No keys available in ~/.ssh")
+            idx = self.dropdown_existing.get_selected()
+            logger.info(f"SshCopyIdWindow: Selected key index: {idx}")
+            if idx < 0 or idx >= len(keys):
+                raise RuntimeError("Please select a key to copy")
+            ssh_key = keys[idx]
+            logger.info(f"SshCopyIdWindow: Selected key: {ssh_key.private_path}")
+            # Launch your existing terminal ssh-copy-id flow
+            self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, ssh_key)
+            self.close()
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Copy existing failed: {e}")
+            self._error("Copy failed", "Could not copy the selected key to the server.", str(e))
+
+    # ---------- Mode: generate ----------
+    def _do_generate_and_copy(self):
+        logger.info("SshCopyIdWindow: Starting generate and copy operation")
+        try:
+            key_name = (self.row_key_name.get_text() or "").strip()
+            logger.info(f"SshCopyIdWindow: Key name: '{key_name}'")
+            if not key_name:
+                raise ValueError("Enter a key file name (e.g. id_ed25519)")
+            if "/" in key_name or key_name.startswith("."):
+                raise ValueError("Key file name must not contain '/' or start with '.'")
+
+            # Key type
+            kt = "ed25519" if self.type_row.get_selected() == 0 else "rsa"
+            logger.info(f"SshCopyIdWindow: Key type: {kt}")
+
+            passphrase = None
+            if self.row_pass_toggle.get_active():
+                p1 = self.pass1.get_text() or ""
+                p2 = self.pass2.get_text() or ""
+                if p1 != p2:
+                    raise ValueError("Passphrases do not match")
+                passphrase = p1
+                logger.info("SshCopyIdWindow: Passphrase enabled")
+
+            logger.info(f"SshCopyIdWindow: Calling key_manager.generate_key with name='{key_name}', type='{kt}'")
+            new_key = self._km.generate_key(
+                key_name=key_name,
+                key_type=kt,
+                key_size=3072 if kt == "rsa" else 0,
+                comment=None,
+                passphrase=passphrase,
+            )
+            if not new_key:
+                raise RuntimeError("Key generation failed. See logs for details.")
+
+            logger.info(f"SshCopyIdWindow: Key generated successfully: {new_key.private_path}")
+            # Immediately run your terminal ssh-copy-id flow
+            self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, new_key)
+            self.close()
+
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Generate and copy failed: {e}")
+            self._error("Generate & Copy failed",
+                        "Could not generate a new key and copy it to the server.",
+                        str(e))
+
+
 class ConnectionRow(Gtk.ListBoxRow):
     """Row widget for connection list"""
     
@@ -1429,6 +1754,23 @@ class MainWindow(Adw.ApplicationWindow):
             name_row = Adw.EntryRow()
             name_row.set_title(_("Key file name"))
             name_row.set_text("id_ed25519")
+            
+            # Add real-time validation
+            def on_name_changed(entry):
+                key_name = (entry.get_text() or "").strip()
+                if key_name and not key_name.startswith(".") and "/" not in key_name:
+                    key_path = self.key_manager.ssh_dir / key_name
+                    if key_path.exists():
+                        entry.add_css_class("error")
+                        entry.set_title(_("Key file name (already exists)"))
+                    else:
+                        entry.remove_css_class("error")
+                        entry.set_title(_("Key file name"))
+                else:
+                    entry.remove_css_class("error")
+                    entry.set_title(_("Key file name"))
+            
+            name_row.connect("changed", on_name_changed)
             form.add(name_row)
 
             type_row = Adw.ComboRow()
@@ -1437,16 +1779,6 @@ class MainWindow(Adw.ApplicationWindow):
             type_row.set_model(types)
             type_row.set_selected(0)
             form.add(type_row)
-
-            bits_row = Adw.SpinRow.new_with_range(1024, 8192, 256)
-            bits_row.set_title(_("RSA bits"))
-            bits_row.set_value(3072)
-            bits_row.set_sensitive(False)      # only for RSA
-            form.add(bits_row)
-
-            comment_row = Adw.EntryRow()
-            comment_row.set_title(_("Comment (optional)"))
-            form.add(comment_row)
 
             pass_switch = Adw.SwitchRow()
             pass_switch.set_title(_("Encrypt with passphrase"))
@@ -1461,10 +1793,7 @@ class MainWindow(Adw.ApplicationWindow):
             pass_box.append(pass1); pass_box.append(pass2)
             pass_box.set_visible(False)
 
-            def on_type_changed(*_):
-                # 0=ed25519, 1=rsa
-                bits_row.set_sensitive(type_row.get_selected() == 1)
-            type_row.connect("notify::selected", on_type_changed)
+
 
             def on_pass_toggle(*_):
                 pass_box.set_visible(pass_switch.get_active())
@@ -1504,9 +1833,19 @@ class MainWindow(Adw.ApplicationWindow):
                     if "/" in key_name or key_name.startswith("."):
                         raise ValueError(_("Key file name must not contain '/' or start with '.'"))
 
+                    # Check if key already exists before attempting generation
+                    key_path = self.key_manager.ssh_dir / key_name
+                    if key_path.exists():
+                        # Suggest alternative names
+                        base_name = key_name
+                        counter = 1
+                        while (self.key_manager.ssh_dir / f"{base_name}_{counter}").exists():
+                            counter += 1
+                        suggestion = f"{base_name}_{counter}"
+                        
+                        raise ValueError(_("A key named '{}' already exists. Try '{}' instead.").format(key_name, suggestion))
+
                     kt = "ed25519" if type_row.get_selected() == 0 else "rsa"
-                    bits = int(bits_row.get_value()) if kt == "rsa" else 0
-                    comment = (comment_row.get_text() or "").strip() or None
 
                     passphrase = None
                     if pass_switch.get_active():
@@ -1519,8 +1858,8 @@ class MainWindow(Adw.ApplicationWindow):
                     key = self.key_manager.generate_key(
                         key_name=key_name,
                         key_type=kt,
-                        key_size=bits or 3072,
-                        comment=comment,
+                        key_size=3072 if kt == "rsa" else 0,
+                        comment=None,
                         passphrase=passphrase,
                     )
                     if not key:
@@ -1551,128 +1890,31 @@ class MainWindow(Adw.ApplicationWindow):
 
     # --- Integrate generator into ssh-copy-id chooser ---------------------------
 
-    def on_copy_key_to_server_clicked(self, button):
-        """
-        Ask the user to use an existing key or generate a new one.
-        If they generate a key, immediately run ssh-copy-id using the existing terminal flow.
-        """
+    def on_copy_key_to_server_clicked(self, _button):
+        logger.info("Main window: ssh-copy-id button clicked")
+        selected_row = self.connection_list.get_selected_row()
+        if not selected_row or not getattr(selected_row, "connection", None):
+            logger.warning("Main window: No connection selected for ssh-copy-id")
+            return
+        connection = selected_row.connection
+        logger.info(f"Main window: Selected connection: {getattr(connection, 'nickname', 'unknown')}")
+
         try:
-            selected_row = self.connection_list.get_selected_row()
-            if not selected_row:
-                return
-            connection = getattr(selected_row, "connection", None)
-            if not connection:
-                return
-
-            # First dialog: choose action
-            chooser = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_("Install Public Key on Server"),
-                body=_("Do you want to use an existing SSH key or generate a new one?")
-            )
-            chooser.add_response("existing", _("Use existing key"))
-            chooser.add_response("generate", _("Generate new key"))
-            chooser.add_response("cancel", _("Cancel"))
-            chooser.set_default_response("existing")
-            chooser.set_close_response("cancel")
-
-            def _on_chooser(dlg, response):
-                dlg.close()
-                if response == "existing":
-                    _pick_and_copy_existing_key(connection)
-                elif response == "generate":
-                    # Generate, then copy via existing terminal flow
-                    def after_gen(new_key):
-                        if not new_key:
-                            return
-                        # Use your existing ssh-copy-id terminal window:
-                        # _show_ssh_copy_id_terminal_using_main_widget(...)
-                        try:
-                            self._show_ssh_copy_id_terminal_using_main_widget(connection, new_key)
-                        except Exception as e:
-                            self._error_dialog(_("Error"),
-                                              _("Failed to start ssh-copy-id."), str(e))
-
-                    self.show_key_dialog(on_success=after_gen)
-
-            # Helper to pick an existing key and copy it
-            def _pick_and_copy_existing_key(conn):
-                try:
-                    keys = self.key_manager.discover_keys() if hasattr(self, "key_manager") else []
-                    if not keys:
-                        # Offer to generate if none exist
-                        no_keys = Adw.MessageDialog(
-                            transient_for=self,
-                            modal=True,
-                            heading=_("No SSH keys found"),
-                            body=_("You have no SSH keys in ~/.ssh. Generate a new key pair now?")
-                        )
-                        no_keys.add_response("cancel", _("Cancel"))
-                        no_keys.add_response("generate", _("Generate SSH Key"))
-                        no_keys.set_default_response("generate")
-                        no_keys.set_close_response("cancel")
-
-                        def _resp(dlg, r):
-                            dlg.close()
-                            if r == "generate":
-                                # Generate then copy to this server
-                                def after_gen(new_key):
-                                    if not new_key:
-                                        return
-                                    try:
-                                        self._show_ssh_copy_id_terminal_using_main_widget(conn, new_key)
-                                    except Exception as e:
-                                        self._error_dialog(_("Error"),
-                                                          _("Failed to start ssh-copy-id."), str(e))
-                                self.show_key_dialog(on_success=after_gen)
-
-                        no_keys.connect("response", _resp)
-                        no_keys.present()
-                        return
-
-                    # Picker for existing keys
-                    picker = Adw.MessageDialog(
-                        transient_for=self,
-                        modal=True,
-                        heading=_("Select SSH key to copy"),
-                        body=_("Choose which public key to add to the server using ssh-copy-id")
-                    )
-                    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-                    names = [os.path.basename(k.private_path) for k in keys]
-                    dropdown = Gtk.DropDown.new_from_strings(names)
-                    dropdown.set_selected(0)
-                    box.append(dropdown)
-                    picker.set_extra_child(box)
-                    picker.add_response("cancel", _("Cancel"))
-                    picker.add_response("copy", _("Copy Key"))
-                    picker.set_default_response("copy")
-                    picker.set_close_response("cancel")
-
-                    def _on_pick(dlg, response):
-                        dlg.close()
-                        if response != "copy":
-                            return
-                        idx = dropdown.get_selected()
-                        if idx < 0 or idx >= len(keys):
-                            return
-                        ssh_key = keys[idx]
-                        try:
-                            self._show_ssh_copy_id_terminal_using_main_widget(conn, ssh_key)
-                        except Exception as e:
-                            self._error_dialog(_("Error"),
-                                              _("Failed to start ssh-copy-id."), str(e))
-
-                    picker.connect("response", _on_pick)
-                    picker.present()
-                except Exception as e:
-                    logger.error("Copy key to server failed: %s", e)
-
-            chooser.connect("response", _on_chooser)
-            chooser.present()
-
+            logger.info("Main window: Creating SshCopyIdWindow")
+            win = SshCopyIdWindow(self, connection, self.key_manager, self.connection_manager)
+            logger.info("Main window: SshCopyIdWindow created successfully, presenting")
+            win.present()
         except Exception as e:
-            logger.error("ssh-copy-id chooser failed: %s", e)
+            logger.error(f"Main window: ssh-copy-id window failed: {e}")
+            # Fallback error if window cannot be created
+            try:
+                md = Adw.MessageDialog(transient_for=self, modal=True,
+                                       heading="Error",
+                                       body=f"Could not open the Copy Key window.\n\n{e}")
+                md.add_response("ok", "OK")
+                md.present()
+            except Exception:
+                pass
 
     def show_preferences(self):
         """Show preferences dialog"""
@@ -2044,96 +2286,7 @@ class MainWindow(Adw.ApplicationWindow):
         if selected_row:
             self.show_connection_dialog(selected_row.connection)
 
-    def on_copy_key_to_server_clicked(self, button):
-        """Copy selected SSH public key to selected server using ssh-copy-id"""
-        try:
-            selected_row = self.connection_list.get_selected_row()
-            if not selected_row:
-                return
-            connection = getattr(selected_row, 'connection', None)
-            if not connection:
-                return
 
-            # Discover keys
-            keys = self.key_manager.discover_keys() if hasattr(self, 'key_manager') else []
-            if not keys:
-                # Offer to generate a key first
-                dlg = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading=_('No SSH keys found'),
-                    body=_('You have no SSH keys in ~/.ssh. Generate a new key pair now?')
-                )
-                dlg.add_response('cancel', _('Cancel'))
-                dlg.add_response('generate', _('Generate SSH Key'))
-                dlg.set_default_response('generate')
-                dlg.set_close_response('cancel')
-
-                def _resp(d, response):
-                    d.close()
-                    if response == 'generate':
-                        self.show_key_dialog()
-                dlg.connect('response', _resp)
-                dlg.present()
-                return
-
-            # Picker dialog for available keys
-            picker = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_('Select SSH key to copy'),
-                body=_('Choose which public key to add to the server using ssh-copy-id')
-            )
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            names = [os.path.basename(k.path) for k in keys]
-            dropdown = Gtk.DropDown.new_from_strings(names)
-            dropdown.set_selected(0)
-            box.append(dropdown)
-            picker.set_extra_child(box)
-            picker.add_response('cancel', _('Cancel'))
-            picker.add_response('copy', _('Copy Key'))
-            picker.set_default_response('copy')
-            picker.set_close_response('cancel')
-
-            def _on_pick(d, response):
-                d.close()
-                if response != 'copy':
-                    return
-                idx = dropdown.get_selected()
-                if idx < 0 or idx >= len(keys):
-                    return
-                ssh_key = keys[idx]
-                if _HAS_VTE:
-                    self._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
-                else:
-                    ok = self.key_manager.copy_key_to_host(ssh_key, connection, self.connection_manager)
-                    if ok:
-                        msg = Adw.MessageDialog(
-                            transient_for=self,
-                            modal=True,
-                            heading=_('Success'),
-                            body=_('Public key copied to {}@{}').format(connection.username, connection.host)
-                        )
-                        msg.add_response('ok', _('OK'))
-                        msg.set_default_response('ok')
-                        msg.set_close_response('ok')
-                        msg.present()
-                    else:
-                        msg = Adw.MessageDialog(
-                            transient_for=self,
-                            modal=True,
-                            heading=_('Error'),
-                            body=_('Failed to copy the public key. Check logs for details.')
-                        )
-                        msg.add_response('ok', _('OK'))
-                        msg.set_default_response('ok')
-                        msg.set_close_response('ok')
-                        msg.present()
-
-            picker.connect('response', _on_pick)
-            picker.present()
-        except Exception as e:
-            logger.error(f'Copy key to server failed: {e}')
 
     def on_upload_file_clicked(self, button):
         """Show SCP intro dialog and start upload to selected server."""
@@ -2217,12 +2370,6 @@ class MainWindow(Adw.ApplicationWindow):
             title_widget.append(subtitle_label)
             header.set_title_widget(title_widget)
 
-            cancel_btn = Gtk.Button(label=_('Cancel'))
-            try:
-                cancel_btn.add_css_class('flat')
-            except Exception:
-                pass
-            header.pack_start(cancel_btn)
             # Close button is omitted; window has native close (X)
 
             # Content: TerminalWidget without connecting spinner/banner
@@ -2258,6 +2405,20 @@ class MainWindow(Adw.ApplicationWindow):
             term_widget.set_vexpand(True)
             # No frame: avoid borders around the terminal
             content_box.append(term_widget)
+
+            # Bottom button area with Cancel button
+            button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            button_box.set_halign(Gtk.Align.END)
+            button_box.set_margin_top(12)
+            
+            cancel_btn = Gtk.Button(label=_('Cancel'))
+            try:
+                cancel_btn.add_css_class('suggested-action')
+            except Exception:
+                pass
+            button_box.append(cancel_btn)
+            
+            content_box.append(button_box)
 
             # Root container combines header and content
             root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -2375,23 +2536,19 @@ class MainWindow(Adw.ApplicationWindow):
             except Exception as e:
                 logger.error(f'Failed to spawn ssh-copy-id in TerminalWidget: {e}')
                 dlg.close()
-                ok = self.key_manager.copy_key_to_host(ssh_key, connection)
-                msg = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading=_('Success') if ok else _('Error'),
-                    body=(_('Public key copied to {}@{}').format(connection.username, connection.host)
-                         if ok else _('Failed to copy the public key. Check logs for details.'))
-                )
-                msg.add_response('ok', _('OK'))
-                msg.set_default_response('ok')
-                msg.set_close_response('ok')
-                msg.present()
+                # No fallback method available
+                logger.error(f'Terminal ssh-copy-id failed: {e}')
+                self._error_dialog(_("SSH Key Copy Error"),
+                                  _("Failed to copy SSH key to server."), 
+                                  f"Terminal error: {str(e)}\n\nPlease check:\n• Network connectivity\n• SSH server configuration\n• User permissions")
                 return
 
             dlg.present()
         except Exception as e:
             logger.error(f'VTE ssh-copy-id window failed: {e}')
+            self._error_dialog(_("SSH Key Copy Error"),
+                              _("Failed to create ssh-copy-id terminal window."), 
+                              f"Error: {str(e)}\n\nThis could be due to:\n• Missing VTE terminal widget\n• Display/GTK issues\n• System resource limitations")
 
     def _build_ssh_copy_id_argv(self, connection, ssh_key):
         """Construct argv for ssh-copy-id honoring saved UI auth preferences."""
