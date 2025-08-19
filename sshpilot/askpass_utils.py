@@ -101,6 +101,10 @@ if __name__ == "__main__":
         if passphrase:
             print(passphrase)
             sys.exit(0)
+        
+        # If we reach here, no password/passphrase was found:
+        print("", end="")        # ensure no stray text
+        sys.exit(1)              # <— signal failure so ssh can fall back to TTY
 """)
         os.chmod(python_script, 0o700)
         
@@ -119,7 +123,7 @@ def get_ssh_env_with_askpass() -> dict:
     # Don't create the script here - let it be created when actually needed
     askpass_script = os.path.expanduser("~/.local/bin/sshpilot-askpass")
     env['SSH_ASKPASS'] = askpass_script
-    env['SSH_ASKPASS_REQUIRE'] = 'force'
+    env['SSH_ASKPASS_REQUIRE'] = 'prefer'   # <— was 'force'
     env['DISPLAY'] = ':0'
     return env
 

@@ -2114,16 +2114,21 @@ class MainWindow(Adw.ApplicationWindow):
             # Initial info line
             _feed_colored_line(_('Running ssh-copy-id…'), 'yellow')
 
-            # 1) Make sure the wrapper exists
-            ensure_askpass_script()
+            # Check if we have a saved password and set up askpass accordingly
+            has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username))
 
-            # 2) Build env that lets askpass fetch the right secret
-            askpass_env = get_ssh_env_with_askpass_for_password(connection.host, connection.username)
+            if has_saved_password:
+                ensure_askpass_script()
+                askpass_env = get_ssh_env_with_askpass_for_password(connection.host, connection.username)
+            else:
+                askpass_env = {}  # No askpass environment variables - SSH will fall back to interactive prompts
 
-            # 3) Merge with current env for the child process only
-            child_env = os.environ.copy()
-            child_env.update(askpass_env)
-            envv = [f"{k}={v}" for k, v in child_env.items()]
+            cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
+            logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
+
+            env = os.environ.copy()
+            env.update(askpass_env)
+            envv = [f"{k}={v}" for k, v in env.items()]
 
             try:
                 term_widget.vte.spawn_async(
@@ -2406,14 +2411,21 @@ class MainWindow(Adw.ApplicationWindow):
 
             # Build and run scp command in the terminal
             argv = self._build_scp_argv(connection, local_paths, remote_dir)
+
+            # Check if we have a saved password and set up askpass accordingly
+            has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username))
+
+            if has_saved_password:
+                ensure_askpass_script()
+                askpass_env = get_ssh_env_with_askpass_for_password(connection.host, connection.username)
+            else:
+                askpass_env = {}  # No askpass environment variables - SSH will fall back to interactive prompts
+
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
 
-            # Ensure askpass exists and merge env so scp can fetch the password from keyring
-            ensure_askpass_script()  # creates ~/.local/bin/sshpilot-askpass if missing
-            askpass_env = get_ssh_env_with_askpass_for_password(connection.host, connection.username)
-            child_env = os.environ.copy()
-            child_env.update(askpass_env)
-            envv = [f"{k}={v}" for k, v in child_env.items()]
+            env = os.environ.copy()
+            env.update(askpass_env)
+            envv = [f"{k}={v}" for k, v in env.items()]
 
             # Helper to write colored lines
             def _feed_colored_line(text: str, color: str):
