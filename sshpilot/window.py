@@ -538,12 +538,20 @@ class PreferencesWindow(Adw.PreferencesWindow):
             advanced_group.add(self.debug_enabled_row)
 
             # Reset button
-            reset_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-            reset_btn = Gtk.Button.new_with_label("Reset Advanced SSH to Defaults")
+            # Add spacing before reset button
+            advanced_group.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+            
+            # Use Adw.ActionRow for proper spacing and layout
+            reset_row = Adw.ActionRow()
+            reset_row.set_title("Reset Advanced SSH Settings")
+            reset_row.set_subtitle("Restore all advanced SSH settings to their default values")
+            
+            reset_btn = Gtk.Button.new_with_label("Reset")
             reset_btn.add_css_class('destructive-action')
             reset_btn.connect('clicked', self.on_reset_advanced_ssh)
-            reset_box.append(reset_btn)
-            advanced_group.add(reset_box)
+            reset_row.add_suffix(reset_btn)
+            
+            advanced_group.add(reset_row)
 
             # Disable/enable advanced controls based on toggle
             def _sync_advanced_sensitivity(row=None, *_):
