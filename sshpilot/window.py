@@ -30,6 +30,7 @@ from .config import Config
 from .key_manager import KeyManager, SSHKey
 from .port_forwarding_ui import PortForwardingRules
 from .connection_dialog import ConnectionDialog
+from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
 
 logger = logging.getLogger(__name__)
 
@@ -537,12 +538,20 @@ class PreferencesWindow(Adw.PreferencesWindow):
             advanced_group.add(self.debug_enabled_row)
 
             # Reset button
-            reset_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-            reset_btn = Gtk.Button.new_with_label("Reset Advanced SSH to Defaults")
+            # Add spacing before reset button
+            advanced_group.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+            
+            # Use Adw.ActionRow for proper spacing and layout
+            reset_row = Adw.ActionRow()
+            reset_row.set_title("Reset Advanced SSH Settings")
+            reset_row.set_subtitle("Restore all advanced SSH settings to their default values")
+            
+            reset_btn = Gtk.Button.new_with_label("Reset")
             reset_btn.add_css_class('destructive-action')
             reset_btn.connect('clicked', self.on_reset_advanced_ssh)
-            reset_box.append(reset_btn)
-            advanced_group.add(reset_box)
+            reset_row.add_suffix(reset_btn)
+            
+            advanced_group.add(reset_row)
 
             # Disable/enable advanced controls based on toggle
             def _sync_advanced_sensitivity(row=None, *_):
@@ -1918,7 +1927,7 @@ class MainWindow(Adw.ApplicationWindow):
                 if _HAS_VTE:
                     self._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
                 else:
-                    ok = self.key_manager.copy_key_to_host(ssh_key, connection)
+                    ok = self.key_manager.copy_key_to_host(ssh_key, connection, self.connection_manager)
                     if ok:
                         msg = Adw.MessageDialog(
                             transient_for=self,
@@ -2113,12 +2122,28 @@ class MainWindow(Adw.ApplicationWindow):
             # Initial info line
             _feed_colored_line(_('Running ssh-copy-id…'), 'yellow')
 
+            # Check if we have a saved password and set up askpass accordingly
+            has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username))
+
+            if has_saved_password:
+                ensure_askpass_script()
+                askpass_env = get_ssh_env_with_askpass_for_password(connection.host, connection.username)
+            else:
+                askpass_env = {}  # No askpass environment variables - SSH will fall back to interactive prompts
+
+            cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
+            logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
+
+            env = os.environ.copy()
+            env.update(askpass_env)
+            envv = [f"{k}={v}" for k, v in env.items()]
+
             try:
                 term_widget.vte.spawn_async(
                     Vte.PtyFlags.DEFAULT,
                     os.path.expanduser('~') or '/',
                     ['bash', '-lc', cmdline],
-                    [f"{k}={v}" for k, v in os.environ.items()],
+                    envv,  # <— use merged env
                     GLib.SpawnFlags.DEFAULT,
                     None,
                     None,
@@ -2372,6 +2397,18 @@ class MainWindow(Adw.ApplicationWindow):
                 dlg.set_child(root_box)
 
             def _on_cancel(_btn):
+                # Clean up askpass helper scripts
+                try:
+                    if hasattr(self, '_scp_askpass_helpers'):
+                        for helper_path in self._scp_askpass_helpers:
+                            try:
+                                os.unlink(helper_path)
+                            except Exception:
+                                pass
+                        self._scp_askpass_helpers.clear()
+                except Exception:
+                    pass
+                
                 try:
                     if hasattr(term_widget, 'disconnect'):
                         term_widget.disconnect()
@@ -2382,7 +2419,21 @@ class MainWindow(Adw.ApplicationWindow):
 
             # Build and run scp command in the terminal
             argv = self._build_scp_argv(connection, local_paths, remote_dir)
+
+            # Check if we have a saved password and set up askpass accordingly
+            has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username))
+
+            if has_saved_password:
+                ensure_askpass_script()
+                askpass_env = get_ssh_env_with_askpass_for_password(connection.host, connection.username)
+            else:
+                askpass_env = {}  # No askpass environment variables - SSH will fall back to interactive prompts
+
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
+
+            env = os.environ.copy()
+            env.update(askpass_env)
+            envv = [f"{k}={v}" for k, v in env.items()]
 
             # Helper to write colored lines
             def _feed_colored_line(text: str, color: str):
@@ -2405,7 +2456,7 @@ class MainWindow(Adw.ApplicationWindow):
                     Vte.PtyFlags.DEFAULT,
                     os.path.expanduser('~') or '/',
                     ['bash', '-lc', cmdline],
-                    [f"{k}={v}" for k, v in os.environ.items()],
+                    envv,  # <— use merged env (ASKPASS + DISPLAY + SSHPILOT_* )
                     GLib.SpawnFlags.DEFAULT,
                     None,
                     None,
@@ -2434,6 +2485,18 @@ class MainWindow(Adw.ApplicationWindow):
                         _feed_colored_line(_('Upload failed. See output above.'), 'red')
 
                     def _present_result_dialog():
+                        # Clean up askpass helper scripts
+                        try:
+                            if hasattr(self, '_scp_askpass_helpers'):
+                                for helper_path in self._scp_askpass_helpers:
+                                    try:
+                                        os.unlink(helper_path)
+                                    except Exception:
+                                        pass
+                                self._scp_askpass_helpers.clear()
+                        except Exception:
+                            pass
+                        
                         msg = Adw.MessageDialog(
                             transient_for=dlg,
                             modal=True,
@@ -2505,10 +2568,53 @@ class MainWindow(Adw.ApplicationWindow):
             keyfile_ok = bool(keyfile) and os.path.isfile(keyfile)
         except Exception:
             keyfile_ok = False
+        # Handle authentication with saved credentials
         if key_mode == 1 and keyfile_ok:
             argv += ['-i', keyfile, '-o', 'IdentitiesOnly=yes', '-o', 'IdentityAgent=none']
+            
+            # Try to get saved passphrase for the key
+            try:
+                if hasattr(self, 'connection_manager') and self.connection_manager:
+                    saved_passphrase = self.connection_manager.get_key_passphrase(keyfile)
+                    if saved_passphrase:
+                        # Use the secure askpass script for passphrase authentication
+                        # This avoids storing passphrases in plain text temporary files
+                        from .askpass_utils import get_ssh_env_with_askpass, ensure_askpass_script
+                        # Ensure the askpass script exists
+                        ensure_askpass_script()
+                        # Get environment for passphrase authentication
+                        askpass_env = get_ssh_env_with_askpass()
+                        # Set environment variables for the terminal
+                        os.environ.update(askpass_env)
+            except Exception as e:
+                logger.debug(f"Failed to get saved passphrase for SCP: {e}")
+                
         elif prefer_password:
             argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password,keyboard-interactive']
+            
+            # Try to get saved password
+            try:
+                if hasattr(self, 'connection_manager') and self.connection_manager:
+                    saved_password = self.connection_manager.get_password(connection.host, connection.username)
+                    if saved_password:
+                        # Use sshpass for password authentication
+                        import shutil
+                        sshpass_path = None
+                        if shutil.which('sshpass'):
+                            sshpass_path = 'sshpass'
+                        elif os.path.exists('/app/bin/sshpass'):
+                            sshpass_path = '/app/bin/sshpass'
+                        
+                        if sshpass_path:
+                            # Use sshpass with environment variable instead of command line argument
+                            # This avoids exposing password in process lists
+                            os.environ['SSHPASS'] = saved_password
+                            # Prepend sshpass to the command (without -p argument)
+                            argv = [sshpass_path, '-e'] + argv
+                            logger.debug("Using sshpass with environment variable for SCP with saved password")
+            except Exception as e:
+                logger.debug(f"Failed to get saved password for SCP: {e}")
+        
         # Paths
         for p in local_paths:
             argv.append(p)

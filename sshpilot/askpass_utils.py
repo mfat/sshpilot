@@ -50,18 +50,61 @@ def get_passphrase(key_path):
     except Exception as e:
         return ""
 
+def get_password(host, username):
+    try:
+        bus = secretstorage.dbus_init()
+        collection = secretstorage.get_default_collection(bus)
+        if collection and collection.is_locked():
+            collection.unlock()
+        
+        items = list(collection.search_items({{
+            'application': 'sshPilot',
+            'type': 'password',
+            'host': host,
+            'username': username
+        }}))
+        
+        if items:
+            return items[0].get_secret().decode('utf-8')
+        return ""
+    except Exception as e:
+        return ""
+
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         # Extract key path from the prompt text
         prompt = sys.argv[1]
+        
+        # Check if this is a password prompt (not a passphrase prompt)
+        if "password" in prompt.lower() and "passphrase" not in prompt.lower():
+            # This is likely a password prompt, try to extract host/username from environment
+            # or use a fallback approach
+            host = os.environ.get('SSHPILOT_HOST', '')
+            username = os.environ.get('SSHPILOT_USERNAME', '')
+            if host and username:
+                password = get_password(host, username)
+                if password:
+                    print(password)
+                    sys.exit(0)
+        
         # Look for the key path in the prompt (e.g., "Enter passphrase for /path/to/key: ")
         match = re.search(r'for ([^:]+):', prompt)
         if match:
             key_path = match.group(1)
-            print(get_passphrase(key_path))
-        else:
-            # Fallback: try to use the argument as-is
-            print(get_passphrase(prompt))
+            passphrase = get_passphrase(key_path)
+            if passphrase:
+                print(passphrase)
+                sys.exit(0)
+        
+        # Fallback: try to use the argument as-is for key passphrase
+        passphrase = get_passphrase(prompt)
+        if passphrase:
+            print(passphrase)
+            sys.exit(0)
+        
+        # If we reach here, no password/passphrase was found:
+        print("", end="")        # ensure no stray text
+        sys.exit(1)              # <— signal failure so ssh can fall back to TTY
 """)
         os.chmod(python_script, 0o700)
         
@@ -74,31 +117,20 @@ if __name__ == "__main__":
     
     return askpass_script
 
-def create_temp_askpass_script(password: str) -> str:
-    """Create a temporary SSH_ASKPASS script for a specific password"""
-    import tempfile
-    
-    # Create temporary script file
-    script_fd, script_path = tempfile.mkstemp(prefix='ssh_askpass_', suffix='.sh')
-    
-    # Write the script content - use printf for safer password handling
-    script_content = f"""#!/bin/sh
-printf '%s' '{password.replace("'", "'\"'\"'")}'
-"""
-    os.write(script_fd, script_content.encode('utf-8'))
-    os.close(script_fd)
-    
-    # Make the script executable
-    os.chmod(script_path, 0o700)
-    
-    return script_path
-
 def get_ssh_env_with_askpass() -> dict:
     """Get environment variables configured for SSH_ASKPASS usage"""
     env = os.environ.copy()
     # Don't create the script here - let it be created when actually needed
     askpass_script = os.path.expanduser("~/.local/bin/sshpilot-askpass")
     env['SSH_ASKPASS'] = askpass_script
-    env['SSH_ASKPASS_REQUIRE'] = 'force'
+    env['SSH_ASKPASS_REQUIRE'] = 'prefer'   # <— was 'force'
     env['DISPLAY'] = ':0'
+    return env
+
+def get_ssh_env_with_askpass_for_password(host: str, username: str) -> dict:
+    """Get environment variables configured for SSH_ASKPASS usage with password context"""
+    env = get_ssh_env_with_askpass()
+    # Set host and username context for password retrieval
+    env['SSHPILOT_HOST'] = host
+    env['SSHPILOT_USERNAME'] = username
     return env

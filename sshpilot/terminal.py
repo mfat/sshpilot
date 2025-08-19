@@ -16,8 +16,8 @@ import asyncio
 import threading
 import weakref
 import subprocess
-import shutil
 from datetime import datetime
+from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
@@ -462,6 +462,19 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 password_auth_selected = False
 
+            # Check if we have a saved password for password authentication
+            has_saved_password = False
+            password_value = None
+            if password_auth_selected:
+                try:
+                    # Try to fetch without storing in argv
+                    password_value = getattr(self.connection, 'password', None)
+                    if (not password_value) and hasattr(self, 'connection_manager') and self.connection_manager:
+                        password_value = self.connection_manager.get_password(self.connection.host, self.connection.username)
+                    has_saved_password = bool(password_value)
+                except Exception:
+                    has_saved_password = False
+
             # Apply advanced args only when user explicitly enabled them
             if apply_adv:
                 # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
@@ -552,39 +565,6 @@ class TerminalWidget(Gtk.Box):
                 # Prefer password/interactive methods when user chose password auth
                 ssh_cmd.extend(['-o', 'PreferredAuthentications=password,keyboard-interactive'])
                 ssh_cmd.extend(['-o', 'PubkeyAuthentication=no'])
-
-                # If we have a stored password and sshpass is available, use it to avoid prompts
-                password_value = None
-                try:
-                    password_value = getattr(self.connection, 'password', None)
-                    if (not password_value) and hasattr(self, 'connection_manager') and self.connection_manager:
-                        password_value = self.connection_manager.get_password(self.connection.host, self.connection.username)
-                except Exception:
-                    password_value = None
-
-                # Check for sshpass in multiple locations for Flatpak compatibility
-                sshpass_path = None
-                if shutil.which('sshpass'):
-                    sshpass_path = 'sshpass'
-                elif os.path.exists('/app/bin/sshpass'):
-                    sshpass_path = '/app/bin/sshpass'
-                # If we're in Flatpak and sshpass exists at /app/bin/sshpass, use the full path
-                elif os.environ.get('SSHPILOT_FLATPAK') and os.path.exists('/app/bin/sshpass'):
-                    sshpass_path = '/app/bin/sshpass'
-                
-                # In Flatpak environment, always use the full path to sshpass if it exists
-                if os.environ.get('SSHPILOT_FLATPAK') and os.path.exists('/app/bin/sshpass'):
-                    sshpass_path = '/app/bin/sshpass'
-                
-                if password_value and sshpass_path:
-                    # Prepend sshpass and move current ssh_cmd after it
-                    ssh_cmd = [sshpass_path, '-p', str(password_value), 'ssh'] + ssh_cmd[1:]
-                    # Do not log plaintext password
-                    try:
-                        masked = [part if part != str(password_value) else '******' for part in ssh_cmd]
-                        logger.debug("Using sshpass with command: %s", ' '.join(masked))
-                    except Exception:
-                        pass
             
             # Add X11 forwarding if enabled
             if hasattr(self.connection, 'x11_forwarding') and self.connection.x11_forwarding:
@@ -668,14 +648,14 @@ class TerminalWidget(Gtk.Box):
                 # Append as single argument; let shell on remote parse quotes. Keep as-is to allow user quoting.
                 ssh_cmd.append(final_remote_cmd)
             
-            # Avoid logging password when sshpass is used
+            # Make sure ssh will prompt in our VTE if no saved password:
+            if password_auth_selected and not has_saved_password:
+                if '-t' not in ssh_cmd and '-tt' not in ssh_cmd:
+                    ssh_cmd.append('-t')  # force a TTY for interactive password
+            
+            # Log the SSH command
             try:
-                if len(ssh_cmd) > 2 and ssh_cmd[1] == '-p' and (ssh_cmd[0] == 'sshpass' or ssh_cmd[0] == '/app/bin/sshpass'):
-                    masked_cmd = ssh_cmd.copy()
-                    masked_cmd[2] = '******'
-                    logger.debug(f"SSH command: {' '.join(masked_cmd)}")
-                else:
-                    logger.debug(f"SSH command: {' '.join(ssh_cmd)}")
+                logger.debug(f"SSH command: {' '.join(ssh_cmd)}")
             except Exception:
                 logger.debug("Prepared SSH command")
             
@@ -685,8 +665,16 @@ class TerminalWidget(Gtk.Box):
             # Start the SSH process using VTE's spawn_async with our PTY
             logger.debug(f"Flatpak debug: About to spawn SSH with command: {ssh_cmd}")
             
+            # Askpass env only when we *actually* have a saved secret:
+            if password_auth_selected and has_saved_password:
+                ensure_askpass_script()
+                askpass_env = get_ssh_env_with_askpass_for_password(self.connection.host, self.connection.username)
+            else:
+                askpass_env = {}  # no askpass -> ssh will prompt on TTY
+            
             # Ensure proper environment for Flatpak
             env = os.environ.copy()
+            env.update(askpass_env)
             env['TERM'] = env.get('TERM', 'xterm-256color')
             env['SHELL'] = env.get('SHELL', '/bin/bash')
             env['SSHPILOT_FLATPAK'] = '1'
