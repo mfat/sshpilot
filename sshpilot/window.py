@@ -1918,7 +1918,7 @@ class MainWindow(Adw.ApplicationWindow):
                 if _HAS_VTE:
                     self._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
                 else:
-                    ok = self.key_manager.copy_key_to_host(ssh_key, connection)
+                    ok = self.key_manager.copy_key_to_host(ssh_key, connection, self.connection_manager)
                     if ok:
                         msg = Adw.MessageDialog(
                             transient_for=self,
@@ -2372,6 +2372,18 @@ class MainWindow(Adw.ApplicationWindow):
                 dlg.set_child(root_box)
 
             def _on_cancel(_btn):
+                # Clean up askpass helper scripts
+                try:
+                    if hasattr(self, '_scp_askpass_helpers'):
+                        for helper_path in self._scp_askpass_helpers:
+                            try:
+                                os.unlink(helper_path)
+                            except Exception:
+                                pass
+                        self._scp_askpass_helpers.clear()
+                except Exception:
+                    pass
+                
                 try:
                     if hasattr(term_widget, 'disconnect'):
                         term_widget.disconnect()
@@ -2434,6 +2446,18 @@ class MainWindow(Adw.ApplicationWindow):
                         _feed_colored_line(_('Upload failed. See output above.'), 'red')
 
                     def _present_result_dialog():
+                        # Clean up askpass helper scripts
+                        try:
+                            if hasattr(self, '_scp_askpass_helpers'):
+                                for helper_path in self._scp_askpass_helpers:
+                                    try:
+                                        os.unlink(helper_path)
+                                    except Exception:
+                                        pass
+                                self._scp_askpass_helpers.clear()
+                        except Exception:
+                            pass
+                        
                         msg = Adw.MessageDialog(
                             transient_for=dlg,
                             modal=True,
@@ -2505,10 +2529,53 @@ class MainWindow(Adw.ApplicationWindow):
             keyfile_ok = bool(keyfile) and os.path.isfile(keyfile)
         except Exception:
             keyfile_ok = False
+        # Handle authentication with saved credentials
         if key_mode == 1 and keyfile_ok:
             argv += ['-i', keyfile, '-o', 'IdentitiesOnly=yes', '-o', 'IdentityAgent=none']
+            
+            # Try to get saved passphrase for the key
+            try:
+                if hasattr(self, 'connection_manager') and self.connection_manager:
+                    saved_passphrase = self.connection_manager.get_key_passphrase(keyfile)
+                    if saved_passphrase:
+                        # Use the secure askpass script for passphrase authentication
+                        # This avoids storing passphrases in plain text temporary files
+                        from .askpass_utils import get_ssh_env_with_askpass, ensure_askpass_script
+                        # Ensure the askpass script exists
+                        ensure_askpass_script()
+                        # Get environment for passphrase authentication
+                        askpass_env = get_ssh_env_with_askpass()
+                        # Set environment variables for the terminal
+                        os.environ.update(askpass_env)
+            except Exception as e:
+                logger.debug(f"Failed to get saved passphrase for SCP: {e}")
+                
         elif prefer_password:
             argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password,keyboard-interactive']
+            
+            # Try to get saved password
+            try:
+                if hasattr(self, 'connection_manager') and self.connection_manager:
+                    saved_password = self.connection_manager.get_password(connection.host, connection.username)
+                    if saved_password:
+                        # Use sshpass for password authentication
+                        import shutil
+                        sshpass_path = None
+                        if shutil.which('sshpass'):
+                            sshpass_path = 'sshpass'
+                        elif os.path.exists('/app/bin/sshpass'):
+                            sshpass_path = '/app/bin/sshpass'
+                        
+                        if sshpass_path:
+                            # Use sshpass with environment variable instead of command line argument
+                            # This avoids exposing password in process lists
+                            os.environ['SSHPASS'] = saved_password
+                            # Prepend sshpass to the command (without -p argument)
+                            argv = [sshpass_path, '-e'] + argv
+                            logger.debug("Using sshpass with environment variable for SCP with saved password")
+            except Exception as e:
+                logger.debug(f"Failed to get saved password for SCP: {e}")
+        
         # Paths
         for p in local_paths:
             argv.append(p)

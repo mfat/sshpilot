@@ -22,7 +22,7 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, GObject, GLib
 
 import paramiko
-from .askpass_utils import get_ssh_env_with_askpass, create_temp_askpass_script
+from .askpass_utils import get_ssh_env_with_askpass
 
 logger = logging.getLogger(__name__)
 
@@ -429,7 +429,7 @@ class KeyManager(GObject.Object):
             logger.error(f"Password prompt failed: {e}")
             return None
 
-    def _run_ssh_copy_id(self, base_cmd: List[str], accept_new_host_keys: bool = True, password: Optional[str] = None, extra_ssh_opts: Optional[List[str]] = None, env_overrides: Optional[Dict[str, str]] = None) -> Tuple[bool, str]:
+    def _run_ssh_copy_id(self, base_cmd: List[str], accept_new_host_keys: bool = True, password: Optional[str] = None, passphrase: Optional[str] = None, extra_ssh_opts: Optional[List[str]] = None, env_overrides: Optional[Dict[str, str]] = None) -> Tuple[bool, str]:
         """Run ssh-copy-id with optional non-interactive password using sshpass or askpass fallback.
 
         Returns (success, combined_output).
@@ -451,45 +451,40 @@ class KeyManager(GObject.Object):
                     env.update(env_overrides)
                 except Exception:
                     pass
+            
+            # Handle passphrase for key-based authentication
+            if passphrase:
+                # Use the secure askpass script for passphrase authentication
+                # This avoids storing passphrases in plain text temporary files
+                from .askpass_utils import get_ssh_env_with_askpass, ensure_askpass_script
+                # Ensure the askpass script exists
+                ensure_askpass_script()
+                # Get environment for passphrase authentication
+                askpass_env = get_ssh_env_with_askpass()
+                env.update(askpass_env)
+            
             # Detach from controlling TTY so ssh won't prompt in terminal; we'll use GUI if needed
             run_kwargs = dict(capture_output=True, text=True, timeout=60, start_new_session=True)
 
             if password:
-                # Split out target so -o options are placed before it
+                # Use the secure askpass script for password authentication
+                # This avoids storing passwords in plain text temporary files
+                from .askpass_utils import get_ssh_env_with_askpass_for_password, ensure_askpass_script
+                # Ensure the askpass script exists
+                ensure_askpass_script()
+                # Get environment with password context
+                askpass_env = get_ssh_env_with_askpass_for_password(connection.host, connection.username)
+                env.update(askpass_env)
+                
+                # No TTY for ssh to trigger askpass; limit prompts for safety
                 target = cmd[-1] if cmd else ''
                 before_target = cmd[:-1]
-                # Check for sshpass in multiple locations for Flatpak compatibility
-                sshpass_path = None
-                if shutil.which('sshpass'):
-                    sshpass_path = 'sshpass'
-                elif os.path.exists('/app/bin/sshpass'):
-                    sshpass_path = '/app/bin/sshpass'
+                composed = before_target + ['-o', 'BatchMode=no', '-o', 'NumberOfPasswordPrompts=1', target]
+                result = subprocess.run(composed, env=env, stdin=subprocess.DEVNULL, **run_kwargs)
+                out = (result.stdout or '') + (result.stderr or '')
+                success = (result.returncode == 0)
                 
-                if sshpass_path:
-                    composed = [sshpass_path, '-p', password] + before_target + ['-o', 'BatchMode=no', '-o', 'NumberOfPasswordPrompts=1', target]
-                    result = subprocess.run(composed, stdin=subprocess.DEVNULL, env=env, **run_kwargs)
-                    out = (result.stdout or '') + (result.stderr or '')
-                    return (result.returncode == 0, out)
-                else:
-                    # Fallback to SSH_ASKPASS helper script
-                    # Create a temporary script that prints the password
-                    helper_path = create_temp_askpass_script(password)
-                    try:
-                        env['SSH_ASKPASS'] = helper_path
-                        env['SSH_ASKPASS_REQUIRE'] = 'force'
-                        # Ensure DISPLAY is set for askpass
-                        if 'DISPLAY' not in env:
-                            env['DISPLAY'] = ':0'
-                        # No TTY for ssh to trigger askpass; limit prompts for safety
-                        composed = before_target + ['-o', 'BatchMode=no', '-o', 'NumberOfPasswordPrompts=1', target]
-                        result = subprocess.run(composed, env=env, stdin=subprocess.DEVNULL, **run_kwargs)
-                        out = (result.stdout or '') + (result.stderr or '')
-                        return (result.returncode == 0, out)
-                    finally:
-                        try:
-                            os.unlink(helper_path)
-                        except Exception:
-                            pass
+                return (success, out)
 
             # No password provided: force non-interactive so it cannot prompt in terminal
             target = cmd[-1] if cmd else ''
@@ -501,13 +496,15 @@ class KeyManager(GObject.Object):
                 composed = before_target + ['-o', 'BatchMode=yes', '-o', 'NumberOfPasswordPrompts=0', target]
             result = subprocess.run(composed, stdin=subprocess.DEVNULL, env=env, **run_kwargs)
             out = (result.stdout or '') + (result.stderr or '')
-            return (result.returncode == 0, out)
+            success = (result.returncode == 0)
+            
+            return (success, out)
         except subprocess.TimeoutExpired:
             return (False, 'ssh-copy-id timed out')
         except Exception as e:
             return (False, f'Error running ssh-copy-id: {e}')
 
-    def copy_key_to_host(self, ssh_key: SSHKey, connection) -> bool:
+    def copy_key_to_host(self, ssh_key: SSHKey, connection, connection_manager=None) -> bool:
         """Copy SSH key to host using ssh-copy-id.
 
         If a password is required, show a GUI password prompt instead of using the terminal.
@@ -540,8 +537,40 @@ class KeyManager(GObject.Object):
                 if key_mode == 1 and keyfile and os.path.exists(keyfile):
                     extra_opts += ['-o', f'IdentityFile={keyfile}', '-o', 'IdentitiesOnly=yes']
 
-            # First attempt without password (may succeed depending on method)
-            ok, output = self._run_ssh_copy_id(cmd, accept_new_host_keys=True, password=None, extra_ssh_opts=extra_opts)
+            # Try to get saved password from keyring if password auth is preferred
+            saved_password = None
+            if prefer_password and connection_manager:
+                try:
+                    saved_password = connection_manager.get_password(connection.host, connection.username)
+                except Exception as e:
+                    logger.debug(f"Failed to get saved password: {e}")
+
+            # Try to get saved key passphrase if using key-based auth
+            saved_passphrase = None
+            if not prefer_password and connection_manager:
+                # Determine which key needs the passphrase
+                keyfile = getattr(connection, 'keyfile', '') or ''
+                key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
+                
+                # If using a specific key for authentication, get its passphrase
+                if key_mode == 1 and keyfile and os.path.exists(keyfile):
+                    try:
+                        saved_passphrase = connection_manager.get_key_passphrase(keyfile)
+                        logger.debug(f"Getting passphrase for authentication key: {keyfile}")
+                    except Exception as e:
+                        logger.debug(f"Failed to get saved passphrase for auth key {keyfile}: {e}")
+                # Otherwise, try to get passphrase for the key being copied
+                elif ssh_key.path:
+                    try:
+                        saved_passphrase = connection_manager.get_key_passphrase(ssh_key.path)
+                        logger.debug(f"Getting passphrase for key being copied: {ssh_key.path}")
+                    except Exception as e:
+                        logger.debug(f"Failed to get saved passphrase for copied key {ssh_key.path}: {e}")
+
+            # First attempt with saved credentials
+            password_to_use = saved_password if prefer_password else None
+            passphrase_to_use = saved_passphrase if not prefer_password else None
+            ok, output = self._run_ssh_copy_id(cmd, accept_new_host_keys=True, password=password_to_use, passphrase=passphrase_to_use, extra_ssh_opts=extra_opts)
             if ok:
                 self.emit('key-deployed', ssh_key, connection)
                 logger.info(f"Copied SSH key {ssh_key} to {connection} using ssh-copy-id")
@@ -556,91 +585,44 @@ class KeyManager(GObject.Object):
                 logger.error(f"ssh-copy-id failed: {output}")
                 return False
 
-            # Use system askpass instead of a custom Gtk dialog
-            # Prepare environment to force SSH_ASKPASS usage; try to locate a system askpass helper
-            ask_env = {
-                'SSH_ASKPASS_REQUIRE': 'force'
-            }
-            # Ensure we have a display; prefer existing DISPLAY/WAYLAND_DISPLAY
-            if 'DISPLAY' not in os.environ and 'WAYLAND_DISPLAY' not in os.environ:
-                ask_env['DISPLAY'] = ':0'
-            # Try to pick an askpass program if not explicitly set in env
-            try:
-                askpass_candidates = [
-                    os.environ.get('SSH_ASKPASS'),
-                    'ssh-askpass',
-                    'ksshaskpass',
-                    'x11-ssh-askpass',
-                    'ssh-askpass-gnome',
-                    '/usr/lib/ssh/ssh-askpass',
-                    '/usr/libexec/ssh/ssh-askpass',
-                ]
-                askpass_path = None
-                for cand in askpass_candidates:
-                    if not cand:
-                        continue
-                    if os.path.isabs(cand):
-                        if os.path.exists(cand) and os.access(cand, os.X_OK):
-                            askpass_path = cand
-                            break
-                    else:
-                        from shutil import which as _which
-                        found = _which(cand)
-                        if found:
-                            askpass_path = found
-                            break
-                if askpass_path:
-                    ask_env['SSH_ASKPASS'] = askpass_path
-            except Exception:
-                pass
-
-            # When preferring password, ensure we do not try pubkey first to avoid floods
-            retry_extra = list(extra_opts)
-            if prefer_password and ('-o', 'PubkeyAuthentication=no') not in zip(retry_extra[::2], retry_extra[1::2]):
-                retry_extra += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password,keyboard-interactive']
-
-            ok, output2 = self._run_ssh_copy_id(cmd, accept_new_host_keys=True, password=None, extra_ssh_opts=retry_extra, env_overrides=ask_env)
-            if ok:
-                self.emit('key-deployed', ssh_key, connection)
-                logger.info(f"Copied SSH key {ssh_key} to {connection} using ssh-copy-id (system askpass)")
-                return True
-            else:
-                # Fallback: if askpass is missing/unavailable, prompt via minimal Gtk and retry with sshpass-style flow
-                outl = (output2 or '').lower()
-                if 'ssh_askpass' in outl or 'no such file or directory' in outl:
-                    # Thread-safe GTK prompt
-                    if threading.current_thread() is threading.main_thread():
-                        password = self._prompt_password_sync(
-                            title='Password required',
-                            message=f'Enter the password for {target} to install your public key.'
-                        )
-                    else:
-                        result_holder: Dict[str, Optional[str]] = {"password": None}
-                        done = threading.Event()
-                        def _ask():
-                            try:
-                                result_holder["password"] = self._prompt_password_sync(
-                                    title='Password required',
-                                    message=f'Enter the password for {target} to install your public key.'
-                                )
-                            finally:
-                                done.set()
-                            return False
-                        GLib.idle_add(_ask)
-                        done.wait()
-                        password = result_holder["password"]
-                    if not password:
-                        logger.info("ssh-copy-id canceled by user (no password entered)")
-                        return False
-                    ok3, output3 = self._run_ssh_copy_id(cmd, accept_new_host_keys=True, password=password, extra_ssh_opts=retry_extra)
-                    if ok3:
-                        self.emit('key-deployed', ssh_key, connection)
-                        logger.info(f"Copied SSH key {ssh_key} to {connection} using ssh-copy-id (gtk fallback)")
-                        return True
-                    logger.error(f"ssh-copy-id failed after GTK fallback: {output3}")
+            # If the first attempt failed, try with a GUI prompt as fallback
+            if not ok and prefer_password:
+                # Try with a GUI password prompt
+                if threading.current_thread() is threading.main_thread():
+                    password = self._prompt_password_sync(
+                        title='Password required',
+                        message=f'Enter the password for {target} to install your public key.'
+                    )
                 else:
-                    logger.error(f"ssh-copy-id failed even after password entry: {output2}")
-                return False
+                    result_holder: Dict[str, Optional[str]] = {"password": None}
+                    done = threading.Event()
+                    def _ask():
+                        try:
+                            result_holder["password"] = self._prompt_password_sync(
+                                title='Password required',
+                                message=f'Enter the password for {target} to install your public key.'
+                            )
+                        finally:
+                            done.set()
+                        return False
+                    GLib.idle_add(_ask)
+                    done.wait()
+                    password = result_holder["password"]
+                
+                if password:
+                    ok2, output2 = self._run_ssh_copy_id(cmd, accept_new_host_keys=True, password=password, passphrase=None, extra_ssh_opts=extra_opts)
+                    if ok2:
+                        self.emit('key-deployed', ssh_key, connection)
+                        logger.info(f"Copied SSH key {ssh_key} to {connection} using ssh-copy-id (GUI prompt)")
+                        return True
+                    logger.error(f"ssh-copy-id failed after GUI password prompt: {output2}")
+                else:
+                    logger.info("ssh-copy-id canceled by user (no password entered)")
+                    return False
+            
+            # If we get here, the first attempt failed and we don't have a fallback
+            logger.error(f"ssh-copy-id failed: {output}")
+            return False
 
         except Exception as e:
             logger.error(f"Failed to copy SSH key using ssh-copy-id: {e}")
