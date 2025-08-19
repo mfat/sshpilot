@@ -30,6 +30,7 @@ from .config import Config
 from .key_manager import KeyManager, SSHKey
 from .port_forwarding_ui import PortForwardingRules
 from .connection_dialog import ConnectionDialog
+from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
 
 logger = logging.getLogger(__name__)
 
@@ -2113,12 +2114,23 @@ class MainWindow(Adw.ApplicationWindow):
             # Initial info line
             _feed_colored_line(_('Running ssh-copy-id…'), 'yellow')
 
+            # 1) Make sure the wrapper exists
+            ensure_askpass_script()
+
+            # 2) Build env that lets askpass fetch the right secret
+            askpass_env = get_ssh_env_with_askpass_for_password(connection.host, connection.username)
+
+            # 3) Merge with current env for the child process only
+            child_env = os.environ.copy()
+            child_env.update(askpass_env)
+            envv = [f"{k}={v}" for k, v in child_env.items()]
+
             try:
                 term_widget.vte.spawn_async(
                     Vte.PtyFlags.DEFAULT,
                     os.path.expanduser('~') or '/',
                     ['bash', '-lc', cmdline],
-                    [f"{k}={v}" for k, v in os.environ.items()],
+                    envv,  # <— use merged env
                     GLib.SpawnFlags.DEFAULT,
                     None,
                     None,
