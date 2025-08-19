@@ -2406,12 +2406,12 @@ class MainWindow(Adw.ApplicationWindow):
             # No frame: avoid borders around the terminal
             content_box.append(term_widget)
 
-            # Bottom button area with Cancel button
+            # Bottom button area with Close button
             button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
             button_box.set_halign(Gtk.Align.END)
             button_box.set_margin_top(12)
             
-            cancel_btn = Gtk.Button(label=_('Cancel'))
+            cancel_btn = Gtk.Button(label=_('Close'))
             try:
                 cancel_btn.add_css_class('suggested-action')
             except Exception:
