@@ -22,6 +22,7 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, GObject, GLib
 
 import paramiko
+from .askpass_utils import get_ssh_env_with_askpass, create_temp_askpass_script
 
 logger = logging.getLogger(__name__)
 
@@ -472,13 +473,7 @@ class KeyManager(GObject.Object):
                 else:
                     # Fallback to SSH_ASKPASS helper script
                     # Create a temporary script that prints the password
-                    with tempfile.NamedTemporaryFile('w', delete=False) as tf:
-                        helper_path = tf.name
-                        tf.write('#!/bin/sh\n')
-                        # Use printf with safely single-quoted password. Escape single quotes for POSIX shell.
-                        esc = password.replace("'", "'\"'\"'")
-                        tf.write("printf '%s' '" + esc + "'\n")
-                    os.chmod(helper_path, 0o700)
+                    helper_path = create_temp_askpass_script(password)
                     try:
                         env['SSH_ASKPASS'] = helper_path
                         env['SSH_ASKPASS_REQUIRE'] = 'force'
