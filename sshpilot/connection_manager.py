@@ -17,6 +17,7 @@ import secretstorage
 import socket
 import time
 from gi.repository import GObject, GLib
+from .askpass_utils import get_ssh_env_with_askpass
 
 # Set up asyncio event loop for GTK integration
 if os.name == 'posix':
@@ -1006,81 +1007,31 @@ class ConnectionManager(GObject.Object):
             logger.error(f"Error ensuring ssh-agent is running: {e}")
             return False
 
+
+
     def add_key_to_agent(self, key_path: str) -> bool:
-        """Add SSH key to ssh-agent using temporary SSH_ASKPASS script"""
+        """Add SSH key to ssh-agent using secure SSH_ASKPASS script"""
         if not os.path.isfile(key_path):
             logger.error(f"Key file not found: {key_path}")
             return False
-        
-        # Get the passphrase from secure storage
-        passphrase = self.get_key_passphrase(key_path)
-        if not passphrase:
-            logger.debug(f"No stored passphrase for key: {key_path}")
-            return False
-        
-        # Ensure ssh-agent is running
+
         if not self._ensure_ssh_agent():
-            logger.error("Failed to ensure ssh-agent is running")
             return False
-        
-        # Create temporary SSH_ASKPASS script
-        import tempfile
-        import stat
-        
-        try:
-            # Create temporary script file
-            script_fd, script_path = tempfile.mkstemp(prefix='ssh_askpass_', suffix='.sh')
-            
-            # Write the script content
-            script_content = f"""#!/bin/bash
-echo "{passphrase}"
-"""
-            os.write(script_fd, script_content.encode('utf-8'))
-            os.close(script_fd)
-            
-            # Make the script executable
-            os.chmod(script_path, stat.S_IRWXU)
-            
-            logger.debug(f"Created SSH_ASKPASS script: {script_path}")
-            
-            # Set up environment variables for ssh-add
-            env = os.environ.copy()
-            env['SSH_ASKPASS'] = script_path
-            env['SSH_ASKPASS_REQUIRE'] = 'force'
-            env['DISPLAY'] = ':0'  # Dummy display to satisfy ssh-add
-            
-            # Run ssh-add
-            result = subprocess.run(
-                ['ssh-add', key_path],
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            
-            # Clean up the script immediately
-            try:
-                os.unlink(script_path)
-                logger.debug(f"Cleaned up SSH_ASKPASS script: {script_path}")
-            except Exception as e:
-                logger.warning(f"Failed to clean up SSH_ASKPASS script: {e}")
-            
-            if result.returncode == 0:
-                logger.debug(f"Successfully added key to ssh-agent: {key_path}")
-                return True
-            else:
-                logger.error(f"Failed to add key to ssh-agent: {result.stderr}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error adding key to ssh-agent: {e}")
-            # Clean up script if it exists
-            try:
-                if 'script_path' in locals():
-                    os.unlink(script_path)
-            except Exception:
-                pass
-            return False
+
+        # Use secure SSH_ASKPASS environment and ensure script exists
+        env = get_ssh_env_with_askpass()
+        # Ensure the askpass script exists before using it
+        from .askpass_utils import ensure_askpass_script
+        ensure_askpass_script()
+
+        result = subprocess.run(
+            ['ssh-add', key_path],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        return result.returncode == 0
 
     def prepare_key_for_connection(self, key_path: str) -> bool:
         """Prepare SSH key for connection by adding it to ssh-agent"""
