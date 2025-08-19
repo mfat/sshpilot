@@ -465,10 +465,12 @@ class Connection:
         self.remote_command = data.get('remote_command', '')
         
         # Authentication method: 0 = key-based, 1 = password
-        try:
-            self.auth_method = int(data.get('auth_method', 0))
-        except Exception:
-            self.auth_method = 0
+        # Preserve existing auth_method if not present in new data
+        if 'auth_method' in data:
+            try:
+                self.auth_method = int(data.get('auth_method', 0))
+            except Exception:
+                self.auth_method = 0
             
         # X11 forwarding preference
         self.x11_forwarding = bool(data.get('x11_forwarding', False))
@@ -591,16 +593,28 @@ class ConnectionManager(GObject.Object):
                                     if existing:
                                         # Update existing connection with new data
                                         existing.update_data(connection_data)
+                                        # Apply per-connection metadata from app config (auth method, etc.)
+                                        try:
+                                            from .config import Config
+                                            cfg = Config()
+                                            meta = cfg.get_connection_meta(existing.nickname)
+                                            if isinstance(meta, dict):
+                                                if 'auth_method' in meta:
+                                                    existing.auth_method = meta['auth_method']
+                                        except Exception:
+                                            pass
                                         self.connections.append(existing)
                                     else:
                                         # Create new connection only if none exists
                                         conn = Connection(connection_data)
+                                        # Apply per-connection metadata from app config (auth method, etc.)
                                         try:
                                             from .config import Config
                                             cfg = Config()
                                             meta = cfg.get_connection_meta(conn.nickname)
-                                            if isinstance(meta, dict) and 'auth_method' in meta:
-                                                conn.auth_method = meta['auth_method']
+                                            if isinstance(meta, dict):
+                                                if 'auth_method' in meta:
+                                                    conn.auth_method = meta['auth_method']
                                         except Exception:
                                             pass
                                         self.connections.append(conn)
@@ -627,6 +641,16 @@ class ConnectionManager(GObject.Object):
                     if existing:
                         # Update existing connection with new data
                         existing.update_data(connection_data)
+                        # Apply per-connection metadata from app config (auth method, etc.)
+                        try:
+                            from .config import Config
+                            cfg = Config()
+                            meta = cfg.get_connection_meta(existing.nickname)
+                            if isinstance(meta, dict):
+                                if 'auth_method' in meta:
+                                    existing.auth_method = meta['auth_method']
+                        except Exception:
+                            pass
                         self.connections.append(existing)
                     else:
                         # Create new connection only if none exists
