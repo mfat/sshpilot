@@ -626,6 +626,7 @@ class WelcomePage(Gtk.Box):
         
         shortcuts = [
             ('Ctrl+N', 'New Connection'),
+            ('F9', 'Toggle Sidebar'),
             ('Ctrl+L', 'Focus connection list to select server'),
             ('Ctrl+Shift+K', 'New SSH Key'),
             ('Alt+Right', 'Next Tab'),
@@ -1287,14 +1288,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.sidebar_toggle_button = Gtk.ToggleButton()
         self.sidebar_toggle_button.set_can_focus(False)  # Remove focus from sidebar toggle
         
-        # Load sidebar visibility state from config
-        try:
-            sidebar_visible = self.config.get_setting('ui.sidebar_visible', True)
-        except Exception:
-            sidebar_visible = True
+        # Sidebar always starts visible
+        sidebar_visible = True
         
         self.sidebar_toggle_button.set_icon_name('sidebar-show-symbolic')
-        self.sidebar_toggle_button.set_tooltip_text('Hide Sidebar (F9, Ctrl+B)' if sidebar_visible else 'Show Sidebar (F9, Ctrl+B)')
+        self.sidebar_toggle_button.set_tooltip_text('Hide Sidebar (F9, Ctrl+B)')
         self.sidebar_toggle_button.set_active(sidebar_visible)
         self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
         self.header_bar.pack_start(self.sidebar_toggle_button)
@@ -1319,11 +1317,8 @@ class MainWindow(Adw.ApplicationWindow):
             self.split_view.set_vexpand(True)
             self._split_variant = 'paned'
         
-        # Initialize sidebar visibility state
-        try:
-            sidebar_visible = self.config.get_setting('ui.sidebar_visible', True)
-        except Exception:
-            sidebar_visible = True
+        # Sidebar always starts visible
+        sidebar_visible = True
         
         # Create sidebar
         self.setup_sidebar()
@@ -1334,17 +1329,7 @@ class MainWindow(Adw.ApplicationWindow):
         # Add split view to main container
         main_box.append(self.split_view)
         
-        # Apply initial sidebar visibility state
-        try:
-            if not sidebar_visible:
-                if HAS_OVERLAY_SPLIT:
-                    self.split_view.set_show_sidebar(False)
-                else:
-                    sidebar_widget = self.split_view.get_start_child()
-                    if sidebar_widget:
-                        sidebar_widget.set_visible(False)
-        except Exception as e:
-            logger.warning(f"Failed to apply initial sidebar visibility: {e}")
+        # Sidebar is always visible on startup
 
         # Set main content (no toasts preferred)
         self.set_content(main_box)
@@ -2375,11 +2360,7 @@ class MainWindow(Adw.ApplicationWindow):
                 button.set_icon_name('sidebar-show-symbolic')
                 button.set_tooltip_text('Show Sidebar (F9, Ctrl+B)')
             
-            # Save the state to config
-            try:
-                self.config.set_setting('ui.sidebar_visible', is_visible)
-            except Exception as e:
-                logger.warning(f"Failed to save sidebar visibility state: {e}")
+            # No need to save state - sidebar always starts visible
                 
         except Exception as e:
             logger.error(f"Failed to toggle sidebar: {e}")
@@ -2404,11 +2385,7 @@ class MainWindow(Adw.ApplicationWindow):
             if hasattr(self, 'sidebar_toggle_button'):
                 self.sidebar_toggle_button.set_active(new_visible)
             
-            # Save the state to config
-            try:
-                self.config.set_setting('ui.sidebar_visible', new_visible)
-            except Exception as e:
-                logger.warning(f"Failed to save sidebar visibility state: {e}")
+            # No need to save state - sidebar always starts visible
                 
         except Exception as e:
             logger.error(f"Failed to toggle sidebar via action: {e}")
