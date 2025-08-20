@@ -1360,13 +1360,27 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Key controller
         key_ctl = Gtk.EventControllerKey()
-        key_ctl.connect("key-pressed", self._stop_pulse_on_interaction)
+        key_ctl.connect("key-pressed", self._on_connection_list_key_pressed)
         self.connection_list.add_controller(key_ctl)
         
         # Scroll controller
         scroll_ctl = Gtk.EventControllerScroll()
         scroll_ctl.connect("scroll", self._stop_pulse_on_interaction)
         self.connection_list.add_controller(scroll_ctl)
+
+    def _on_connection_list_key_pressed(self, controller, keyval, keycode, state):
+        """Handle key presses in the connection list"""
+        # Stop pulse effect on any key press
+        self._stop_pulse_on_interaction(controller)
+        
+        # Handle Enter key specifically
+        if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+            selected_row = self.connection_list.get_selected_row()
+            if selected_row and hasattr(selected_row, 'connection'):
+                connection = selected_row.connection
+                self._focus_most_recent_tab_or_open_new(connection)
+            return True  # Consume the event to prevent row-activated
+        return False
 
     def _stop_pulse_on_interaction(self, controller, *args):
         """Stop any ongoing pulse effect when user interacts"""
@@ -2533,6 +2547,47 @@ class MainWindow(Adw.ApplicationWindow):
         """Handle connection activation (double-click)"""
         if row:
             self._cycle_connection_tabs_or_open(row.connection)
+
+    def _focus_most_recent_tab_or_open_new(self, connection: Connection):
+        """If there are open tabs for this server, focus the most recent one.
+        Otherwise open a new tab for the server.
+        """
+        try:
+            # Check if there are open tabs for this connection
+            terms_for_conn = []
+            try:
+                n = self.tab_view.get_n_pages()
+            except Exception:
+                n = 0
+            for i in range(n):
+                page = self.tab_view.get_nth_page(i)
+                child = page.get_child() if hasattr(page, 'get_child') else None
+                if child is not None and self.terminal_to_connection.get(child) == connection:
+                    terms_for_conn.append(child)
+
+            if terms_for_conn:
+                # Focus the most recent tab for this connection
+                most_recent_term = self.active_terminals.get(connection)
+                if most_recent_term and most_recent_term in terms_for_conn:
+                    # Use the most recent terminal
+                    target_term = most_recent_term
+                else:
+                    # Fallback to the first tab for this connection
+                    target_term = terms_for_conn[0]
+                
+                page = self.tab_view.get_page(target_term)
+                if page is not None:
+                    self.tab_view.set_selected_page(page)
+                    # Update most-recent mapping
+                    self.active_terminals[connection] = target_term
+                    # Give focus to the VTE terminal so user can start typing immediately
+                    target_term.vte.grab_focus()
+                    return
+
+            # No existing tabs for this connection -> open a new one
+            self.connect_to_host(connection, force_new=False)
+        except Exception as e:
+            logger.error(f"Failed to focus most recent tab or open new for {getattr(connection, 'nickname', '')}: {e}")
 
     def _cycle_connection_tabs_or_open(self, connection: Connection):
         """If there are open tabs for this server, cycle to the next one (wrap).
