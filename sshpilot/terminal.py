@@ -134,6 +134,11 @@ class SSHProcessManager:
     def cleanup_all(self):
         """Clean up all managed processes"""
         logger.info("Cleaning up all SSH processes...")
+        
+        # First, mark all terminals as quitting to suppress signal handlers
+        for terminal in list(self.terminals):
+            terminal._is_quitting = True
+        
         with self.lock:
             # Make a copy of PIDs to avoid modifying the dict during iteration
             pids = list(self.processes.keys())
@@ -188,6 +193,7 @@ class TerminalWidget(Gtk.Box):
         self.watch_id = 0
         self.ssh_client = None
         self.session_id = str(id(self))  # Unique ID for this session
+        self._is_quitting = False  # Flag to suppress signal handlers during quit
         
         # Register with process manager
         process_manager.register_terminal(self)
@@ -734,6 +740,11 @@ class TerminalWidget(Gtk.Box):
     
     def _on_spawn_complete(self, terminal, pid, error, user_data=None):
         """Called when terminal spawn is complete"""
+        # Skip if terminal is quitting
+        if getattr(self, '_is_quitting', False):
+            logger.debug("Terminal is quitting, skipping spawn complete handler")
+            return
+            
         logger.debug(f"Flatpak debug: _on_spawn_complete called with pid={pid}, error={error}, user_data={user_data}")
         
         if error:
@@ -794,6 +805,11 @@ class TerminalWidget(Gtk.Box):
     
     def _fallback_hide_spinner(self):
         """Fallback method to hide spinner if spawn completion doesn't fire"""
+        # Skip if terminal is quitting
+        if getattr(self, '_is_quitting', False):
+            logger.debug("Terminal is quitting, skipping fallback hide spinner")
+            return False
+            
         logger.debug("Flatpak debug: Fallback hide spinner called")
         if not self.is_connected:
             logger.warning("Flatpak: Spawn completion callback didn't fire, forcing connection state")
@@ -1503,6 +1519,11 @@ class TerminalWidget(Gtk.Box):
 
     def on_child_exited(self, terminal, status):
         """Handle terminal child process exit"""
+        # Skip if terminal is quitting
+        if getattr(self, '_is_quitting', False):
+            logger.debug("Terminal is quitting, skipping child exit handler")
+            return
+            
         logger.debug(f"Terminal child exited with status: {status}")
         
         # Defer the heavy work to avoid blocking the signal handler
