@@ -116,7 +116,7 @@ class SshCopyIdWindow(Adw.Window):
         # ---------- Options group ----------
         logger.info("SshCopyIdWindow: Creating options group")
         try:
-            group = Adw.PreferencesGroup(title="Choose how to install the key")
+            group = Adw.PreferencesGroup(title="")
 
             # Radio option 1: Use existing key (using CheckButton with group for radio behavior)
             self.radio_existing = Gtk.CheckButton(label="Copy existing key")
