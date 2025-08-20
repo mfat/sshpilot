@@ -4,7 +4,7 @@
 
 **sshPilot** is a user-friendly, modern and lightweight SSH connection manager for Linux. It's a free (as in freedom) alternative to Putty and Termius.
 
-<img width="1212" height="778" alt="Screenshot From 2025-08-15 01-21-40" src="https://github.com/user-attachments/assets/9cf2a0bb-9ca8-46cc-ae33-17111ac157fe" />
+<img width="1057" height="705" alt="Screenshot From 2025-08-20 18-32-09" src="https://github.com/user-attachments/assets/f57b25a9-c3ce-4355-891e-caad17a906f9" />
 
 <img width="1212" height="778" alt="Screenshot From 2025-08-15 01-22-02" src="https://github.com/user-attachments/assets/6b79a06a-d900-49eb-969f-a8f7a4c31b02" />
 
@@ -23,7 +23,7 @@
 - SCP support for quicly uploading a file to remote server
 - Keypair generation and copying to remote servers (ssh-copy-id)
 - Support for running remote and local commands upon login
-- Secure storage for credentials using libsecret
+- Secure storage for credentials, no secret (password or passphrase) is copied to clipboard or saved to plain text
 - Privacy toggle to show/hide ip addresses/hostnames in the main window
 - Light/Dark interface themes
 - Customizable terminal font and color schemes
@@ -100,3 +100,9 @@ python3 run.py
 sshPilot is easy to navigate with keyboard. When the app starts up, just press enter to connect to the first host in the list. You can do the same thing by double-clicking the host.
 Press ctrl+L to quickly switch between hosts, close tabs with ctrl+F4 and switch tabs with alt+right/left arrow.
 If you have multiple connections to a single host, doble-clicking the host will cycle through all its open tabs.
+
+## Special Thanks
+
+- Eibugy as the prime sponsor of the projects
+- Behnam Tavakkoli for testing
+- Icon designed by [Blisterexe](https://github.com/Blisterexe)
