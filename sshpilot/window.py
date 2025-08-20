@@ -1194,6 +1194,20 @@ class MainWindow(Adw.ApplicationWindow):
             GLib.idle_add(self._focus_connection_list_first_row)
         except Exception:
             pass
+        
+        # Add sidebar toggle action and accelerators
+        try:
+            # Add window-scoped action for sidebar toggle
+            sidebar_action = Gio.SimpleAction.new("toggle_sidebar", None)
+            sidebar_action.connect("activate", self.on_toggle_sidebar_action)
+            self.add_action(sidebar_action)
+            
+            # Bind accelerators (F9 primary, Ctrl+B alternate)
+            app = self.get_application()
+            if app:
+                app.set_accels_for_action("win.toggle_sidebar", ["F9", "<Control>b"])
+        except Exception as e:
+            logger.warning(f"Failed to add sidebar toggle action: {e}")
 
     def setup_window(self):
         """Configure main window properties"""
@@ -1243,20 +1257,6 @@ class MainWindow(Adw.ApplicationWindow):
                 Gtk.CallbackAction.new(_cb_prev)
             ))
             
-            # Add sidebar toggle shortcut: F9
-            def _cb_sidebar_toggle(widget, *args):
-                try:
-                    if hasattr(self, 'sidebar_toggle_button'):
-                        self.sidebar_toggle_button.set_active(not self.sidebar_toggle_button.get_active())
-                except Exception:
-                    pass
-                return True
-            
-            nav.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string('<F9>'),
-                Gtk.CallbackAction.new(_cb_sidebar_toggle)
-            ))
-            
             self.add_controller(nav)
         except Exception:
             pass
@@ -1285,6 +1285,7 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Add sidebar toggle button to the left side of header bar
         self.sidebar_toggle_button = Gtk.ToggleButton()
+        self.sidebar_toggle_button.set_can_focus(False)  # Remove focus from sidebar toggle
         
         # Load sidebar visibility state from config
         try:
@@ -1293,7 +1294,7 @@ class MainWindow(Adw.ApplicationWindow):
             sidebar_visible = True
         
         self.sidebar_toggle_button.set_icon_name('sidebar-show-symbolic')
-        self.sidebar_toggle_button.set_tooltip_text('Hide Sidebar (F9)' if sidebar_visible else 'Show Sidebar (F9)')
+        self.sidebar_toggle_button.set_tooltip_text('Hide Sidebar (F9, Ctrl+B)' if sidebar_visible else 'Show Sidebar (F9, Ctrl+B)')
         self.sidebar_toggle_button.set_active(sidebar_visible)
         self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
         self.header_bar.pack_start(self.sidebar_toggle_button)
@@ -1577,6 +1578,7 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Menu button
         menu_button = Gtk.MenuButton()
+        menu_button.set_can_focus(False)  # Remove focus from menu button
         menu_button.set_icon_name('open-menu-symbolic')
         menu_button.set_tooltip_text('Menu')
         menu_button.set_menu_model(self.create_menu())
@@ -2363,26 +2365,15 @@ class MainWindow(Adw.ApplicationWindow):
         """Handle sidebar toggle button click"""
         try:
             is_visible = button.get_active()
-            
-            if HAS_OVERLAY_SPLIT:
-                # For Adw.OverlaySplitView
-                if is_visible:
-                    self.split_view.set_show_sidebar(True)
-                else:
-                    self.split_view.set_show_sidebar(False)
-            else:
-                # For Gtk.Paned fallback
-                sidebar_widget = self.split_view.get_start_child()
-                if sidebar_widget:
-                    sidebar_widget.set_visible(is_visible)
+            self._toggle_sidebar_visibility(is_visible)
             
             # Update button icon and tooltip
             if is_visible:
                 button.set_icon_name('sidebar-show-symbolic')
-                button.set_tooltip_text('Hide Sidebar (F9)')
+                button.set_tooltip_text('Hide Sidebar (F9, Ctrl+B)')
             else:
                 button.set_icon_name('sidebar-show-symbolic')
-                button.set_tooltip_text('Show Sidebar (F9)')
+                button.set_tooltip_text('Show Sidebar (F9, Ctrl+B)')
             
             # Save the state to config
             try:
@@ -2392,6 +2383,49 @@ class MainWindow(Adw.ApplicationWindow):
                 
         except Exception as e:
             logger.error(f"Failed to toggle sidebar: {e}")
+
+    def on_toggle_sidebar_action(self, action, param):
+        """Handle sidebar toggle action (for keyboard shortcuts)"""
+        try:
+            # Get current sidebar visibility
+            if HAS_OVERLAY_SPLIT:
+                current_visible = self.split_view.get_show_sidebar()
+            else:
+                sidebar_widget = self.split_view.get_start_child()
+                current_visible = sidebar_widget.get_visible() if sidebar_widget else True
+            
+            # Toggle to opposite state
+            new_visible = not current_visible
+            
+            # Update sidebar visibility
+            self._toggle_sidebar_visibility(new_visible)
+            
+            # Update button state if it exists
+            if hasattr(self, 'sidebar_toggle_button'):
+                self.sidebar_toggle_button.set_active(new_visible)
+            
+            # Save the state to config
+            try:
+                self.config.set_setting('ui.sidebar_visible', new_visible)
+            except Exception as e:
+                logger.warning(f"Failed to save sidebar visibility state: {e}")
+                
+        except Exception as e:
+            logger.error(f"Failed to toggle sidebar via action: {e}")
+
+    def _toggle_sidebar_visibility(self, is_visible):
+        """Helper method to toggle sidebar visibility"""
+        try:
+            if HAS_OVERLAY_SPLIT:
+                # For Adw.OverlaySplitView
+                self.split_view.set_show_sidebar(is_visible)
+            else:
+                # For Gtk.Paned fallback
+                sidebar_widget = self.split_view.get_start_child()
+                if sidebar_widget:
+                    sidebar_widget.set_visible(is_visible)
+        except Exception as e:
+            logger.error(f"Failed to toggle sidebar visibility: {e}")
 
 
 
