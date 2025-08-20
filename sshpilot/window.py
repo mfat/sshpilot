@@ -1245,7 +1245,7 @@ class MainWindow(Adw.ApplicationWindow):
             .pulse-highlight {
               background: alpha(@accent_bg_color, 0.18);
               border-radius: 8px;
-              box-shadow: 0 0 0 0.5px #262626 inset;
+              box-shadow: 0 0 0 0.5px alpha(@accent_bg_color, 0.28) inset;
               opacity: 0;
               transition: opacity 0.9s ease-in-out;
             }
