@@ -626,6 +626,8 @@ class WelcomePage(Gtk.Box):
         
         shortcuts = [
             ('Ctrl+N', 'New Connection'),
+            ('Ctrl+Alt+N', 'Open New Connection Tab'),
+            ('Ctrl+Enter', 'Open New Connection Tab'),
             ('F9', 'Toggle Sidebar'),
             ('Ctrl+L', 'Focus connection list to select server'),
             ('Ctrl+Shift+K', 'New SSH Key'),
@@ -1176,6 +1178,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.open_new_connection_action = Gio.SimpleAction.new('open-new-connection', None)
         self.open_new_connection_action.connect('activate', self.on_open_new_connection_action)
         self.add_action(self.open_new_connection_action)
+        
+        # Global action for opening new connection tab (Ctrl+Alt+N)
+        self.open_new_connection_tab_action = Gio.SimpleAction.new('open-new-connection-tab', None)
+        self.open_new_connection_tab_action.connect('activate', self.on_open_new_connection_tab_action)
+        self.add_action(self.open_new_connection_tab_action)
         # (Toasts disabled) Remove any toast-related actions if previously defined
         try:
             if hasattr(self, '_toast_reconnect_action'):
@@ -1503,6 +1510,30 @@ class MainWindow(Adw.ApplicationWindow):
             self.connection_list.add_controller(context_click)
         except Exception:
             pass
+        
+        # Add keyboard controller for Ctrl+Enter to open new connection
+        try:
+            key_controller = Gtk.ShortcutController()
+            key_controller.set_scope(Gtk.ShortcutScope.LOCAL)
+            
+            def _on_ctrl_enter(widget, *args):
+                try:
+                    selected_row = self.connection_list.get_selected_row()
+                    if selected_row and hasattr(selected_row, 'connection'):
+                        connection = selected_row.connection
+                        self.connect_to_host(connection, force_new=True)
+                except Exception as e:
+                    logger.error(f"Failed to open new connection with Ctrl+Enter: {e}")
+                return True
+            
+            key_controller.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string('<Control>Return'),
+                Gtk.CallbackAction.new(_on_ctrl_enter)
+            ))
+            
+            self.connection_list.add_controller(key_controller)
+        except Exception as e:
+            logger.debug(f"Failed to add Ctrl+Enter shortcut: {e}")
         
         scrolled.set_child(self.connection_list)
         sidebar_box.append(scrolled)
@@ -3600,6 +3631,21 @@ class MainWindow(Adw.ApplicationWindow):
             self.connect_to_host(connection, force_new=True)
         except Exception as e:
             logger.error(f"Failed to open new connection tab: {e}")
+
+    def on_open_new_connection_tab_action(self, action, param=None):
+        """Open a new tab for the selected connection via global shortcut (Ctrl+Alt+N)."""
+        try:
+            # Get the currently selected connection
+            row = self.connection_list.get_selected_row()
+            if row and hasattr(row, 'connection'):
+                connection = row.connection
+                self.connect_to_host(connection, force_new=True)
+            else:
+                # If no connection is selected, show a message or fall back to new connection dialog
+                logger.debug("No connection selected for Ctrl+Alt+N, opening new connection dialog")
+                self.show_connection_dialog()
+        except Exception as e:
+            logger.error(f"Failed to open new connection tab with Ctrl+Alt+N: {e}")
 
     def _cleanup_and_quit(self):
         """Clean up all connections and quit - SIMPLIFIED VERSION"""
