@@ -3878,7 +3878,7 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.add_response('cancel', 'Cancel')
         dialog.add_response('quit', 'Quit Anyway')
         dialog.set_response_appearance('quit', Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_default_response('cancel')
+        dialog.set_default_response('quit')
         dialog.set_close_response('cancel')
         
         dialog.connect('response', self.on_quit_confirmation_response)
