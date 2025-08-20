@@ -46,7 +46,7 @@ A Flatpak is also planned for future.
 
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
 
-If your distro doesn't use deb or RPM, the Flatpak version should work. 
+If your distro doesn't use DEB or RPM, the Flatpak version should work. 
 
 You can also run the app from source. Install the modules listed in requirements.txt and a fairly recent version of GNOME and it should run.
 
