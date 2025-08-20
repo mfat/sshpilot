@@ -1242,6 +1242,21 @@ class MainWindow(Adw.ApplicationWindow):
                 Gtk.ShortcutTrigger.parse_string('<Alt>Left'),
                 Gtk.CallbackAction.new(_cb_prev)
             ))
+            
+            # Add sidebar toggle shortcut: F9
+            def _cb_sidebar_toggle(widget, *args):
+                try:
+                    if hasattr(self, 'sidebar_toggle_button'):
+                        self.sidebar_toggle_button.set_active(not self.sidebar_toggle_button.get_active())
+                except Exception:
+                    pass
+                return True
+            
+            nav.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string('<F9>'),
+                Gtk.CallbackAction.new(_cb_sidebar_toggle)
+            ))
+            
             self.add_controller(nav)
         except Exception:
             pass
@@ -1268,6 +1283,21 @@ class MainWindow(Adw.ApplicationWindow):
         self.header_bar.set_show_start_title_buttons(True)
         self.header_bar.set_show_end_title_buttons(True)
         
+        # Add sidebar toggle button to the left side of header bar
+        self.sidebar_toggle_button = Gtk.ToggleButton()
+        
+        # Load sidebar visibility state from config
+        try:
+            sidebar_visible = self.config.get_setting('ui.sidebar_visible', True)
+        except Exception:
+            sidebar_visible = True
+        
+        self.sidebar_toggle_button.set_icon_name('sidebar-show-symbolic')
+        self.sidebar_toggle_button.set_tooltip_text('Hide Sidebar (F9)' if sidebar_visible else 'Show Sidebar (F9)')
+        self.sidebar_toggle_button.set_active(sidebar_visible)
+        self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
+        self.header_bar.pack_start(self.sidebar_toggle_button)
+        
         # Add header bar to main container
         main_box.append(self.header_bar)
         
@@ -1288,6 +1318,12 @@ class MainWindow(Adw.ApplicationWindow):
             self.split_view.set_vexpand(True)
             self._split_variant = 'paned'
         
+        # Initialize sidebar visibility state
+        try:
+            sidebar_visible = self.config.get_setting('ui.sidebar_visible', True)
+        except Exception:
+            sidebar_visible = True
+        
         # Create sidebar
         self.setup_sidebar()
         
@@ -1296,6 +1332,18 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Add split view to main container
         main_box.append(self.split_view)
+        
+        # Apply initial sidebar visibility state
+        try:
+            if not sidebar_visible:
+                if HAS_OVERLAY_SPLIT:
+                    self.split_view.set_show_sidebar(False)
+                else:
+                    sidebar_widget = self.split_view.get_start_child()
+                    if sidebar_widget:
+                        sidebar_widget.set_visible(False)
+        except Exception as e:
+            logger.warning(f"Failed to apply initial sidebar visibility: {e}")
 
         # Set main content (no toasts preferred)
         self.set_content(main_box)
@@ -2310,6 +2358,40 @@ class MainWindow(Adw.ApplicationWindow):
         selected_row = self.connection_list.get_selected_row()
         if selected_row:
             self.show_connection_dialog(selected_row.connection)
+
+    def on_sidebar_toggle(self, button):
+        """Handle sidebar toggle button click"""
+        try:
+            is_visible = button.get_active()
+            
+            if HAS_OVERLAY_SPLIT:
+                # For Adw.OverlaySplitView
+                if is_visible:
+                    self.split_view.set_show_sidebar(True)
+                else:
+                    self.split_view.set_show_sidebar(False)
+            else:
+                # For Gtk.Paned fallback
+                sidebar_widget = self.split_view.get_start_child()
+                if sidebar_widget:
+                    sidebar_widget.set_visible(is_visible)
+            
+            # Update button icon and tooltip
+            if is_visible:
+                button.set_icon_name('sidebar-show-symbolic')
+                button.set_tooltip_text('Hide Sidebar (F9)')
+            else:
+                button.set_icon_name('sidebar-show-symbolic')
+                button.set_tooltip_text('Show Sidebar (F9)')
+            
+            # Save the state to config
+            try:
+                self.config.set_setting('ui.sidebar_visible', is_visible)
+            except Exception as e:
+                logger.warning(f"Failed to save sidebar visibility state: {e}")
+                
+        except Exception as e:
+            logger.error(f"Failed to toggle sidebar: {e}")
 
 
 
