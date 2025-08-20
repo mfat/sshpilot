@@ -12,7 +12,7 @@
 
 <img width="722" height="622" alt="Screenshot From 2025-08-15 01-17-38" src="https://github.com/user-attachments/assets/b72fe4df-f5ac-48e2-9ba0-af728901e1c8" />
 
-<img width="1193" height="804" alt="Screenshot From 2025-08-15 01-16-09" src="https://github.com/user-attachments/assets/624e46b1-53bb-493d-aee9-cc76716f6753" />
+<img width="562" height="569" alt="Screenshot From 2025-08-20 13-49-59" src="https://github.com/user-attachments/assets/eb8de65b-ce0e-449e-a7e3-dcc6bf1e43bb" />
 
 
 ## Features
