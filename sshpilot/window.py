@@ -3659,10 +3659,20 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as e:
             logger.error(f"Cleanup during quit encountered an error: {e}")
         finally:
-            # Final sweep of any lingering ssh/vte children
+            # Final sweep of any lingering processes (but skip terminal cleanup since we already did that)
             try:
                 from .terminal import SSHProcessManager
-                SSHProcessManager().cleanup_all()
+                # Only clean up processes, not terminals
+                process_manager = SSHProcessManager()
+                with process_manager.lock:
+                    # Make a copy of PIDs to avoid modifying the dict during iteration
+                    pids = list(process_manager.processes.keys())
+                    for pid in pids:
+                        process_manager._terminate_process_by_pid(pid)
+                    # Clear all tracked processes
+                    process_manager.processes.clear()
+                    # Clear terminal references
+                    process_manager.terminals.clear()
             except Exception as e:
                 logger.debug(f"Final SSH cleanup failed: {e}")
             # Clear active terminals and hide progress

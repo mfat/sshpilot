@@ -143,10 +143,10 @@ class SSHProcessManager:
             # Clear all tracked processes
             self.processes.clear()
             
-            # Clean up any remaining terminals
+            # Clean up any remaining terminals (only if they're still connected)
             for terminal in list(self.terminals):
                 try:
-                    if hasattr(terminal, 'disconnect'):
+                    if hasattr(terminal, 'disconnect') and hasattr(terminal, 'is_connected') and terminal.is_connected:
                         terminal.disconnect()
                 except Exception as e:
                     logger.error(f"Error cleaning up terminal {id(terminal)}: {e}")
@@ -1385,32 +1385,15 @@ class TerminalWidget(Gtk.Box):
         was_connected = self.is_connected
         self.is_connected = False
         
-        # Update connection status in the connection manager if we were connected
-        # Only update if this is the last terminal for this connection
-        if was_connected and hasattr(self, 'connection') and self.connection:
-            # Check if there are other active terminals for this connection
-            other_terminals_active = False
-            try:
-                if hasattr(self, 'connection_manager') and self.connection_manager:
-                    # Get the main window to check for other terminals
-                    app = self.connection_manager.get_application()
-                    if app and app.props.active_window:
-                        window = app.props.active_window
-                        if hasattr(window, 'connection_to_terminals'):
-                            connection_terminals = window.connection_to_terminals.get(self.connection, [])
-                            # Count terminals that are still connected (excluding self)
-                            for term in connection_terminals:
-                                if term is not self and hasattr(term, 'is_connected') and term.is_connected:
-                                    other_terminals_active = True
-                                    break
-            except Exception as e:
-                logger.debug(f"Error checking other terminals: {e}")
-            
-            # Only mark connection as disconnected if no other terminals are active
-            if not other_terminals_active:
-                self.connection.is_connected = False
-                if hasattr(self, 'connection_manager') and self.connection_manager:
-                    GLib.idle_add(self.connection_manager.emit, 'connection-status-changed', self.connection, False)
+        # Guard UI emissions when the root window is quitting
+        root = self.get_root() if hasattr(self, 'get_root') else None
+        is_quitting = bool(getattr(root, '_is_quitting', False))
+        
+        # Only update manager / UI if not quitting
+        if was_connected and hasattr(self, 'connection') and self.connection and not is_quitting:
+            self.connection.is_connected = False
+            if hasattr(self, 'connection_manager') and self.connection_manager:
+                GLib.idle_add(self.connection_manager.emit, 'connection-status-changed', self.connection, False)
         
         try:
             # Try to get the terminal's child PID (with timeout protection)
@@ -1477,8 +1460,9 @@ class TerminalWidget(Gtk.Box):
             self.process_pid = None
             self.process_pgid = None
             
-            # Ensure we always emit the connection-lost signal
-            self.emit('connection-lost')
+            # Only emit connection-lost signal if not quitting
+            if not is_quitting:
+                self.emit('connection-lost')
             logger.debug(f"SSH session {self.session_id} disconnected")
     
     def _on_connection_failed(self, error_message):
