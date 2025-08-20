@@ -104,5 +104,5 @@ If you have multiple connections to a single host, doble-clicking the host will 
 ## Special Thanks
 
 - Eibugy as the prime sponsor of the projects
-- Behnam Tavakkoli for testing
+- Behnam Tavakkoli and Chalist for testing
 - Icon designed by [Blisterexe](https://github.com/Blisterexe)
