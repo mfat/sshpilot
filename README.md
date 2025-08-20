@@ -2,7 +2,7 @@
 <img width="154" height="154" alt="logo" src="https://github.com/user-attachments/assets/42b73dbf-778c-45ff-9361-22a52988f1b3" />
 </p>
 
-**sshPilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS. It's a free alternative to Putty and Termius.
+**sshPilot** is a user-friendly, modern and lightweight SSH connection manager for Linux. It's a free (as in freedom) alternative to Putty and Termius.
 
 <img width="1212" height="778" alt="Screenshot From 2025-08-15 01-21-40" src="https://github.com/user-attachments/assets/9cf2a0bb-9ca8-46cc-ae33-17111ac157fe" />
 
@@ -45,6 +45,8 @@ A Flatpak is also planned for future.
 ## Download
 
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
+
+If your distro doesn't use deb or RPM, the Flatpak version should work. 
 
 You can also run the app from source. Install the modules listed in requirements.txt and a fairly recent version of GNOME and it should run.
 
