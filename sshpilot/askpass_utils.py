@@ -123,8 +123,8 @@ def get_ssh_env_with_askpass() -> dict:
     # Don't create the script here - let it be created when actually needed
     askpass_script = os.path.expanduser("~/.local/bin/sshpilot-askpass")
     env['SSH_ASKPASS'] = askpass_script
-    env['SSH_ASKPASS_REQUIRE'] = 'prefer'   # <— was 'force'
-    env['DISPLAY'] = ':0'
+    env['SSH_ASKPASS_REQUIRE'] = 'force'    # ensure askpass even if a TTY exists
+    # no DISPLAY needed for our headless askpass
     return env
 
 def get_ssh_env_with_askpass_for_password(host: str, username: str) -> dict:
