@@ -158,13 +158,13 @@ class SSHProcessManager:
                 terminal._is_quitting = True
             
             with self.lock:
-                # Make a copy of PIDs to avoid modifying the dict during iteration
-                pids = list(self.processes.keys())
-                for pid in pids:
-                    self._terminate_process_by_pid(pid)
-                
-                # Clear all tracked processes
+                # Atomically extract and clear all processes
+                processes_to_clean = dict(self.processes)
                 self.processes.clear()
+            
+            # Clean up without holding the lock
+            for pid, info in processes_to_clean.items():
+                self._terminate_process_by_pid(pid)
                 
                 # Clean up any remaining terminals (only if they're still connected)
                 for terminal in list(self.terminals):
