@@ -348,7 +348,32 @@ class SshCopyIdWindow(Adw.Window):
                 raise RuntimeError("Key generation failed. See logs for details.")
 
             logger.info(f"SshCopyIdWindow: Key generated successfully: {new_key.private_path}")
-            # Immediately run your terminal ssh-copy-id flow
+            
+            # Ensure the key files are properly written and accessible
+            import time
+            time.sleep(0.5)  # Small delay to ensure files are written
+            
+            # Verify the key files exist and are accessible
+            if not os.path.exists(new_key.private_path):
+                raise RuntimeError(f"Private key file not found: {new_key.private_path}")
+            if not os.path.exists(new_key.public_path):
+                raise RuntimeError(f"Public key file not found: {new_key.public_path}")
+            
+            logger.info(f"SshCopyIdWindow: Key files verified, starting ssh-copy-id")
+            
+            # Try to add the key to SSH agent for authentication during copy
+            try:
+                import subprocess
+                add_result = subprocess.run(['ssh-add', new_key.private_path], 
+                                          capture_output=True, text=True, timeout=10)
+                if add_result.returncode == 0:
+                    logger.info(f"Successfully added key to SSH agent: {new_key.private_path}")
+                else:
+                    logger.warning(f"Failed to add key to SSH agent: {add_result.stderr}")
+            except Exception as e:
+                logger.warning(f"Could not add key to SSH agent: {e}")
+            
+            # Run your terminal ssh-copy-id flow
             self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, new_key)
             self.close()
 
@@ -2444,6 +2469,7 @@ class MainWindow(Adw.ApplicationWindow):
             argv = self._build_ssh_copy_id_argv(connection, ssh_key)
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
             logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
+            logger.info("Full command line: %s", cmdline)
 
             # Helper to write colored lines into the terminal
             def _feed_colored_line(text: str, color: str):
@@ -2507,10 +2533,13 @@ class MainWindow(Adw.ApplicationWindow):
                         except Exception:
                             exit_code = status
 
+                    logger.info(f"ssh-copy-id exited with status: {status}, normalized exit_code: {exit_code}")
                     ok = (exit_code == 0)
                     if ok:
+                        logger.info("ssh-copy-id completed successfully")
                         _feed_colored_line(_('Public key was installed successfully.'), 'green')
                     else:
+                        logger.error(f"ssh-copy-id failed with exit code: {exit_code}")
                         _feed_colored_line(_('Failed to install the public key.'), 'red')
 
                     def _present_result_dialog():
@@ -2552,6 +2581,14 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _build_ssh_copy_id_argv(self, connection, ssh_key):
         """Construct argv for ssh-copy-id honoring saved UI auth preferences."""
+        logger.info(f"Building ssh-copy-id argv for key: {getattr(ssh_key, 'public_path', 'unknown')}")
+        logger.info(f"Key object attributes: private_path={getattr(ssh_key, 'private_path', 'unknown')}, public_path={getattr(ssh_key, 'public_path', 'unknown')}")
+        
+        # Verify the public key file exists
+        if not os.path.exists(ssh_key.public_path):
+            logger.error(f"Public key file does not exist: {ssh_key.public_path}")
+            raise RuntimeError(f"Public key file not found: {ssh_key.public_path}")
+        
         argv = ['ssh-copy-id', '-i', ssh_key.public_path]
         try:
             if getattr(connection, 'port', 22) and connection.port != 22:
