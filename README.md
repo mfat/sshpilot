@@ -103,6 +103,6 @@ If you have multiple connections to a single host, doble-clicking the host will 
 
 ## Special Thanks
 
-- Elibugy as the prime sponsor of the projects
+- [Elibugy](https://www.linkedin.com/in/elham-hesaraki) as the primary sponsor of the project
 - Behnam Tavakkoli, Chalist and Kalpase for testing
 - Icon designed by [Blisterexe](https://github.com/Blisterexe)
