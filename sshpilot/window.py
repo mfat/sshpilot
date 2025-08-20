@@ -1245,9 +1245,9 @@ class MainWindow(Adw.ApplicationWindow):
             .pulse-highlight {
               background: alpha(@accent_bg_color, 0.18);
               border-radius: 8px;
-              box-shadow: 0 0 0 3px alpha(@accent_bg_color, 0.28) inset;
+              box-shadow: 0 0 0 0.5px #262626 inset;
               opacity: 0;
-              transition: opacity 0.8s ease-in-out;
+              transition: opacity 0.9s ease-in-out;
             }
             .pulse-highlight.on {
               opacity: 1;
@@ -1255,7 +1255,7 @@ class MainWindow(Adw.ApplicationWindow):
 
             /* optional: a subtle focus ring while the list is focused */
             row:selected:focus-within {
-              box-shadow: 0 0 0 0.5px @accent_bg_color inset;
+              box-shadow: 0 0 0 0.25px @accent_bg_color inset;
               border-radius: 8px;
             }
             """
