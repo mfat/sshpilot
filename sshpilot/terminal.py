@@ -111,16 +111,23 @@ class SSHProcessManager:
     def _terminate_process_by_pid(self, pid):
         """Terminate a process by PID"""
         try:
+            # Always try process group first
             pgid = os.getpgid(pid)
             os.killpg(pgid, signal.SIGTERM)
-            time.sleep(1)
-            try:
-                os.kill(pid, 0)
-                os.killpg(pgid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        except (ProcessLookupError, OSError) as e:
-            logger.debug(f"Process {pid} cleanup: {e}")
+            
+            # Wait with timeout
+            for _ in range(50):  # 5 seconds max
+                try:
+                    os.killpg(pgid, 0)
+                    time.sleep(0.1)
+                except ProcessLookupError:
+                    return True
+                    
+            # Force kill if still alive
+            os.killpg(pgid, signal.SIGKILL)
+            return True
+        except Exception:
+            return False
         finally:
             with self.lock:
                 if pid in self.processes:
