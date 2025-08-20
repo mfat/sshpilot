@@ -3626,6 +3626,11 @@ class MainWindow(Adw.ApplicationWindow):
         self._show_cleanup_progress(total)
         # Schedule cleanup to run after the dialog has a chance to render
         GLib.idle_add(self._perform_cleanup_and_quit, connections_to_disconnect, priority=GLib.PRIORITY_DEFAULT_IDLE)
+        # Force-quit watchdog (last resort)
+        try:
+            GLib.timeout_add_seconds(5, self._do_quit)
+        except Exception:
+            pass
 
     def _perform_cleanup_and_quit(self, connections_to_disconnect):
         """Disconnect terminals with UI progress, then quit. Runs on idle."""
@@ -3654,6 +3659,12 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as e:
             logger.error(f"Cleanup during quit encountered an error: {e}")
         finally:
+            # Final sweep of any lingering ssh/vte children
+            try:
+                from .terminal import SSHProcessManager
+                SSHProcessManager().cleanup_all()
+            except Exception as e:
+                logger.debug(f"Final SSH cleanup failed: {e}")
             # Clear active terminals and hide progress
             self.active_terminals.clear()
             self._hide_cleanup_progress()
