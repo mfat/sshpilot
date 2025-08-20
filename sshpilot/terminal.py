@@ -635,6 +635,9 @@ class TerminalWidget(Gtk.Box):
                         except Exception as e:
                             logger.error(f"Failed to set up remote forwarding: {e}")
             
+            # Add NumberOfPasswordPrompts option before hostname and command
+            ssh_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
+            
             # Add host and user
             ssh_cmd.append(f"{self.connection.username}@{self.connection.host}" if hasattr(self.connection, 'username') and self.connection.username else self.connection.host)
 
@@ -668,10 +671,6 @@ class TerminalWidget(Gtk.Box):
             # Always provide askpass env (so Flatpak cannot pick /usr/bin/ksshaskpass)
             ensure_askpass_script()
             askpass_env = get_ssh_env_with_askpass_for_password(self.connection.host, self.connection.username)
-
-            # Force ssh to use our helper by setting environment variable
-            # Note: AskPass is not a valid SSH option, we rely on SSH_ASKPASS env var
-            ssh_cmd = ssh_cmd + ['-o', 'NumberOfPasswordPrompts=1']
             
             # Ensure proper environment for Flatpak
             env = os.environ.copy()

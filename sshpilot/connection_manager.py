@@ -122,6 +122,7 @@ class Connection:
                 if compression:
                     ssh_cmd.append('-C')
             ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
+            ssh_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
 
             # Apply default host key behavior when not explicitly set
             try:
@@ -341,7 +342,6 @@ class Connection:
             ensure_askpass_script()
             env = os.environ.copy()
             env.update(get_ssh_env_with_askpass_for_password(self.host, self.username))
-            ssh_cmd = ssh_cmd + ['-o', 'NumberOfPasswordPrompts=1']
             
             # Start the SSH process
             logger.info(f"Starting dynamic port forwarding with command: {' '.join(ssh_cmd)}")
@@ -426,7 +426,6 @@ class Connection:
             ensure_askpass_script()
             env = os.environ.copy()
             env.update(get_ssh_env_with_askpass_for_password(self.host, self.username))
-            ssh_cmd = ssh_cmd + ['-o', 'NumberOfPasswordPrompts=1']
             
             # Start the SSH process
             self.process = await asyncio.create_subprocess_exec(
@@ -477,7 +476,6 @@ class Connection:
             ensure_askpass_script()
             env = os.environ.copy()
             env.update(get_ssh_env_with_askpass_for_password(self.host, self.username))
-            ssh_cmd = ssh_cmd + ['-o', 'NumberOfPasswordPrompts=1']
             
             # Start the SSH process
             self.process = await asyncio.create_subprocess_exec(
