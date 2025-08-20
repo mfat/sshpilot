@@ -17,7 +17,7 @@ import secretstorage
 import socket
 import time
 from gi.repository import GObject, GLib
-from .askpass_utils import get_ssh_env_with_askpass
+from .askpass_utils import get_ssh_env_with_askpass, get_ssh_env_with_askpass_for_password
 
 # Set up asyncio event loop for GTK integration
 if os.name == 'posix':
@@ -336,12 +336,20 @@ class Connection:
             # Log the full command (without sensitive data)
             logger.debug(f"SSH command: {' '.join(ssh_cmd[:10])}...")
             
+            # Set up askpass environment to prevent Flatpak from using system askpass
+            from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
+            ensure_askpass_script()
+            env = os.environ.copy()
+            env.update(get_ssh_env_with_askpass_for_password(self.host, self.username))
+            ssh_cmd = ssh_cmd + ['-o', 'NumberOfPasswordPrompts=1']
+            
             # Start the SSH process
             logger.info(f"Starting dynamic port forwarding with command: {' '.join(ssh_cmd)}")
             self.process = await asyncio.create_subprocess_exec(
                 *ssh_cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                env=env
             )
             
             # Wait a bit to catch any immediate errors
@@ -413,11 +421,19 @@ class Connection:
                 '-L', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"
             ]
             
+            # Set up askpass environment to prevent Flatpak from using system askpass
+            from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
+            ensure_askpass_script()
+            env = os.environ.copy()
+            env.update(get_ssh_env_with_askpass_for_password(self.host, self.username))
+            ssh_cmd = ssh_cmd + ['-o', 'NumberOfPasswordPrompts=1']
+            
             # Start the SSH process
             self.process = await asyncio.create_subprocess_exec(
                 *ssh_cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                env=env
             )
             
             # Check if the process started successfully
@@ -442,6 +458,57 @@ class Connection:
             
         except Exception as e:
             logger.error(f"Local forwarding failed: {e}")
+            if hasattr(self, 'process') and self.process:
+                self.process.terminate()
+                await self.process.wait()
+            raise
+
+    async def start_remote_forwarding(self, listen_addr: str, listen_port: int, remote_host: str, remote_port: int):
+        """Start remote port forwarding using system SSH client"""
+        try:
+            # Build the SSH command for remote port forwarding
+            ssh_cmd = self.ssh_cmd + [
+                '-N',  # No remote command
+                '-R', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"
+            ]
+            
+            # Set up askpass environment to prevent Flatpak from using system askpass
+            from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
+            ensure_askpass_script()
+            env = os.environ.copy()
+            env.update(get_ssh_env_with_askpass_for_password(self.host, self.username))
+            ssh_cmd = ssh_cmd + ['-o', 'NumberOfPasswordPrompts=1']
+            
+            # Start the SSH process
+            self.process = await asyncio.create_subprocess_exec(
+                *ssh_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env
+            )
+            
+            # Check if the process started successfully
+            if self.process.returncode is not None and self.process.returncode != 0:
+                stderr = await self.process.stderr.read()
+                raise Exception(f"SSH remote port forwarding failed: {stderr.decode().strip()}")
+            
+            logger.info(f"Remote forwarding started: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
+            
+            # Store the forwarding rule
+            self.forwarding_rules.append({
+                'type': 'remote',
+                'listen_addr': listen_addr,
+                'listen_port': listen_port,
+                'remote_host': remote_host,
+                'remote_port': remote_port,
+                'process': self.process
+            })
+            
+            # Wait for the process to complete
+            await self.process.wait()
+            
+        except Exception as e:
+            logger.error(f"Remote forwarding failed: {e}")
             if hasattr(self, 'process') and self.process:
                 self.process.terminate()
                 await self.process.wait()

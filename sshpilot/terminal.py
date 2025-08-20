@@ -665,12 +665,13 @@ class TerminalWidget(Gtk.Box):
             # Start the SSH process using VTE's spawn_async with our PTY
             logger.debug(f"Flatpak debug: About to spawn SSH with command: {ssh_cmd}")
             
-            # Askpass env only when we *actually* have a saved secret:
-            if password_auth_selected and has_saved_password:
-                ensure_askpass_script()
-                askpass_env = get_ssh_env_with_askpass_for_password(self.connection.host, self.connection.username)
-            else:
-                askpass_env = {}  # no askpass -> ssh will prompt on TTY
+            # Always provide askpass env (so Flatpak cannot pick /usr/bin/ksshaskpass)
+            ensure_askpass_script()
+            askpass_env = get_ssh_env_with_askpass_for_password(self.connection.host, self.connection.username)
+
+            # Force ssh to use our helper by setting environment variable
+            # Note: AskPass is not a valid SSH option, we rely on SSH_ASKPASS env var
+            ssh_cmd = ssh_cmd + ['-o', 'NumberOfPasswordPrompts=1']
             
             # Ensure proper environment for Flatpak
             env = os.environ.copy()

@@ -90,7 +90,7 @@ if __name__ == "__main__":
         # Look for the key path in the prompt (e.g., "Enter passphrase for /path/to/key: ")
         match = re.search(r'for ([^:]+):', prompt)
         if match:
-            key_path = match.group(1)
+            key_path = match.group(1).strip(" '\"")   # strip single/double quotes and spaces
             passphrase = get_passphrase(key_path)
             if passphrase:
                 print(passphrase)
@@ -117,14 +117,10 @@ if __name__ == "__main__":
     
     return askpass_script
 
-def get_ssh_env_with_askpass() -> dict:
-    """Get environment variables configured for SSH_ASKPASS usage"""
+def get_ssh_env_with_askpass():
     env = os.environ.copy()
-    # Don't create the script here - let it be created when actually needed
-    askpass_script = os.path.expanduser("~/.local/bin/sshpilot-askpass")
-    env['SSH_ASKPASS'] = askpass_script
-    env['SSH_ASKPASS_REQUIRE'] = 'force'    # ensure askpass even if a TTY exists
-    # no DISPLAY needed for our headless askpass
+    env['SSH_ASKPASS'] = os.path.expanduser("~/.local/bin/sshpilot-askpass")
+    env['SSH_ASKPASS_REQUIRE'] = 'force'
     return env
 
 def get_ssh_env_with_askpass_for_password(host: str, username: str) -> dict:
