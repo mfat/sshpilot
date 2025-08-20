@@ -140,33 +140,46 @@ class SSHProcessManager:
     
     def cleanup_all(self):
         """Clean up all managed processes"""
-        logger.info("Cleaning up all SSH processes...")
+        import signal
         
-        # First, mark all terminals as quitting to suppress signal handlers
-        for terminal in list(self.terminals):
-            terminal._is_quitting = True
+        def timeout_handler(signum, frame):
+            logger.warning("Cleanup timeout - forcing exit")
+            os._exit(1)
         
-        with self.lock:
-            # Make a copy of PIDs to avoid modifying the dict during iteration
-            pids = list(self.processes.keys())
-            for pid in pids:
-                self._terminate_process_by_pid(pid)
+        # Set 10-second timeout for entire cleanup
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(10)
+        
+        try:
+            logger.info("Cleaning up all SSH processes...")
             
-            # Clear all tracked processes
-            self.processes.clear()
-            
-            # Clean up any remaining terminals (only if they're still connected)
+            # First, mark all terminals as quitting to suppress signal handlers
             for terminal in list(self.terminals):
-                try:
-                    if hasattr(terminal, 'disconnect') and hasattr(terminal, 'is_connected') and terminal.is_connected:
-                        terminal.disconnect()
-                except Exception as e:
-                    logger.error(f"Error cleaning up terminal {id(terminal)}: {e}")
+                terminal._is_quitting = True
             
-            # Clear terminal references
-            self.terminals.clear()
-            
-        logger.info("SSH process cleanup completed")
+            with self.lock:
+                # Make a copy of PIDs to avoid modifying the dict during iteration
+                pids = list(self.processes.keys())
+                for pid in pids:
+                    self._terminate_process_by_pid(pid)
+                
+                # Clear all tracked processes
+                self.processes.clear()
+                
+                # Clean up any remaining terminals (only if they're still connected)
+                for terminal in list(self.terminals):
+                    try:
+                        if hasattr(terminal, 'disconnect') and hasattr(terminal, 'is_connected') and terminal.is_connected:
+                            terminal.disconnect()
+                    except Exception as e:
+                        logger.error(f"Error cleaning up terminal {id(terminal)}: {e}")
+                
+                # Clear terminal references
+                self.terminals.clear()
+                
+            logger.info("SSH process cleanup completed")
+        finally:
+            signal.alarm(0)  # Cancel timeout
 
 # Global process manager instance
 process_manager = SSHProcessManager()
