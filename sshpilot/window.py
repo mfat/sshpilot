@@ -1243,9 +1243,9 @@ class MainWindow(Adw.ApplicationWindow):
             css = """
             /* Pulse highlight for selected rows */
             .pulse-highlight {
-              background: alpha(@accent_bg_color, 0.6);
+              background: alpha(@accent_bg_color, 0.18);
               border-radius: 8px;
-              box-shadow: 0 0 0 3px alpha(@accent_bg_color, 0.8) inset;
+              box-shadow: 0 0 0 3px alpha(@accent_bg_color, 0.28) inset;
               opacity: 0;
               transition: opacity 0.8s ease-in-out;
             }
@@ -1395,11 +1395,11 @@ class MainWindow(Adw.ApplicationWindow):
     def _wire_pulses(self):
         """Wire pulse effects to trigger on startup and focus-in"""
         # On first show
-        self.connect("map", lambda *_: self.pulse_selected_row(self.connection_list, repeats=3, duration_ms=6700))
+        self.connect("map", lambda *_: self.pulse_selected_row(self.connection_list, repeats=2, duration_ms=4000))
         
         # When list gains keyboard focus (e.g., after Ctrl+L)
         focus_ctl = Gtk.EventControllerFocus()
-        focus_ctl.connect("enter", lambda *_: self.pulse_selected_row(self.connection_list, repeats=3, duration_ms=6700))
+        focus_ctl.connect("enter", lambda *_: self.pulse_selected_row(self.connection_list, repeats=2, duration_ms=4000))
         self.connection_list.add_controller(focus_ctl)
         
         # Stop pulse effect when user interacts with the list
@@ -1996,11 +1996,11 @@ class MainWindow(Adw.ApplicationWindow):
                 self.connection_list.grab_focus()
                 
                 # Pulse the selected row
-                self.pulse_selected_row(self.connection_list, repeats=3, duration_ms=6700)
+                self.pulse_selected_row(self.connection_list, repeats=2, duration_ms=4000)
                 
                 # Show toast notification
                 toast = Adw.Toast.new(
-                    "Connection list focused — ↑/↓ navigate, Enter open, Ctrl+Enter new tab"
+                    "Switched to connection list — ↑/↓ navigate, Enter open, Ctrl+Enter new tab"
                 )
                 toast.set_timeout(3)  # seconds
                 self.toast_overlay.add_toast(toast)
