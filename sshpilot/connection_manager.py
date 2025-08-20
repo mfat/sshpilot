@@ -684,6 +684,10 @@ class ConnectionManager(GObject.Object):
             host = _unwrap(config.get('host', ''))
             if not host:
                 return None
+
+            # ⬇️ Ignore global defaults (Host *)
+            if str(host).strip() == '*':
+                return None
                 
             # Extract relevant configuration
             parsed = {
