@@ -1,804 +1,151 @@
-"""
-SSH Key Manager for sshPilot
-Handles SSH key generation, management, and deployment
-"""
+# key_manager.py
+from __future__ import annotations
 
 import os
-import stat
-import logging
 import subprocess
-from typing import List, Dict, Optional, Tuple
-import threading
-import shutil
-import tempfile
+import logging
 from pathlib import Path
+from typing import Optional, List
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa, ed25519
-from cryptography.hazmat.backends import default_backend
-
-import gi
-gi.require_version('Gtk', '4.0')
-from gi.repository import Gtk, GObject, GLib
-
-import paramiko
-from .askpass_utils import get_ssh_env_with_askpass
+from gi.repository import GObject
 
 logger = logging.getLogger(__name__)
 
+
 class SSHKey:
-    """Represents an SSH key pair"""
-    
-    def __init__(self, path: str, key_type: str = None, comment: str = None):
-        self.path = path
-        self.public_path = f"{path}.pub"
-        self.key_type = key_type
-        self.comment = comment
-        self.fingerprint = None
-        self.bits = None
-        
-        # Load key information
-        self.load_key_info()
+    """
+    Lightweight representation of a generated/known SSH key.
+    """
+    def __init__(self, private_path: str):
+        self.private_path = private_path
+        self.public_path = f"{private_path}.pub"
 
-    def load_key_info(self):
-        """Load key information from files"""
-        try:
-            if os.path.exists(self.public_path):
-                with open(self.public_path, 'r') as f:
-                    pub_key_content = f.read().strip()
-                
-                # Parse public key
-                parts = pub_key_content.split()
-                if len(parts) >= 2:
-                    self.key_type = parts[0]
-                    if len(parts) >= 3:
-                        self.comment = parts[2]
-                
-                # Get fingerprint using ssh-keygen
-                try:
-                    result = subprocess.run(
-                        ['ssh-keygen', '-lf', self.public_path],
-                        capture_output=True,
-                        text=True,
-                        check=True
-                    )
-                    
-                    # Parse output: "2048 SHA256:... comment (RSA)"
-                    output_parts = result.stdout.strip().split()
-                    if len(output_parts) >= 3:
-                        self.bits = int(output_parts[0])
-                        self.fingerprint = output_parts[1]
-                        
-                except subprocess.CalledProcessError as e:
-                    logger.warning(f"Failed to get fingerprint for {self.path}: {e}")
-        
-        except Exception as e:
-            logger.error(f"Failed to load key info for {self.path}: {e}")
+    def __str__(self) -> str:
+        return os.path.basename(self.private_path)
 
-    def exists(self) -> bool:
-        """Check if key files exist"""
-        return os.path.exists(self.path) and os.path.exists(self.public_path)
-
-    def get_public_key_content(self) -> Optional[str]:
-        """Get public key content"""
-        try:
-            if os.path.exists(self.public_path):
-                with open(self.public_path, 'r') as f:
-                    return f.read().strip()
-        except Exception as e:
-            logger.error(f"Failed to read public key {self.public_path}: {e}")
-        return None
-
-    def __str__(self):
-        return f"{os.path.basename(self.path)} ({self.key_type}, {self.bits} bits)"
 
 class KeyManager(GObject.Object):
-    """SSH key management"""
-    
+    """
+    Unified SSH key generation (single method) + discovery helper.
+    Uses system `ssh-keygen` for portability and OpenSSH-compatible output.
+    """
     __gsignals__ = {
-        'key-generated': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
-        'key-deleted': (GObject.SignalFlags.RUN_FIRST, None, (str,)),
-        'key-deployed': (GObject.SignalFlags.RUN_FIRST, None, (object, object)),
+        # Emitted after a key is generated successfully
+        "key-generated": (GObject.SignalFlags.RUN_LAST, None, (object,)),
     }
-    
-    def __init__(self):
+
+    def __init__(self, ssh_dir: Optional[Path] = None):
         super().__init__()
-        self.ssh_dir = Path.home() / '.ssh'
-        self.ssh_dir.mkdir(mode=0o700, exist_ok=True)
-        
-        # Ensure proper permissions on .ssh directory
-        os.chmod(self.ssh_dir, 0o700)
+        self.ssh_dir = Path(ssh_dir or Path.home() / ".ssh")
+        self.ssh_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(self.ssh_dir, 0o700)
+        except Exception:
+            pass
+
+    # ---------------- Public API ----------------
 
     def discover_keys(self) -> List[SSHKey]:
-        """Discover existing SSH keys"""
-        keys = []
-        
+        """List keys that have a matching .pub next to the private key."""
+        keys: List[SSHKey] = []
         try:
             if not self.ssh_dir.exists():
                 return keys
-            
-            # Look for private key files (list all plausible private keys, even without .pub)
             for file_path in self.ssh_dir.iterdir():
-                if file_path.is_file() and not file_path.name.endswith('.pub'):
-                    # Skip known non-key files
-                    if file_path.name in ['config', 'known_hosts', 'authorized_keys']:
-                        continue
-                    
-                    # Check if corresponding .pub file exists
-                    pub_path = file_path.with_suffix(file_path.suffix + '.pub')
-                    if pub_path.exists():
-                        try:
-                            # Try to load as SSH key
-                            key = SSHKey(str(file_path))
-                            if key.key_type:  # Valid key
-                                keys.append(key)
-                        except Exception as e:
-                            logger.debug(f"Skipping {file_path}: {e}")
-            
-            logger.info(f"Discovered {len(keys)} SSH keys")
-            
+                if not file_path.is_file():
+                    continue
+                name = file_path.name
+                if name.endswith(".pub"):
+                    continue
+                # skip very common non-key files
+                if name in ("config", "known_hosts", "authorized_keys"):
+                    continue
+                pub = file_path.with_suffix(file_path.suffix + ".pub")
+                if pub.exists():
+                    keys.append(SSHKey(str(file_path)))
         except Exception as e:
-            logger.error(f"Failed to discover SSH keys: {e}")
-        
+            logger.error("Failed to discover SSH keys: %s", e)
         return keys
 
-    def generate_key(self, 
-                    key_name: str, 
-                    key_type: str = 'rsa',
-                    key_size: int = 2048,
-                    comment: str = None,
-                    passphrase: str = None) -> Optional[SSHKey]:
-        """Generate a new SSH key pair"""
-        
-        try:
-            key_path = self.ssh_dir / key_name
-            
-            # Check if key already exists
-            if key_path.exists():
-                logger.error(f"Key {key_name} already exists")
-                return None
-            
-            # Generate key based on type
-            if key_type.lower() == 'rsa':
-                private_key = rsa.generate_private_key(
-                    public_exponent=65537,
-                    key_size=key_size,
-                    backend=default_backend()
-                )
-            elif key_type.lower() == 'ed25519':
-                private_key = ed25519.Ed25519PrivateKey.generate()
-            else:
-                logger.error(f"Unsupported key type: {key_type}")
-                return None
-            
-            # Prepare encryption
-            if passphrase:
-                encryption_algorithm = serialization.BestAvailableEncryption(
-                    passphrase.encode('utf-8')
-                )
-            else:
-                encryption_algorithm = serialization.NoEncryption()
-            
-            # Write private key
-            private_pem = private_key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.OpenSSH,
-                encryption_algorithm=encryption_algorithm
-            )
-            
-            with open(key_path, 'wb') as f:
-                f.write(private_pem)
-            
-            # Set proper permissions for private key
-            os.chmod(key_path, 0o600)
-            
-            # Generate public key
-            public_key = private_key.public_key()
-            public_ssh = public_key.public_bytes(
-                encoding=serialization.Encoding.OpenSSH,
-                format=serialization.PublicFormat.OpenSSH
-            )
-            
-            # Add comment if provided
-            if comment:
-                public_ssh += f' {comment}'.encode('utf-8')
-            
-            # Write public key
-            pub_path = key_path.with_suffix('.pub')
-            with open(pub_path, 'wb') as f:
-                f.write(public_ssh)
-            
-            # Set proper permissions for public key
-            os.chmod(pub_path, 0o644)
-            
-            # Create SSHKey object
-            ssh_key = SSHKey(str(key_path), key_type, comment)
-            
-            # Emit signal
-            self.emit('key-generated', ssh_key)
-            
-            logger.info(f"Generated SSH key: {ssh_key}")
-            return ssh_key
-            
-        except Exception as e:
-            logger.error(f"Failed to generate SSH key: {e}")
-            return None
-
-    def generate_key_with_ssh_keygen(self,
-                                   key_name: str,
-                                   key_type: str = 'rsa',
-                                   key_size: int = 2048,
-                                   comment: str = None,
-                                   passphrase: str = None) -> Optional[SSHKey]:
-        """Generate SSH key using ssh-keygen command"""
-        
-        try:
-            key_path = self.ssh_dir / key_name
-            
-            # Check if key already exists
-            if key_path.exists():
-                logger.error(f"Key {key_name} already exists")
-                return None
-            
-            # Build ssh-keygen command
-            cmd = ['ssh-keygen', '-t', key_type]
-            
-            if key_type.lower() == 'rsa':
-                cmd.extend(['-b', str(key_size)])
-            
-            if comment:
-                cmd.extend(['-C', comment])
-            else:
-                cmd.extend(['-C', f'{os.getenv("USER")}@{os.uname().nodename}'])
-            
-            cmd.extend(['-f', str(key_path)])
-            
-            if passphrase:
-                cmd.extend(['-N', passphrase])
-            else:
-                cmd.extend(['-N', ''])  # No passphrase
-            
-            # Run ssh-keygen
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            
-            logger.debug(f"ssh-keygen output: {result.stdout}")
-            
-            # Create SSHKey object
-            ssh_key = SSHKey(str(key_path))
-            
-            # Emit signal
-            self.emit('key-generated', ssh_key)
-            
-            logger.info(f"Generated SSH key with ssh-keygen: {ssh_key}")
-            return ssh_key
-            
-        except subprocess.CalledProcessError as e:
-            logger.error(f"ssh-keygen failed: {e.stderr}")
-            return None
-        except Exception as e:
-            logger.error(f"Failed to generate SSH key with ssh-keygen: {e}")
-            return None
-
-    def delete_key(self, ssh_key: SSHKey) -> bool:
-        """Delete an SSH key pair"""
-        try:
-            key_path = Path(ssh_key.path)
-            pub_path = Path(ssh_key.public_path)
-            
-            # Remove files
-            if key_path.exists():
-                key_path.unlink()
-            
-            if pub_path.exists():
-                pub_path.unlink()
-            
-            # Emit signal
-            self.emit('key-deleted', ssh_key.path)
-            
-            logger.info(f"Deleted SSH key: {ssh_key}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to delete SSH key {ssh_key}: {e}")
-            return False
-
-    def deploy_key_to_host(self, ssh_key: SSHKey, connection, connection_manager=None) -> bool:
-        """Deploy SSH key to remote host"""
-        try:
-            # Get public key content
-            public_key_content = ssh_key.get_public_key_content()
-            if not public_key_content:
-                logger.error(f"Could not read public key: {ssh_key.public_path}")
-                return False
-            
-            # Connect to host
-            if connection_manager is None:
-                logger.error("Connection manager is required")
-                return False
-            client = connection_manager.connect_ssh(connection)
-            if not client:
-                logger.error(f"Could not connect to {connection}")
-                return False
-            
-            try:
-                # Create .ssh directory if it doesn't exist
-                stdin, stdout, stderr = client.exec_command('mkdir -p ~/.ssh && chmod 700 ~/.ssh')
-                stdin.close()
-                
-                # Add public key to authorized_keys
-                command = (
-                    f'echo "{public_key_content}" >> ~/.ssh/authorized_keys && '
-                    'chmod 600 ~/.ssh/authorized_keys && '
-                    'sort ~/.ssh/authorized_keys | uniq > ~/.ssh/authorized_keys.tmp && '
-                    'mv ~/.ssh/authorized_keys.tmp ~/.ssh/authorized_keys'
-                )
-                
-                stdin, stdout, stderr = client.exec_command(command)
-                stdin.close()
-                
-                # Check for errors
-                error_output = stderr.read().decode().strip()
-                if error_output:
-                    logger.warning(f"SSH key deployment warning: {error_output}")
-                
-                # Emit signal
-                self.emit('key-deployed', ssh_key, connection)
-                
-                logger.info(f"Deployed SSH key {ssh_key} to {connection}")
-                return True
-                
-            finally:
-                client.close()
-                
-        except Exception as e:
-            logger.error(f"Failed to deploy SSH key {ssh_key} to {connection}: {e}")
-            return False
-
-    def _get_active_window(self):
-        try:
-            app = Gtk.Application.get_default()
-            if app is not None:
-                return app.get_active_window()
-        except Exception:
-            pass
-        return None
-
-    def _prompt_password_sync(self, title: str, message: str) -> Optional[str]:
-        """Show a synchronous password prompt and return the entered password or None if canceled."""
-        try:
-            parent = self._get_active_window()
-            dialog = Gtk.Dialog(title=title, transient_for=parent, modal=True)
-            dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
-            dialog.add_button("OK", Gtk.ResponseType.OK)
-            try:
-                dialog.set_default_response(Gtk.ResponseType.OK)
-            except Exception:
-                pass
-
-            box = dialog.get_content_area()
-            box.set_spacing(8)
-            label = Gtk.Label(label=message)
-            label.set_wrap(True)
-            box.append(label)
-
-            # Gtk.PasswordEntry is available in Gtk4; placeholder API may vary
-            pwd_entry = Gtk.PasswordEntry()
-            try:
-                pwd_entry.set_placeholder_text("Password")
-            except Exception:
-                pass
-            try:
-                if hasattr(pwd_entry, 'set_show_peek_icon'):
-                    pwd_entry.set_show_peek_icon(True)
-            except Exception:
-                pass
-            box.append(pwd_entry)
-            try:
-                # Pressing Enter in the entry should trigger OK
-                pwd_entry.connect('activate', lambda *_: dialog.response(Gtk.ResponseType.OK))
-                pwd_entry.grab_focus()
-            except Exception:
-                pass
-
-            # Run a nested loop to emulate synchronous dialog
-            password_result: Dict[str, Optional[str]] = {"value": None}
-            loop = GLib.MainLoop()
-
-            def on_response(dlg, response_id):
-                try:
-                    if response_id == Gtk.ResponseType.OK:
-                        password_result["value"] = pwd_entry.get_text() or None
-                except Exception:
-                    password_result["value"] = None
-                finally:
-                    try:
-                        dlg.destroy()
-                    finally:
-                        loop.quit()
-
-            dialog.connect("response", on_response)
-            dialog.show()
-            loop.run()
-            return password_result["value"]
-        except Exception as e:
-            logger.error(f"Password prompt failed: {e}")
-            return None
-
-    def _run_ssh_copy_id(self, base_cmd: List[str], accept_new_host_keys: bool = True, password: Optional[str] = None, passphrase: Optional[str] = None, extra_ssh_opts: Optional[List[str]] = None, env_overrides: Optional[Dict[str, str]] = None) -> Tuple[bool, str]:
-        """Run ssh-copy-id with optional non-interactive password using sshpass or askpass fallback.
-
-        Returns (success, combined_output).
+    def generate_key(
+        self,
+        key_name: str,
+        key_type: str = "ed25519",
+        key_size: int = 3072,          # used only when key_type == "rsa"
+        comment: Optional[str] = None,
+        passphrase: Optional[str] = None,
+    ) -> Optional[SSHKey]:
+        """
+        Single, unified generator using `ssh-keygen`.
+        - key_type: "ed25519" (default) or "rsa"
+        - key_size: used only for RSA (min 1024)
+        - passphrase: optional; empty means unencrypted key
+        Returns SSHKey or None on failure.
         """
         try:
-            cmd = list(base_cmd)
-            if accept_new_host_keys:
-                # Ensure StrictHostKeyChecking=accept-new to avoid interactive prompt
-                cmd = cmd[:1] + ['-o', 'StrictHostKeyChecking=accept-new'] + cmd[1:]
-            if extra_ssh_opts:
-                # Insert extra ssh -o options before the final target argument
-                if len(cmd) >= 1:
-                    target = cmd[-1]
-                    cmd = cmd[:-1] + list(extra_ssh_opts) + [target]
+            # validate filename
+            if not key_name or key_name.strip() == "":
+                raise ValueError("Key file name is required.")
+            if "/" in key_name or key_name.startswith("."):
+                raise ValueError("Key file name must not contain '/' or start with '.'.")
 
-            env = os.environ.copy()
-            if env_overrides:
+            key_path = self.ssh_dir / key_name
+            if key_path.exists():
+                # Suggest alternative names
+                base_name = key_name
+                counter = 1
+                while (self.ssh_dir / f"{base_name}_{counter}").exists():
+                    counter += 1
+                suggestion = f"{base_name}_{counter}"
+                
+                raise FileExistsError(f"A key named '{key_name}' already exists. Try '{suggestion}' instead.")
+
+            kt = (key_type or "").lower().strip()
+            if kt not in ("ed25519", "rsa"):
+                raise ValueError(f"Unsupported key type: {key_type}")
+
+            cmd = ["ssh-keygen", "-t", kt]
+            if kt == "rsa":
+                size = int(key_size) if key_size else 3072
+                if size < 1024:
+                    raise ValueError("RSA key size must be >= 1024 bits.")
+                cmd += ["-b", str(size)]
+
+            if not comment:
                 try:
-                    env.update(env_overrides)
+                    user = os.getenv("USER") or "user"
+                    host = os.uname().nodename
+                    comment = f"{user}@{host}"
                 except Exception:
-                    pass
-            
-            # Handle passphrase for key-based authentication
-            if passphrase:
-                # Use the secure askpass script for passphrase authentication
-                # This avoids storing passphrases in plain text temporary files
-                from .askpass_utils import get_ssh_env_with_askpass, ensure_askpass_script
-                # Ensure the askpass script exists
-                ensure_askpass_script()
-                # Get environment for passphrase authentication
-                askpass_env = get_ssh_env_with_askpass()
-                env.update(askpass_env)
-            
-            # Detach from controlling TTY so ssh won't prompt in terminal; we'll use GUI if needed
-            run_kwargs = dict(capture_output=True, text=True, timeout=60, start_new_session=True)
+                    comment = "generated-by-sshpilot"
+            cmd += ["-C", comment]
 
-            if password:
-                # Use the secure askpass script for password authentication
-                # This avoids storing passwords in plain text temporary files
-                from .askpass_utils import get_ssh_env_with_askpass_for_password, ensure_askpass_script
-                # Ensure the askpass script exists
-                ensure_askpass_script()
-                # Get environment with password context
-                askpass_env = get_ssh_env_with_askpass_for_password(connection.host, connection.username)
-                env.update(askpass_env)
-                
-                # No TTY for ssh to trigger askpass; limit prompts for safety
-                target = cmd[-1] if cmd else ''
-                before_target = cmd[:-1]
-                composed = before_target + ['-o', 'BatchMode=no', '-o', 'NumberOfPasswordPrompts=1', target]
-                result = subprocess.run(composed, env=env, stdin=subprocess.DEVNULL, **run_kwargs)
-                out = (result.stdout or '') + (result.stderr or '')
-                success = (result.returncode == 0)
-                
-                return (success, out)
+            cmd += ["-f", str(key_path)]
+            cmd += ["-N", passphrase or ""]  # empty => no passphrase
 
-            # No password provided: force non-interactive so it cannot prompt in terminal
-            target = cmd[-1] if cmd else ''
-            before_target = cmd[:-1]
-            # Allow askpass prompts when env_overrides requests it
-            if env_overrides and (env_overrides.get('SSH_ASKPASS') or env_overrides.get('SSH_ASKPASS_REQUIRE')):
-                composed = before_target + ['-o', 'BatchMode=no', '-o', 'NumberOfPasswordPrompts=1', target]
-            else:
-                composed = before_target + ['-o', 'BatchMode=yes', '-o', 'NumberOfPasswordPrompts=0', target]
-            result = subprocess.run(composed, stdin=subprocess.DEVNULL, env=env, **run_kwargs)
-            out = (result.stdout or '') + (result.stderr or '')
-            success = (result.returncode == 0)
-            
-            return (success, out)
-        except subprocess.TimeoutExpired:
-            return (False, 'ssh-copy-id timed out')
-        except Exception as e:
-            return (False, f'Error running ssh-copy-id: {e}')
+            logger.debug("Running ssh-keygen: %s", " ".join(cmd))
+            completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
-    def copy_key_to_host(self, ssh_key: SSHKey, connection, connection_manager=None) -> bool:
-        """Copy SSH key to host using ssh-copy-id.
+            if completed.returncode != 0:
+                # Surface stderr as the UI message
+                stderr = completed.stderr.strip() or "ssh-keygen failed"
+                raise RuntimeError(stderr)
 
-        If a password is required, show a GUI password prompt instead of using the terminal.
-        """
-        try:
-            # Build base ssh-copy-id command
-            target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
-            cmd = ['ssh-copy-id', '-i', ssh_key.public_path]
-            if getattr(connection, 'port', 22) != 22:
-                cmd.extend(['-p', str(connection.port)])
-            cmd.append(target)
-
-            # Determine preferred auth from saved connection config
-            prefer_password = False
+            # Ensure sane permissions (best effort)
             try:
-                prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
-            except Exception:
-                prefer_password = False
-            extra_opts: List[str] = []
-            # If user prefers password, avoid pubkey attempts to prevent auth flood
-            if prefer_password:
-                extra_opts += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password,keyboard-interactive']
-            else:
-                # If UI selected a specific key, force that identity and avoid agent flood
-                try:
-                    key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
-                except Exception:
-                    key_mode = 0
-                keyfile = getattr(connection, 'keyfile', '') or ''
-                if key_mode == 1 and keyfile and os.path.exists(keyfile):
-                    extra_opts += ['-o', f'IdentityFile={keyfile}', '-o', 'IdentitiesOnly=yes']
+                os.chmod(key_path, 0o600)
+                pub_path = f"{key_path}.pub"
+                if os.path.exists(pub_path):
+                    os.chmod(pub_path, 0o644)
+            except Exception as perm_err:
+                logger.warning("Failed setting permissions on key files: %s", perm_err)
 
-            # Try to get saved password from keyring if password auth is preferred
-            saved_password = None
-            if prefer_password and connection_manager:
-                try:
-                    saved_password = connection_manager.get_password(connection.host, connection.username)
-                except Exception as e:
-                    logger.debug(f"Failed to get saved password: {e}")
-
-            # Try to get saved key passphrase if using key-based auth
-            saved_passphrase = None
-            if not prefer_password and connection_manager:
-                # Determine which key needs the passphrase
-                keyfile = getattr(connection, 'keyfile', '') or ''
-                key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
-                
-                # If using a specific key for authentication, get its passphrase
-                if key_mode == 1 and keyfile and os.path.exists(keyfile):
-                    try:
-                        saved_passphrase = connection_manager.get_key_passphrase(keyfile)
-                        logger.debug(f"Getting passphrase for authentication key: {keyfile}")
-                    except Exception as e:
-                        logger.debug(f"Failed to get saved passphrase for auth key {keyfile}: {e}")
-                # Otherwise, try to get passphrase for the key being copied
-                elif ssh_key.path:
-                    try:
-                        saved_passphrase = connection_manager.get_key_passphrase(ssh_key.path)
-                        logger.debug(f"Getting passphrase for key being copied: {ssh_key.path}")
-                    except Exception as e:
-                        logger.debug(f"Failed to get saved passphrase for copied key {ssh_key.path}: {e}")
-
-            # First attempt with saved credentials
-            password_to_use = saved_password if prefer_password else None
-            passphrase_to_use = saved_passphrase if not prefer_password else None
-            ok, output = self._run_ssh_copy_id(cmd, accept_new_host_keys=True, password=password_to_use, passphrase=passphrase_to_use, extra_ssh_opts=extra_opts)
-            if ok:
-                self.emit('key-deployed', ssh_key, connection)
-                logger.info(f"Copied SSH key {ssh_key} to {connection} using ssh-copy-id")
-                return True
-
-            # Detect if password is required
-            out_lower = (output or '').lower()
-            needs_password = any(token in out_lower for token in [
-                'password:', 'permission denied', 'please try again', 'authentication failed'
-            ])
-            if not needs_password:
-                logger.error(f"ssh-copy-id failed: {output}")
-                return False
-
-            # If the first attempt failed, try with a GUI prompt as fallback
-            if not ok and prefer_password:
-                # Try with a GUI password prompt
-                if threading.current_thread() is threading.main_thread():
-                    password = self._prompt_password_sync(
-                        title='Password required',
-                        message=f'Enter the password for {target} to install your public key.'
-                    )
-                else:
-                    result_holder: Dict[str, Optional[str]] = {"password": None}
-                    done = threading.Event()
-                    def _ask():
-                        try:
-                            result_holder["password"] = self._prompt_password_sync(
-                                title='Password required',
-                                message=f'Enter the password for {target} to install your public key.'
-                            )
-                        finally:
-                            done.set()
-                        return False
-                    GLib.idle_add(_ask)
-                    done.wait()
-                    password = result_holder["password"]
-                
-                if password:
-                    ok2, output2 = self._run_ssh_copy_id(cmd, accept_new_host_keys=True, password=password, passphrase=None, extra_ssh_opts=extra_opts)
-                    if ok2:
-                        self.emit('key-deployed', ssh_key, connection)
-                        logger.info(f"Copied SSH key {ssh_key} to {connection} using ssh-copy-id (GUI prompt)")
-                        return True
-                    logger.error(f"ssh-copy-id failed after GUI password prompt: {output2}")
-                else:
-                    logger.info("ssh-copy-id canceled by user (no password entered)")
-                    return False
-            
-            # If we get here, the first attempt failed and we don't have a fallback
-            logger.error(f"ssh-copy-id failed: {output}")
-            return False
+            key = SSHKey(str(key_path))
+            self.emit("key-generated", key)
+            logger.info("Generated SSH key at %s", key_path)
+            return key
 
         except Exception as e:
-            logger.error(f"Failed to copy SSH key using ssh-copy-id: {e}")
-            return False
-
-    def get_key_info(self, key_path: str) -> Optional[Dict[str, str]]:
-        """Get detailed information about an SSH key"""
-        try:
-            result = subprocess.run(
-                ['ssh-keygen', '-lf', key_path],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            
-            # Parse output
-            output = result.stdout.strip()
-            parts = output.split()
-            
-            if len(parts) >= 4:
-                return {
-                    'bits': parts[0],
-                    'fingerprint': parts[1],
-                    'comment': ' '.join(parts[2:-1]),
-                    'type': parts[-1].strip('()')
-                }
-                
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to get key info for {key_path}: {e}")
-        
-        return None
-
-    def change_key_passphrase(self, ssh_key: SSHKey, old_passphrase: str = None, new_passphrase: str = None) -> bool:
-        """Change SSH key passphrase"""
-        try:
-            cmd = ['ssh-keygen', '-p', '-f', ssh_key.path]
-            
-            # Prepare input
-            input_data = ""
-            if old_passphrase:
-                input_data += f"{old_passphrase}\n"
-            else:
-                input_data += "\n"  # No old passphrase
-            
-            if new_passphrase:
-                input_data += f"{new_passphrase}\n{new_passphrase}\n"
-            else:
-                input_data += "\n\n"  # No new passphrase
-            
-            # Run ssh-keygen
-            result = subprocess.run(
-                cmd,
-                input=input_data,
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            
-            if result.returncode == 0:
-                logger.info(f"Changed passphrase for SSH key: {ssh_key}")
-                return True
-            else:
-                logger.error(f"Failed to change passphrase: {result.stderr}")
-                return False
-                
-        except subprocess.TimeoutExpired:
-            logger.error("Passphrase change timed out")
-            return False
-        except Exception as e:
-            logger.error(f"Failed to change key passphrase: {e}")
-            return False
-
-    def add_key_to_agent(self, ssh_key: SSHKey, passphrase: str = None) -> bool:
-        """Add SSH key to ssh-agent"""
-        try:
-            cmd = ['ssh-add', ssh_key.path]
-            
-            # Prepare input (passphrase if needed)
-            input_data = f"{passphrase}\n" if passphrase else None
-            
-            # Run ssh-add
-            result = subprocess.run(
-                cmd,
-                input=input_data,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            
-            if result.returncode == 0:
-                logger.info(f"Added SSH key to agent: {ssh_key}")
-                return True
-            else:
-                logger.error(f"Failed to add key to agent: {result.stderr}")
-                return False
-                
-        except subprocess.TimeoutExpired:
-            logger.error("ssh-add timed out")
-            return False
-        except Exception as e:
-            logger.error(f"Failed to add key to agent: {e}")
-            return False
-
-    def remove_key_from_agent(self, ssh_key: SSHKey) -> bool:
-        """Remove SSH key from ssh-agent"""
-        try:
-            cmd = ['ssh-add', '-d', ssh_key.path]
-            
-            # Run ssh-add
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            
-            if result.returncode == 0:
-                logger.info(f"Removed SSH key from agent: {ssh_key}")
-                return True
-            else:
-                logger.error(f"Failed to remove key from agent: {result.stderr}")
-                return False
-                
-        except subprocess.TimeoutExpired:
-            logger.error("ssh-add removal timed out")
-            return False
-        except Exception as e:
-            logger.error(f"Failed to remove key from agent: {e}")
-            return False
-
-    def list_agent_keys(self) -> List[str]:
-        """List keys currently loaded in ssh-agent"""
-        try:
-            result = subprocess.run(
-                ['ssh-add', '-l'],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            
-            if result.returncode == 0:
-                keys = []
-                for line in result.stdout.strip().split('\n'):
-                    if line.strip():
-                        keys.append(line.strip())
-                return keys
-            else:
-                # No keys in agent
-                return []
-                
-        except subprocess.TimeoutExpired:
-            logger.error("ssh-add list timed out")
-            return []
-        except Exception as e:
-            logger.error(f"Failed to list agent keys: {e}")
-            return []
-
-    def validate_key_file(self, key_path: str) -> bool:
-        """Validate if a file is a valid SSH private key"""
-        try:
-            # Try to load the key
-            with open(key_path, 'rb') as f:
-                key_data = f.read()
-            
-            # Try to parse as SSH private key
-            try:
-                serialization.load_ssh_private_key(key_data, password=None)
-                return True
-            except ValueError:
-                # Try with PEM format
-                try:
-                    serialization.load_pem_private_key(key_data, password=None)
-                    return True
-                except ValueError:
-                    return False
-                    
-        except Exception as e:
-            logger.debug(f"Key validation failed for {key_path}: {e}")
-            return False
+            logger.error("Key generation failed: %s", e, exc_info=True)
+            # Re-raise the exception so the UI can handle it properly
+            raise
