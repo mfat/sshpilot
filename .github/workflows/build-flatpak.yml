@@ -19,6 +19,13 @@ jobs:
     - name: Get version from tag
       id: version
       run: |
+        # Only run on tag pushes
+        if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+          echo "Error: This workflow should only run on tag pushes (v* tags)"
+          echo "Current ref: $GITHUB_REF"
+          exit 1
+        fi
+        
         VERSION="${GITHUB_REF#refs/tags/v}"
         echo "version=$VERSION" >> $GITHUB_ENV
         echo "Building version: $VERSION"
