@@ -15,8 +15,40 @@ jobs:
       options: --privileged
     steps:
     - uses: actions/checkout@v4
-    - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
       with:
-        bundle: sshpilot.flatpak
-        manifest-path: io.github.mfat.sshpilot.yaml
-        cache-key: flatpak-builder-${{ github.sha }}
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Update manifest with tag and commit
+      run: |
+        # Extract version from tag (remove 'v' prefix)
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "Updating manifest for version: $VERSION"
+        
+        # Update tag in manifest
+        sed -i "s/tag: v[0-9.]*/tag: v$VERSION/" io.github.mfat.sshpilot.yaml
+        
+        # Update commit hash in manifest
+        sed -i "s/commit: [a-f0-9]*/commit: ${{ github.sha }}/" io.github.mfat.sshpilot.yaml
+        
+        # Show the updated manifest
+        echo "Updated manifest:"
+        grep -A 2 "sources:" io.github.mfat.sshpilot.yaml
+    
+    - name: Commit updated manifest
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add io.github.mfat.sshpilot.yaml
+        git commit -m "Update manifest for release ${{ github.ref_name }} [skip ci]" || echo "No changes to commit"
+        git push
+    
+    - name: Build Flatpak bundle
+      run: |
+        # Extract version from tag (remove 'v' prefix)
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "Building Flatpak bundle for version: $VERSION"
+        
+        # Build the Flatpak bundle
+        flatpak-builder --force-clean --repo=repo --state-dir=.flatpak-builder build-dir io.github.mfat.sshpilot.yaml
+        flatpak build-bundle repo sshpilot_${VERSION}-1.flatpak io.github.mfat.sshpilot
