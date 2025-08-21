@@ -48,7 +48,7 @@ jobs:
         flatpak build-bundle $BUILD_DIR $BUNDLE_NAME --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo --arch=x86_64 io.github.mfat.sshpilot
 
     - name: Upload Flatpak bundle as artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: sshpilot-flatpak
         path: "sshpilot_${VERSION}.flatpak"
