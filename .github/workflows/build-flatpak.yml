@@ -13,11 +13,32 @@ jobs:
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
       options: --privileged
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+      # Don't fail the whole workflow if one architecture fails
+      fail-fast: false
     steps:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
         token: ${{ secrets.GITHUB_TOKEN }}
+    
+    # Docker is required by the docker/setup-qemu-action which enables emulation
+    - name: Install deps
+      if: ${{ matrix.arch != 'x86_64' }}
+      run: |
+        # Use the static binaries because it's unable to use a package manager 
+        curl https://download.docker.com/linux/static/stable/x86_64/docker-26.0.0.tgz --output ./docker.tgz
+        tar xzvf docker.tgz
+        mv docker/* /usr/bin
+    
+    - name: Set up QEMU
+      if: ${{ matrix.arch != 'x86_64' }}
+      id: qemu
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
     
     - name: Update manifest with tag and commit
       run: |
@@ -51,8 +72,8 @@ jobs:
       run: |
         # Extract version from tag (remove 'v' prefix)
         VERSION=${GITHUB_REF#refs/tags/v}
-        echo "Building Flatpak bundle for version: $VERSION"
+        echo "Building Flatpak bundle for version: $VERSION on ${{ matrix.arch }}"
         
         # Build the Flatpak bundle
         flatpak-builder --force-clean --repo=repo --state-dir=.flatpak-builder build-dir io.github.mfat.sshpilot.yaml
-        flatpak build-bundle repo sshpilot_${VERSION}-1.flatpak io.github.mfat.sshpilot
+        flatpak build-bundle repo sshpilot_${VERSION}-1-${{ matrix.arch }}.flatpak io.github.mfat.sshpilot
