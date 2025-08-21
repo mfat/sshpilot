@@ -15,15 +15,16 @@ jobs:
       options: --privileged
     steps:
     - uses: actions/checkout@v4
-    - name: Get version from manifest
+
+    - name: Get version from tag
       id: version
       run: |
-        VERSION=$(grep "tag:" io.github.mfat.sshpilot.yaml | head -1 | sed 's/.*tag: v//')
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        VERSION="${GITHUB_REF#refs/tags/v}"
+        echo "version=$VERSION" >> $GITHUB_ENV
         echo "Building version: $VERSION"
     
     - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
       with:
-        bundle: sshpilot_${{ steps.version.outputs.version }}-1.flatpak
+        bundle: sshpilot_${{ env.version }}-1.flatpak
         manifest-path: io.github.mfat.sshpilot.yaml
         cache-key: flatpak-builder-${{ github.sha }}
