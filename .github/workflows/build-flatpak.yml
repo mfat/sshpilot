@@ -23,8 +23,32 @@ jobs:
         echo "version=$VERSION" >> $GITHUB_ENV
         echo "Building version: $VERSION"
     
-    - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+    - name: Set up Flatpak environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y flatpak-builder
+
+    - name: Build Flatpak with flatpak-builder
+      run: |
+        flatpak-builder --user --install --force-clean build-dir io.github.mfat.sshpilot.yaml
+
+    - name: Create Flatpak bundle
+      run: |
+        VERSION="${GITHUB_REF#refs/tags/v}"
+        BUILD_DIR="build-dir"  # Adjust to match your actual build directory
+        BUNDLE_NAME="sshpilot_${VERSION}-1.flatpak"
+        
+        # Ensure the build directory exists
+        if [ ! -d "$BUILD_DIR" ]; then
+          echo "Error: Build directory not found!"
+          exit 1
+        fi
+        
+        # Create the bundle
+        flatpak build-bundle $BUILD_DIR $BUNDLE_NAME --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo --arch=x86_64 io.github.mfat.sshpilot
+
+    - name: Upload Flatpak bundle as artifact
+      uses: actions/upload-artifact@v3
       with:
-        bundle: sshpilot_${{ env.version }}-1.flatpak
-        manifest-path: io.github.mfat.sshpilot.yaml
-        cache-key: flatpak-builder-${{ github.sha }}
+        name: sshpilot-flatpak
+        path: "sshpilot_${VERSION}-1.flatpak"
