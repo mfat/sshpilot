@@ -111,16 +111,23 @@ class SSHProcessManager:
     def _terminate_process_by_pid(self, pid):
         """Terminate a process by PID"""
         try:
+            # Always try process group first
             pgid = os.getpgid(pid)
             os.killpg(pgid, signal.SIGTERM)
-            time.sleep(1)
-            try:
-                os.kill(pid, 0)
-                os.killpg(pgid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        except (ProcessLookupError, OSError) as e:
-            logger.debug(f"Process {pid} cleanup: {e}")
+            
+            # Wait with timeout
+            for _ in range(50):  # 5 seconds max
+                try:
+                    os.killpg(pgid, 0)
+                    time.sleep(0.1)
+                except ProcessLookupError:
+                    return True
+                    
+            # Force kill if still alive
+            os.killpg(pgid, signal.SIGKILL)
+            return True
+        except Exception:
+            return False
         finally:
             with self.lock:
                 if pid in self.processes:
@@ -133,28 +140,46 @@ class SSHProcessManager:
     
     def cleanup_all(self):
         """Clean up all managed processes"""
-        logger.info("Cleaning up all SSH processes...")
-        with self.lock:
-            # Make a copy of PIDs to avoid modifying the dict during iteration
-            pids = list(self.processes.keys())
-            for pid in pids:
-                self._terminate_process_by_pid(pid)
+        import signal
+        
+        def timeout_handler(signum, frame):
+            logger.warning("Cleanup timeout - forcing exit")
+            os._exit(1)
+        
+        # Set 10-second timeout for entire cleanup
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(10)
+        
+        try:
+            logger.info("Cleaning up all SSH processes...")
             
-            # Clear all tracked processes
-            self.processes.clear()
-            
-            # Clean up any remaining terminals (only if they're still connected)
+            # First, mark all terminals as quitting to suppress signal handlers
             for terminal in list(self.terminals):
-                try:
-                    if hasattr(terminal, 'disconnect') and hasattr(terminal, 'is_connected') and terminal.is_connected:
-                        terminal.disconnect()
-                except Exception as e:
-                    logger.error(f"Error cleaning up terminal {id(terminal)}: {e}")
+                terminal._is_quitting = True
             
-            # Clear terminal references
-            self.terminals.clear()
+            with self.lock:
+                # Atomically extract and clear all processes
+                processes_to_clean = dict(self.processes)
+                self.processes.clear()
             
-        logger.info("SSH process cleanup completed")
+            # Clean up without holding the lock
+            for pid, info in processes_to_clean.items():
+                self._terminate_process_by_pid(pid)
+                
+                # Clean up any remaining terminals (only if they're still connected)
+                for terminal in list(self.terminals):
+                    try:
+                        if hasattr(terminal, 'disconnect') and hasattr(terminal, 'is_connected') and terminal.is_connected:
+                            terminal.disconnect()
+                    except Exception as e:
+                        logger.error(f"Error cleaning up terminal {id(terminal)}: {e}")
+                
+                # Clear terminal references
+                self.terminals.clear()
+                
+            logger.info("SSH process cleanup completed")
+        finally:
+            signal.alarm(0)  # Cancel timeout
 
 # Global process manager instance
 process_manager = SSHProcessManager()
@@ -188,6 +213,7 @@ class TerminalWidget(Gtk.Box):
         self.watch_id = 0
         self.ssh_client = None
         self.session_id = str(id(self))  # Unique ID for this session
+        self._is_quitting = False  # Flag to suppress signal handlers during quit
         
         # Register with process manager
         process_manager.register_terminal(self)
@@ -734,6 +760,11 @@ class TerminalWidget(Gtk.Box):
     
     def _on_spawn_complete(self, terminal, pid, error, user_data=None):
         """Called when terminal spawn is complete"""
+        # Skip if terminal is quitting
+        if getattr(self, '_is_quitting', False):
+            logger.debug("Terminal is quitting, skipping spawn complete handler")
+            return
+            
         logger.debug(f"Flatpak debug: _on_spawn_complete called with pid={pid}, error={error}, user_data={user_data}")
         
         if error:
@@ -794,6 +825,11 @@ class TerminalWidget(Gtk.Box):
     
     def _fallback_hide_spinner(self):
         """Fallback method to hide spinner if spawn completion doesn't fire"""
+        # Skip if terminal is quitting
+        if getattr(self, '_is_quitting', False):
+            logger.debug("Terminal is quitting, skipping fallback hide spinner")
+            return False
+            
         logger.debug("Flatpak debug: Fallback hide spinner called")
         if not self.is_connected:
             logger.warning("Flatpak: Spawn completion callback didn't fire, forcing connection state")
@@ -1503,6 +1539,11 @@ class TerminalWidget(Gtk.Box):
 
     def on_child_exited(self, terminal, status):
         """Handle terminal child process exit"""
+        # Skip if terminal is quitting
+        if getattr(self, '_is_quitting', False):
+            logger.debug("Terminal is quitting, skipping child exit handler")
+            return
+            
         logger.debug(f"Terminal child exited with status: {status}")
         
         # Defer the heavy work to avoid blocking the signal handler

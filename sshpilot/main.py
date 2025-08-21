@@ -72,6 +72,7 @@ class SshPilotApplication(Adw.Application):
         # Create actions with keyboard shortcuts
         self.create_action('quit', self.on_quit_action, ['<primary>q'])
         self.create_action('new-connection', self.on_new_connection, ['<primary>n'])
+        self.create_action('open-new-connection-tab', self.on_open_new_connection_tab, ['<primary><alt>n'])
         self.create_action('toggle-list', self.on_toggle_list, ['<primary>l'])
         self.create_action('new-key', self.on_new_key, ['<primary><shift>k'])
         self.create_action('show-resources', self.on_show_resources, ['<primary>r'])
@@ -216,6 +217,13 @@ class SshPilotApplication(Adw.Application):
         logging.debug("New connection action triggered")
         if self.props.active_window:
             self.props.active_window.show_connection_dialog()
+
+    def on_open_new_connection_tab(self, action, param):
+        """Handle open new connection tab action (Ctrl+Alt+N)"""
+        logging.debug("Open new connection tab action triggered")
+        if self.props.active_window:
+            # Forward to the window's action
+            self.props.active_window.open_new_connection_tab_action.activate(None)
 
     def on_toggle_list(self, action, param):
         """Handle toggle list focus action"""

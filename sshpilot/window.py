@@ -5,6 +5,7 @@ Primary UI with connection list, tabs, and terminal management
 
 import os
 import logging
+import math
 from typing import Optional, Dict, Any, List, Tuple
 
 import gi
@@ -21,6 +22,7 @@ from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango
 
 # Feature detection for libadwaita versions across distros
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
+HAS_TIMED_ANIMATION = hasattr(Adw, 'TimedAnimation')
 
 from gettext import gettext as _
 
@@ -114,7 +116,7 @@ class SshCopyIdWindow(Adw.Window):
         # ---------- Options group ----------
         logger.info("SshCopyIdWindow: Creating options group")
         try:
-            group = Adw.PreferencesGroup(title="Choose how to install the key")
+            group = Adw.PreferencesGroup(title="")
 
             # Radio option 1: Use existing key (using CheckButton with group for radio behavior)
             self.radio_existing = Gtk.CheckButton(label="Copy existing key")
@@ -391,17 +393,21 @@ class ConnectionRow(Gtk.ListBoxRow):
         super().__init__()
         self.connection = connection
         
-        # Create main box
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        box.set_margin_start(12)
-        box.set_margin_end(12)
-        box.set_margin_top(6)
-        box.set_margin_bottom(6)
+        # Create overlay for pulse effect
+        overlay = Gtk.Overlay()
+        self.set_child(overlay)
+        
+        # Create main content box
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        content.set_margin_start(12)
+        content.set_margin_end(12)
+        content.set_margin_top(6)
+        content.set_margin_bottom(6)
         
         # Connection icon
         icon = Gtk.Image.new_from_icon_name('computer-symbolic')
         icon.set_icon_size(Gtk.IconSize.NORMAL)
-        box.append(icon)
+        content.append(icon)
         
         # Connection info
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -420,20 +426,31 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._apply_host_label_text()
         info_box.append(self.host_label)
         
-        box.append(info_box)
+        content.append(info_box)
         
         # Port forwarding indicators (L/R/D)
         self.indicator_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.indicator_box.set_halign(Gtk.Align.CENTER)
         self.indicator_box.set_valign(Gtk.Align.CENTER)
-        box.append(self.indicator_box)
+        content.append(self.indicator_box)
 
         # Connection status indicator
         self.status_icon = Gtk.Image.new_from_icon_name('network-offline-symbolic')
         self.status_icon.set_pixel_size(16)  # GTK4 uses pixel size instead of IconSize
-        box.append(self.status_icon)
+        content.append(self.status_icon)
         
-        self.set_child(box)
+        # Set content as the main child of overlay
+        overlay.set_child(content)
+        
+        # Create pulse layer
+        self._pulse = Gtk.Box()
+        self._pulse.add_css_class("pulse-highlight")
+        self._pulse.set_can_target(False)  # Don't intercept mouse events
+        self._pulse.set_hexpand(True)
+        self._pulse.set_vexpand(True)
+        overlay.add_overlay(self._pulse)
+        logger.debug(f"Created pulse layer for connection {connection.nickname}: {self._pulse}")
+        
         self.set_selectable(True)  # Make the row selectable for keyboard navigation
         
         # Update status
@@ -463,6 +480,8 @@ class ConnectionRow(Gtk.ListBoxRow):
             setattr(display, '_pf_css_installed', True)
         except Exception:
             pass
+
+
 
     def _update_forwarding_indicators(self):
         # Ensure CSS exists
@@ -626,6 +645,8 @@ class WelcomePage(Gtk.Box):
         
         shortcuts = [
             ('Ctrl+N', 'New Connection'),
+            ('Ctrl+Alt+N', 'Open New Connection Tab'),
+            ('Ctrl+Enter', 'Open New Connection Tab'),
             ('F9', 'Toggle Sidebar'),
             ('Ctrl+L', 'Focus connection list to select server'),
             ('Ctrl+Shift+K', 'New SSH Key'),
@@ -1176,6 +1197,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.open_new_connection_action = Gio.SimpleAction.new('open-new-connection', None)
         self.open_new_connection_action.connect('activate', self.on_open_new_connection_action)
         self.add_action(self.open_new_connection_action)
+        
+        # Global action for opening new connection tab (Ctrl+Alt+N)
+        self.open_new_connection_tab_action = Gio.SimpleAction.new('open-new-connection-tab', None)
+        self.open_new_connection_tab_action.connect('activate', self.on_open_new_connection_tab_action)
+        self.add_action(self.open_new_connection_tab_action)
         # (Toasts disabled) Remove any toast-related actions if previously defined
         try:
             if hasattr(self, '_toast_reconnect_action'):
@@ -1190,11 +1216,195 @@ class MainWindow(Adw.ApplicationWindow):
         
         logger.info("Main window initialized")
 
+        # Install sidebar CSS
+        try:
+            self._install_sidebar_css()
+        except Exception as e:
+            logger.error(f"Failed to install sidebar CSS: {e}")
+
         # On startup, focus the first item in the connection list (not the toolbar buttons)
         try:
             GLib.idle_add(self._focus_connection_list_first_row)
         except Exception:
             pass
+
+    def _install_sidebar_css(self):
+        """Install sidebar focus CSS"""
+        try:
+            # Install CSS for sidebar focus highlighting once per display
+            display = Gdk.Display.get_default()
+            if not display:
+                logger.warning("No display available for CSS installation")
+                return
+            # Use an attribute on the display to avoid re-adding provider
+            if getattr(display, '_sidebar_css_installed', False):
+                return
+            provider = Gtk.CssProvider()
+            css = """
+            /* Pulse highlight for selected rows */
+            .pulse-highlight {
+              background: alpha(@accent_bg_color, 0.5);
+              border-radius: 8px;
+              box-shadow: 0 0 0 0.5px alpha(@accent_bg_color, 0.28) inset;
+              opacity: 0;
+              transition: opacity 0.9s ease-in-out;
+            }
+            .pulse-highlight.on {
+              opacity: 1;
+            }
+
+            /* optional: a subtle focus ring while the list is focused */
+            row:selected:focus-within {
+            #   box-shadow: 0 0 8px 2px @accent_bg_color inset;
+            #border: 2px solid @accent_bg_color;  /* Adds a solid border of 2px thickness */
+              border-radius: 8px;
+            }
+            """
+            provider.load_from_data(css.encode('utf-8'))
+            Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            setattr(display, '_sidebar_css_installed', True)
+            logger.debug("Sidebar CSS installed successfully")
+        except Exception as e:
+            logger.error(f"Failed to install sidebar CSS: {e}")
+            import traceback
+            logger.debug(f"CSS installation traceback: {traceback.format_exc()}")
+
+    def _toggle_class(self, widget, name, on):
+        """Helper to toggle CSS class on a widget"""
+        if on: 
+            widget.add_css_class(name)
+        else:  
+            widget.remove_css_class(name)
+
+    def breathe(self, widget: Gtk.Widget, repeats=3, duration_ms=280):
+        """Breathe animation helper using Adw.TimedAnimation"""
+        if not HAS_TIMED_ANIMATION:
+            logger.debug("Adw.TimedAnimation not available")
+            return
+            
+        logger.debug(f"Creating breathe animation for widget {widget}, repeats={repeats}, duration={duration_ms}ms")
+        
+        # If an old animation exists, stop it
+        if hasattr(widget, "_pulse_anim") and widget._pulse_anim is not None:
+            widget._pulse_anim.pause()
+            widget._pulse_anim = None
+
+        target = Adw.PropertyAnimationTarget.new(widget, "opacity")
+        anim = Adw.TimedAnimation.new(widget, 0.0, 1.0, duration_ms, target)
+        anim.set_easing(Adw.Easing.EASE_IN_OUT)
+        anim.set_alternate(True)          # 0→1 then 1→0 forms one "breath"
+        anim.set_repeat_count(repeats)    # number of breaths
+
+        widget._pulse_anim = anim
+        # Make sure the layer starts invisible
+        widget.set_opacity(0.0)
+        logger.debug(f"Starting animation: {anim}, initial opacity: {widget.get_opacity()}")
+        anim.play()
+        
+        # Add a test callback to see if animation completes
+        def on_animation_done(animation):
+            logger.debug("Animation completed")
+        anim.connect("done", on_animation_done)
+
+    def pulse_selected_row(self, list_box: Gtk.ListBox, repeats=3, duration_ms=280):
+        """Pulse the selected row with highlight effect"""
+        row = list_box.get_selected_row() or (list_box.get_selected_rows()[0] if list_box.get_selected_rows() else None)
+        if not row:
+            logger.debug("No selected row found for pulse effect")
+            return
+        if not hasattr(row, "_pulse"):
+            logger.debug(f"Row {row} has no _pulse attribute")
+            return
+        # Ensure it's realized so opacity changes render
+        if not row.get_mapped():
+            row.realize()
+        logger.debug(f"Starting pulse animation on row {row}, pulse widget: {row._pulse}")
+        
+        # Use CSS-based pulse for now
+        pulse = row._pulse
+        cycle_duration = max(900, duration_ms // repeats)  # Minimum 900ms per cycle for very slow, clear pulses
+        
+        def do_cycle(count):
+            if count == 0:
+                return False
+            logger.debug(f"Pulse cycle {count}: adding 'on' class")
+            pulse.add_css_class("on")
+            # Keep the pulse visible for a longer time for smoother effect
+            GLib.timeout_add(cycle_duration // 3, lambda: (
+                logger.debug(f"Pulse cycle {count}: removing 'on' class"),
+                pulse.remove_css_class("on"),
+                # Add a longer delay before the next pulse
+                GLib.timeout_add(cycle_duration * 2 // 3, lambda: do_cycle(count - 1)) or True
+            ) and False)
+            return False
+
+        GLib.idle_add(lambda: do_cycle(repeats))
+
+    def _test_css_pulse(self, action, param):
+        """Simple test to manually toggle CSS class"""
+        row = self.connection_list.get_selected_row()
+        if row and hasattr(row, "_pulse"):
+            pulse = row._pulse
+            logger.debug(f"Testing CSS pulse on {pulse}")
+            pulse.add_css_class("on")
+            GLib.timeout_add(1000, lambda: (
+                logger.debug("Removing CSS class"),
+                pulse.remove_css_class("on")
+            ) or False)
+
+    def _setup_interaction_stop_pulse(self):
+        """Set up event controllers to stop pulse effect on user interaction"""
+        # Mouse click controller
+        click_ctl = Gtk.GestureClick()
+        click_ctl.connect("pressed", self._stop_pulse_on_interaction)
+        self.connection_list.add_controller(click_ctl)
+        
+        # Key controller
+        key_ctl = Gtk.EventControllerKey()
+        key_ctl.connect("key-pressed", self._on_connection_list_key_pressed)
+        self.connection_list.add_controller(key_ctl)
+        
+        # Scroll controller
+        scroll_ctl = Gtk.EventControllerScroll()
+        scroll_ctl.connect("scroll", self._stop_pulse_on_interaction)
+        self.connection_list.add_controller(scroll_ctl)
+
+    def _on_connection_list_key_pressed(self, controller, keyval, keycode, state):
+        """Handle key presses in the connection list"""
+        # Stop pulse effect on any key press
+        self._stop_pulse_on_interaction(controller)
+        
+        # Handle Enter key specifically
+        if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+            selected_row = self.connection_list.get_selected_row()
+            if selected_row and hasattr(selected_row, 'connection'):
+                connection = selected_row.connection
+                self._focus_most_recent_tab_or_open_new(connection)
+            return True  # Consume the event to prevent row-activated
+        return False
+
+    def _stop_pulse_on_interaction(self, controller, *args):
+        """Stop any ongoing pulse effect when user interacts"""
+        # Stop pulse on any row that has the 'on' class
+        for row in self.connection_list:
+            if hasattr(row, "_pulse"):
+                pulse = row._pulse
+                if "on" in pulse.get_css_classes():
+                    logger.debug("Stopping pulse due to user interaction")
+                    pulse.remove_css_class("on")
+
+    def _wire_pulses(self):
+        """Wire pulse effects to trigger on startup and focus-in"""
+        # On first show
+        self.connect("map", lambda *_: self.pulse_selected_row(self.connection_list, repeats=2, duration_ms=4000))
+        
+        # When list gains keyboard focus (e.g., after Ctrl+L)
+        focus_ctl = Gtk.EventControllerFocus()
+        focus_ctl.connect("enter", lambda *_: self.pulse_selected_row(self.connection_list, repeats=2, duration_ms=4000))
+        self.connection_list.add_controller(focus_ctl)
+        
+        # Stop pulse effect when user interacts with the list
+        self._setup_interaction_stop_pulse()
         
         # Add sidebar toggle action and accelerators
         try:
@@ -1202,6 +1412,8 @@ class MainWindow(Adw.ApplicationWindow):
             sidebar_action = Gio.SimpleAction.new("toggle_sidebar", None)
             sidebar_action.connect("activate", self.on_toggle_sidebar_action)
             self.add_action(sidebar_action)
+            
+
             
             # Bind accelerators (F9 primary, Ctrl+B alternate)
             app = self.get_application()
@@ -1331,8 +1543,10 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Sidebar is always visible on startup
 
-        # Set main content (no toasts preferred)
-        self.set_content(main_box)
+        # Create toast overlay and set main content
+        self.toast_overlay = Adw.ToastOverlay()
+        self.toast_overlay.set_child(main_box)
+        self.set_content(self.toast_overlay)
 
     def _set_sidebar_widget(self, widget: Gtk.Widget) -> None:
         if HAS_OVERLAY_SPLIT:
@@ -1379,6 +1593,7 @@ class MainWindow(Adw.ApplicationWindow):
     def setup_sidebar(self):
         """Set up the sidebar with connection list"""
         sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        sidebar_box.add_css_class('sidebar')
         
         # Sidebar header
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -1403,6 +1618,14 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception:
             pass
         header.append(add_button)
+
+        # Menu button
+        menu_button = Gtk.MenuButton()
+        menu_button.set_can_focus(False)
+        menu_button.set_icon_name('open-menu-symbolic')
+        menu_button.set_tooltip_text('Menu')
+        menu_button.set_menu_model(self.create_menu())
+        header.append(menu_button)
 
         # Hide/Show hostnames button (eye icon)
         def _update_eye_icon(btn):
@@ -1451,6 +1674,9 @@ class MainWindow(Adw.ApplicationWindow):
             self.connection_list.set_can_focus(True)
         except Exception:
             pass
+        
+        # Wire pulse effects
+        self._wire_pulses()
         
         # Connect signals
         self.connection_list.connect('row-selected', self.on_connection_selected)  # For button sensitivity
@@ -1503,6 +1729,30 @@ class MainWindow(Adw.ApplicationWindow):
             self.connection_list.add_controller(context_click)
         except Exception:
             pass
+        
+        # Add keyboard controller for Ctrl+Enter to open new connection
+        try:
+            key_controller = Gtk.ShortcutController()
+            key_controller.set_scope(Gtk.ShortcutScope.LOCAL)
+            
+            def _on_ctrl_enter(widget, *args):
+                try:
+                    selected_row = self.connection_list.get_selected_row()
+                    if selected_row and hasattr(selected_row, 'connection'):
+                        connection = selected_row.connection
+                        self.connect_to_host(connection, force_new=True)
+                except Exception as e:
+                    logger.error(f"Failed to open new connection with Ctrl+Enter: {e}")
+                return True
+            
+            key_controller.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string('<Control>Return'),
+                Gtk.CallbackAction.new(_on_ctrl_enter)
+            ))
+            
+            self.connection_list.add_controller(key_controller)
+        except Exception as e:
+            logger.debug(f"Failed to add Ctrl+Enter shortcut: {e}")
         
         scrolled.set_child(self.connection_list)
         sidebar_box.append(scrolled)
@@ -1560,14 +1810,6 @@ class MainWindow(Adw.ApplicationWindow):
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
         toolbar.append(spacer)
-        
-        # Menu button
-        menu_button = Gtk.MenuButton()
-        menu_button.set_can_focus(False)  # Remove focus from menu button
-        menu_button.set_icon_name('open-menu-symbolic')
-        menu_button.set_tooltip_text('Menu')
-        menu_button.set_menu_model(self.create_menu())
-        toolbar.append(menu_button)
         
         sidebar_box.append(toolbar)
         
@@ -1742,6 +1984,29 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception:
             pass
         return False
+
+    def focus_connection_list(self):
+        """Focus the connection list and show a toast notification."""
+        try:
+            if hasattr(self, 'connection_list') and self.connection_list:
+                # If sidebar is hidden, show it first
+                if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
+                    if not self.sidebar_toggle_button.get_active():
+                        self.sidebar_toggle_button.set_active(True)
+                
+                self.connection_list.grab_focus()
+                
+                # Pulse the selected row
+                self.pulse_selected_row(self.connection_list, repeats=2, duration_ms=4000)
+                
+                # Show toast notification
+                toast = Adw.Toast.new(
+                    "Switched to connection list — ↑/↓ navigate, Enter open, Ctrl+Enter new tab"
+                )
+                toast.set_timeout(3)  # seconds
+                self.toast_overlay.add_toast(toast)
+        except Exception as e:
+            logger.error(f"Error focusing connection list: {e}")
     
     def show_tab_view(self):
         """Show the tab view when connections are active"""
@@ -2065,8 +2330,8 @@ class MainWindow(Adw.ApplicationWindow):
                 if hasattr(child, 'vte'):
                     child.vte.grab_focus()
         else:
-            # Focus connection list
-            self.connection_list.grab_focus()
+            # Focus connection list with toast notification
+            self.focus_connection_list()
 
     def _select_tab_relative(self, delta: int):
         """Select tab relative to current index, wrapping around."""
@@ -2283,6 +2548,47 @@ class MainWindow(Adw.ApplicationWindow):
         """Handle connection activation (double-click)"""
         if row:
             self._cycle_connection_tabs_or_open(row.connection)
+
+    def _focus_most_recent_tab_or_open_new(self, connection: Connection):
+        """If there are open tabs for this server, focus the most recent one.
+        Otherwise open a new tab for the server.
+        """
+        try:
+            # Check if there are open tabs for this connection
+            terms_for_conn = []
+            try:
+                n = self.tab_view.get_n_pages()
+            except Exception:
+                n = 0
+            for i in range(n):
+                page = self.tab_view.get_nth_page(i)
+                child = page.get_child() if hasattr(page, 'get_child') else None
+                if child is not None and self.terminal_to_connection.get(child) == connection:
+                    terms_for_conn.append(child)
+
+            if terms_for_conn:
+                # Focus the most recent tab for this connection
+                most_recent_term = self.active_terminals.get(connection)
+                if most_recent_term and most_recent_term in terms_for_conn:
+                    # Use the most recent terminal
+                    target_term = most_recent_term
+                else:
+                    # Fallback to the first tab for this connection
+                    target_term = terms_for_conn[0]
+                
+                page = self.tab_view.get_page(target_term)
+                if page is not None:
+                    self.tab_view.set_selected_page(page)
+                    # Update most-recent mapping
+                    self.active_terminals[connection] = target_term
+                    # Give focus to the VTE terminal so user can start typing immediately
+                    target_term.vte.grab_focus()
+                    return
+
+            # No existing tabs for this connection -> open a new one
+            self.connect_to_host(connection, force_new=False)
+        except Exception as e:
+            logger.error(f"Failed to focus most recent tab or open new for {getattr(connection, 'nickname', '')}: {e}")
 
     def _cycle_connection_tabs_or_open(self, connection: Connection):
         """If there are open tabs for this server, cycle to the next one (wrap).
@@ -3573,7 +3879,7 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.add_response('cancel', 'Cancel')
         dialog.add_response('quit', 'Quit Anyway')
         dialog.set_response_appearance('quit', Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_default_response('cancel')
+        dialog.set_default_response('quit')
         dialog.set_close_response('cancel')
         
         dialog.connect('response', self.on_quit_confirmation_response)
@@ -3600,6 +3906,21 @@ class MainWindow(Adw.ApplicationWindow):
             self.connect_to_host(connection, force_new=True)
         except Exception as e:
             logger.error(f"Failed to open new connection tab: {e}")
+
+    def on_open_new_connection_tab_action(self, action, param=None):
+        """Open a new tab for the selected connection via global shortcut (Ctrl+Alt+N)."""
+        try:
+            # Get the currently selected connection
+            row = self.connection_list.get_selected_row()
+            if row and hasattr(row, 'connection'):
+                connection = row.connection
+                self.connect_to_host(connection, force_new=True)
+            else:
+                # If no connection is selected, show a message or fall back to new connection dialog
+                logger.debug("No connection selected for Ctrl+Alt+N, opening new connection dialog")
+                self.show_connection_dialog()
+        except Exception as e:
+            logger.error(f"Failed to open new connection tab with Ctrl+Alt+N: {e}")
 
     def _cleanup_and_quit(self):
         """Clean up all connections and quit - SIMPLIFIED VERSION"""

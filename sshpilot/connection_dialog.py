@@ -1038,7 +1038,7 @@ class ConnectionDialog(Adw.PreferencesDialog):
         basic_group = Adw.PreferencesGroup(title=_("Basic Settings"))
         
         # Nickname
-        self.nickname_row = Adw.EntryRow(title=_("Nickname"))
+        self.nickname_row = Adw.EntryRow(title=_("Nickname (Only letters, digits, dot, underscore, dash)"))
         basic_group.add(self.nickname_row)
         
         # Host
