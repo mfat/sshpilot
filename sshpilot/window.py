@@ -449,7 +449,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._pulse.set_hexpand(True)
         self._pulse.set_vexpand(True)
         overlay.add_overlay(self._pulse)
-        logger.debug(f"Created pulse layer for connection {connection.nickname}: {self._pulse}")
         
         self.set_selectable(True)  # Make the row selectable for keyboard navigation
         
@@ -1279,11 +1278,8 @@ class MainWindow(Adw.ApplicationWindow):
     def breathe(self, widget: Gtk.Widget, repeats=3, duration_ms=280):
         """Breathe animation helper using Adw.TimedAnimation"""
         if not HAS_TIMED_ANIMATION:
-            logger.debug("Adw.TimedAnimation not available")
             return
             
-        logger.debug(f"Creating breathe animation for widget {widget}, repeats={repeats}, duration={duration_ms}ms")
-        
         # If an old animation exists, stop it
         if hasattr(widget, "_pulse_anim") and widget._pulse_anim is not None:
             widget._pulse_anim.pause()
@@ -1298,27 +1294,18 @@ class MainWindow(Adw.ApplicationWindow):
         widget._pulse_anim = anim
         # Make sure the layer starts invisible
         widget.set_opacity(0.0)
-        logger.debug(f"Starting animation: {anim}, initial opacity: {widget.get_opacity()}")
         anim.play()
-        
-        # Add a test callback to see if animation completes
-        def on_animation_done(animation):
-            logger.debug("Animation completed")
-        anim.connect("done", on_animation_done)
 
     def pulse_selected_row(self, list_box: Gtk.ListBox, repeats=3, duration_ms=280):
         """Pulse the selected row with highlight effect"""
         row = list_box.get_selected_row() or (list_box.get_selected_rows()[0] if list_box.get_selected_rows() else None)
         if not row:
-            logger.debug("No selected row found for pulse effect")
             return
         if not hasattr(row, "_pulse"):
-            logger.debug(f"Row {row} has no _pulse attribute")
             return
         # Ensure it's realized so opacity changes render
         if not row.get_mapped():
             row.realize()
-        logger.debug(f"Starting pulse animation on row {row}, pulse widget: {row._pulse}")
         
         # Use CSS-based pulse for now
         pulse = row._pulse
@@ -1327,11 +1314,9 @@ class MainWindow(Adw.ApplicationWindow):
         def do_cycle(count):
             if count == 0:
                 return False
-            logger.debug(f"Pulse cycle {count}: adding 'on' class")
             pulse.add_css_class("on")
             # Keep the pulse visible for a longer time for smoother effect
             GLib.timeout_add(cycle_duration // 3, lambda: (
-                logger.debug(f"Pulse cycle {count}: removing 'on' class"),
                 pulse.remove_css_class("on"),
                 # Add a longer delay before the next pulse
                 GLib.timeout_add(cycle_duration * 2 // 3, lambda: do_cycle(count - 1)) or True
@@ -1345,10 +1330,8 @@ class MainWindow(Adw.ApplicationWindow):
         row = self.connection_list.get_selected_row()
         if row and hasattr(row, "_pulse"):
             pulse = row._pulse
-            logger.debug(f"Testing CSS pulse on {pulse}")
             pulse.add_css_class("on")
             GLib.timeout_add(1000, lambda: (
-                logger.debug("Removing CSS class"),
                 pulse.remove_css_class("on")
             ) or False)
 
@@ -1390,7 +1373,6 @@ class MainWindow(Adw.ApplicationWindow):
             if hasattr(row, "_pulse"):
                 pulse = row._pulse
                 if "on" in pulse.get_css_classes():
-                    logger.debug("Stopping pulse due to user interaction")
                     pulse.remove_css_class("on")
 
     def _wire_pulses(self):
@@ -1910,6 +1892,7 @@ class MainWindow(Adw.ApplicationWindow):
         menu.append('New Connection', 'app.new-connection')
         menu.append('Generate SSH Key', 'app.new-key')
         menu.append('Preferences', 'app.preferences')
+        menu.append('Help', 'app.help')
         menu.append('About', 'app.about')
         menu.append('Quit', 'app.quit')
         
@@ -2319,6 +2302,35 @@ class MainWindow(Adw.ApplicationWindow):
                 pass
         
         about.present()
+
+    def open_help_url(self):
+        """Open the SSH Pilot wiki in the default browser"""
+        try:
+            import subprocess
+            import webbrowser
+            
+            # Try to open the URL using the default browser
+            url = "https://github.com/mfat/sshpilot/wiki"
+            
+            # Use webbrowser module which handles platform differences
+            webbrowser.open(url)
+            
+            logger.info(f"Opened help URL: {url}")
+        except Exception as e:
+            logger.error(f"Failed to open help URL: {e}")
+            # Fallback: show an error dialog
+            try:
+                dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    message_type=Gtk.MessageType.ERROR,
+                    buttons=Gtk.ButtonsType.OK,
+                    text="Failed to open help",
+                    secondary_text=f"Could not open the help URL. Please visit:\n{url}"
+                )
+                dialog.present()
+            except Exception:
+                pass
 
     def toggle_list_focus(self):
         """Toggle focus between connection list and terminal"""

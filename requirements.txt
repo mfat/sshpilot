@@ -12,7 +12,6 @@ paramiko>=3.4
 cryptography>=42.0
 secretstorage>=3.3 ; platform_system=="Linux"
 
-# Plotting for resource monitor
-matplotlib>=3.8
+
 
 
