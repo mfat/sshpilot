@@ -1619,6 +1619,14 @@ class MainWindow(Adw.ApplicationWindow):
             pass
         header.append(add_button)
 
+        # Menu button
+        menu_button = Gtk.MenuButton()
+        menu_button.set_can_focus(False)
+        menu_button.set_icon_name('open-menu-symbolic')
+        menu_button.set_tooltip_text('Menu')
+        menu_button.set_menu_model(self.create_menu())
+        header.append(menu_button)
+
         # Hide/Show hostnames button (eye icon)
         def _update_eye_icon(btn):
             try:
@@ -1802,14 +1810,6 @@ class MainWindow(Adw.ApplicationWindow):
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
         toolbar.append(spacer)
-        
-        # Menu button
-        menu_button = Gtk.MenuButton()
-        menu_button.set_can_focus(False)  # Remove focus from menu button
-        menu_button.set_icon_name('open-menu-symbolic')
-        menu_button.set_tooltip_text('Menu')
-        menu_button.set_menu_model(self.create_menu())
-        toolbar.append(menu_button)
         
         sidebar_box.append(toolbar)
         
