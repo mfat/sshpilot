@@ -51,4 +51,4 @@ jobs:
       uses: actions/upload-artifact@v3
       with:
         name: sshpilot-flatpak
-        path: "sshpilot_${VERSION}-1.flatpak"
+        path: "sshpilot_${VERSION}.flatpak"
