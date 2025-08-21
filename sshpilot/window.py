@@ -1243,7 +1243,7 @@ class MainWindow(Adw.ApplicationWindow):
             css = """
             /* Pulse highlight for selected rows */
             .pulse-highlight {
-              background: alpha(@accent_bg_color, 0.18);
+              background: alpha(@accent_bg_color, 0.5);
               border-radius: 8px;
               box-shadow: 0 0 0 0.5px alpha(@accent_bg_color, 0.28) inset;
               opacity: 0;
@@ -1255,7 +1255,7 @@ class MainWindow(Adw.ApplicationWindow):
 
             /* optional: a subtle focus ring while the list is focused */
             row:selected:focus-within {
-              box-shadow: 0 0 0 0.25px @accent_bg_color inset;
+            #   box-shadow: 0 0 0 0.25px @accent_bg_color inset;
               border-radius: 8px;
             }
             """
