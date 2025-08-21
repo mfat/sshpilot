@@ -25,8 +25,8 @@ jobs:
     
     - name: Set up Flatpak environment
       run: |
-        sudo apt-get update
-        sudo apt-get install -y flatpak-builder
+        apt-get update
+        apt-get install -y flatpak-builder
 
     - name: Build Flatpak with flatpak-builder
       run: |
