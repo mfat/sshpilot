@@ -2,14 +2,9 @@ name: Build Flatpak
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+  pull_request:
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to build (e.g., 2.7.1)'
-        required: true
-        type: string
 
 jobs:
   flatpak:
@@ -18,79 +13,17 @@ jobs:
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
       options: --privileged
-    strategy:
-      matrix:
-        arch: [x86_64, aarch64]
-      # Don't fail the whole workflow if one architecture fails
-      fail-fast: false
     steps:
     - uses: actions/checkout@v4
+    - name: Get version from manifest
+      id: version
+      run: |
+        VERSION=$(grep "tag:" io.github.mfat.sshpilot.yaml | head -1 | sed 's/.*tag: v//')
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Building version: $VERSION"
+    
+    - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
       with:
-        fetch-depth: 0
-        token: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Configure git
-      run: |
-        git config --global --add safe.directory /__w/sshpilot/sshpilot
-    
-    # Docker is required by the docker/setup-qemu-action which enables emulation
-    - name: Install deps
-      if: ${{ matrix.arch != 'x86_64' }}
-      run: |
-        # Use the static binaries because it's unable to use a package manager 
-        curl https://download.docker.com/linux/static/stable/x86_64/docker-26.0.0.tgz --output ./docker.tgz
-        tar xzvf docker.tgz
-        mv docker/* /usr/bin
-    
-    - name: Set up QEMU
-      if: ${{ matrix.arch != 'x86_64' }}
-      id: qemu
-      uses: docker/setup-qemu-action@v3
-      with:
-        platforms: arm64
-    
-    - name: Update manifest with tag and commit
-      run: |
-        # Extract version from tag (remove 'v' prefix) or use manual input
-        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          VERSION=${{ github.event.inputs.version }}
-        else
-          VERSION=${GITHUB_REF#refs/tags/v}
-        fi
-        echo "Updating manifest for version: $VERSION"
-        
-        # Get the commit hash for this specific tag
-        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          COMMIT_HASH=$(git rev-parse v$VERSION)
-        else
-          COMMIT_HASH=$(git rev-parse ${{ github.ref_name }})
-        fi
-        echo "Commit hash for version $VERSION: $COMMIT_HASH"
-        
-        # Update tag in manifest
-        sed -i "s/tag: v[0-9.]*/tag: v$VERSION/" io.github.mfat.sshpilot.yaml
-        
-        # Update commit hash in manifest
-        sed -i "s/commit: [a-f0-9]*/commit: $COMMIT_HASH/" io.github.mfat.sshpilot.yaml
-        
-        # Show the updated manifest
-        echo "Updated manifest:"
-        grep -A 2 "sources:" io.github.mfat.sshpilot.yaml
-    
-    - name: Commit updated manifest
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add io.github.mfat.sshpilot.yaml
-        git commit -m "Update manifest for release ${{ github.ref_name }} [skip ci]" || echo "No changes to commit"
-        git push
-    
-    - name: Build Flatpak bundle
-      run: |
-        # Extract version from tag (remove 'v' prefix)
-        VERSION=${GITHUB_REF#refs/tags/v}
-        echo "Building Flatpak bundle for version: $VERSION on ${{ matrix.arch }}"
-        
-        # Build the Flatpak bundle
-        flatpak-builder --force-clean --repo=repo --state-dir=.flatpak-builder build-dir io.github.mfat.sshpilot.yaml
-        flatpak build-bundle repo sshpilot_${VERSION}-1-${{ matrix.arch }}.flatpak io.github.mfat.sshpilot
+        bundle: sshpilot_${{ steps.version.outputs.version }}-1.flatpak
+        manifest-path: io.github.mfat.sshpilot.yaml
+        cache-key: flatpak-builder-${{ github.sha }}
