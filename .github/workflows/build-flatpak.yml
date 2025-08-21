@@ -3,52 +3,51 @@ name: Build Flatpak
 on:
   push:
     tags:
-      - 'v*'
-  workflow_dispatch:
+      - 'v*'  # Trigger build when a tag is pushed
+  workflow_dispatch:  # Allow manual trigger
 
 jobs:
   flatpak:
-    name: "Flatpak"
+    name: "Build Flatpak"
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
       options: --privileged
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]  # Build for both x86_64 and aarch64
+      fail-fast: false  # Don't fail the entire workflow if one architecture fails
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Get version from tag
-      id: version
-      run: |
-        VERSION="${GITHUB_REF#refs/tags/v}"
-        echo "version=$VERSION" >> $GITHUB_ENV
-        echo "Building version: $VERSION"
-    
-    - name: Set up Flatpak environment
-      run: |
-        apt-get update
-        apt-get install -y flatpak-builder
+      # Install Docker for non-x86_64 architectures (e.g., aarch64)
+      - name: Install Docker
+        if: ${{ matrix.arch != 'x86_64' }}
+        run: |
+          curl https://download.docker.com/linux/static/stable/x86_64/docker-26.0.0.tgz --output ./docker.tgz
+          tar xzvf docker.tgz
+          mv docker/* /usr/bin
 
-    - name: Build Flatpak with flatpak-builder
-      run: |
-        flatpak-builder --user --install --force-clean build-dir io.github.mfat.sshpilot.yaml
+      # Set up QEMU for non-x86_64 architectures
+      - name: Set up QEMU
+        if: ${{ matrix.arch != 'x86_64' }}
+        id: qemu
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
-    - name: Create Flatpak bundle
-      run: |
-        VERSION="${GITHUB_REF#refs/tags/v}"
-        BUILD_DIR="build-dir"  # Adjust to match your actual build directory
-        BUNDLE_NAME="sshpilot_${VERSION}-1.flatpak"
-        
-        # Ensure the build directory exists
-        if [ ! -d "$BUILD_DIR" ]; then
-          echo "Error: Build directory not found!"
-          exit 1
-        fi
-        
-        # Create the bundle
-        flatpak build-bundle $BUILD_DIR $BUNDLE_NAME --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo --arch=x86_64 io.github.mfat.sshpilot
+      # Build Flatpak bundle
+      - name: Build Flatpak
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: sshpilot_${{ github.ref_name }}-${{ matrix.arch }}.flatpak  # Dynamic naming based on tag and arch
+          manifest-path: io.github.mfat.sshpilot.yaml  # Path to your manifest file
+          cache-key: flatpak-builder-${{ matrix.arch }}-${{ github.sha }}
+          arch: ${{ matrix.arch }}
 
-    - name: Upload Flatpak bundle as artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: sshpilot-flatpak
-        path: "sshpilot_${VERSION}.flatpak"
+      # Upload the built Flatpak bundle as an artifact
+      - name: Upload Flatpak bundle as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshpilot-flatpak
+          path: "sshpilot_${{ github.ref_name }}-${{ matrix.arch }}.flatpak"
