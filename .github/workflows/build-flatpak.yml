@@ -1,46 +1,21 @@
-name: Build Flatpak Bundle
+name: CI
 
 on:
   push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
+    branches: [main]
+  pull_request:
+
 jobs:
-  build-flatpak:
+  flatpak:
+    name: "Flatpak"
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      options: --privileged
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Flatpak
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
-        with:
-          bundle: sshpilot.flatpak
-          cache-key: flatpak-builder-${{ github.sha }}
-          manifest-path: io.github.mfat.sshpilot.yaml
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: sshpilot.flatpak
-          tag_name: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
-          body: |
-            Flatpak bundle for SSH Pilot ${{ github.ref_name }}
-            
-            **Commit:** ${{ github.sha }}
-            **Tag:** ${{ github.ref_name }}
-            
-            ## Installation
-            
-            ```bash
-            flatpak install sshpilot.flatpak
-            ```
-            
-            ## What's New
-            
-            See the [changelog](https://github.com/mfat/sshpilot/blob/${{ github.ref_name }}/CHANGELOG.md) for details.
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - uses: actions/checkout@v4
+    - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+      with:
+        bundle: sshpilot.flatpak
+        manifest-path: io.github.mfat.sshpilot.yaml
+        cache-key: flatpak-builder-${{ github.sha }}
