@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., 2.7.1)'
+        required: true
+        type: string
 
 jobs:
   flatpak:
@@ -24,6 +29,10 @@ jobs:
         fetch-depth: 0
         token: ${{ secrets.GITHUB_TOKEN }}
     
+    - name: Configure git
+      run: |
+        git config --global --add safe.directory /__w/sshpilot/sshpilot
+    
     # Docker is required by the docker/setup-qemu-action which enables emulation
     - name: Install deps
       if: ${{ matrix.arch != 'x86_64' }}
@@ -42,13 +51,21 @@ jobs:
     
     - name: Update manifest with tag and commit
       run: |
-        # Extract version from tag (remove 'v' prefix)
-        VERSION=${GITHUB_REF#refs/tags/v}
+        # Extract version from tag (remove 'v' prefix) or use manual input
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          VERSION=${{ github.event.inputs.version }}
+        else
+          VERSION=${GITHUB_REF#refs/tags/v}
+        fi
         echo "Updating manifest for version: $VERSION"
         
         # Get the commit hash for this specific tag
-        COMMIT_HASH=$(git rev-parse ${{ github.ref_name }})
-        echo "Commit hash for tag ${{ github.ref_name }}: $COMMIT_HASH"
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          COMMIT_HASH=$(git rev-parse v$VERSION)
+        else
+          COMMIT_HASH=$(git rev-parse ${{ github.ref_name }})
+        fi
+        echo "Commit hash for version $VERSION: $COMMIT_HASH"
         
         # Update tag in manifest
         sed -i "s/tag: v[0-9.]*/tag: v$VERSION/" io.github.mfat.sshpilot.yaml
