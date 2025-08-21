@@ -106,3 +106,8 @@ If you have multiple connections to a single host, doble-clicking the host will 
 - [Elibugy](https://www.linkedin.com/in/elham-hesaraki) as the primary sponsor of the project
 - Behnam Tavakkoli, Chalist and Kalpase for testing
 - Icon designed by [Blisterexe](https://github.com/Blisterexe)
+
+## Support development
+Bitcoin: bc1qqtsyf0ft85zshsnw25jgsxnqy45rfa867zqk4t
+
+Doge: DRzNb8DycFD65H6oHNLuzyTzY1S5avPHHx
