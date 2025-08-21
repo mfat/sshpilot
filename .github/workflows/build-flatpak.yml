@@ -3,7 +3,7 @@ name: Build Flatpak
 on:
   push:
     tags:
-      - 'v*'  # Trigger build when a tag is pushed
+      - 'v*'  # Trigger build when a tag is pushed (e.g., v2.7.1)
   workflow_dispatch:  # Allow manual trigger
 
 jobs:
@@ -15,39 +15,24 @@ jobs:
       options: --privileged
     strategy:
       matrix:
-        arch: [x86_64, aarch64]  # Build for both x86_64 and aarch64
+        arch: [x86_64, aarch64]  # Build for both x86_64 and aarch64 architectures
       fail-fast: false  # Don't fail the entire workflow if one architecture fails
     steps:
+      # Checkout the code
       - uses: actions/checkout@v4
 
-      # Install Docker for non-x86_64 architectures (e.g., aarch64)
-      - name: Install Docker
-        if: ${{ matrix.arch != 'x86_64' }}
-        run: |
-          curl https://download.docker.com/linux/static/stable/x86_64/docker-26.0.0.tgz --output ./docker.tgz
-          tar xzvf docker.tgz
-          mv docker/* /usr/bin
-
-      # Set up QEMU for non-x86_64 architectures
-      - name: Set up QEMU
-        if: ${{ matrix.arch != 'x86_64' }}
-        id: qemu
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      # Build Flatpak bundle
+      # Build the Flatpak for the current architecture
       - name: Build Flatpak
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          bundle: sshpilot_${{ github.ref_name }}-${{ matrix.arch }}.flatpak  # Dynamic naming based on tag and arch
-          manifest-path: io.github.mfat.sshpilot.yaml  # Path to your manifest file
+          bundle: sshpilot_${{ github.ref_name }}-${{ matrix.arch }}.flatpak  # Dynamic naming based on tag and architecture
+          manifest-path: io.github.mfat.sshpilot.yaml  # Path to the manifest file
           cache-key: flatpak-builder-${{ matrix.arch }}-${{ github.sha }}
           arch: ${{ matrix.arch }}
 
-      # Upload the built Flatpak bundle as an artifact
-      - name: Upload Flatpak bundle as artifact
+      # Upload the Flatpak bundle as an artifact for the current architecture
+      - name: Upload Flatpak bundle for ${{ matrix.arch }} architecture
         uses: actions/upload-artifact@v4
         with:
-          name: sshpilot-flatpak
-          path: "sshpilot_${{ github.ref_name }}-${{ matrix.arch }}.flatpak"
+          name: sshpilot-flatpak-${{ matrix.arch }}  # Unique name based on architecture
+          path: sshpilot_${{ github.ref_name }}-${{ matrix.arch }}.flatpak
