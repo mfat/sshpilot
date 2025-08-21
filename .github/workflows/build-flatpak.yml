@@ -25,11 +25,15 @@ jobs:
         VERSION=${GITHUB_REF#refs/tags/v}
         echo "Updating manifest for version: $VERSION"
         
+        # Get the commit hash for this specific tag
+        COMMIT_HASH=$(git rev-parse ${{ github.ref_name }})
+        echo "Commit hash for tag ${{ github.ref_name }}: $COMMIT_HASH"
+        
         # Update tag in manifest
         sed -i "s/tag: v[0-9.]*/tag: v$VERSION/" io.github.mfat.sshpilot.yaml
         
         # Update commit hash in manifest
-        sed -i "s/commit: [a-f0-9]*/commit: ${{ github.sha }}/" io.github.mfat.sshpilot.yaml
+        sed -i "s/commit: [a-f0-9]*/commit: $COMMIT_HASH/" io.github.mfat.sshpilot.yaml
         
         # Show the updated manifest
         echo "Updated manifest:"
