@@ -1255,7 +1255,8 @@ class MainWindow(Adw.ApplicationWindow):
 
             /* optional: a subtle focus ring while the list is focused */
             row:selected:focus-within {
-            #   box-shadow: 0 0 0 0.25px @accent_bg_color inset;
+            #   box-shadow: 0 0 8px 2px @accent_bg_color inset;
+            #border: 2px solid @accent_bg_color;  /* Adds a solid border of 2px thickness */
               border-radius: 8px;
             }
             """
