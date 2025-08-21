@@ -948,7 +948,18 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 logger.debug(f"Syncing dropdown to keyfile: {current_path} (index {preselect_idx})")
                 self.key_dropdown.set_selected(preselect_idx)
             else:
-                logger.debug(f"Could not find keyfile '{current_path}' in dropdown paths")
+                # If the key is not in the dropdown, add it and then select it
+                if current_path and hasattr(self, '_key_paths') and hasattr(self, 'key_dropdown'):
+                    self._key_paths.append(current_path)
+                    model = self.key_dropdown.get_model()
+                    if model:
+                        filename = os.path.basename(current_path)
+                        model.append(filename)
+                        preselect_idx = len(self._key_paths) - 1
+                        logger.debug(f"Added external key to dropdown: {filename} (path: {current_path}, index {preselect_idx})")
+                        self.key_dropdown.set_selected(preselect_idx)
+                else:
+                    logger.debug(f"Could not find keyfile '{current_path}' in dropdown paths")
         except Exception as e:
             logger.debug(f"Failed to sync key dropdown: {e}")
 
@@ -1669,7 +1680,24 @@ class ConnectionDialog(Adw.PreferencesDialog):
         if response == Gtk.ResponseType.ACCEPT:
             key_file = dialog.get_file()
             if key_file:
-                self.keyfile_row.set_subtitle(key_file.get_path())
+                key_path = key_file.get_path()
+                self.keyfile_row.set_subtitle(key_path)
+                
+                # Add the browsed key to the dropdown if it's not already there
+                if hasattr(self, '_key_paths') and key_path not in self._key_paths:
+                    self._key_paths.append(key_path)
+                    # Update the dropdown model with just the filename
+                    if hasattr(self, 'key_dropdown'):
+                        model = self.key_dropdown.get_model()
+                        if model:
+                            filename = os.path.basename(key_path)
+                            model.append(filename)
+                
+                # Set the selected keyfile path
+                self._selected_keyfile_path = key_path
+                
+                # Sync the dropdown to select the browsed key
+                self._sync_key_dropdown_with_current_keyfile()
         dialog.destroy()
     
     def on_delete_forwarding_rule_clicked(self, button, rule):
