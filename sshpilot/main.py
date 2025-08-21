@@ -78,6 +78,7 @@ class SshPilotApplication(Adw.Application):
         self.create_action('show-resources', self.on_show_resources, ['<primary>r'])
         self.create_action('preferences', self.on_preferences, ['<primary>comma'])
         self.create_action('about', self.on_about)
+        self.create_action('help', self.on_help, ['F1'])
         # Tab navigation accelerators
         self.create_action('tab-next', self.on_tab_next, ['<alt>Right'])
         self.create_action('tab-prev', self.on_tab_prev, ['<alt>Left'])
@@ -254,6 +255,12 @@ class SshPilotApplication(Adw.Application):
         logging.debug("About dialog action triggered")
         if self.props.active_window:
             self.props.active_window.show_about_dialog()
+
+    def on_help(self, action, param):
+        """Handle help action"""
+        logging.debug("Help action triggered")
+        if self.props.active_window:
+            self.props.active_window.open_help_url()
 
     def on_tab_next(self, action, param):
         """Switch to next tab"""

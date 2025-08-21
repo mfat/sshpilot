@@ -71,7 +71,7 @@ sudo apt install \
   libgtk-4-1 (>= 4.6) gir1.2-gtk-4.0 (>= 4.6) \
   libadwaita-1-0 (>= 1.4) gir1.2-adw-1 (>= 1.4) \
   libvte-2.91-gtk4-0 (>= 0.70) gir1.2-vte-3.91 (>= 0.70) \
-  python3-paramiko python3-cryptography python3-secretstorage python3-matplotlib sshpass ssh-askpass
+  python3-paramiko python3-cryptography python3-secretstorage sshpass ssh-askpass
 ```
 
 Fedora / RHEL / CentOS
@@ -83,7 +83,7 @@ sudo dnf install \
   gtk4 libadwaita \
   vte291-gtk4 \
   libsecret \
-  python3-paramiko python3-cryptography python3-secretstorage python3-matplotlib sshpass openssh-askpass
+  python3-paramiko python3-cryptography python3-secretstorage sshpass openssh-askpass
 ```
 
 Run from source
