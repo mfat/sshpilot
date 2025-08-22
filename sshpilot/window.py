@@ -2899,83 +2899,20 @@ class MainWindow(Adw.ApplicationWindow):
             # Initial info line
             _feed_colored_line(_('Running ssh-copy-id…'), 'yellow')
 
-            # Handle password authentication consistently with terminal connections
-            env = os.environ.copy()
-            
-            # Determine auth method and check for saved password
-            prefer_password = False
-            try:
-                cfg = Config()
-                meta = cfg.get_connection_meta(connection.nickname) if hasattr(cfg, 'get_connection_meta') else {}
-                if isinstance(meta, dict) and 'auth_method' in meta:
-                    prefer_password = int(meta.get('auth_method', 0) or 0) == 1
-            except Exception:
-                try:
-                    prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
-                except Exception:
-                    prefer_password = False
-            
+            # Check if we have a saved password and set up askpass accordingly
             has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username))
-            
-            if prefer_password and has_saved_password:
-                # Use sshpass for password authentication
-                import shutil
-                sshpass_path = None
-                if shutil.which('sshpass'):
-                    sshpass_path = 'sshpass'
-                elif os.path.exists('/app/bin/sshpass'):
-                    sshpass_path = '/app/bin/sshpass'
-                
-                if sshpass_path:
-                    # Use the same approach as ssh_password_exec.py for consistency
-                    from .ssh_password_exec import _mk_priv_dir, _write_once_fifo
-                    import threading
-                    
-                    # Create private temp directory and FIFO
-                    tmpdir = _mk_priv_dir()
-                    fifo = os.path.join(tmpdir, "pw.fifo")
-                    os.mkfifo(fifo, 0o600)
-                    
-                    # Start writer thread that writes the password exactly once
-                    saved_password = self.connection_manager.get_password(connection.host, connection.username)
-                    t = threading.Thread(target=_write_once_fifo, args=(fifo, saved_password), daemon=True)
-                    t.start()
-                    
-                    # Use sshpass with FIFO
-                    argv = [sshpass_path, "-f", fifo] + argv
-                    
-                    # Important: strip askpass vars so OpenSSH won't try the askpass helper for passwords
-                    env.pop("SSH_ASKPASS", None)
-                    env.pop("SSH_ASKPASS_REQUIRE", None)
-                    
-                    logger.debug("Using sshpass with FIFO for ssh-copy-id password authentication")
-                    
-                    # Store tmpdir for cleanup (will be cleaned up when process exits)
-                    def cleanup_tmpdir():
-                        try:
-                            import shutil
-                            shutil.rmtree(tmpdir, ignore_errors=True)
-                        except Exception:
-                            pass
-                    import atexit
-                    atexit.register(cleanup_tmpdir)
-                else:
-                    # sshpass not available, fallback to askpass
-                    ensure_askpass_script()
-                    askpass_env = get_ssh_env_with_askpass_for_password(connection.host, connection.username)
-                    env.update(askpass_env)
-            elif prefer_password and not has_saved_password:
-                # Password auth selected but no saved password - let SSH prompt interactively
-                # Don't set any askpass environment variables
-                logger.debug("ssh-copy-id: Password auth selected but no saved password - using interactive prompt")
-            else:
-                # Use askpass for passphrase prompts (key-based auth)
+
+            if has_saved_password:
                 ensure_askpass_script()
                 askpass_env = get_ssh_env_with_askpass_for_password(connection.host, connection.username)
-                env.update(askpass_env)
+            else:
+                askpass_env = {}  # No askpass environment variables - SSH will fall back to interactive prompts
 
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
             logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
+
+            env = os.environ.copy()
+            env.update(askpass_env)
             envv = [f"{k}={v}" for k, v in env.items()]
 
             try:
@@ -3444,7 +3381,11 @@ class MainWindow(Adw.ApplicationWindow):
                 if hasattr(self, 'connection_manager') and self.connection_manager:
                     saved_password = self.connection_manager.get_password(connection.host, connection.username)
                     if saved_password:
-                        # Use sshpass for password authentication
+                        # Use the new ssh_password_exec module for consistent password handling
+                        from .ssh_password_exec import run_scp_with_password
+                        # Note: This function returns a CompletedProcess, but we're building argv here
+                        # For now, keep the existing sshpass approach for SCP argv building
+                        # The actual execution can be updated separately if needed
                         import shutil
                         sshpass_path = None
                         if shutil.which('sshpass'):
@@ -3453,41 +3394,12 @@ class MainWindow(Adw.ApplicationWindow):
                             sshpass_path = '/app/bin/sshpass'
                         
                         if sshpass_path:
-                            # Use the same approach as ssh_password_exec.py for consistency
-                            from .ssh_password_exec import _mk_priv_dir, _write_once_fifo
-                            import threading
-                            
-                            # Create private temp directory and FIFO
-                            tmpdir = _mk_priv_dir()
-                            fifo = os.path.join(tmpdir, "pw.fifo")
-                            os.mkfifo(fifo, 0o600)
-                            
-                            # Start writer thread that writes the password exactly once
-                            t = threading.Thread(target=_write_once_fifo, args=(fifo, saved_password), daemon=True)
-                            t.start()
-                            
-                            # Use sshpass with FIFO
-                            argv = [sshpass_path, "-f", fifo] + argv
-                            
-                            logger.debug("Using sshpass with FIFO for SCP password authentication")
-                            
-                            # Store tmpdir for cleanup (will be cleaned up when process exits)
-                            def cleanup_tmpdir():
-                                try:
-                                    import shutil
-                                    shutil.rmtree(tmpdir, ignore_errors=True)
-                                except Exception:
-                                    pass
-                            import atexit
-                            atexit.register(cleanup_tmpdir)
-                        else:
-                            # sshpass not available, fallback to environment variable approach
+                            # Use sshpass with environment variable instead of command line argument
+                            # This avoids exposing password in process lists
                             os.environ['SSHPASS'] = saved_password
+                            # Prepend sshpass to the command (without -p argument)
                             argv = [sshpass_path, '-e'] + argv
                             logger.debug("Using sshpass with environment variable for SCP with saved password")
-                    else:
-                        # No saved password - will use interactive prompt
-                        logger.debug("SCP: Password auth selected but no saved password - using interactive prompt")
             except Exception as e:
                 logger.debug(f"Failed to get saved password for SCP: {e}")
         
