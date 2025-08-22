@@ -3267,20 +3267,38 @@ class MainWindow(Adw.ApplicationWindow):
             # Build and run scp command in the terminal
             argv = self._build_scp_argv(connection, local_paths, remote_dir)
 
-            # Check if we have a saved password and set up askpass accordingly
-            has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username))
-
-            if has_saved_password:
-                ensure_askpass_script()
-                askpass_env = get_ssh_env_with_askpass_for_password(connection.host, connection.username)
+            # Handle environment variables for authentication
+            env = os.environ.copy()
+            
+            # Check if we have stored askpass environment from key passphrase handling
+            if hasattr(self, '_scp_askpass_env') and self._scp_askpass_env:
+                env.update(self._scp_askpass_env)
+                logger.debug(f"SCP: Using askpass environment for key passphrase: {list(self._scp_askpass_env.keys())}")
+                # Clear the stored environment after use
+                self._scp_askpass_env = {}
+                
+                # For key-based auth, ensure the key is loaded in SSH agent first
+                try:
+                    keyfile = getattr(connection, 'keyfile', '') or ''
+                    if keyfile and os.path.isfile(keyfile):
+                        # Prepare key for connection (add to ssh-agent if needed)
+                        if hasattr(self, 'connection_manager') and self.connection_manager:
+                            key_prepared = self.connection_manager.prepare_key_for_connection(keyfile)
+                            if key_prepared:
+                                logger.debug(f"SCP: Key prepared for connection: {keyfile}")
+                            else:
+                                logger.warning(f"SCP: Failed to prepare key for connection: {keyfile}")
+                except Exception as e:
+                    logger.warning(f"SCP: Error preparing key for connection: {e}")
             else:
-                askpass_env = {}  # No askpass environment variables - SSH will fall back to interactive prompts
+                # Handle password authentication - sshpass is already handled in _build_scp_argv
+                # No additional environment setup needed here
+                logger.debug("SCP: Password authentication handled by sshpass in command line")
 
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
-
-            env = os.environ.copy()
-            env.update(askpass_env)
             envv = [f"{k}={v}" for k, v in env.items()]
+            logger.debug(f"SCP: Final environment variables: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
+            logger.debug(f"SCP: Command line: {cmdline}")
 
             # Helper to write colored lines
             def _feed_colored_line(text: str, color: str):
@@ -3417,7 +3435,7 @@ class MainWindow(Adw.ApplicationWindow):
             keyfile_ok = False
         # Handle authentication with saved credentials
         if key_mode == 1 and keyfile_ok:
-            argv += ['-i', keyfile, '-o', 'IdentitiesOnly=yes', '-o', 'IdentityAgent=none']
+            argv += ['-i', keyfile, '-o', 'IdentitiesOnly=yes']
             
             # Try to get saved passphrase for the key
             try:
@@ -3426,13 +3444,17 @@ class MainWindow(Adw.ApplicationWindow):
                     if saved_passphrase:
                         # Use the secure askpass script for passphrase authentication
                         # This avoids storing passphrases in plain text temporary files
-                        from .askpass_utils import get_ssh_env_with_askpass, ensure_askpass_script
-                        # Ensure the askpass script exists
-                        ensure_askpass_script()
-                        # Get environment for passphrase authentication
-                        askpass_env = get_ssh_env_with_askpass()
-                        # Set environment variables for the terminal
-                        os.environ.update(askpass_env)
+                        from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options, force_regenerate_askpass_script
+                        force_regenerate_askpass_script()
+                        askpass_env = get_ssh_env_with_forced_askpass()
+                        # Store for later use in the main execution
+                        if not hasattr(self, '_scp_askpass_env'):
+                            self._scp_askpass_env = {}
+                        self._scp_askpass_env.update(askpass_env)
+                        logger.debug(f"SCP: Stored askpass environment for key passphrase: {list(askpass_env.keys())}")
+                        
+                        # Add SSH options to force public key authentication and prevent password fallback
+                        argv += get_scp_ssh_options()
             except Exception as e:
                 logger.debug(f"Failed to get saved passphrase for SCP: {e}")
                 
