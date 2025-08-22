@@ -694,13 +694,58 @@ class TerminalWidget(Gtk.Box):
             # Start the SSH process using VTE's spawn_async with our PTY
             logger.debug(f"Flatpak debug: About to spawn SSH with command: {ssh_cmd}")
             
-            # Always provide askpass env (so Flatpak cannot pick /usr/bin/ksshaskpass)
-            ensure_askpass_script()
-            askpass_env = get_ssh_env_with_askpass_for_password(self.connection.host, self.connection.username)
-            
-            # Ensure proper environment for Flatpak
+            # Handle password authentication with sshpass if available
             env = os.environ.copy()
-            env.update(askpass_env)
+            logger.debug(f"Initial environment SSH_ASKPASS: {env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE: {env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
+            if password_auth_selected and has_saved_password and password_value:
+                # Use sshpass for password authentication
+                import shutil
+                sshpass_path = None
+                if shutil.which('sshpass'):
+                    sshpass_path = 'sshpass'
+                elif os.path.exists('/app/bin/sshpass'):
+                    sshpass_path = '/app/bin/sshpass'
+                
+                if sshpass_path:
+                    # Use the same approach as ssh_password_exec.py for consistency
+                    from .ssh_password_exec import _mk_priv_dir, _write_once_fifo
+                    import threading
+                    
+                    # Create private temp directory and FIFO
+                    tmpdir = _mk_priv_dir()
+                    fifo = os.path.join(tmpdir, "pw.fifo")
+                    os.mkfifo(fifo, 0o600)
+                    
+                    # Start writer thread that writes the password exactly once
+                    t = threading.Thread(target=_write_once_fifo, args=(fifo, password_value), daemon=True)
+                    t.start()
+                    
+                    # Use sshpass with FIFO
+                    ssh_cmd = [sshpass_path, "-f", fifo] + ssh_cmd
+                    
+                    # Important: strip askpass vars so OpenSSH won't try the askpass helper for passwords
+                    env.pop("SSH_ASKPASS", None)
+                    env.pop("SSH_ASKPASS_REQUIRE", None)
+                    
+                    logger.debug("Using sshpass with FIFO for password authentication")
+                    logger.debug(f"Environment after removing SSH_ASKPASS: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
+                    
+                    # Store tmpdir for cleanup
+                    self._sshpass_tmpdir = tmpdir
+                else:
+                    # sshpass not available, fallback to askpass for password prompts
+                    ensure_askpass_script()
+                    askpass_env = get_ssh_env_with_askpass_for_password(self.connection.host, self.connection.username)
+                    env.update(askpass_env)
+            elif password_auth_selected and not has_saved_password:
+                # Password auth selected but no saved password - let SSH prompt interactively
+                # Don't set any askpass environment variables
+                logger.debug("Password auth selected but no saved password - using interactive prompt")
+            else:
+                # Use askpass for passphrase prompts (key-based auth)
+                ensure_askpass_script()
+                askpass_env = get_ssh_env_with_askpass_for_password(self.connection.host, self.connection.username)
+                env.update(askpass_env)
             env['TERM'] = env.get('TERM', 'xterm-256color')
             env['SHELL'] = env.get('SHELL', '/bin/bash')
             env['SSHPILOT_FLATPAK'] = '1'
@@ -1477,6 +1522,17 @@ class TerminalWidget(Gtk.Box):
                     logger.error(f"Error closing PTY: {e}")
                 finally:
                     self.pty = None
+            
+            # Clean up sshpass temporary directory if it exists
+            if hasattr(self, '_sshpass_tmpdir') and self._sshpass_tmpdir:
+                try:
+                    import shutil
+                    shutil.rmtree(self._sshpass_tmpdir, ignore_errors=True)
+                    logger.debug(f"Cleaned up sshpass tmpdir: {self._sshpass_tmpdir}")
+                except Exception as e:
+                    logger.debug(f"Error cleaning up sshpass tmpdir: {e}")
+                finally:
+                    self._sshpass_tmpdir = None
             
             # Clean up from process manager
             with process_manager.lock:

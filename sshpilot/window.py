@@ -3381,7 +3381,11 @@ class MainWindow(Adw.ApplicationWindow):
                 if hasattr(self, 'connection_manager') and self.connection_manager:
                     saved_password = self.connection_manager.get_password(connection.host, connection.username)
                     if saved_password:
-                        # Use sshpass for password authentication
+                        # Use the new ssh_password_exec module for consistent password handling
+                        from .ssh_password_exec import run_scp_with_password
+                        # Note: This function returns a CompletedProcess, but we're building argv here
+                        # For now, keep the existing sshpass approach for SCP argv building
+                        # The actual execution can be updated separately if needed
                         import shutil
                         sshpass_path = None
                         if shutil.which('sshpass'):
