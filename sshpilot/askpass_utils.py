@@ -48,9 +48,12 @@ def get_passphrase(key_path: str) -> str:
 if __name__ == "__main__":
     prompt = sys.argv[1] if len(sys.argv) > 1 else ""
     pl = prompt.lower()
+    # Never handle password prompts in this helper
+    if "password" in pl:
+        sys.exit(1)
     if "passphrase" in pl:
         # Handle: "Enter passphrase for key '/path':" and "Enter passphrase for '/path':"
-        m = re.search(r'passphrase.*for (?:key )?["\']?([^"\':]+)["\']?:', prompt, re.IGNORECASE)
+        m = re.search(r"passphrase.*for (?:key )?['\"]?([^'\":]+)['\"]?:", prompt, re.IGNORECASE)
         if m:
             key_path = m.group(1).strip(' \'"')
             # try raw, ~-expanded, and fully resolved path; de-dup order
