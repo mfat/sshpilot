@@ -8,6 +8,14 @@ import subprocess
 import tempfile
 from typing import List, Optional, Tuple
 
+try:
+    import gi
+    gi.require_version('Vte', '3.91')
+    from gi.repository import Vte, GLib
+except ImportError:
+    Vte = None
+    GLib = None
+
 logger = logging.getLogger(__name__)
 
 def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False):
@@ -116,16 +124,17 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
             if not for_ssh_copy_id:
                 options.extend(['-i', connection.keyfile])
             # Enforce using only the specified key when key_select_mode == 1
+            # But for ssh-copy-id, we want to try all keys first
             try:
-                if int(getattr(connection, 'key_select_mode', 0) or 0) == 1:
+                if int(getattr(connection, 'key_select_mode', 0) or 0) == 1 and not for_ssh_copy_id:
                     options.extend(['-o', 'IdentitiesOnly=yes'])
             except Exception:
                 pass
     else:
-        # Prefer password/interactive methods when user chose password auth (same as terminal.py)
-        # But don't disable pubkey auth for ssh-copy-id since we're installing a key
-        options.extend(['-o', 'PreferredAuthentications=password,keyboard-interactive'])
+        # For ssh-copy-id, don't restrict authentication methods - let it try all keys first
         if not for_ssh_copy_id:
+            # Prefer password/interactive methods when user chose password auth (same as terminal.py)
+            options.extend(['-o', 'PreferredAuthentications=password,keyboard-interactive'])
             options.extend(['-o', 'PubkeyAuthentication=no'])
     
     # Add X11 forwarding if enabled (same as terminal.py) - not supported by ssh-copy-id
@@ -134,7 +143,7 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
     
     return options
 
-def custom_ssh_copy_id(connection, public_key_path: str, config=None, connection_manager=None) -> Tuple[bool, str]:
+def custom_ssh_copy_id(connection, public_key_path, config=None, connection_manager=None, terminal_widget=None):
     """
     Custom ssh-copy-id implementation that tries all keys and then password, like default SSH behavior.
     
@@ -143,6 +152,7 @@ def custom_ssh_copy_id(connection, public_key_path: str, config=None, connection
         public_key_path: Path to the public key to copy
         config: Optional config object
         connection_manager: Optional connection manager for password retrieval
+        terminal_widget: Optional terminal widget for interactive password prompts
         
     Returns:
         Tuple of (success: bool, message: str)
@@ -174,10 +184,80 @@ def custom_ssh_copy_id(connection, public_key_path: str, config=None, connection
         # Step 1: Try to connect and check if the key is already installed
         logger.debug("Custom ssh-copy-id: Checking if key is already installed")
         
-        # Build SSH command for checking
-        check_cmd = ['ssh'] + ssh_options + [target, 'cat ~/.ssh/authorized_keys']
+        # Check if we have a saved password for this connection (do this early)
+        saved_password = None
+        if connection_manager and hasattr(connection_manager, 'get_password'):
+            try:
+                saved_password = connection_manager.get_password(connection.host, connection.username)
+                if saved_password:
+                    logger.info(f"Custom ssh-copy-id: Found saved password for {connection.username}@{connection.host}")
+                else:
+                    logger.debug(f"Custom ssh-copy-id: No saved password found for {connection.username}@{connection.host}")
+            except Exception as e:
+                logger.debug(f"Custom ssh-copy-id: Could not retrieve saved password: {e}")
+        else:
+            logger.debug("Custom ssh-copy-id: No connection manager or get_password method available")
         
+        # Build SSH command for checking with proper auth options
+        check_ssh_options = ssh_options + [
+            '-o', 'PreferredAuthentications=publickey,password,keyboard-interactive',
+            '-o', 'PubkeyAuthentication=yes',
+            '-o', 'PasswordAuthentication=yes',
+            '-o', 'KbdInteractiveAuthentication=yes',
+            '-o', 'NumberOfPasswordPrompts=1',
+            '-o', 'IdentitiesOnly=no',
+        ]
+        check_cmd = ['ssh'] + check_ssh_options + [target, 'cat ~/.ssh/authorized_keys']
+        
+        # Try to check with saved password first if available
+        if saved_password:
+            try:
+                import shutil
+                sshpass_path = None
+                if shutil.which('sshpass'):
+                    sshpass_path = 'sshpass'
+                elif os.path.exists('/app/bin/sshpass'):
+                    sshpass_path = '/app/bin/sshpass'
+                
+                if sshpass_path:
+                    # Create temporary password file for checking
+                    with tempfile.NamedTemporaryFile(mode='w', delete=False) as pw_file:
+                        pw_file.write(saved_password)
+                        pw_file_path = pw_file.name
+                    
+                    try:
+                        os.chmod(pw_file_path, 0o600)
+                        check_cmd_with_pass = [sshpass_path, '-f', pw_file_path] + check_cmd
+                        
+                        logger.debug("Custom ssh-copy-id: Checking with saved password")
+                        result = subprocess.run(
+                            check_cmd_with_pass,
+                            capture_output=True,
+                            text=True,
+                            timeout=30
+                        )
+                        
+                        if result.returncode == 0:
+                            # Successfully read authorized_keys, check if our key is already there
+                            authorized_keys = result.stdout
+                            if public_key_content in authorized_keys:
+                                logger.info("Custom ssh-copy-id: Key already installed")
+                                return True, "Public key is already installed on the server"
+                            else:
+                                logger.debug("Custom ssh-copy-id: Key not found, will install")
+                        else:
+                            logger.debug(f"Custom ssh-copy-id: Check failed with saved password: {result.stderr}")
+                    finally:
+                        try:
+                            os.unlink(pw_file_path)
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.debug(f"Custom ssh-copy-id: Failed to check with saved password: {e}")
+        
+        # Fallback: try without saved password (interactive)
         try:
+            logger.debug("Custom ssh-copy-id: Checking without saved password (interactive)")
             result = subprocess.run(
                 check_cmd,
                 capture_output=True,
@@ -189,7 +269,12 @@ def custom_ssh_copy_id(connection, public_key_path: str, config=None, connection
                 # Successfully read authorized_keys, check if our key is already there
                 authorized_keys = result.stdout
                 if public_key_content in authorized_keys:
+                    logger.info("Custom ssh-copy-id: Key already installed")
                     return True, "Public key is already installed on the server"
+                else:
+                    logger.debug("Custom ssh-copy-id: Key not found, will install")
+            else:
+                logger.debug(f"Custom ssh-copy-id: Check failed: {result.stderr}")
         except subprocess.TimeoutExpired:
             logger.debug("Custom ssh-copy-id: Timeout checking existing keys, continuing with installation")
         except Exception as e:
@@ -225,34 +310,31 @@ echo "Public key successfully installed"
             os.chmod(temp_script_path, 0o755)
             
             # Build SSH command to execute the script
-            # Use the same authentication strategy as default SSH: try all keys, then password
+            # For ssh-copy-id, always try public key first, then password (auth mode 0)
+            # Override any connection-specific auth settings
             ssh_cmd = ['ssh'] + ssh_options + [
                 '-o', 'PreferredAuthentications=publickey,password,keyboard-interactive',
                 '-o', 'PubkeyAuthentication=yes',
                 '-o', 'PasswordAuthentication=yes',
                 '-o', 'KbdInteractiveAuthentication=yes',
                 '-o', 'NumberOfPasswordPrompts=1',
+                # Ensure we try all available keys, not just the connection's specific key
+                '-o', 'IdentitiesOnly=no',
                 target,
                 f'bash < {temp_script_path}'
             ]
             
             logger.debug(f"Custom ssh-copy-id: Executing command: {' '.join(ssh_cmd)}")
             
-            # Execute the command
-            result = subprocess.run(
-                ssh_cmd,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-            
-            if result.returncode == 0:
-                logger.info("Custom ssh-copy-id: Successfully copied public key")
-                return True, "Public key successfully installed on the server"
+            if saved_password and terminal_widget:
+                # Use saved password with sshpass
+                return _run_ssh_copy_id_with_saved_password(ssh_cmd, temp_script_path, saved_password, terminal_widget)
+            elif terminal_widget:
+                # Use terminal widget for interactive password prompts
+                return _run_ssh_copy_id_with_terminal(ssh_cmd, temp_script_path, terminal_widget)
             else:
-                error_msg = result.stderr.strip() if result.stderr else "Unknown error"
-                logger.error(f"Custom ssh-copy-id: Failed to copy key: {error_msg}")
-                return False, f"Failed to copy public key: {error_msg}"
+                # Fallback to subprocess for non-interactive mode
+                return _run_ssh_copy_id_with_subprocess(ssh_cmd, temp_script_path)
                 
         finally:
             # Clean up temporary script
@@ -264,3 +346,147 @@ echo "Public key successfully installed"
     except Exception as e:
         logger.error(f"Custom ssh-copy-id: Unexpected error: {e}")
         return False, f"Unexpected error: {str(e)}"
+
+
+def _run_ssh_copy_id_with_saved_password(ssh_cmd, temp_script_path, saved_password, terminal_widget):
+    """Run ssh-copy-id using saved password with sshpass"""
+    try:
+        logger.info(f"Running ssh-copy-id with saved password using sshpass")
+        
+        # Check if sshpass is available
+        import shutil
+        sshpass_path = None
+        if shutil.which('sshpass'):
+            sshpass_path = 'sshpass'
+        elif os.path.exists('/app/bin/sshpass'):
+            sshpass_path = '/app/bin/sshpass'
+        
+        if not sshpass_path:
+            logger.warning("sshpass not found, falling back to interactive terminal")
+            return _run_ssh_copy_id_with_terminal(ssh_cmd, temp_script_path, terminal_widget)
+        
+        logger.info(f"Using sshpass at: {sshpass_path}")
+        
+        # Create a temporary file to store the password securely
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as pw_file:
+            pw_file.write(saved_password)
+            pw_file_path = pw_file.name
+        
+        try:
+            # Set secure permissions on the password file
+            os.chmod(pw_file_path, 0o600)
+            
+            # Build sshpass command
+            sshpass_cmd = [sshpass_path, '-f', pw_file_path] + ssh_cmd
+            
+            if Vte is None or GLib is None:
+                logger.error("Vte or GLib not available, falling back to subprocess")
+                return _run_ssh_copy_id_with_subprocess(sshpass_cmd, temp_script_path)
+            
+            # Get SSH environment with askpass for passphrase handling
+            from .askpass_utils import get_ssh_env_with_askpass
+            env = get_ssh_env_with_askpass("force")
+            
+            # Convert env dict to list of strings for Vte.spawn_async
+            env_list = []
+            for key, value in env.items():
+                env_list.append(f"{key}={value}")
+            
+            # Start the sshpass process in the terminal
+            pid = terminal_widget.vte.spawn_async(
+                Vte.PtyFlags.DEFAULT,
+                None,  # working directory
+                sshpass_cmd,
+                env_list,
+                GLib.SpawnFlags.DO_NOT_REAP_CHILD,
+                None,  # child setup
+                None,  # user data
+                None   # callback
+            )
+            
+            if pid == 0:
+                return False, "Failed to start sshpass process in terminal"
+            
+            logger.info("sshpass process started in terminal for ssh-copy-id with saved password")
+            return True, "sshpass process started in terminal - operation should complete automatically"
+            
+        finally:
+            # Clean up password file
+            try:
+                os.unlink(pw_file_path)
+            except Exception:
+                pass
+        
+    except Exception as e:
+        logger.error(f"Failed to run ssh-copy-id with saved password: {e}")
+        return False, f"Saved password execution failed: {str(e)}"
+
+
+def _run_ssh_copy_id_with_terminal(ssh_cmd, temp_script_path, terminal_widget):
+    """Run ssh-copy-id using terminal widget for interactive password prompts"""
+    try:
+        if Vte is None or GLib is None:
+            logger.error("Vte or GLib not available, falling back to subprocess")
+            return _run_ssh_copy_id_with_subprocess(ssh_cmd, temp_script_path)
+        
+        # Get SSH environment with askpass for passphrase handling
+        from .askpass_utils import get_ssh_env_with_askpass
+        env = get_ssh_env_with_askpass("force")
+        
+        # Convert env dict to list of strings for Vte.spawn_async
+        env_list = []
+        for key, value in env.items():
+            env_list.append(f"{key}={value}")
+        
+        # Start the SSH process in the terminal
+        pid = terminal_widget.vte.spawn_async(
+            Vte.PtyFlags.DEFAULT,
+            None,  # working directory
+            ssh_cmd,
+            env_list,
+            GLib.SpawnFlags.DO_NOT_REAP_CHILD,
+            None,  # child setup
+            None,  # user data
+            None   # callback
+        )
+        
+        if pid == 0:
+            return False, "Failed to start SSH process in terminal"
+        
+        # The terminal widget will handle the interactive session
+        # We can't easily wait for completion here since it's interactive
+        # Instead, we'll let the user see the output and determine success
+        logger.info("SSH process started in terminal for interactive ssh-copy-id")
+        return True, "SSH process started in terminal - complete the operation in the terminal"
+        
+    except Exception as e:
+        logger.error(f"Failed to run ssh-copy-id with terminal: {e}")
+        return False, f"Terminal execution failed: {str(e)}"
+
+
+def _run_ssh_copy_id_with_subprocess(ssh_cmd, temp_script_path):
+    """Run ssh-copy-id using subprocess (fallback method)"""
+    try:
+        # Execute the command
+        result = subprocess.run(
+            ssh_cmd,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        if result.returncode == 0:
+            logger.info("Custom ssh-copy-id: Successfully copied public key")
+            return True, "Public key successfully installed on the server"
+        else:
+            error_msg = result.stderr.strip() if result.stderr else "Unknown error"
+            logger.error(f"Custom ssh-copy-id: Failed to copy key: {error_msg}")
+            return False, f"Failed to copy public key: {error_msg}"
+            
+    except subprocess.TimeoutExpired:
+        logger.error("Custom ssh-copy-id: Timeout during key copy")
+        return False, "Timeout during key copy operation"
+    except Exception as e:
+        logger.error(f"Custom ssh-copy-id: Subprocess execution failed: {e}")
+        return False, f"Subprocess execution failed: {str(e)}"

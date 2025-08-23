@@ -2765,7 +2765,7 @@ class MainWindow(Adw.ApplicationWindow):
         try:
             target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
             pub_name = os.path.basename(getattr(ssh_key, 'public_path', '') or '')
-            body_text = _('This will add your public key to the server\'s ~/.ssh/authorized_keys so future logins can use SSH keys.')
+            body_text = _('This will add your public key to the server\'s ~/.ssh/authorized_keys so future logins can use SSH keys. The operation will try all available keys first, then fall back to password authentication.')
             dlg = Adw.Window()
             dlg.set_transient_for(self)
             dlg.set_modal(True)
@@ -2879,9 +2879,11 @@ class MainWindow(Adw.ApplicationWindow):
                     pass
 
             # Initial info line
-            _feed_colored_line(_('Running custom ssh-copy-id…'), 'yellow')
+            _feed_colored_line(_('Starting SSH key copy process…'), 'yellow')
             _feed_colored_line(_('This will attempt to copy the public key to the remote server.'), 'blue')
-            _feed_colored_line(_('The operation will try all keys and then password, like default SSH behavior.'), 'blue')
+            _feed_colored_line(_('The operation will try all available keys first, then fall back to password.'), 'blue')
+            _feed_colored_line(_('If a saved password exists, it will be used automatically.'), 'blue')
+            _feed_colored_line(_('Password prompts will appear in this terminal window.'), 'blue')
 
             # Use the refactored askpass mechanism for passphrase handling
             from .askpass_utils import get_ssh_env_with_askpass
@@ -2897,42 +2899,67 @@ class MainWindow(Adw.ApplicationWindow):
                         connection, 
                         ssh_key.public_path, 
                         self.config, 
-                        self.connection_manager
+                        self.connection_manager,
+                        term_widget
                     )
                     
                     if success:
-                        _feed_colored_line(_('Public key was installed successfully.'), 'green')
-                        _feed_colored_line(message, 'green')
+                        if "sshpass" in message.lower():
+                            # sshpass process started with saved password
+                            _feed_colored_line(_('SSH process started with saved password.'), 'green')
+                            _feed_colored_line(_('The operation should complete automatically.'), 'blue')
+                            _feed_colored_line(_('If you see any prompts, please respond in the terminal above.'), 'blue')
+                        elif "terminal" in message.lower():
+                            # SSH process started in terminal - provide guidance
+                            _feed_colored_line(_('SSH process started in terminal.'), 'green')
+                            _feed_colored_line(_('Please complete the operation in the terminal above.'), 'blue')
+                            _feed_colored_line(_('You may be prompted for:'), 'blue')
+                            _feed_colored_line(_('• SSH key passphrase (if your key is encrypted)'), 'blue')
+                            _feed_colored_line(_('• Server password (if key authentication fails)'), 'blue')
+                            _feed_colored_line(_('• Server user password (for sudo if needed)'), 'blue')
+                            _feed_colored_line(_(''), 'blue')
+                            _feed_colored_line(_('The operation will try all available keys first, then fall back to password.'), 'blue')
+                        else:
+                            # Direct success (non-interactive mode)
+                            _feed_colored_line(_('Public key was installed successfully.'), 'green')
+                            _feed_colored_line(message, 'green')
+                            
+                            # Show success dialog
+                            def _present_success_dialog():
+                                msg = Adw.MessageDialog(
+                                    transient_for=dlg,
+                                    modal=True,
+                                    heading=_('Success'),
+                                    body=_('Public key copied to {}@{}').format(connection.username, connection.host),
+                                )
+                                msg.add_response('ok', _('OK'))
+                                msg.set_default_response('ok')
+                                msg.set_close_response('ok')
+                                msg.present()
+                                return False
+                            GLib.idle_add(_present_success_dialog)
                     else:
-                        _feed_colored_line(_('Failed to install the public key.'), 'red')
+                        _feed_colored_line(_('Failed to start SSH process.'), 'red')
                         _feed_colored_line(message, 'red')
-                    
-                    # Show result dialog
-                    def _present_result_dialog():
-                        msg = Adw.MessageDialog(
-                            transient_for=dlg,
-                            modal=True,
-                            heading=_('Success') if success else _('Error'),
-                            body=(_('Public key copied to {}@{}').format(connection.username, connection.host)
-                                  if success else _('Failed to copy the public key. Check logs for details.')),
-                        )
-                        msg.add_response('ok', _('OK'))
-                        msg.set_default_response('ok')
-                        msg.set_close_response('ok')
-                        msg.present()
-                        return False
-
-                    GLib.idle_add(_present_result_dialog)
+                        
+                        # Show error dialog
+                        def _present_error_dialog():
+                            self._error_dialog(_("SSH Key Copy Error"),
+                                              _("Failed to start SSH key copy process."), 
+                                              f"Error: {message}\n\nPlease check:\n• Network connectivity\n• SSH server configuration\n• User permissions")
+                            return False
+                        GLib.idle_add(_present_error_dialog)
                     
                 except Exception as e:
-                    logger.error(f'Custom ssh-copy-id failed: {e}')
-                    _feed_colored_line(_('Failed to install the public key.'), 'red')
-                    _feed_colored_line(str(e), 'red')
+                    error_msg = str(e)
+                    logger.error(f'Custom ssh-copy-id failed: {error_msg}')
+                    _feed_colored_line(_('Failed to start SSH process.'), 'red')
+                    _feed_colored_line(error_msg, 'red')
                     
                     def _present_error_dialog():
                         self._error_dialog(_("SSH Key Copy Error"),
-                                          _("Failed to copy SSH key to server."), 
-                                          f"Error: {str(e)}\n\nPlease check:\n• Network connectivity\n• SSH server configuration\n• User permissions")
+                                          _("Failed to start SSH key copy process."), 
+                                          f"Error: {error_msg}\n\nPlease check:\n• Network connectivity\n• SSH server configuration\n• User permissions")
                         return False
                     
                     GLib.idle_add(_present_error_dialog)
