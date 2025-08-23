@@ -953,10 +953,9 @@ class ConnectionDialog(Adw.PreferencesDialog):
                     self._key_paths.append(current_path)
                     model = self.key_dropdown.get_model()
                     if model:
-                        filename = os.path.basename(current_path)
-                        model.append(filename)
+                        model.append(current_path)
                         preselect_idx = len(self._key_paths) - 1
-                        logger.debug(f"Added external key to dropdown: {filename} (path: {current_path}, index {preselect_idx})")
+                        logger.debug(f"Added external key to dropdown: {current_path} (index {preselect_idx})")
                         self.key_dropdown.set_selected(preselect_idx)
                 else:
                     logger.debug(f"Could not find keyfile '{current_path}' in dropdown paths")
@@ -1686,12 +1685,11 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 # Add the browsed key to the dropdown if it's not already there
                 if hasattr(self, '_key_paths') and key_path not in self._key_paths:
                     self._key_paths.append(key_path)
-                    # Update the dropdown model with just the filename
+                    # Update the dropdown model
                     if hasattr(self, 'key_dropdown'):
                         model = self.key_dropdown.get_model()
                         if model:
-                            filename = os.path.basename(key_path)
-                            model.append(filename)
+                            model.append(key_path)
                 
                 # Set the selected keyfile path
                 self._selected_keyfile_path = key_path
