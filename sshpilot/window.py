@@ -50,7 +50,7 @@ class SshCopyIdWindow(Adw.Window):
     - Pressing OK triggers:
         - Either copy selected existing key
         - Or generate a new key, then copy it
-    - Uses your existing terminal flow:
+    - Uses our custom ssh-copy-id implementation:
         parent._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
     """
 
@@ -307,7 +307,7 @@ class SshCopyIdWindow(Adw.Window):
                 raise RuntimeError("Please select a key to copy")
             ssh_key = keys[idx]
             logger.info(f"SshCopyIdWindow: Selected key: {ssh_key.private_path}")
-            # Launch your existing terminal ssh-copy-id flow
+            # Launch our custom ssh-copy-id implementation
             self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, ssh_key)
             self.close()
         except Exception as e:
@@ -361,7 +361,7 @@ class SshCopyIdWindow(Adw.Window):
             if not os.path.exists(new_key.public_path):
                 raise RuntimeError(f"Public key file not found: {new_key.public_path}")
             
-            logger.info(f"SshCopyIdWindow: Key files verified, starting ssh-copy-id")
+            logger.info(f"SshCopyIdWindow: Key files verified, starting custom ssh-copy-id")
             
             # Try to add the key to SSH agent for authentication during copy
             try:
@@ -375,7 +375,7 @@ class SshCopyIdWindow(Adw.Window):
             except Exception as e:
                 logger.warning(f"Could not add key to SSH agent: {e}")
             
-            # Run your terminal ssh-copy-id flow
+            # Run our custom ssh-copy-id implementation
             self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, new_key)
             self.close()
 
@@ -1767,9 +1767,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.edit_button.connect('clicked', self.on_edit_connection_clicked)
         toolbar.append(self.edit_button)
 
-        # Copy key to server button (ssh-copy-id)
+        # Copy key to server button (custom ssh-copy-id)
         self.copy_key_button = Gtk.Button.new_from_icon_name('dialog-password-symbolic')
-        self.copy_key_button.set_tooltip_text('Copy public key to server for passwordless login')
+        self.copy_key_button.set_tooltip_text('Copy public key to server for passwordless login (uses custom implementation)')
         self.copy_key_button.set_sensitive(False)
         self.copy_key_button.connect('clicked', self.on_copy_key_to_server_clicked)
         toolbar.append(self.copy_key_button)
@@ -2196,13 +2196,13 @@ class MainWindow(Adw.ApplicationWindow):
             logger.error("Failed to present key generator: %s", e)
 
 
-    # --- Integrate generator into ssh-copy-id chooser ---------------------------
+    # --- Integrate generator into custom ssh-copy-id chooser ---------------------------
 
     def on_copy_key_to_server_clicked(self, _button):
-        logger.info("Main window: ssh-copy-id button clicked")
+        logger.info("Main window: custom ssh-copy-id button clicked")
         selected_row = self.connection_list.get_selected_row()
         if not selected_row or not getattr(selected_row, "connection", None):
-            logger.warning("Main window: No connection selected for ssh-copy-id")
+            logger.warning("Main window: No connection selected for custom ssh-copy-id")
             return
         connection = selected_row.connection
         logger.info(f"Main window: Selected connection: {getattr(connection, 'nickname', 'unknown')}")
@@ -2213,7 +2213,7 @@ class MainWindow(Adw.ApplicationWindow):
             logger.info("Main window: SshCopyIdWindow created successfully, presenting")
             win.present()
         except Exception as e:
-            logger.error(f"Main window: ssh-copy-id window failed: {e}")
+            logger.error(f"Main window: custom ssh-copy-id window failed: {e}")
             # Fallback error if window cannot be created
             try:
                 md = Adw.MessageDialog(transient_for=self, modal=True,
@@ -2768,7 +2768,7 @@ class MainWindow(Adw.ApplicationWindow):
             logger.error(f'Upload dialog failed: {e}')
 
     def _show_ssh_copy_id_terminal_using_main_widget(self, connection, ssh_key):
-        """Show a window with header bar and embedded terminal running ssh-copy-id.
+        """Show a window with header bar and embedded terminal running our custom ssh-copy-id.
 
         Requirements:
         - Terminal expands horizontally, no borders around it
@@ -2782,7 +2782,7 @@ class MainWindow(Adw.ApplicationWindow):
             dlg.set_transient_for(self)
             dlg.set_modal(True)
             try:
-                dlg.set_title(_('ssh-copy-id'))
+                dlg.set_title(_('Copy SSH Key'))
             except Exception:
                 pass
             try:
@@ -2793,7 +2793,7 @@ class MainWindow(Adw.ApplicationWindow):
             # Header bar with Cancel
             header = Adw.HeaderBar()
             title_widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            title_label = Gtk.Label(label=_('ssh-copy-id'))
+            title_label = Gtk.Label(label=_('Copy SSH Key'))
             title_label.set_halign(Gtk.Align.START)
             subtitle_label = Gtk.Label(label=_('Copying {key} to {target}').format(key=pub_name or _('selected key'), target=target))
             subtitle_label.set_halign(Gtk.Align.START)
@@ -2876,12 +2876,6 @@ class MainWindow(Adw.ApplicationWindow):
             cancel_btn.connect('clicked', _on_cancel)
             # No explicit close button; use window close (X)
 
-            # Build ssh-copy-id command with options derived from connection settings
-            argv = self._build_ssh_copy_id_argv(connection, ssh_key)
-            cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
-            logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
-            logger.info("Full command line: %s", cmdline)
-
             # Helper to write colored lines into the terminal
             def _feed_colored_line(text: str, color: str):
                 colors = {
@@ -2897,132 +2891,51 @@ class MainWindow(Adw.ApplicationWindow):
                     pass
 
             # Initial info line
-            _feed_colored_line(_('Running ssh-copy-id…'), 'yellow')
+            _feed_colored_line(_('Running custom ssh-copy-id…'), 'yellow')
+            _feed_colored_line(_('This will attempt to copy the public key to the remote server.'), 'blue')
+            _feed_colored_line(_('The operation will try all keys and then password, like default SSH behavior.'), 'blue')
 
-            # Handle password authentication consistently with terminal connections
-            env = os.environ.copy()
+            # Use the refactored askpass mechanism for passphrase handling
+            from .askpass_utils import get_ssh_env_with_askpass
+            env = get_ssh_env_with_askpass("force")
             
-            # Determine auth method and check for saved password
-            prefer_password = False
+            # Ensure the key is loaded in ssh-agent for better authentication success
             try:
-                cfg = Config()
-                meta = cfg.get_connection_meta(connection.nickname) if hasattr(cfg, 'get_connection_meta') else {}
-                if isinstance(meta, dict) and 'auth_method' in meta:
-                    prefer_password = int(meta.get('auth_method', 0) or 0) == 1
-            except Exception:
-                try:
-                    prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
-                except Exception:
-                    prefer_password = False
-            
-            has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username))
-            
-            if prefer_password and has_saved_password:
-                # Use sshpass for password authentication
-                import shutil
-                sshpass_path = None
-                if shutil.which('sshpass'):
-                    sshpass_path = 'sshpass'
-                elif os.path.exists('/app/bin/sshpass'):
-                    sshpass_path = '/app/bin/sshpass'
-                
-                if sshpass_path:
-                    # Use the same approach as ssh_password_exec.py for consistency
-                    from .ssh_password_exec import _mk_priv_dir, _write_once_fifo
-                    import threading
-                    
-                    # Create private temp directory and FIFO
-                    tmpdir = _mk_priv_dir()
-                    fifo = os.path.join(tmpdir, "pw.fifo")
-                    os.mkfifo(fifo, 0o600)
-                    
-                    # Start writer thread that writes the password exactly once
-                    saved_password = self.connection_manager.get_password(connection.host, connection.username)
-                    t = threading.Thread(target=_write_once_fifo, args=(fifo, saved_password), daemon=True)
-                    t.start()
-                    
-                    # Use sshpass with FIFO
-                    argv = [sshpass_path, "-f", fifo] + argv
-                    
-                    # Important: strip askpass vars so OpenSSH won't try the askpass helper for passwords
-                    env.pop("SSH_ASKPASS", None)
-                    env.pop("SSH_ASKPASS_REQUIRE", None)
-                    
-                    logger.debug("Using sshpass with FIFO for ssh-copy-id password authentication")
-                    
-                    # Store tmpdir for cleanup (will be cleaned up when process exits)
-                    def cleanup_tmpdir():
-                        try:
-                            import shutil
-                            shutil.rmtree(tmpdir, ignore_errors=True)
-                        except Exception:
-                            pass
-                    import atexit
-                    atexit.register(cleanup_tmpdir)
-                else:
-                    # sshpass not available, fallback to askpass
-                    from .askpass_utils import get_ssh_env_with_askpass
-                    askpass_env = get_ssh_env_with_askpass("force")
-                    env.update(askpass_env)
-            elif prefer_password and not has_saved_password:
-                # Password auth selected but no saved password - let SSH prompt interactively
-                # Don't set any askpass environment variables
-                logger.debug("ssh-copy-id: Password auth selected but no saved password - using interactive prompt")
-            else:
-                # Use askpass for passphrase prompts (key-based auth)
-                from .askpass_utils import get_ssh_env_with_askpass
-                askpass_env = get_ssh_env_with_askpass("force")
-                env.update(askpass_env)
-
-            cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
-            logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
-            envv = [f"{k}={v}" for k, v in env.items()]
-
-            try:
-                term_widget.vte.spawn_async(
-                    Vte.PtyFlags.DEFAULT,
-                    os.path.expanduser('~') or '/',
-                    ['bash', '-lc', cmdline],
-                    envv,  # <— use merged env
-                    GLib.SpawnFlags.DEFAULT,
-                    None,
-                    None,
-                    -1,
-                    None,
-                    None
-                )
-
-                # Show result modal when the command finishes
-                def _on_copyid_exited(vte, status):
-                    # Normalize exit code
-                    exit_code = None
-                    try:
-                        if os.WIFEXITED(status):
-                            exit_code = os.WEXITSTATUS(status)
-                        else:
-                            exit_code = status if 0 <= int(status) < 256 else ((int(status) >> 8) & 0xFF)
-                    except Exception:
-                        try:
-                            exit_code = int(status)
-                        except Exception:
-                            exit_code = status
-
-                    logger.info(f"ssh-copy-id exited with status: {status}, normalized exit_code: {exit_code}")
-                    ok = (exit_code == 0)
-                    if ok:
-                        logger.info("ssh-copy-id completed successfully")
-                        _feed_colored_line(_('Public key was installed successfully.'), 'green')
+                if hasattr(ssh_key, 'private_path') and os.path.exists(ssh_key.private_path):
+                    from .askpass_utils import ensure_key_in_agent
+                    if ensure_key_in_agent(ssh_key.private_path):
+                        logger.debug(f"ssh-copy-id: Successfully loaded key in ssh-agent: {ssh_key.private_path}")
                     else:
-                        logger.error(f"ssh-copy-id failed with exit code: {exit_code}")
-                        _feed_colored_line(_('Failed to install the public key.'), 'red')
+                        logger.warning(f"ssh-copy-id: Failed to load key in ssh-agent: {ssh_key.private_path}")
+            except Exception as e:
+                logger.warning(f"ssh-copy-id: Error preparing key for ssh-agent: {e}")
 
+            # Run our custom ssh-copy-id implementation
+            def _run_custom_ssh_copy_id():
+                try:
+                    from .ssh_utils import custom_ssh_copy_id
+                    success, message = custom_ssh_copy_id(
+                        connection, 
+                        ssh_key.public_path, 
+                        self.config, 
+                        self.connection_manager
+                    )
+                    
+                    if success:
+                        _feed_colored_line(_('Public key was installed successfully.'), 'green')
+                        _feed_colored_line(message, 'green')
+                    else:
+                        _feed_colored_line(_('Failed to install the public key.'), 'red')
+                        _feed_colored_line(message, 'red')
+                    
+                    # Show result dialog
                     def _present_result_dialog():
                         msg = Adw.MessageDialog(
                             transient_for=dlg,
                             modal=True,
-                            heading=_('Success') if ok else _('Error'),
+                            heading=_('Success') if success else _('Error'),
                             body=(_('Public key copied to {}@{}').format(connection.username, connection.host)
-                                  if ok else _('Failed to copy the public key. Check logs for details.')),
+                                  if success else _('Failed to copy the public key. Check logs for details.')),
                         )
                         msg.add_response('ok', _('OK'))
                         msg.set_default_response('ok')
@@ -3031,92 +2944,33 @@ class MainWindow(Adw.ApplicationWindow):
                         return False
 
                     GLib.idle_add(_present_result_dialog)
+                    
+                except Exception as e:
+                    logger.error(f'Custom ssh-copy-id failed: {e}')
+                    _feed_colored_line(_('Failed to install the public key.'), 'red')
+                    _feed_colored_line(str(e), 'red')
+                    
+                    def _present_error_dialog():
+                        self._error_dialog(_("SSH Key Copy Error"),
+                                          _("Failed to copy SSH key to server."), 
+                                          f"Error: {str(e)}\n\nPlease check:\n• Network connectivity\n• SSH server configuration\n• User permissions")
+                        return False
+                    
+                    GLib.idle_add(_present_error_dialog)
 
-                try:
-                    term_widget.vte.connect('child-exited', _on_copyid_exited)
-                except Exception:
-                    pass
-            except Exception as e:
-                logger.error(f'Failed to spawn ssh-copy-id in TerminalWidget: {e}')
-                dlg.close()
-                # No fallback method available
-                logger.error(f'Terminal ssh-copy-id failed: {e}')
-                self._error_dialog(_("SSH Key Copy Error"),
-                                  _("Failed to copy SSH key to server."), 
-                                  f"Terminal error: {str(e)}\n\nPlease check:\n• Network connectivity\n• SSH server configuration\n• User permissions")
-                return
+            # Run the custom ssh-copy-id in a separate thread to avoid blocking the UI
+            import threading
+            thread = threading.Thread(target=_run_custom_ssh_copy_id, daemon=True)
+            thread.start()
 
             dlg.present()
         except Exception as e:
-            logger.error(f'VTE ssh-copy-id window failed: {e}')
+            logger.error(f'Custom ssh-copy-id window failed: {e}')
             self._error_dialog(_("SSH Key Copy Error"),
                               _("Failed to create ssh-copy-id terminal window."), 
                               f"Error: {str(e)}\n\nThis could be due to:\n• Missing VTE terminal widget\n• Display/GTK issues\n• System resource limitations")
 
-    def _build_ssh_copy_id_argv(self, connection, ssh_key):
-        """Construct argv for ssh-copy-id honoring saved UI auth preferences."""
-        logger.info(f"Building ssh-copy-id argv for key: {getattr(ssh_key, 'public_path', 'unknown')}")
-        logger.info(f"Key object attributes: private_path={getattr(ssh_key, 'private_path', 'unknown')}, public_path={getattr(ssh_key, 'public_path', 'unknown')}")
-        
-        # Verify the public key file exists
-        if not os.path.exists(ssh_key.public_path):
-            logger.error(f"Public key file does not exist: {ssh_key.public_path}")
-            raise RuntimeError(f"Public key file not found: {ssh_key.public_path}")
-        
-        argv = ['ssh-copy-id', '-i', ssh_key.public_path]
-        try:
-            if getattr(connection, 'port', 22) and connection.port != 22:
-                argv += ['-p', str(connection.port)]
-        except Exception:
-            pass
-        # Honor app SSH settings: strict host key checking / auto-add
-        try:
-            cfg = Config()
-            ssh_cfg = cfg.get_ssh_config() if hasattr(cfg, 'get_ssh_config') else {}
-            strict_val = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
-            auto_add = bool(ssh_cfg.get('auto_add_host_keys', True))
-            if strict_val:
-                argv += ['-o', f'StrictHostKeyChecking={strict_val}']
-            elif auto_add:
-                argv += ['-o', 'StrictHostKeyChecking=accept-new']
-        except Exception:
-            argv += ['-o', 'StrictHostKeyChecking=accept-new']
-        # Derive auth prefs from saved config and connection
-        prefer_password = False
-        key_mode = 0
-        keyfile = getattr(connection, 'keyfile', '') or ''
-        try:
-            cfg = Config()
-            meta = cfg.get_connection_meta(connection.nickname) if hasattr(cfg, 'get_connection_meta') else {}
-            if isinstance(meta, dict) and 'auth_method' in meta:
-                prefer_password = int(meta.get('auth_method', 0) or 0) == 1
-        except Exception:
-            try:
-                prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
-            except Exception:
-                prefer_password = False
-        try:
-            # key_select_mode is saved in ssh config, our connection object should have it post-load
-            key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
-        except Exception:
-            key_mode = 0
-        # Validate keyfile path
-        try:
-            keyfile_ok = bool(keyfile) and os.path.isfile(keyfile)
-        except Exception:
-            keyfile_ok = False
 
-        # Priority: if UI selected a specific key and it exists, use it; otherwise fall back to password prefs/try-all
-        if key_mode == 1 and keyfile_ok:
-            argv += ['-o', f'IdentityFile={keyfile}', '-o', 'IdentitiesOnly=yes', '-o', 'IdentityAgent=none']
-        else:
-            # Only force password when user selected password auth
-            if prefer_password:
-                argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password,keyboard-interactive']
-        # Target
-        target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
-        argv.append(target)
-        return argv
 
     def _on_files_chosen(self, chooser, response, connection):
         try:
