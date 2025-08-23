@@ -2961,8 +2961,8 @@ class MainWindow(Adw.ApplicationWindow):
                     atexit.register(cleanup_tmpdir)
                 else:
                     # sshpass not available, fallback to askpass
-                    ensure_askpass_script()
-                    askpass_env = get_ssh_env_with_askpass_for_password(connection.host, connection.username)
+                    from .askpass_utils import get_ssh_env_with_askpass
+                    askpass_env = get_ssh_env_with_askpass("force")
                     env.update(askpass_env)
             elif prefer_password and not has_saved_password:
                 # Password auth selected but no saved password - let SSH prompt interactively
@@ -2970,8 +2970,8 @@ class MainWindow(Adw.ApplicationWindow):
                 logger.debug("ssh-copy-id: Password auth selected but no saved password - using interactive prompt")
             else:
                 # Use askpass for passphrase prompts (key-based auth)
-                ensure_askpass_script()
-                askpass_env = get_ssh_env_with_askpass_for_password(connection.host, connection.username)
+                from .askpass_utils import get_ssh_env_with_askpass
+                askpass_env = get_ssh_env_with_askpass("force")
                 env.update(askpass_env)
 
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
@@ -3444,8 +3444,7 @@ class MainWindow(Adw.ApplicationWindow):
                     if saved_passphrase:
                         # Use the secure askpass script for passphrase authentication
                         # This avoids storing passphrases in plain text temporary files
-                        from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options, force_regenerate_askpass_script
-                        force_regenerate_askpass_script()
+                        from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
                         askpass_env = get_ssh_env_with_forced_askpass()
                         # Store for later use in the main execution
                         if not hasattr(self, '_scp_askpass_env'):

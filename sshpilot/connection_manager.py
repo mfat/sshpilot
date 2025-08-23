@@ -1104,56 +1104,13 @@ class ConnectionManager(GObject.Object):
 
     def add_key_to_agent(self, key_path: str) -> bool:
         """Add SSH key to ssh-agent using secure SSH_ASKPASS script"""
-        if not os.path.isfile(key_path):
-            logger.error(f"Key file not found: {key_path}")
-            return False
-
-        if not self._ensure_ssh_agent():
-            return False
-
-        # Use secure SSH_ASKPASS environment and ensure script exists
-        env = get_ssh_env_with_askpass()
-        # Ensure the askpass script exists before using it
-        from .askpass_utils import ensure_askpass_script
-        ensure_askpass_script()
-
-        result = subprocess.run(
-            ['ssh-add', key_path],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        return result.returncode == 0
+        from .askpass_utils import ensure_key_in_agent
+        return ensure_key_in_agent(key_path)
 
     def prepare_key_for_connection(self, key_path: str) -> bool:
         """Prepare SSH key for connection by adding it to ssh-agent"""
-        try:
-            if not key_path or not os.path.isfile(key_path):
-                logger.debug("No valid key path provided")
-                return False
-            
-            # Check if key is already in ssh-agent
-            if os.environ.get('SSH_AUTH_SOCK'):
-                try:
-                    result = subprocess.run(
-                        ['ssh-add', '-l'],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-                    if result.returncode == 0 and key_path in result.stdout:
-                        logger.debug(f"Key already in ssh-agent: {key_path}")
-                        return True
-                except Exception:
-                    pass
-            
-            # Add key to ssh-agent
-            return self.add_key_to_agent(key_path)
-            
-        except Exception as e:
-            logger.error(f"Error preparing key for connection: {e}")
-            return False
+        from .askpass_utils import prepare_key_for_connection
+        return prepare_key_for_connection(key_path)
 
     def format_ssh_config_entry(self, data: Dict[str, Any]) -> str:
         """Format connection data as SSH config entry"""

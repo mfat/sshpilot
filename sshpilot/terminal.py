@@ -743,8 +743,8 @@ class TerminalWidget(Gtk.Box):
                 logger.debug("Password auth selected but no saved password - using interactive prompt")
             else:
                 # Use askpass for passphrase prompts (key-based auth)
-                ensure_askpass_script()
-                askpass_env = get_ssh_env_with_askpass_for_password(self.connection.host, self.connection.username)
+                from .askpass_utils import get_ssh_env_with_askpass
+                askpass_env = get_ssh_env_with_askpass("force")
                 env.update(askpass_env)
             env['TERM'] = env.get('TERM', 'xterm-256color')
             env['SHELL'] = env.get('SHELL', '/bin/bash')
