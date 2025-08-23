@@ -305,43 +305,35 @@ echo "Public key successfully installed"
             temp_script.write(script_content)
             temp_script_path = temp_script.name
         
-        try:
-            # Make the script executable
-            os.chmod(temp_script_path, 0o755)
-            
-            # Build SSH command to execute the script
-            # For ssh-copy-id, always try public key first, then password (auth mode 0)
-            # Override any connection-specific auth settings
-            ssh_cmd = ['ssh'] + ssh_options + [
-                '-o', 'PreferredAuthentications=publickey,password,keyboard-interactive',
-                '-o', 'PubkeyAuthentication=yes',
-                '-o', 'PasswordAuthentication=yes',
-                '-o', 'KbdInteractiveAuthentication=yes',
-                '-o', 'NumberOfPasswordPrompts=1',
-                # Ensure we try all available keys, not just the connection's specific key
-                '-o', 'IdentitiesOnly=no',
-                target,
-                f'bash < {temp_script_path}'
-            ]
-            
-            logger.debug(f"Custom ssh-copy-id: Executing command: {' '.join(ssh_cmd)}")
-            
-            if saved_password and terminal_widget:
-                # Use saved password with sshpass
-                return _run_ssh_copy_id_with_saved_password(ssh_cmd, temp_script_path, saved_password, terminal_widget)
-            elif terminal_widget:
-                # Use terminal widget for interactive password prompts
-                return _run_ssh_copy_id_with_terminal(ssh_cmd, temp_script_path, terminal_widget)
-            else:
-                # Fallback to subprocess for non-interactive mode
-                return _run_ssh_copy_id_with_subprocess(ssh_cmd, temp_script_path)
-                
-        finally:
-            # Clean up temporary script
-            try:
-                os.unlink(temp_script_path)
-            except Exception:
-                pass
+        # Make the script executable
+        os.chmod(temp_script_path, 0o755)
+        
+        # Build SSH command to execute the script
+        # For ssh-copy-id, always try public key first, then password (auth mode 0)
+        # Override any connection-specific auth settings
+        ssh_cmd = ['ssh'] + ssh_options + [
+            '-o', 'PreferredAuthentications=publickey,password,keyboard-interactive',
+            '-o', 'PubkeyAuthentication=yes',
+            '-o', 'PasswordAuthentication=yes',
+            '-o', 'KbdInteractiveAuthentication=yes',
+            '-o', 'NumberOfPasswordPrompts=1',
+            # Ensure we try all available keys, not just the connection's specific key
+            '-o', 'IdentitiesOnly=no',
+            target,
+            f'bash < {temp_script_path}'
+        ]
+        
+        logger.debug(f"Custom ssh-copy-id: Executing command: {' '.join(ssh_cmd)}")
+        
+        if saved_password and terminal_widget:
+            # Use saved password with sshpass
+            return _run_ssh_copy_id_with_saved_password(ssh_cmd, temp_script_path, saved_password, terminal_widget)
+        elif terminal_widget:
+            # Use terminal widget for interactive password prompts
+            return _run_ssh_copy_id_with_terminal(ssh_cmd, temp_script_path, terminal_widget)
+        else:
+            # Fallback to subprocess for non-interactive mode
+            return _run_ssh_copy_id_with_subprocess(ssh_cmd, temp_script_path)
                 
     except Exception as e:
         logger.error(f"Custom ssh-copy-id: Unexpected error: {e}")
@@ -373,50 +365,59 @@ def _run_ssh_copy_id_with_saved_password(ssh_cmd, temp_script_path, saved_passwo
             pw_file.write(saved_password)
             pw_file_path = pw_file.name
         
-        try:
-            # Set secure permissions on the password file
-            os.chmod(pw_file_path, 0o600)
-            
-            # Build sshpass command
-            sshpass_cmd = [sshpass_path, '-f', pw_file_path] + ssh_cmd
-            
-            if Vte is None or GLib is None:
-                logger.error("Vte or GLib not available, falling back to subprocess")
-                return _run_ssh_copy_id_with_subprocess(sshpass_cmd, temp_script_path)
-            
-            # Get SSH environment with askpass for passphrase handling
-            from .askpass_utils import get_ssh_env_with_askpass
-            env = get_ssh_env_with_askpass("force")
-            
-            # Convert env dict to list of strings for Vte.spawn_async
-            env_list = []
-            for key, value in env.items():
-                env_list.append(f"{key}={value}")
-            
-            # Start the sshpass process in the terminal
-            pid = terminal_widget.vte.spawn_async(
-                Vte.PtyFlags.DEFAULT,
-                None,  # working directory
-                sshpass_cmd,
-                env_list,
-                GLib.SpawnFlags.DO_NOT_REAP_CHILD,
-                None,  # child setup
-                None,  # user data
-                None   # callback
-            )
-            
-            if pid == 0:
-                return False, "Failed to start sshpass process in terminal"
-            
-            logger.info("sshpass process started in terminal for ssh-copy-id with saved password")
-            return True, "sshpass process started in terminal - operation should complete automatically"
-            
-        finally:
-            # Clean up password file
+        # Set secure permissions on the password file
+        os.chmod(pw_file_path, 0o600)
+        
+        # Build sshpass command
+        sshpass_cmd = [sshpass_path, '-f', pw_file_path] + ssh_cmd
+        
+        if Vte is None or GLib is None:
+            logger.error("Vte or GLib not available, falling back to subprocess")
+            # Clean up password file before returning
             try:
                 os.unlink(pw_file_path)
             except Exception:
                 pass
+            return _run_ssh_copy_id_with_subprocess(sshpass_cmd, temp_script_path)
+        
+        # Get SSH environment with askpass for passphrase handling
+        from .askpass_utils import get_ssh_env_with_askpass
+        env = get_ssh_env_with_askpass("force")
+        
+        # Convert env dict to list of strings for Vte.spawn_async
+        env_list = []
+        for key, value in env.items():
+            env_list.append(f"{key}={value}")
+        
+        # Start the sshpass process in the terminal
+        pid = terminal_widget.vte.spawn_async(
+            Vte.PtyFlags.DEFAULT,
+            os.path.expanduser('~') or '/',
+            sshpass_cmd,
+            env_list,
+            GLib.SpawnFlags.DEFAULT,
+            None,  # Child setup function
+            None,  # Child setup data
+            -1,    # Timeout (-1 = default)
+            None,  # Cancellable
+            None,  # Callback
+            ()     # User data - empty tuple for Flatpak VTE compatibility
+        )
+        
+        if pid == 0:
+            # Clean up password file before returning
+            try:
+                os.unlink(pw_file_path)
+            except Exception:
+                pass
+            return False, "Failed to start sshpass process in terminal"
+        
+        logger.info("sshpass process started in terminal for ssh-copy-id with saved password")
+        
+        # Note: We don't clean up the temp_script_path or pw_file_path here because the SSH process is still running
+        # The files will be cleaned up by the system when the process exits
+        
+        return True, "sshpass process started in terminal - operation should complete automatically"
         
     except Exception as e:
         logger.error(f"Failed to run ssh-copy-id with saved password: {e}")
@@ -442,13 +443,16 @@ def _run_ssh_copy_id_with_terminal(ssh_cmd, temp_script_path, terminal_widget):
         # Start the SSH process in the terminal
         pid = terminal_widget.vte.spawn_async(
             Vte.PtyFlags.DEFAULT,
-            None,  # working directory
+            os.path.expanduser('~') or '/',
             ssh_cmd,
             env_list,
-            GLib.SpawnFlags.DO_NOT_REAP_CHILD,
-            None,  # child setup
-            None,  # user data
-            None   # callback
+            GLib.SpawnFlags.DEFAULT,
+            None,  # Child setup function
+            None,  # Child setup data
+            -1,    # Timeout (-1 = default)
+            None,  # Cancellable
+            None,  # Callback
+            ()     # User data - empty tuple for Flatpak VTE compatibility
         )
         
         if pid == 0:
@@ -459,6 +463,9 @@ def _run_ssh_copy_id_with_terminal(ssh_cmd, temp_script_path, terminal_widget):
         # Instead, we'll let the user see the output and determine success
         logger.info("SSH process started in terminal for interactive ssh-copy-id")
         return True, "SSH process started in terminal - complete the operation in the terminal"
+        
+        # Note: We don't clean up the temp_script_path here because the SSH process is still running
+        # The script will be cleaned up by the system when the process exits
         
     except Exception as e:
         logger.error(f"Failed to run ssh-copy-id with terminal: {e}")
@@ -490,3 +497,9 @@ def _run_ssh_copy_id_with_subprocess(ssh_cmd, temp_script_path):
     except Exception as e:
         logger.error(f"Custom ssh-copy-id: Subprocess execution failed: {e}")
         return False, f"Subprocess execution failed: {str(e)}"
+    finally:
+        # Clean up temporary script file after subprocess completes
+        try:
+            os.unlink(temp_script_path)
+        except Exception:
+            pass
