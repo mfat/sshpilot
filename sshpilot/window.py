@@ -363,18 +363,6 @@ class SshCopyIdWindow(Adw.Window):
             
             logger.info(f"SshCopyIdWindow: Key files verified, starting custom ssh-copy-id")
             
-            # Try to add the key to SSH agent for authentication during copy
-            try:
-                import subprocess
-                add_result = subprocess.run(['ssh-add', new_key.private_path], 
-                                          capture_output=True, text=True, timeout=10)
-                if add_result.returncode == 0:
-                    logger.info(f"Successfully added key to SSH agent: {new_key.private_path}")
-                else:
-                    logger.warning(f"Failed to add key to SSH agent: {add_result.stderr}")
-            except Exception as e:
-                logger.warning(f"Could not add key to SSH agent: {e}")
-            
             # Run our custom ssh-copy-id implementation
             self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, new_key)
             self.close()
@@ -2899,16 +2887,7 @@ class MainWindow(Adw.ApplicationWindow):
             from .askpass_utils import get_ssh_env_with_askpass
             env = get_ssh_env_with_askpass("force")
             
-            # Ensure the key is loaded in ssh-agent for better authentication success
-            try:
-                if hasattr(ssh_key, 'private_path') and os.path.exists(ssh_key.private_path):
-                    from .askpass_utils import ensure_key_in_agent
-                    if ensure_key_in_agent(ssh_key.private_path):
-                        logger.debug(f"ssh-copy-id: Successfully loaded key in ssh-agent: {ssh_key.private_path}")
-                    else:
-                        logger.warning(f"ssh-copy-id: Failed to load key in ssh-agent: {ssh_key.private_path}")
-            except Exception as e:
-                logger.warning(f"ssh-copy-id: Error preparing key for ssh-agent: {e}")
+
 
             # Run our custom ssh-copy-id implementation
             def _run_custom_ssh_copy_id():
