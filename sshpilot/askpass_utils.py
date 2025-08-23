@@ -1,141 +1,132 @@
-# askpass_utils.py
-import os, tempfile, atexit, shutil
+"""
+SSH_ASKPASS utilities for secure passphrase handling
+"""
 
-_ASKPASS_DIR = None
-_ASKPASS_SCRIPT = None
+import os
+import logging
 
-def ensure_passphrase_askpass() -> str:
-    global _ASKPASS_DIR, _ASKPASS_SCRIPT
-    # Clear cache to force regeneration of the script
-    _ASKPASS_SCRIPT = None
-    if _ASKPASS_DIR:
-        try:
-            shutil.rmtree(_ASKPASS_DIR, ignore_errors=True)
-        except Exception:
-            pass
-        _ASKPASS_DIR = None
+logger = logging.getLogger(__name__)
 
-    _ASKPASS_DIR = tempfile.mkdtemp(prefix="sshpilot-askpass-")
-    os.chmod(_ASKPASS_DIR, 0o700)
-    path = os.path.join(_ASKPASS_DIR, "askpass.py")
+def ensure_askpass_script() -> str:
+    """Ensure the SSH_ASKPASS script exists and return its path"""
+    askpass_script = os.path.expanduser("~/.local/bin/sshpilot-askpass")
+    if not os.path.isfile(askpass_script):
+        # Create it once
+        script_dir = os.path.dirname(askpass_script)
+        if not os.path.exists(script_dir):
+            os.makedirs(script_dir, mode=0o700)
+        
+        # Get the current script's directory to find the sshpilot module
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(current_dir)
+        
+        # Create a Python script file to avoid quote escaping issues
+        python_script = os.path.join(script_dir, "sshpilot-askpass.py")
+        with open(python_script, "w") as f:
+            f.write(f"""#!/usr/bin/env python3
+import sys
+import os
+import re
+sys.path.insert(0, "{project_root}")
 
-    script_body = '''#!/usr/bin/env python3
-import sys, re
-try:
-    import secretstorage
-except Exception:
-    secretstorage = None
+import secretstorage
 
-def get_passphrase(key_path: str) -> str:
-    if secretstorage is None:
-        return ""
+def get_passphrase(key_path):
     try:
         bus = secretstorage.dbus_init()
         collection = secretstorage.get_default_collection(bus)
         if collection and collection.is_locked():
             collection.unlock()
-        items = list(collection.search_items({
-            "application": "sshPilot",
-            "type": "key_passphrase",
-            "key_path": key_path
-        }))
+        
+        items = list(collection.search_items({{
+            'application': 'sshPilot',
+            'type': 'key_passphrase',
+            'key_path': key_path
+        }}))
+        
         if items:
-            return items[0].get_secret().decode("utf-8")
-    except Exception:
-        pass
-    return ""
+            return items[0].get_secret().decode('utf-8')
+        return ""
+    except Exception as e:
+        return ""
+
+def get_password(host, username):
+    try:
+        bus = secretstorage.dbus_init()
+        collection = secretstorage.get_default_collection(bus)
+        if collection and collection.is_locked():
+            collection.unlock()
+        
+        items = list(collection.search_items({{
+            'application': 'sshPilot',
+            'type': 'password',
+            'host': host,
+            'username': username
+        }}))
+        
+        if items:
+            return items[0].get_secret().decode('utf-8')
+        return ""
+    except Exception as e:
+        return ""
 
 if __name__ == "__main__":
-    prompt = sys.argv[1] if len(sys.argv) > 1 else ""
-    pl = prompt.lower()
-    if "passphrase" in pl:
-        # Handle: "Enter passphrase for key '/path':" and "Enter passphrase for '/path':"
-        m = re.search(r'passphrase.*for (?:key )?["\']?([^"\':]+)["\']?:', prompt, re.IGNORECASE)
-        if m:
-            key_path = m.group(1).strip(' \'"')
-            # try raw, ~-expanded, and fully resolved path; de-dup order
-            import os
-            candidates = [key_path, os.path.expanduser(key_path), os.path.realpath(os.path.expanduser(key_path))]
-            seen = set()
-            for key_path in [c for c in candidates if not (c in seen or seen.add(c))]:
-                p = get_passphrase(key_path)
-                if p:
-                    print(p)
+    if len(sys.argv) > 1:
+        # Extract key path from the prompt text
+        prompt = sys.argv[1]
+        
+        # Check if this is a password prompt (not a passphrase prompt)
+        if "password" in prompt.lower() and "passphrase" not in prompt.lower():
+            # This is likely a password prompt, try to extract host/username from environment
+            # or use a fallback approach
+            host = os.environ.get('SSHPILOT_HOST', '')
+            username = os.environ.get('SSHPILOT_USERNAME', '')
+            if host and username:
+                password = get_password(host, username)
+                if password:
+                    print(password)
                     sys.exit(0)
-    # Not a passphrase prompt or not found
-    sys.exit(1)
-'''
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(script_body)
-    os.chmod(path, 0o700)
+        
+        # Look for the key path in the prompt (e.g., "Enter passphrase for /path/to/key: ")
+        match = re.search(r'for ([^:]+):', prompt)
+        if match:
+            key_path = match.group(1).strip(" '\"")   # strip single/double quotes and spaces
+            passphrase = get_passphrase(key_path)
+            if passphrase:
+                print(passphrase)
+                sys.exit(0)
+        
+        # Fallback: try to use the argument as-is for key passphrase
+        passphrase = get_passphrase(prompt)
+        if passphrase:
+            print(passphrase)
+            sys.exit(0)
+        
+        # If we reach here, no password/passphrase was found:
+        print("", end="")        # ensure no stray text
+        sys.exit(1)              # <— signal failure so ssh can fall back to TTY
+""")
+        os.chmod(python_script, 0o700)
+        
+        # Create the shell wrapper
+        with open(askpass_script, "w") as f:
+            f.write(f"#!/bin/sh\n{python_script} \"$1\"\n")
+        os.chmod(askpass_script, 0o700)
+        
+        logger.debug(f"Created SSH_ASKPASS script: {askpass_script}")
+    
+    return askpass_script
 
-    def _cleanup():
-        try:
-            if _ASKPASS_DIR:
-                shutil.rmtree(_ASKPASS_DIR, ignore_errors=True)
-        except Exception:
-            pass
-    atexit.register(_cleanup)
-    _ASKPASS_SCRIPT = path
-    return path
-
-def ensure_askpass_script() -> str:
-    """Ensure the askpass script is available for passphrase handling"""
-    return ensure_passphrase_askpass()
-
-def force_regenerate_askpass_script() -> str:
-    """Force regeneration of the askpass script (useful after fixes)"""
-    global _ASKPASS_DIR, _ASKPASS_SCRIPT
-    _ASKPASS_SCRIPT = None
-    if _ASKPASS_DIR:
-        try:
-            shutil.rmtree(_ASKPASS_DIR, ignore_errors=True)
-        except Exception:
-            pass
-        _ASKPASS_DIR = None
-    return ensure_passphrase_askpass()
-
-def get_askpass_env(require: str = "prefer") -> dict:
+def get_ssh_env_with_askpass():
     env = os.environ.copy()
-    env["SSH_ASKPASS"] = ensure_passphrase_askpass()
-    env["SSH_ASKPASS_REQUIRE"] = require  # use "prefer" for GUI apps
-    return env
-
-def get_ssh_env_with_askpass(require: str = "prefer") -> dict:
-    """Get SSH environment with askpass for passphrase handling.
-    This function is used for general askpass environment setup.
-    """
-    env = os.environ.copy()
-    env["SSH_ASKPASS"] = ensure_passphrase_askpass()
-    env["SSH_ASKPASS_REQUIRE"] = require  # use "prefer" for GUI apps
+    env['SSH_ASKPASS'] = os.path.expanduser("~/.local/bin/sshpilot-askpass")
+    env['SSH_ASKPASS_REQUIRE'] = 'force'
     return env
 
 def get_ssh_env_with_askpass_for_password(host: str, username: str) -> dict:
-    """Get SSH environment with askpass for password authentication.
-    This function is used when we want to use the askpass mechanism for password prompts.
-    """
-    env = os.environ.copy()
-    env["SSH_ASKPASS"] = ensure_passphrase_askpass()
-    env["SSH_ASKPASS_REQUIRE"] = "prefer"  # use "prefer" for GUI apps
-    return env
-
-def get_scp_ssh_options() -> list:
-    """Get SSH options for SCP operations with passphrased keys.
-    These options force public key authentication and prevent password fallback.
-    """
-    return [
-        "-o", "PreferredAuthentications=publickey",
-        "-o", "PasswordAuthentication=no",
-        "-o", "KbdInteractiveAuthentication=no",
-        "-o", "IdentitiesOnly=yes",   # if you pass -i
-    ]
-
-def get_ssh_env_with_forced_askpass() -> dict:
-    """Get SSH environment with forced askpass for passphrase handling.
-    This function is used for SCP operations where we want to force askpass
-    and prevent fallback to password authentication.
-    """
-    env = os.environ.copy()
-    env["SSH_ASKPASS"] = ensure_passphrase_askpass()
-    env["SSH_ASKPASS_REQUIRE"] = "force"  # force askpass for passphrased keys
+    """Get environment variables configured for SSH_ASKPASS usage with password context"""
+    env = get_ssh_env_with_askpass()
+    # Set host and username context for password retrieval
+    env['SSHPILOT_HOST'] = host
+    env['SSHPILOT_USERNAME'] = username
     return env
