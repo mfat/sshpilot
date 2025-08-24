@@ -2974,6 +2974,12 @@ class MainWindow(Adw.ApplicationWindow):
                 askpass_env = get_ssh_env_with_askpass("force")
                 env.update(askpass_env)
 
+            # Ensure /app/bin is first in PATH for Flatpak compatibility
+            if os.path.exists('/app/bin'):
+                current_path = env.get('PATH', '')
+                if '/app/bin' not in current_path:
+                    env['PATH'] = f"/app/bin:{current_path}"
+            
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
             logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
             envv = [f"{k}={v}" for k, v in env.items()]
@@ -3295,6 +3301,12 @@ class MainWindow(Adw.ApplicationWindow):
                 # No additional environment setup needed here
                 logger.debug("SCP: Password authentication handled by sshpass in command line")
 
+            # Ensure /app/bin is first in PATH for Flatpak compatibility
+            if os.path.exists('/app/bin'):
+                current_path = env.get('PATH', '')
+                if '/app/bin' not in current_path:
+                    env['PATH'] = f"/app/bin:{current_path}"
+            
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
             envv = [f"{k}={v}" for k, v in env.items()]
             logger.debug(f"SCP: Final environment variables: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
@@ -3502,10 +3514,14 @@ class MainWindow(Adw.ApplicationWindow):
                             import atexit
                             atexit.register(cleanup_tmpdir)
                         else:
-                            # sshpass not available, fallback to environment variable approach
-                            os.environ['SSHPASS'] = saved_password
-                            argv = [sshpass_path, '-e'] + argv
-                            logger.debug("Using sshpass with environment variable for SCP with saved password")
+                            # sshpass not available → use askpass env (same pattern as in ssh-copy-id path)
+                            from .askpass_utils import get_ssh_env_with_askpass
+                            askpass_env = get_ssh_env_with_askpass("force")
+                            # Store for later use in the main execution
+                            if not hasattr(self, '_scp_askpass_env'):
+                                self._scp_askpass_env = {}
+                            self._scp_askpass_env.update(askpass_env)
+                            logger.debug("SCP: sshpass unavailable, using SSH_ASKPASS fallback")
                     else:
                         # No saved password - will use interactive prompt
                         logger.debug("SCP: Password auth selected but no saved password - using interactive prompt")
