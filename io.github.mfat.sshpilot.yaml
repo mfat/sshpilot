@@ -16,6 +16,7 @@ finish-args:
   - --system-talk-name=org.freedesktop.login1
   - --env=TERM=xterm-256color
   - --env=SHELL=/bin/bash
+  - --env=PATH=/app/bin:/usr/bin:/bin
 
 cleanup:
   - '/include'
@@ -157,10 +158,8 @@ modules:
       - install -Dm755 sshpilot-launcher.sh /app/bin/sshpilot
 
     sources:
-      - type: git
-        url: "https://github.com/mfat/sshpilot.git"
-        tag: v2.7.0
-        commit: e306163ed0f55851735b0706a6dd90ae7875f8bb
+      - type: dir
+        path: .
       - type: file
         path: sshpilot-launcher.sh
 

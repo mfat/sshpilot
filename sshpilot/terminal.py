@@ -703,12 +703,12 @@ class TerminalWidget(Gtk.Box):
                 sshpass_path = None
                 
                 # Check if sshpass is available and executable
-                if shutil.which('sshpass'):
-                    sshpass_path = 'sshpass'
-                    logger.debug("Found sshpass in PATH")
-                elif os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
+                if os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
                     sshpass_path = '/app/bin/sshpass'
                     logger.debug("Found sshpass at /app/bin/sshpass")
+                elif shutil.which('sshpass'):
+                    sshpass_path = shutil.which('sshpass')
+                    logger.debug(f"Found sshpass in PATH: {sshpass_path}")
                 else:
                     logger.debug("sshpass not found or not executable")
                 

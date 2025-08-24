@@ -48,7 +48,7 @@ def run_ssh_with_password(host: str, user: str, password: str, *,
         ssh_opts += extra_ssh_opts
 
     # Resolve sshpass and ssh binaries like in window.py/terminal.py
-    sshpass = shutil.which("sshpass") or ("/app/bin/sshpass" if os.path.exists("/app/bin/sshpass") and os.access("/app/bin/sshpass", os.X_OK) else None)
+    sshpass = ("/app/bin/sshpass" if os.path.exists("/app/bin/sshpass") and os.access("/app/bin/sshpass", os.X_OK) else None) or shutil.which("sshpass")
     sshbin = shutil.which("ssh") or "/usr/bin/ssh"
     
     # Debug logging
@@ -117,7 +117,7 @@ def run_scp_with_password(host: str, user: str, password: str,
         ssh_opts += ["-o", "StrictHostKeyChecking=accept-new"]
 
     # Resolve sshpass and scp binaries
-    sshpass = shutil.which("sshpass") or ("/app/bin/sshpass" if os.path.exists("/app/bin/sshpass") and os.access("/app/bin/sshpass", os.X_OK) else None)
+    sshpass = ("/app/bin/sshpass" if os.path.exists("/app/bin/sshpass") and os.access("/app/bin/sshpass", os.X_OK) else None) or shutil.which("sshpass")
     scpbin = shutil.which("scp") or "/usr/bin/scp"
     
     if not sshpass:
