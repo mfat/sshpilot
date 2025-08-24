@@ -1727,9 +1727,12 @@ class ConnectionDialog(Adw.PreferencesDialog):
         """Open a small Gtk.Dialog to add/edit a forwarding rule (compatible across lib versions)."""
         # Create dialog
         parent_win = self.get_transient_for() if hasattr(self, 'get_transient_for') else None
-        dialog = Gtk.Dialog(title=_("Port Forwarding Rule"), transient_for=parent_win, modal=True)
+        dialog = Gtk.Dialog(title=_("Port Forwarding Rule Editor"), transient_for=parent_win, modal=True)
         dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
         dialog.add_button(_("Save"), Gtk.ResponseType.OK)
+        
+        # Set default size to make dialog wider
+        dialog.set_default_size(500, -1)  # 500px width, auto height
 
         content = dialog.get_content_area()
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
