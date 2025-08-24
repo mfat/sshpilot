@@ -33,8 +33,8 @@
 ## Installation 
 
 ### Linux
-The app is currently distributed as deb and rpm packages (see releases) and can be installed on recent versions of Debian (testing/unstable), Ubuntu and Fedora. Debian bookworm is not supported due to older libadwaita version. 
-A Flatpak is also planned for future.
+The app is currently distributed as deb and rpm packages (see releases) and can be installed on recent versions of Debian (testing/unstable), Ubuntu and Fedora. Debian bookworm is not supported due to older libadwaita version. A flatpak is also provided that should work on any distro with flatpak support. (Do NOT install deb/rpm and Flatpak together as the desktop launcher will not work)
+[Download](https://github.com/mfat/sshpilot/releases/)
 
 ### macOS
 
