@@ -1357,13 +1357,19 @@ class MainWindow(Adw.ApplicationWindow):
                     pulse.remove_css_class("on")
 
     def _wire_pulses(self):
-        """Wire pulse effects to trigger on startup and focus-in"""
-        # On first show
-        self.connect("map", lambda *_: self.pulse_selected_row(self.connection_list, repeats=1, duration_ms=600))
+        """Wire pulse effects to trigger on focus-in only"""
+        # Track if this is the initial startup focus
+        self._is_initial_focus = True
         
         # When list gains keyboard focus (e.g., after Ctrl+L)
         focus_ctl = Gtk.EventControllerFocus()
-        focus_ctl.connect("enter", lambda *_: self.pulse_selected_row(self.connection_list, repeats=1, duration_ms=600))
+        def on_focus_enter(*args):
+            # Don't pulse on initial startup focus
+            if self._is_initial_focus:
+                self._is_initial_focus = False
+                return
+            self.pulse_selected_row(self.connection_list, repeats=1, duration_ms=600)
+        focus_ctl.connect("enter", on_focus_enter)
         self.connection_list.add_controller(focus_ctl)
         
         # Stop pulse effect when user interacts with the list
