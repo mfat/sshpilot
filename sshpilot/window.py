@@ -1246,7 +1246,7 @@ class MainWindow(Adw.ApplicationWindow):
               border-radius: 8px;
               box-shadow: 0 0 0 0.5px alpha(@accent_bg_color, 0.28) inset;
               opacity: 0;
-              transition: opacity 0.9s ease-in-out;
+              transition: opacity 0.3s ease-in-out;
             }
             .pulse-highlight.on {
               opacity: 1;
@@ -1275,26 +1275,7 @@ class MainWindow(Adw.ApplicationWindow):
         else:  
             widget.remove_css_class(name)
 
-    def breathe(self, widget: Gtk.Widget, repeats=3, duration_ms=280):
-        """Breathe animation helper using Adw.TimedAnimation"""
-        if not HAS_TIMED_ANIMATION:
-            return
-            
-        # If an old animation exists, stop it
-        if hasattr(widget, "_pulse_anim") and widget._pulse_anim is not None:
-            widget._pulse_anim.pause()
-            widget._pulse_anim = None
 
-        target = Adw.PropertyAnimationTarget.new(widget, "opacity")
-        anim = Adw.TimedAnimation.new(widget, 0.0, 1.0, duration_ms, target)
-        anim.set_easing(Adw.Easing.EASE_IN_OUT)
-        anim.set_alternate(True)          # 0→1 then 1→0 forms one "breath"
-        anim.set_repeat_count(repeats)    # number of breaths
-
-        widget._pulse_anim = anim
-        # Make sure the layer starts invisible
-        widget.set_opacity(0.0)
-        anim.play()
 
     def pulse_selected_row(self, list_box: Gtk.ListBox, repeats=3, duration_ms=280):
         """Pulse the selected row with highlight effect"""
@@ -1309,17 +1290,17 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Use CSS-based pulse for now
         pulse = row._pulse
-        cycle_duration = max(900, duration_ms // repeats)  # Minimum 900ms per cycle for very slow, clear pulses
+        cycle_duration = max(300, duration_ms // repeats)  # Minimum 300ms per cycle for faster pulses
         
         def do_cycle(count):
             if count == 0:
                 return False
             pulse.add_css_class("on")
-            # Keep the pulse visible for a longer time for smoother effect
-            GLib.timeout_add(cycle_duration // 3, lambda: (
+            # Keep the pulse visible for a shorter time for snappier effect
+            GLib.timeout_add(cycle_duration // 2, lambda: (
                 pulse.remove_css_class("on"),
-                # Add a longer delay before the next pulse
-                GLib.timeout_add(cycle_duration * 2 // 3, lambda: do_cycle(count - 1)) or True
+                # Add a shorter delay before the next pulse
+                GLib.timeout_add(cycle_duration // 2, lambda: do_cycle(count - 1)) or True
             ) and False)
             return False
 
@@ -1378,11 +1359,11 @@ class MainWindow(Adw.ApplicationWindow):
     def _wire_pulses(self):
         """Wire pulse effects to trigger on startup and focus-in"""
         # On first show
-        self.connect("map", lambda *_: self.pulse_selected_row(self.connection_list, repeats=2, duration_ms=4000))
+        self.connect("map", lambda *_: self.pulse_selected_row(self.connection_list, repeats=1, duration_ms=600))
         
         # When list gains keyboard focus (e.g., after Ctrl+L)
         focus_ctl = Gtk.EventControllerFocus()
-        focus_ctl.connect("enter", lambda *_: self.pulse_selected_row(self.connection_list, repeats=2, duration_ms=4000))
+        focus_ctl.connect("enter", lambda *_: self.pulse_selected_row(self.connection_list, repeats=1, duration_ms=600))
         self.connection_list.add_controller(focus_ctl)
         
         # Stop pulse effect when user interacts with the list
@@ -1980,7 +1961,7 @@ class MainWindow(Adw.ApplicationWindow):
                 self.connection_list.grab_focus()
                 
                 # Pulse the selected row
-                self.pulse_selected_row(self.connection_list, repeats=2, duration_ms=4000)
+                self.pulse_selected_row(self.connection_list, repeats=1, duration_ms=600)
                 
                 # Show toast notification
                 toast = Adw.Toast.new(
