@@ -2921,10 +2921,16 @@ class MainWindow(Adw.ApplicationWindow):
                 # Use sshpass for password authentication
                 import shutil
                 sshpass_path = None
+                
+                # Check if sshpass is available and executable
                 if shutil.which('sshpass'):
                     sshpass_path = 'sshpass'
-                elif os.path.exists('/app/bin/sshpass'):
+                    logger.debug("Found sshpass in PATH")
+                elif os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
                     sshpass_path = '/app/bin/sshpass'
+                    logger.debug("Found sshpass at /app/bin/sshpass")
+                else:
+                    logger.debug("sshpass not found or not executable")
                 
                 if sshpass_path:
                     # Use the same approach as ssh_password_exec.py for consistency
@@ -3480,10 +3486,16 @@ class MainWindow(Adw.ApplicationWindow):
                         # Use sshpass for password authentication
                         import shutil
                         sshpass_path = None
+                        
+                        # Check if sshpass is available and executable
                         if shutil.which('sshpass'):
                             sshpass_path = 'sshpass'
-                        elif os.path.exists('/app/bin/sshpass'):
+                            logger.debug("Found sshpass in PATH")
+                        elif os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
                             sshpass_path = '/app/bin/sshpass'
+                            logger.debug("Found sshpass at /app/bin/sshpass")
+                        else:
+                            logger.debug("sshpass not found or not executable")
                         
                         if sshpass_path:
                             # Use the same approach as ssh_password_exec.py for consistency
