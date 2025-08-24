@@ -701,10 +701,16 @@ class TerminalWidget(Gtk.Box):
                 # Use sshpass for password authentication
                 import shutil
                 sshpass_path = None
-                if shutil.which('sshpass'):
-                    sshpass_path = 'sshpass'
-                elif os.path.exists('/app/bin/sshpass'):
+                
+                # Check if sshpass is available and executable
+                if os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
                     sshpass_path = '/app/bin/sshpass'
+                    logger.debug("Found sshpass at /app/bin/sshpass")
+                elif shutil.which('sshpass'):
+                    sshpass_path = shutil.which('sshpass')
+                    logger.debug(f"Found sshpass in PATH: {sshpass_path}")
+                else:
+                    logger.debug("sshpass not found or not executable")
                 
                 if sshpass_path:
                     # Use the same approach as ssh_password_exec.py for consistency
@@ -760,19 +766,38 @@ class TerminalWidget(Gtk.Box):
             for key, value in env.items():
                 env_list.append(f"{key}={value}")
             
-            self.vte.spawn_async(
-                Vte.PtyFlags.DEFAULT,
-                os.path.expanduser('~') or '/',
-                ssh_cmd,
-                env_list,  # Use environment list for Flatpak
-                GLib.SpawnFlags.DEFAULT,
-                None,  # Child setup function
-                None,  # Child setup data
-                -1,    # Timeout (-1 = default)
-                None,  # Cancellable
-                self._on_spawn_complete,
-                ()     # User data - empty tuple for Flatpak VTE compatibility
-            )
+            # Log the command being executed for debugging
+            logger.debug(f"Spawning SSH command: {ssh_cmd}")
+            logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
+            
+            try:
+                self.vte.spawn_async(
+                    Vte.PtyFlags.DEFAULT,
+                    os.path.expanduser('~') or '/',
+                    ssh_cmd,
+                    env_list,  # Use environment list for Flatpak
+                    GLib.SpawnFlags.DEFAULT,
+                    None,  # Child setup function
+                    None,  # Child setup data
+                    -1,    # Timeout (-1 = default)
+                    None,  # Cancellable
+                    self._on_spawn_complete,
+                    ()     # User data - empty tuple for Flatpak VTE compatibility
+                )
+            except GLib.Error as e:
+                logger.error(f"VTE spawn failed with GLib error: {e}")
+                # Check if it's a "No such file or directory" error for sshpass
+                if "sshpass" in str(e) and "No such file or directory" in str(e):
+                    logger.error("sshpass binary not found, falling back to askpass")
+                    # Fall back to askpass method
+                    self._fallback_to_askpass(ssh_cmd, env_list)
+                else:
+                    self._on_connection_failed(str(e))
+                return
+            except Exception as e:
+                logger.error(f"VTE spawn failed with exception: {e}")
+                self._on_connection_failed(str(e))
+                return
             
             # Store the PTY for later cleanup
             self.pty = pty
@@ -801,6 +826,44 @@ class TerminalWidget(Gtk.Box):
             
         except Exception as e:
             logger.error(f"Failed to setup SSH terminal: {e}")
+            self._on_connection_failed(str(e))
+    
+    def _fallback_to_askpass(self, ssh_cmd, env_list):
+        """Fallback method when sshpass fails - use askpass instead"""
+        try:
+            logger.info("Falling back to askpass method for password authentication")
+            
+            # Remove sshpass from the command
+            if ssh_cmd[0] == 'sshpass':
+                ssh_cmd = ssh_cmd[3:]  # Remove sshpass, -f, and fifo_path
+            
+            # Set up askpass environment
+            from .askpass_utils import get_ssh_env_with_askpass_for_password
+            askpass_env = get_ssh_env_with_askpass_for_password(self.connection.host, self.connection.username)
+            
+            # Update environment list
+            for key, value in askpass_env.items():
+                env_list.append(f"{key}={value}")
+            
+            logger.debug(f"Fallback SSH command: {ssh_cmd}")
+            
+            # Try spawning again with askpass
+            self.vte.spawn_async(
+                Vte.PtyFlags.DEFAULT,
+                os.path.expanduser('~') or '/',
+                ssh_cmd,
+                env_list,
+                GLib.SpawnFlags.DEFAULT,
+                None,
+                None,
+                -1,
+                None,
+                self._on_spawn_complete,
+                ()
+            )
+            
+        except Exception as e:
+            logger.error(f"Fallback to askpass also failed: {e}")
             self._on_connection_failed(str(e))
     
     def _on_spawn_complete(self, terminal, pid, error, user_data=None):

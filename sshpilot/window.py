@@ -19,6 +19,7 @@ except Exception:
     _HAS_VTE = False
 
 from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango
+import subprocess
 
 # Feature detection for libadwaita versions across distros
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
@@ -35,6 +36,40 @@ from .connection_dialog import ConnectionDialog
 from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
 
 logger = logging.getLogger(__name__)
+
+
+def open_remote_in_file_manager(user: str, host: str, port: int|None = None, path: str|None = None):
+    """Open remote server in file manager using SFTP URI"""
+    # Build sftp URI (avoid spaces/newlines)
+    p = path or "/"
+    if port:
+        uri = f"sftp://{user}@{host}:{port}{p}"
+    else:
+        uri = f"sftp://{user}@{host}{p}"
+    
+    try:
+        Gio.AppInfo.launch_default_for_uri(uri, None)
+        return True, None
+    except Exception as e:
+        error_msg = str(e)
+        # Fall back to xdg-open if needed
+        try:
+            result = subprocess.run(["xdg-open", uri], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                return True, None
+            else:
+                # Capture the error output for better error reporting
+                error_msg = result.stderr.strip() if result.stderr else error_msg
+                return False, error_msg
+        except subprocess.TimeoutExpired:
+            error_msg = "Connection timeout - SFTP server may not be available"
+            return False, error_msg
+        except FileNotFoundError:
+            error_msg = "No file manager found to handle SFTP connections"
+            return False, error_msg
+        except Exception as sub_e:
+            error_msg = f"{error_msg} (fallback failed: {str(sub_e)})"
+            return False, error_msg
 
 
 # =========================
@@ -1201,6 +1236,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.open_new_connection_tab_action = Gio.SimpleAction.new('open-new-connection-tab', None)
         self.open_new_connection_tab_action.connect('activate', self.on_open_new_connection_tab_action)
         self.add_action(self.open_new_connection_tab_action)
+        
+        # Action for managing files on remote server
+        self.manage_files_action = Gio.SimpleAction.new('manage-files', None)
+        self.manage_files_action.connect('activate', self.on_manage_files_action)
+        self.add_action(self.manage_files_action)
         # (Toasts disabled) Remove any toast-related actions if previously defined
         try:
             if hasattr(self, '_toast_reconnect_action'):
@@ -1246,7 +1286,7 @@ class MainWindow(Adw.ApplicationWindow):
               border-radius: 8px;
               box-shadow: 0 0 0 0.5px alpha(@accent_bg_color, 0.28) inset;
               opacity: 0;
-              transition: opacity 0.9s ease-in-out;
+              transition: opacity 0.3s ease-in-out;
             }
             .pulse-highlight.on {
               opacity: 1;
@@ -1275,26 +1315,7 @@ class MainWindow(Adw.ApplicationWindow):
         else:  
             widget.remove_css_class(name)
 
-    def breathe(self, widget: Gtk.Widget, repeats=3, duration_ms=280):
-        """Breathe animation helper using Adw.TimedAnimation"""
-        if not HAS_TIMED_ANIMATION:
-            return
-            
-        # If an old animation exists, stop it
-        if hasattr(widget, "_pulse_anim") and widget._pulse_anim is not None:
-            widget._pulse_anim.pause()
-            widget._pulse_anim = None
 
-        target = Adw.PropertyAnimationTarget.new(widget, "opacity")
-        anim = Adw.TimedAnimation.new(widget, 0.0, 1.0, duration_ms, target)
-        anim.set_easing(Adw.Easing.EASE_IN_OUT)
-        anim.set_alternate(True)          # 0→1 then 1→0 forms one "breath"
-        anim.set_repeat_count(repeats)    # number of breaths
-
-        widget._pulse_anim = anim
-        # Make sure the layer starts invisible
-        widget.set_opacity(0.0)
-        anim.play()
 
     def pulse_selected_row(self, list_box: Gtk.ListBox, repeats=3, duration_ms=280):
         """Pulse the selected row with highlight effect"""
@@ -1309,17 +1330,17 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Use CSS-based pulse for now
         pulse = row._pulse
-        cycle_duration = max(900, duration_ms // repeats)  # Minimum 900ms per cycle for very slow, clear pulses
+        cycle_duration = max(300, duration_ms // repeats)  # Minimum 300ms per cycle for faster pulses
         
         def do_cycle(count):
             if count == 0:
                 return False
             pulse.add_css_class("on")
-            # Keep the pulse visible for a longer time for smoother effect
-            GLib.timeout_add(cycle_duration // 3, lambda: (
+            # Keep the pulse visible for a shorter time for snappier effect
+            GLib.timeout_add(cycle_duration // 2, lambda: (
                 pulse.remove_css_class("on"),
-                # Add a longer delay before the next pulse
-                GLib.timeout_add(cycle_duration * 2 // 3, lambda: do_cycle(count - 1)) or True
+                # Add a shorter delay before the next pulse
+                GLib.timeout_add(cycle_duration // 2, lambda: do_cycle(count - 1)) or True
             ) and False)
             return False
 
@@ -1376,13 +1397,19 @@ class MainWindow(Adw.ApplicationWindow):
                     pulse.remove_css_class("on")
 
     def _wire_pulses(self):
-        """Wire pulse effects to trigger on startup and focus-in"""
-        # On first show
-        self.connect("map", lambda *_: self.pulse_selected_row(self.connection_list, repeats=2, duration_ms=4000))
+        """Wire pulse effects to trigger on focus-in only"""
+        # Track if this is the initial startup focus
+        self._is_initial_focus = True
         
         # When list gains keyboard focus (e.g., after Ctrl+L)
         focus_ctl = Gtk.EventControllerFocus()
-        focus_ctl.connect("enter", lambda *_: self.pulse_selected_row(self.connection_list, repeats=2, duration_ms=4000))
+        def on_focus_enter(*args):
+            # Don't pulse on initial startup focus
+            if self._is_initial_focus:
+                self._is_initial_focus = False
+                return
+            self.pulse_selected_row(self.connection_list, repeats=1, duration_ms=600)
+        focus_ctl.connect("enter", on_focus_enter)
         self.connection_list.add_controller(focus_ctl)
         
         # Stop pulse effect when user interacts with the list
@@ -1692,7 +1719,10 @@ class MainWindow(Adw.ApplicationWindow):
                     self.connection_list.select_row(row)
                     self._context_menu_connection = getattr(row, 'connection', None)
                     menu = Gio.Menu()
-                    menu.append(_('Open New Connection'), 'win.open-new-connection')
+                    
+                    # Add menu items
+                    menu.append(_('+ Open New Connection'), 'win.open-new-connection')
+                    menu.append(_('🗄 Manage Files'), 'win.manage-files')
                     pop = Gtk.PopoverMenu.new_from_model(menu)
                     pop.set_parent(self.connection_list)
                     try:
@@ -1980,7 +2010,7 @@ class MainWindow(Adw.ApplicationWindow):
                 self.connection_list.grab_focus()
                 
                 # Pulse the selected row
-                self.pulse_selected_row(self.connection_list, repeats=2, duration_ms=4000)
+                self.pulse_selected_row(self.connection_list, repeats=1, duration_ms=600)
                 
                 # Show toast notification
                 toast = Adw.Toast.new(
@@ -2921,10 +2951,16 @@ class MainWindow(Adw.ApplicationWindow):
                 # Use sshpass for password authentication
                 import shutil
                 sshpass_path = None
-                if shutil.which('sshpass'):
-                    sshpass_path = 'sshpass'
-                elif os.path.exists('/app/bin/sshpass'):
+                
+                # Check if sshpass is available and executable
+                if os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
                     sshpass_path = '/app/bin/sshpass'
+                    logger.debug("Found sshpass at /app/bin/sshpass")
+                elif shutil.which('sshpass'):
+                    sshpass_path = shutil.which('sshpass')
+                    logger.debug(f"Found sshpass in PATH: {sshpass_path}")
+                else:
+                    logger.debug("sshpass not found or not executable")
                 
                 if sshpass_path:
                     # Use the same approach as ssh_password_exec.py for consistency
@@ -2974,6 +3010,12 @@ class MainWindow(Adw.ApplicationWindow):
                 askpass_env = get_ssh_env_with_askpass("force")
                 env.update(askpass_env)
 
+            # Ensure /app/bin is first in PATH for Flatpak compatibility
+            if os.path.exists('/app/bin'):
+                current_path = env.get('PATH', '')
+                if '/app/bin' not in current_path:
+                    env['PATH'] = f"/app/bin:{current_path}"
+            
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
             logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
             envv = [f"{k}={v}" for k, v in env.items()]
@@ -3295,6 +3337,12 @@ class MainWindow(Adw.ApplicationWindow):
                 # No additional environment setup needed here
                 logger.debug("SCP: Password authentication handled by sshpass in command line")
 
+            # Ensure /app/bin is first in PATH for Flatpak compatibility
+            if os.path.exists('/app/bin'):
+                current_path = env.get('PATH', '')
+                if '/app/bin' not in current_path:
+                    env['PATH'] = f"/app/bin:{current_path}"
+            
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
             envv = [f"{k}={v}" for k, v in env.items()]
             logger.debug(f"SCP: Final environment variables: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
@@ -3468,10 +3516,16 @@ class MainWindow(Adw.ApplicationWindow):
                         # Use sshpass for password authentication
                         import shutil
                         sshpass_path = None
-                        if shutil.which('sshpass'):
-                            sshpass_path = 'sshpass'
-                        elif os.path.exists('/app/bin/sshpass'):
+                        
+                        # Check if sshpass is available and executable
+                        if os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
                             sshpass_path = '/app/bin/sshpass'
+                            logger.debug("Found sshpass at /app/bin/sshpass")
+                        elif shutil.which('sshpass'):
+                            sshpass_path = shutil.which('sshpass')
+                            logger.debug(f"Found sshpass in PATH: {sshpass_path}")
+                        else:
+                            logger.debug("sshpass not found or not executable")
                         
                         if sshpass_path:
                             # Use the same approach as ssh_password_exec.py for consistency
@@ -3502,10 +3556,14 @@ class MainWindow(Adw.ApplicationWindow):
                             import atexit
                             atexit.register(cleanup_tmpdir)
                         else:
-                            # sshpass not available, fallback to environment variable approach
-                            os.environ['SSHPASS'] = saved_password
-                            argv = [sshpass_path, '-e'] + argv
-                            logger.debug("Using sshpass with environment variable for SCP with saved password")
+                            # sshpass not available → use askpass env (same pattern as in ssh-copy-id path)
+                            from .askpass_utils import get_ssh_env_with_askpass
+                            askpass_env = get_ssh_env_with_askpass("force")
+                            # Store for later use in the main execution
+                            if not hasattr(self, '_scp_askpass_env'):
+                                self._scp_askpass_env = {}
+                            self._scp_askpass_env.update(askpass_env)
+                            logger.debug("SCP: sshpass unavailable, using SSH_ASKPASS fallback")
                     else:
                         # No saved password - will use interactive prompt
                         logger.debug("SCP: Password auth selected but no saved password - using interactive prompt")
@@ -4046,6 +4104,53 @@ class MainWindow(Adw.ApplicationWindow):
                 self.show_connection_dialog()
         except Exception as e:
             logger.error(f"Failed to open new connection tab with Ctrl+Alt+N: {e}")
+
+    def on_manage_files_action(self, action, param=None):
+        """Handle manage files action from context menu"""
+        if hasattr(self, '_context_menu_connection') and self._context_menu_connection:
+            connection = self._context_menu_connection
+            try:
+                success, error_msg = open_remote_in_file_manager(
+                    user=connection.username,
+                    host=connection.host,
+                    port=connection.port if connection.port != 22 else None
+                )
+                if success:
+                    logger.info(f"Opened file manager for {connection.nickname}")
+                else:
+                    logger.error(f"Failed to open file manager for {connection.nickname}: {error_msg}")
+                    # Show error dialog to user
+                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
+            except Exception as e:
+                logger.error(f"Error opening file manager: {e}")
+                # Show error dialog to user
+                self._show_manage_files_error(connection.nickname, str(e))
+
+    def _show_manage_files_error(self, connection_name: str, error_message: str):
+        """Show error dialog for manage files failure"""
+        try:
+            # Show generic error dialog
+            msg = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("File Manager Error"),
+                body=_("Failed to open file manager for remote server.")
+            )
+            
+            # Add technical details if available
+            if error_message and error_message.strip():
+                detail_label = Gtk.Label(label=error_message)
+                detail_label.add_css_class("dim-label")
+                detail_label.set_wrap(True)
+                msg.set_extra_child(detail_label)
+            
+            msg.add_response("ok", _("OK"))
+            msg.set_default_response("ok")
+            msg.set_close_response("ok")
+            msg.present()
+            
+        except Exception as e:
+            logger.error(f"Failed to show manage files error dialog: {e}")
 
     def _cleanup_and_quit(self):
         """Clean up all connections and quit - SIMPLIFIED VERSION"""

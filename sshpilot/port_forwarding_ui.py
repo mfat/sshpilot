@@ -398,7 +398,7 @@ class PortForwardingRules(Gtk.Box):
             if 'dialog' in locals():
                 dialog.destroy()
 
-@Gtk.Template(resource_path='/io/github/mfat/sshpilot/ui/port_forwarding_rules.ui')
+#@Gtk.Template(resource_path='/io/github/mfat/sshpilot/ui/port_forwarding_rules.ui')
 class PortForwardingRuleDialog(Adw.Window):
     """Dialog for adding/editing port forwarding rules"""
     __gtype_name__ = 'PortForwardingRuleDialog'
