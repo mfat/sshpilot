@@ -19,6 +19,7 @@ except Exception:
     _HAS_VTE = False
 
 from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango
+import subprocess
 
 # Feature detection for libadwaita versions across distros
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
@@ -35,6 +36,40 @@ from .connection_dialog import ConnectionDialog
 from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
 
 logger = logging.getLogger(__name__)
+
+
+def open_remote_in_file_manager(user: str, host: str, port: int|None = None, path: str|None = None):
+    """Open remote server in file manager using SFTP URI"""
+    # Build sftp URI (avoid spaces/newlines)
+    p = path or "/"
+    if port:
+        uri = f"sftp://{user}@{host}:{port}{p}"
+    else:
+        uri = f"sftp://{user}@{host}{p}"
+    
+    try:
+        Gio.AppInfo.launch_default_for_uri(uri, None)
+        return True, None
+    except Exception as e:
+        error_msg = str(e)
+        # Fall back to xdg-open if needed
+        try:
+            result = subprocess.run(["xdg-open", uri], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                return True, None
+            else:
+                # Capture the error output for better error reporting
+                error_msg = result.stderr.strip() if result.stderr else error_msg
+                return False, error_msg
+        except subprocess.TimeoutExpired:
+            error_msg = "Connection timeout - SFTP server may not be available"
+            return False, error_msg
+        except FileNotFoundError:
+            error_msg = "No file manager found to handle SFTP connections"
+            return False, error_msg
+        except Exception as sub_e:
+            error_msg = f"{error_msg} (fallback failed: {str(sub_e)})"
+            return False, error_msg
 
 
 # =========================
@@ -1201,6 +1236,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.open_new_connection_tab_action = Gio.SimpleAction.new('open-new-connection-tab', None)
         self.open_new_connection_tab_action.connect('activate', self.on_open_new_connection_tab_action)
         self.add_action(self.open_new_connection_tab_action)
+        
+        # Action for managing files on remote server
+        self.manage_files_action = Gio.SimpleAction.new('manage-files', None)
+        self.manage_files_action.connect('activate', self.on_manage_files_action)
+        self.add_action(self.manage_files_action)
         # (Toasts disabled) Remove any toast-related actions if previously defined
         try:
             if hasattr(self, '_toast_reconnect_action'):
@@ -1679,7 +1719,10 @@ class MainWindow(Adw.ApplicationWindow):
                     self.connection_list.select_row(row)
                     self._context_menu_connection = getattr(row, 'connection', None)
                     menu = Gio.Menu()
-                    menu.append(_('Open New Connection'), 'win.open-new-connection')
+                    
+                    # Add menu items with icons using a simpler approach
+                    menu.append(_('➕ Open New Connection'), 'win.open-new-connection')
+                    menu.append(_('📁 Manage Files'), 'win.manage-files')
                     pop = Gtk.PopoverMenu.new_from_model(menu)
                     pop.set_parent(self.connection_list)
                     try:
@@ -4061,6 +4104,53 @@ class MainWindow(Adw.ApplicationWindow):
                 self.show_connection_dialog()
         except Exception as e:
             logger.error(f"Failed to open new connection tab with Ctrl+Alt+N: {e}")
+
+    def on_manage_files_action(self, action, param=None):
+        """Handle manage files action from context menu"""
+        if hasattr(self, '_context_menu_connection') and self._context_menu_connection:
+            connection = self._context_menu_connection
+            try:
+                success, error_msg = open_remote_in_file_manager(
+                    user=connection.username,
+                    host=connection.host,
+                    port=connection.port if connection.port != 22 else None
+                )
+                if success:
+                    logger.info(f"Opened file manager for {connection.nickname}")
+                else:
+                    logger.error(f"Failed to open file manager for {connection.nickname}: {error_msg}")
+                    # Show error dialog to user
+                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
+            except Exception as e:
+                logger.error(f"Error opening file manager: {e}")
+                # Show error dialog to user
+                self._show_manage_files_error(connection.nickname, str(e))
+
+    def _show_manage_files_error(self, connection_name: str, error_message: str):
+        """Show error dialog for manage files failure"""
+        try:
+            # Show generic error dialog
+            msg = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("File Manager Error"),
+                body=_("Failed to open file manager for remote server.")
+            )
+            
+            # Add technical details if available
+            if error_message and error_message.strip():
+                detail_label = Gtk.Label(label=error_message)
+                detail_label.add_css_class("dim-label")
+                detail_label.set_wrap(True)
+                msg.set_extra_child(detail_label)
+            
+            msg.add_response("ok", _("OK"))
+            msg.set_default_response("ok")
+            msg.set_close_response("ok")
+            msg.present()
+            
+        except Exception as e:
+            logger.error(f"Failed to show manage files error dialog: {e}")
 
     def _cleanup_and_quit(self):
         """Clean up all connections and quit - SIMPLIFIED VERSION"""
