@@ -1720,9 +1720,9 @@ class MainWindow(Adw.ApplicationWindow):
                     self._context_menu_connection = getattr(row, 'connection', None)
                     menu = Gio.Menu()
                     
-                    # Add menu items with icons using a simpler approach
-                    menu.append(_('➕ Open New Connection'), 'win.open-new-connection')
-                    menu.append(_('📁 Manage Files'), 'win.manage-files')
+                    # Add menu items
+                    menu.append(_('+ Open New Connection'), 'win.open-new-connection')
+                    menu.append(_('🗄 Manage Files'), 'win.manage-files')
                     pop = Gtk.PopoverMenu.new_from_model(menu)
                     pop.set_parent(self.connection_list)
                     try:
