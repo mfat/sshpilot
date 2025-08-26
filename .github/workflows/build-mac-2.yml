@@ -22,7 +22,10 @@ jobs:
       - name: Install Homebrew dependencies
         run: |
           brew update
+          # Install GTK4 and libadwaita with all dependencies
           brew install gtk4 libadwaita vte3 adwaita-icon-theme gobject-introspection pygobject3 sshpass
+          # Ensure libadwaita is properly linked
+          brew link --overwrite libadwaita
           # Get Homebrew prefix (different on Intel vs ARM64)
           BREW_PREFIX=$(brew --prefix)
           echo "Homebrew prefix: $BREW_PREFIX"
@@ -46,25 +49,41 @@ jobs:
           pip install paramiko cryptography secretstorage
           # Install specific setuptools version that works well with py2app
           pip install 'setuptools==69.5.1' wheel
+          
       - name: Set up environment for PyGObject
         run: |
           # Set environment variables for GObject Introspection using dynamic Homebrew prefix
           export GI_TYPELIB_PATH="$BREW_PREFIX/lib/girepository-1.0"
           export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_LIBRARY_PATH"
+          export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
           echo "GI_TYPELIB_PATH=$BREW_PREFIX/lib/girepository-1.0" >> $GITHUB_ENV
           echo "DYLD_LIBRARY_PATH=$BREW_PREFIX/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
-      - name: Verify PyGObject installation
+          echo "PKG_CONFIG_PATH=$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+          
+      - name: Verify PyGObject and libadwaita installation
         run: |
           # Set up environment for PyGObject using dynamic Homebrew prefix and Python version
           export PYTHONPATH="$BREW_PREFIX/lib/python$PYTHON_VERSION/site-packages:$PYTHONPATH"
           export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
           
-          # Test PyGObject import
-          python -c "import sys; sys.path.insert(0, '$BREW_PREFIX/lib/python$PYTHON_VERSION/site-packages'); import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk; print('GTK version:', Gtk.get_major_version())" || echo "PyGObject not available via system path"
+          # Test PyGObject import with Adw (libadwaita)
+          python -c "
+          import sys
+          sys.path.insert(0, '$BREW_PREFIX/lib/python$PYTHON_VERSION/site-packages')
+          import gi
+          gi.require_version('Adw', '1')
+          gi.require_version('Gtk', '4.0')
+          from gi.repository import Adw, Gtk
+          print('✓ Adw (libadwaita) available')
+          print('✓ GTK version:', Gtk.get_major_version())
+          " || echo "❌ Adw (libadwaita) not available"
           
           # Check system components
+          echo "Checking GObject Introspection:"
           pkg-config --modversion gobject-introspection-1.0
-          ls -l "$BREW_PREFIX/lib/girepository-1.0" || echo "GI typelib directory not found"
+          echo "Checking libadwaita:"
+          pkg-config --modversion libadwaita-1
+          ls -l "$BREW_PREFIX/lib/girepository-1.0" | grep -i adw || echo "No Adw typelib found"
           ls -l "$BREW_PREFIX/share/glib-2.0/schemas" || echo "GLib schemas not found"
           echo "Checking for icon theme paths:"
           ls -la "$BREW_PREFIX/share/" | grep -i adwaita || echo "No adwaita directory found"
@@ -109,7 +128,8 @@ jobs:
                   'LSEnvironment': {
                       'PYTHONPATH': '$BREW_PREFIX/lib/python$PYTHON_VERSION/site-packages',
                       'GI_TYPELIB_PATH': '$BREW_PREFIX/lib/girepository-1.0',
-                      'DYLD_LIBRARY_PATH': '$BREW_PREFIX/lib'
+                      'DYLD_LIBRARY_PATH': '$BREW_PREFIX/lib',
+                      'PKG_CONFIG_PATH': '$BREW_PREFIX/lib/pkgconfig'
                   }
               }
           }
@@ -123,6 +143,7 @@ jobs:
           
           # Ensure system PyGObject is available
           export PYTHONPATH="$BREW_PREFIX/lib/python$PYTHON_VERSION/site-packages:$PYTHONPATH"
+          export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
           
           # Build with explicit cleanup and architecture flags
           ARCHFLAGS="-arch x86_64 -arch arm64" python setup.py py2app --no-chdir
