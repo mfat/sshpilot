@@ -39,6 +39,8 @@ jobs:
       - name: Install Dependencies via Homebrew
         run: |
           brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwaita-icon-theme pkg-config glib graphene icu4c sshpass
+          # Ensure libadwaita is properly linked
+          brew link --overwrite libadwaita
           # Get Homebrew prefix (different on Intel vs ARM64)
           BREW_PREFIX=$(brew --prefix)
           echo "Homebrew prefix: $BREW_PREFIX"
@@ -61,8 +63,18 @@ jobs:
           pip list | grep -E "(numpy|matplotlib)" || echo "Good: numpy/matplotlib not installed"
           # Set up environment for Homebrew PyGObject using dynamic paths
           export PYTHONPATH="$BREW_PREFIX/lib/python$PYTHON_VERSION/site-packages:$PYTHONPATH"
-          echo "Checking PyGObject availability:"
-          python -c "import sys; sys.path.insert(0, '$BREW_PREFIX/lib/python$PYTHON_VERSION/site-packages'); import gi; print('PyGObject available')" || echo "PyGObject not found"
+          export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+          echo "Checking PyGObject and libadwaita availability:"
+          python -c "
+          import sys
+          sys.path.insert(0, '$BREW_PREFIX/lib/python$PYTHON_VERSION/site-packages')
+          import gi
+          gi.require_version('Adw', '1')
+          gi.require_version('Gtk', '4.0')
+          from gi.repository import Adw, Gtk
+          print('✓ Adw (libadwaita) available')
+          print('✓ GTK version:', Gtk.get_major_version())
+          " || echo "❌ Adw (libadwaita) not available"
 
       # Step 5.5: Patch secretstorage for macOS compatibility
       - name: Patch secretstorage for macOS
@@ -89,6 +101,7 @@ jobs:
           export GI_TYPELIB_PATH="$BREW_PREFIX/lib/girepository-1.0"
           export DYLD_FALLBACK_LIBRARY_PATH="$BREW_PREFIX/opt/gtk4/lib:$BREW_PREFIX/opt/glib/lib:$BREW_PREFIX/opt/vte3/lib:$BREW_PREFIX/opt/icu4c/lib:$BREW_PREFIX/opt/graphene/lib:$BREW_PREFIX/lib"
           export XDG_DATA_DIRS="$BREW_PREFIX/share"
+          export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
           
           # Debug: Check what Python packages are available
           echo "Installed Python packages:"
@@ -184,9 +197,10 @@ jobs:
           EOF
           
           # Set up environment for PyGObject using dynamic Homebrew prefix
-          export PYTHONPATH="$BREW_PREFIX/lib/python3.12/site-packages:$PYTHONPATH"
+          export PYTHONPATH="$BREW_PREFIX/lib/python$PYTHON_VERSION/site-packages:$PYTHONPATH"
           export GI_TYPELIB_PATH="$BREW_PREFIX/lib/girepository-1.0"
           export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_LIBRARY_PATH"
+          export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
           
           # Build app bundle for native architecture (x86_64 on macos-13)
           pyinstaller --clean sshpilot-dynamic.spec
@@ -205,12 +219,21 @@ jobs:
           export GI_TYPELIB_PATH="\$BREW_PREFIX/lib/girepository-1.0"
           export DYLD_LIBRARY_PATH="\$BREW_PREFIX/lib:\$DYLD_LIBRARY_PATH"
           export XDG_DATA_DIRS="\$BREW_PREFIX/share:\$XDG_DATA_DIRS"
+          export PKG_CONFIG_PATH="\$BREW_PREFIX/lib/pkgconfig:\$PKG_CONFIG_PATH"
           
           # Debug: Show environment
           echo "BREW_PREFIX: \$BREW_PREFIX"
           echo "PYTHONPATH: \$PYTHONPATH"
-          echo "Checking for PyGObject..."
-          python3 -c "import sys; sys.path.insert(0, '\$BREW_PREFIX/lib/python$PYTHON_VERSION/site-packages'); import gi; print('PyGObject found')" || echo "PyGObject not found"
+          echo "Checking for PyGObject and libadwaita..."
+          python3 -c "
+          import sys
+          sys.path.insert(0, '\$BREW_PREFIX/lib/python$PYTHON_VERSION/site-packages')
+          import gi
+          gi.require_version('Adw', '1')
+          gi.require_version('Gtk', '4.0')
+          from gi.repository import Adw, Gtk
+          print('✓ PyGObject and libadwaita found')
+          " || echo "❌ PyGObject or libadwaita not found"
           
           # Run the actual application
           exec "\$SCRIPT_DIR/sshPilot" "\$@"
