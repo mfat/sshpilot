@@ -47,10 +47,6 @@ def open_remote_in_file_manager(user: str, host: str, port: int|None = None, pat
     else:
         uri = f"sftp://{user}@{host}{p}"
     
-    # Check if we're running in a Flatpak environment
-    is_flatpak = os.path.exists("/.flatpak-info") or os.environ.get("FLATPAK_ID") is not None
-    logger.debug(f"Detected Flatpak environment: {is_flatpak}")
-    
     # Try multiple approaches with retries for SFTP connection issues
     max_retries = 2
     retry_delay = 1.0  # seconds
@@ -73,70 +69,7 @@ def open_remote_in_file_manager(user: str, host: str, port: int|None = None, pat
                 retry_delay *= 1.5  # Increase delay for next retry
                 continue
             
-            # In Flatpak, try flatpak-spawn to run xdg-open
-            if is_flatpak:
-                try:
-                    logger.debug("Trying flatpak-spawn xdg-open...")
-                    result = subprocess.run(["flatpak-spawn", "--host", "xdg-open", uri], 
-                                          capture_output=True, text=True, timeout=15)
-                    if result.returncode == 0:
-                        logger.info(f"Successfully launched file manager via flatpak-spawn xdg-open for {user}@{host}")
-                        return True, None
-                    else:
-                        error_msg = result.stderr.strip() if result.stderr else error_msg
-                        logger.debug(f"flatpak-spawn xdg-open failed (attempt {attempt + 1}): {error_msg}")
-                        
-                        # Check if it's a "not mounted" error that might resolve with retry
-                        if "not mounted" in error_msg.lower() and attempt < max_retries:
-                            logger.info(f"SFTP connection not ready via flatpak-spawn, retrying in {retry_delay}s...")
-                            import time
-                            time.sleep(retry_delay)
-                            retry_delay *= 1.5
-                            continue
-                        
-                        # If flatpak-spawn failed, try direct xdg-open as fallback
-                        logger.debug("flatpak-spawn failed, trying direct xdg-open...")
-                        try:
-                            result = subprocess.run(["xdg-open", uri], capture_output=True, text=True, timeout=15)
-                            if result.returncode == 0:
-                                logger.info(f"Successfully launched file manager via direct xdg-open for {user}@{host}")
-                                return True, None
-                            else:
-                                error_msg = result.stderr.strip() if result.stderr else error_msg
-                                logger.debug(f"Direct xdg-open failed (attempt {attempt + 1}): {error_msg}")
-                        except FileNotFoundError:
-                            error_msg = "No file manager found in Flatpak environment"
-                            logger.error(f"Direct xdg-open not found in Flatpak: {error_msg}")
-                        except Exception as sub_e:
-                            error_msg = f"Direct xdg-open failed: {str(sub_e)}"
-                            logger.error(f"Direct xdg-open exception (attempt {attempt + 1}): {error_msg}")
-                        
-                        return False, error_msg
-                except FileNotFoundError:
-                    logger.debug("flatpak-spawn not found, trying direct xdg-open...")
-                    # Fall through to regular xdg-open attempt
-                except subprocess.TimeoutExpired:
-                    error_msg = "Connection timeout - SFTP server may not be available"
-                    logger.warning(f"flatpak-spawn timeout (attempt {attempt + 1}): {error_msg}")
-                    if attempt < max_retries:
-                        logger.info(f"Retrying after timeout in {retry_delay}s...")
-                        import time
-                        time.sleep(retry_delay)
-                        retry_delay *= 1.5
-                        continue
-                    return False, error_msg
-                except Exception as sub_e:
-                    error_msg = f"flatpak-spawn failed: {str(sub_e)}"
-                    logger.error(f"flatpak-spawn exception (attempt {attempt + 1}): {error_msg}")
-                    if attempt < max_retries:
-                        logger.info(f"Retrying after flatpak-spawn exception in {retry_delay}s...")
-                        import time
-                        time.sleep(retry_delay)
-                        retry_delay *= 1.5
-                        continue
-                    return False, error_msg
-            
-            # Fall back to regular xdg-open if not in Flatpak or if flatpak-spawn failed
+            # Fall back to xdg-open if Gio failed
             try:
                 result = subprocess.run(["xdg-open", uri], capture_output=True, text=True, timeout=15)
                 if result.returncode == 0:
@@ -4534,12 +4467,8 @@ class MainWindow(Adw.ApplicationWindow):
     def _show_manage_files_error(self, connection_name: str, error_message: str):
         """Show error dialog for manage files failure"""
         try:
-            # Check if we're in a Flatpak environment
-            is_flatpak = os.path.exists("/.flatpak-info") or os.environ.get("FLATPAK_ID") is not None
-            
             # Determine if this is a "not mounted" error that might be temporary
             is_mount_error = "not mounted" in error_message.lower()
-            is_flatpak_error = "flatpak" in error_message.lower() or "no file manager found" in error_message.lower()
             
             if is_mount_error:
                 # Provide more helpful guidance for mount errors
@@ -4554,34 +4483,6 @@ class MainWindow(Adw.ApplicationWindow):
                     _("• Waiting a moment and trying again"),
                     _("• Manually opening the SFTP URL in your file manager"),
                     _("• Ensuring the server is accessible via SSH")
-                ]
-                
-                for suggestion in suggestions:
-                    label = Gtk.Label(label=suggestion)
-                    label.set_halign(Gtk.Align.START)
-                    label.set_wrap(True)
-                    suggestions_box.append(label)
-                
-                msg = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading=heading,
-                    body=body
-                )
-                msg.set_extra_child(suggestions_box)
-            elif is_flatpak_error and is_flatpak:
-                # Provide Flatpak-specific guidance
-                heading = _("File Manager Not Available in Flatpak")
-                body = _("The file manager couldn't be launched from the Flatpak environment. You can try:")
-                
-                # Create a list of suggestions
-                suggestions_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-                suggestions_box.set_margin_top(12)
-                
-                suggestions = [
-                    _("• Manually opening the SFTP URL in your file manager"),
-                    _("• Using the terminal to access files via SSH"),
-                    _("• Installing the app outside of Flatpak if file manager access is needed")
                 ]
                 
                 for suggestion in suggestions:
