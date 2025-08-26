@@ -38,86 +38,312 @@ from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_p
 logger = logging.getLogger(__name__)
 
 
-def open_remote_in_file_manager(user: str, host: str, port: int|None = None, path: str|None = None):
-    """Open remote server in file manager using SFTP URI"""
-    # Build sftp URI (avoid spaces/newlines)
+def open_remote_in_file_manager(user: str, host: str, port: int|None = None, path: str|None = None, error_callback=None):
+    """Open remote server in file manager using SFTP URI with proper GVFS mounting"""
+    # Build sftp URI
     p = path or "/"
+    port_part = f":{port}" if port else ""
+    uri = f"sftp://{user}@{host}{port_part}{p}"
+    
+    logger.info(f"Opening SFTP URI: {uri}")
+    
+    # Verify SSH connection first
+    logger.info(f"Verifying SSH connection to {user}@{host}...")
+    
+    ssh_cmd = ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
     if port:
-        uri = f"sftp://{user}@{host}:{port}{p}"
-    else:
-        uri = f"sftp://{user}@{host}{p}"
+        ssh_cmd.extend(["-p", str(port)])
+    ssh_cmd.extend([f"{user}@{host}", "echo", "READY"])
     
-    # Try multiple approaches with retries for SFTP connection issues
-    max_retries = 2
-    retry_delay = 1.0  # seconds
+    try:
+        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=15)
+        if result.returncode != 0:
+            error_msg = f"SSH connection failed: {result.stderr.strip() if result.stderr else 'Connection refused'}"
+            logger.error(f"SSH connection failed for {user}@{host}: {error_msg}")
+            return False, error_msg
+        
+        logger.info(f"SSH connection verified for {user}@{host}")
+        
+    except subprocess.TimeoutExpired:
+        error_msg = "SSH connection timeout"
+        logger.error(f"SSH connection timeout for {user}@{host}")
+        return False, error_msg
+    except Exception as e:
+        error_msg = f"SSH connection error: {str(e)}"
+        logger.error(f"SSH connection error for {user}@{host}: {e}")
+        return False, error_msg
     
-    for attempt in range(max_retries + 1):
-        try:
-            # First try: Use Gio.AppInfo.launch_default_for_uri
-            Gio.AppInfo.launch_default_for_uri(uri, None)
-            logger.info(f"Successfully launched file manager for {user}@{host}")
-            return True, None
-        except Exception as e:
-            error_msg = str(e)
-            logger.debug(f"Gio.AppInfo.launch_default_for_uri failed (attempt {attempt + 1}): {error_msg}")
-            
-            # Check if it's a "not mounted" error that might resolve with retry
-            if "not mounted" in error_msg.lower() and attempt < max_retries:
-                logger.info(f"SFTP connection not ready, retrying in {retry_delay}s...")
-                import time
-                time.sleep(retry_delay)
-                retry_delay *= 1.5  # Increase delay for next retry
-                continue
-            
-            # Fall back to xdg-open if Gio failed
+    # Use proper GVFS mount operation
+    return _mount_and_open_sftp(uri, user, host, error_callback)
+
+def _mount_and_open_sftp(uri: str, user: str, host: str, error_callback=None):
+    """Mount SFTP location and open in file manager"""
+    try:
+        logger.info(f"Mounting SFTP location: {uri}")
+        
+        # Create progress dialog
+        progress_dialog = _create_mount_progress_dialog(user, host)
+        progress_dialog.present()
+        
+        gfile = Gio.File.new_for_uri(uri)
+        op = Gio.MountOperation()
+        
+        def on_mounted(source, res, data=None):
             try:
-                result = subprocess.run(["xdg-open", uri], capture_output=True, text=True, timeout=15)
-                if result.returncode == 0:
-                    logger.info(f"Successfully launched file manager via xdg-open for {user}@{host}")
-                    return True, None
+                source.mount_enclosing_volume_finish(res)
+                logger.info(f"SFTP mount successful for {user}@{host}, opening file manager...")
+                
+                # Update progress dialog
+                progress_dialog.update_progress(1.0, "Mount successful! Opening file manager...")
+                
+                # Now it's mounted → open in the default file manager
+                Gio.AppInfo.launch_default_for_uri(uri, None)
+                logger.info(f"File manager launched successfully for {user}@{host}")
+                
+                # Close progress dialog after a short delay
+                GLib.timeout_add(1000, progress_dialog.close)
+                
+            except GLib.Error as e:
+                # Check if the error is "already mounted" - this is actually a success case
+                if "already mounted" in e.message.lower():
+                    logger.info(f"SFTP location already mounted for {user}@{host}, opening file manager...")
+                    
+                    # Update progress dialog
+                    progress_dialog.update_progress(1.0, "Location already mounted! Opening file manager...")
+                    
+                    # Open in the default file manager
+                    Gio.AppInfo.launch_default_for_uri(uri, None)
+                    logger.info(f"File manager launched successfully for {user}@{host}")
+                    
+                    # Close progress dialog after a short delay
+                    GLib.timeout_add(1000, progress_dialog.close)
                 else:
-                    # Capture the error output for better error reporting
-                    error_msg = result.stderr.strip() if result.stderr else error_msg
-                    logger.debug(f"xdg-open failed (attempt {attempt + 1}): {error_msg}")
-                    
-                    # Check if it's a "not mounted" error that might resolve with retry
-                    if "not mounted" in error_msg.lower() and attempt < max_retries:
-                        logger.info(f"SFTP connection not ready via xdg-open, retrying in {retry_delay}s...")
-                        import time
-                        time.sleep(retry_delay)
-                        retry_delay *= 1.5  # Increase delay for next retry
-                        continue
-                    
-                    return False, error_msg
-            except subprocess.TimeoutExpired:
-                error_msg = "Connection timeout - SFTP server may not be available"
-                logger.warning(f"xdg-open timeout (attempt {attempt + 1}): {error_msg}")
-                if attempt < max_retries:
-                    logger.info(f"Retrying after timeout in {retry_delay}s...")
-                    import time
-                    time.sleep(retry_delay)
-                    retry_delay *= 1.5
-                    continue
-                return False, error_msg
-            except FileNotFoundError:
-                error_msg = "No file manager found to handle SFTP connections"
-                logger.error(f"xdg-open not found: {error_msg}")
-                return False, error_msg
-            except Exception as sub_e:
-                error_msg = f"{error_msg} (fallback failed: {str(sub_e)})"
-                logger.error(f"xdg-open exception (attempt {attempt + 1}): {error_msg}")
-                if attempt < max_retries:
-                    logger.info(f"Retrying after exception in {retry_delay}s...")
-                    import time
-                    time.sleep(retry_delay)
-                    retry_delay *= 1.5
-                    continue
-                return False, error_msg
+                    error_msg = f"Could not mount {uri}: {e.message}"
+                    logger.error(f"Mount failed for {user}@{host}: {error_msg}")
+                    progress_dialog.update_progress(0.0, f"Mount failed: {e.message}")
+                    progress_dialog.show_error(error_msg)
+                    if error_callback:
+                        error_callback(error_msg)
+            except Exception as e:
+                error_msg = f"Unexpected error during mount: {str(e)}"
+                logger.error(f"Mount error for {user}@{host}: {e}")
+                progress_dialog.update_progress(0.0, f"Error: {str(e)}")
+                progress_dialog.show_error(error_msg)
+                if error_callback:
+                    error_callback(error_msg)
+        
+        # Start progress updates
+        progress_dialog.start_progress_updates()
+        
+        gfile.mount_enclosing_volume(
+            Gio.MountMountFlags.NONE,
+            op,
+            None,  # cancellable
+            on_mounted,
+            None
+        )
+        
+        logger.info(f"Mount operation started for {user}@{host}")
+        return True, None
+        
+    except Exception as e:
+        error_msg = f"Failed to start mount operation: {str(e)}"
+        logger.error(f"Mount operation failed for {user}@{host}: {e}")
+        return False, error_msg
+
+def _create_mount_progress_dialog(user: str, host: str):
+    """Create a progress dialog for SFTP mount operation"""
+    return MountProgressDialog(user, host)
+
+class MountProgressDialog(Adw.Window):
+    """Progress dialog for SFTP mount operations"""
     
-    # If we get here, all attempts failed
-    final_error = f"Failed to open file manager after {max_retries + 1} attempts. Last error: {error_msg}"
-    logger.error(final_error)
-    return False, final_error
+    def __init__(self, user: str, host: str):
+        super().__init__()
+        self.user = user
+        self.host = host
+        self.progress_value = 0.0
+        self.is_cancelled = False
+        
+        self.set_title("Mounting SFTP Connection")
+        self.set_default_size(500, 300)
+        self.set_resizable(True)
+        self.set_modal(True)
+        
+        # Main container
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        main_box.set_margin_start(20)
+        main_box.set_margin_end(20)
+        main_box.set_margin_top(20)
+        main_box.set_margin_bottom(20)
+        
+        # Header
+        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        
+        # Icon
+        icon = Gtk.Image.new_from_icon_name("folder-remote-symbolic")
+        icon.set_pixel_size(32)
+        header_box.append(icon)
+        
+        # Title and subtitle
+        title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        title_label = Gtk.Label()
+        title_label.set_markup(f"<b>Mounting SFTP Connection</b>")
+        title_label.set_halign(Gtk.Align.START)
+        title_box.append(title_label)
+        
+        subtitle_label = Gtk.Label()
+        subtitle_label.set_text(f"{user}@{host}")
+        subtitle_label.add_css_class("dim-label")
+        subtitle_label.set_halign(Gtk.Align.START)
+        title_box.append(subtitle_label)
+        
+        header_box.append(title_box)
+        header_box.set_hexpand(True)
+        main_box.append(header_box)
+        
+        # Progress bar
+        self.progress_bar = Gtk.ProgressBar()
+        self.progress_bar.set_show_text(True)
+        self.progress_bar.set_text("Initializing mount...")
+        main_box.append(self.progress_bar)
+        
+        # Status label
+        self.status_label = Gtk.Label()
+        self.status_label.set_text("Preparing to mount SFTP connection...")
+        self.status_label.set_halign(Gtk.Align.START)
+        self.status_label.set_wrap(True)
+        main_box.append(self.status_label)
+        
+        # Terminal toggle button
+        terminal_toggle_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        terminal_toggle_box.set_halign(Gtk.Align.START)
+        
+        self.terminal_toggle_button = Gtk.ToggleButton()
+        self.terminal_toggle_button.set_label("Show Terminal Logs")
+        self.terminal_toggle_button.set_icon_name("utilities-terminal-symbolic")
+        self.terminal_toggle_button.connect('toggled', self._on_terminal_toggle)
+        terminal_toggle_box.append(self.terminal_toggle_button)
+        
+        main_box.append(terminal_toggle_box)
+        
+        # Terminal widget (hidden by default)
+        self.terminal_widget = None
+        self.terminal_revealer = Gtk.Revealer()
+        self.terminal_revealer.set_reveal_child(False)
+        main_box.append(self.terminal_revealer)
+        
+        # Buttons
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        button_box.set_halign(Gtk.Align.END)
+        
+        self.cancel_button = Gtk.Button.new_with_label("Cancel")
+        self.cancel_button.connect('clicked', self._on_cancel)
+        button_box.append(self.cancel_button)
+        
+        self.close_button = Gtk.Button.new_with_label("Close")
+        self.close_button.connect('clicked', self.close)
+        self.close_button.set_sensitive(False)
+        button_box.append(self.close_button)
+        
+        main_box.append(button_box)
+        
+        self.set_content(main_box)
+        
+        # Start progress simulation
+        self.progress_timer = None
+    
+    def _create_terminal_widget(self):
+        """Create terminal widget for showing logs"""
+        if self.terminal_widget is None:
+            # Create a simple text view for logs
+            scrolled_window = Gtk.ScrolledWindow()
+            scrolled_window.set_min_content_height(150)
+            scrolled_window.set_max_content_height(300)
+            
+            self.terminal_text_view = Gtk.TextView()
+            self.terminal_text_view.set_editable(False)
+            self.terminal_text_view.set_monospace(True)
+            self.terminal_text_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+            
+            # Add some initial content
+            buffer = self.terminal_text_view.get_buffer()
+            buffer.set_text(f"SFTP Mount Log for {self.user}@{self.host}\n")
+            buffer.insert_at_cursor("=" * 50 + "\n")
+            buffer.insert_at_cursor("Initializing mount operation...\n")
+            
+            scrolled_window.set_child(self.terminal_text_view)
+            self.terminal_widget = scrolled_window
+            
+            self.terminal_revealer.set_child(self.terminal_widget)
+    
+    def _on_terminal_toggle(self, button):
+        """Handle terminal toggle button"""
+        if button.get_active():
+            self._create_terminal_widget()
+            self.terminal_revealer.set_reveal_child(True)
+        else:
+            self.terminal_revealer.set_reveal_child(False)
+    
+    def _on_cancel(self, button):
+        """Handle cancel button"""
+        self.is_cancelled = True
+        self.update_progress(0.0, "Operation cancelled")
+        self.cancel_button.set_sensitive(False)
+        self.close_button.set_sensitive(True)
+    
+    def start_progress_updates(self):
+        """Start progress bar updates"""
+        self.progress_timer = GLib.timeout_add(100, self._update_progress_simulation)
+    
+    def _update_progress_simulation(self):
+        """Simulate progress updates"""
+        if self.is_cancelled:
+            return False
+        
+        if self.progress_value < 0.8:  # Don't go to 100% until mount completes
+            self.progress_value += 0.02
+            self.update_progress(self.progress_value, "Mounting SFTP connection...")
+            return True
+        return False
+    
+    def update_progress(self, value: float, status: str):
+        """Update progress bar and status"""
+        self.progress_value = max(0.0, min(1.0, value))
+        self.progress_bar.set_fraction(self.progress_value)
+        self.progress_bar.set_text(status)
+        self.status_label.set_text(status)
+        
+        # Add to terminal if visible
+        if self.terminal_widget and self.terminal_revealer.get_reveal_child():
+            buffer = self.terminal_text_view.get_buffer()
+            buffer.insert_at_cursor(f"[{self._get_timestamp()}] {status}\n")
+            
+            # Scroll to bottom
+            iter = buffer.get_end_iter()
+            self.terminal_text_view.scroll_to_iter(iter, 0.0, False, 0.0, 0.0)
+    
+    def show_error(self, error_message: str):
+        """Show error in dialog"""
+        self.update_progress(0.0, f"Error: {error_message}")
+        self.cancel_button.set_sensitive(False)
+        self.close_button.set_sensitive(True)
+        
+        # Add error to terminal
+        if self.terminal_widget and self.terminal_revealer.get_reveal_child():
+            buffer = self.terminal_text_view.get_buffer()
+            buffer.insert_at_cursor(f"[{self._get_timestamp()}] ERROR: {error_message}\n")
+    
+    def _get_timestamp(self):
+        """Get current timestamp for logs"""
+        from datetime import datetime
+        return datetime.now().strftime("%H:%M:%S")
+    
+    def close(self, widget=None):
+        """Close the dialog"""
+        if self.progress_timer:
+            GLib.source_remove(self.progress_timer)
+        self.destroy()
 
 
 # =========================
@@ -2301,7 +2527,7 @@ class MainWindow(Adw.ApplicationWindow):
             content.append(pass_box)
             content.append(btn_box)
             tv.set_content(content)
-            dlg.set_child(tv)
+            dlg.set_content(tv)
 
             def close_dialog(*args):
                 try:
@@ -2968,17 +3194,24 @@ class MainWindow(Adw.ApplicationWindow):
             
             # Use the same logic as the context menu action
             try:
-                success, error_msg = open_remote_in_file_manager(
-                    user=connection.username,
-                    host=connection.host,
-                    port=connection.port if connection.port != 22 else None
-                )
-                if success:
-                    logger.info(f"Opened file manager for {connection.nickname}")
-                else:
+                # Define error callback for async operation
+                def error_callback(error_msg):
                     logger.error(f"Failed to open file manager for {connection.nickname}: {error_msg}")
                     # Show error dialog to user
                     self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
+                
+                success, error_msg = open_remote_in_file_manager(
+                    user=connection.username,
+                    host=connection.host,
+                    port=connection.port if connection.port != 22 else None,
+                    error_callback=error_callback
+                )
+                if success:
+                    logger.info(f"Started file manager process for {connection.nickname}")
+                else:
+                    logger.error(f"Failed to start file manager process for {connection.nickname}: {error_msg}")
+                    # Show error dialog to user
+                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to start file manager process")
             except Exception as e:
                 logger.error(f"Error opening file manager: {e}")
                 # Show error dialog to user
@@ -3104,11 +3337,7 @@ class MainWindow(Adw.ApplicationWindow):
             root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             root_box.append(header)
             root_box.append(content_box)
-            try:
-                dlg.set_content(root_box)
-            except Exception:
-                # GTK fallback
-                dlg.set_child(root_box)
+            dlg.set_content(root_box)
 
             def _on_cancel(btn):
                 try:
@@ -3593,10 +3822,7 @@ class MainWindow(Adw.ApplicationWindow):
             root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             root_box.append(header)
             root_box.append(content_box)
-            try:
-                dlg.set_content(root_box)
-            except Exception:
-                dlg.set_child(root_box)
+            dlg.set_content(root_box)
 
             def _on_cancel(btn):
                 # Clean up askpass helper scripts
@@ -4423,17 +4649,24 @@ class MainWindow(Adw.ApplicationWindow):
         if hasattr(self, '_context_menu_connection') and self._context_menu_connection:
             connection = self._context_menu_connection
             try:
-                success, error_msg = open_remote_in_file_manager(
-                    user=connection.username,
-                    host=connection.host,
-                    port=connection.port if connection.port != 22 else None
-                )
-                if success:
-                    logger.info(f"Opened file manager for {connection.nickname}")
-                else:
+                # Define error callback for async operation
+                def error_callback(error_msg):
                     logger.error(f"Failed to open file manager for {connection.nickname}: {error_msg}")
                     # Show error dialog to user
                     self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
+                
+                success, error_msg = open_remote_in_file_manager(
+                    user=connection.username,
+                    host=connection.host,
+                    port=connection.port if connection.port != 22 else None,
+                    error_callback=error_callback
+                )
+                if success:
+                    logger.info(f"Started file manager process for {connection.nickname}")
+                else:
+                    logger.error(f"Failed to start file manager process for {connection.nickname}: {error_msg}")
+                    # Show error dialog to user
+                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to start file manager process")
             except Exception as e:
                 logger.error(f"Error opening file manager: {e}")
                 # Show error dialog to user
@@ -4638,52 +4871,55 @@ class MainWindow(Adw.ApplicationWindow):
     def _show_manage_files_error(self, connection_name: str, error_message: str):
         """Show error dialog for manage files failure"""
         try:
-            # Determine if this is a "not mounted" error that might be temporary
-            is_mount_error = "not mounted" in error_message.lower()
+            # Determine error type for appropriate messaging
+            is_ssh_error = "ssh connection" in error_message.lower() or "connection failed" in error_message.lower()
+            is_timeout_error = "timeout" in error_message.lower()
             
-            if is_mount_error:
-                # Provide more helpful guidance for mount errors
-                heading = _("SFTP Connection Not Ready")
-                body = _("The file manager couldn't establish an SFTP connection to the server. This is often temporary and can be resolved by:")
-                
-                # Create a list of suggestions
-                suggestions_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-                suggestions_box.set_margin_top(12)
+            if is_ssh_error or is_timeout_error:
+                heading = _("SSH Connection Failed")
+                body = _("Could not establish SSH connection to the server. Please check:")
                 
                 suggestions = [
-                    _("• Waiting a moment and trying again"),
-                    _("• Manually opening the SFTP URL in your file manager"),
-                    _("• Ensuring the server is accessible via SSH")
+                    _("• Server is running and accessible"),
+                    _("• SSH service is enabled on the server"),
+                    _("• Firewall allows SSH connections"),
+                    _("• Your SSH keys or credentials are correct"),
+                    _("• Network connectivity to the server")
                 ]
-                
-                for suggestion in suggestions:
-                    label = Gtk.Label(label=suggestion)
-                    label.set_halign(Gtk.Align.START)
-                    label.set_wrap(True)
-                    suggestions_box.append(label)
-                
-                msg = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading=heading,
-                    body=body
-                )
-                msg.set_extra_child(suggestions_box)
             else:
-                # Show generic error dialog for other issues
-                msg = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading=_("File Manager Error"),
-                    body=_("Failed to open file manager for remote server.")
-                )
-                
-                # Add technical details if available
-                if error_message and error_message.strip():
-                    detail_label = Gtk.Label(label=error_message)
-                    detail_label.add_css_class("dim-label")
-                    detail_label.set_wrap(True)
-                    msg.set_extra_child(detail_label)
+                heading = _("File Manager Error")
+                body = _("Failed to open file manager for remote server.")
+                suggestions = [
+                    _("• Try again in a moment"),
+                    _("• Check if the server is accessible"),
+                    _("• Ensure you have proper permissions")
+                ]
+            
+            # Create suggestions box
+            suggestions_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            suggestions_box.set_margin_top(12)
+            
+            for suggestion in suggestions:
+                label = Gtk.Label(label=suggestion)
+                label.set_halign(Gtk.Align.START)
+                label.set_wrap(True)
+                suggestions_box.append(label)
+            
+            msg = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=heading,
+                body=body
+            )
+            msg.set_extra_child(suggestions_box)
+            
+            # Add technical details if available
+            if error_message and error_message.strip():
+                detail_label = Gtk.Label(label=error_message)
+                detail_label.add_css_class("dim-label")
+                detail_label.set_wrap(True)
+                detail_label.set_margin_top(8)
+                suggestions_box.append(detail_label)
             
             msg.add_response("ok", _("OK"))
             msg.set_default_response("ok")
