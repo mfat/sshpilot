@@ -1309,6 +1309,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.manage_files_action = Gio.SimpleAction.new('manage-files', None)
         self.manage_files_action.connect('activate', self.on_manage_files_action)
         self.add_action(self.manage_files_action)
+        
+        # Action for editing connections via context menu
+        self.edit_connection_action = Gio.SimpleAction.new('edit-connection', None)
+        self.edit_connection_action.connect('activate', self.on_edit_connection_action)
+        self.add_action(self.edit_connection_action)
         # (Toasts disabled) Remove any toast-related actions if previously defined
         try:
             if hasattr(self, '_toast_reconnect_action'):
@@ -1790,6 +1795,7 @@ class MainWindow(Adw.ApplicationWindow):
                     
                     # Add menu items
                     menu.append(_('+ Open New Connection'), 'win.open-new-connection')
+                    menu.append(_('✏ Edit Connection'), 'win.edit-connection')
                     menu.append(_('🗄 Manage Files'), 'win.manage-files')
                     pop = Gtk.PopoverMenu.new_from_model(menu)
                     pop.set_parent(self.connection_list)
@@ -4309,6 +4315,20 @@ class MainWindow(Adw.ApplicationWindow):
                 logger.error(f"Error opening file manager: {e}")
                 # Show error dialog to user
                 self._show_manage_files_error(connection.nickname, str(e))
+
+    def on_edit_connection_action(self, action, param=None):
+        """Handle edit connection action from context menu"""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                # Fallback to selected row if any
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+            self.show_connection_dialog(connection)
+        except Exception as e:
+            logger.error(f"Failed to edit connection: {e}")
 
     def _show_manage_files_error(self, connection_name: str, error_message: str):
         """Show error dialog for manage files failure"""
