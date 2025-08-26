@@ -47,29 +47,77 @@ def open_remote_in_file_manager(user: str, host: str, port: int|None = None, pat
     else:
         uri = f"sftp://{user}@{host}{p}"
     
-    try:
-        Gio.AppInfo.launch_default_for_uri(uri, None)
-        return True, None
-    except Exception as e:
-        error_msg = str(e)
-        # Fall back to xdg-open if needed
+    # Try multiple approaches with retries for SFTP connection issues
+    max_retries = 2
+    retry_delay = 1.0  # seconds
+    
+    for attempt in range(max_retries + 1):
         try:
-            result = subprocess.run(["xdg-open", uri], capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                return True, None
-            else:
-                # Capture the error output for better error reporting
-                error_msg = result.stderr.strip() if result.stderr else error_msg
+            # First try: Use Gio.AppInfo.launch_default_for_uri
+            Gio.AppInfo.launch_default_for_uri(uri, None)
+            logger.info(f"Successfully launched file manager for {user}@{host}")
+            return True, None
+        except Exception as e:
+            error_msg = str(e)
+            logger.debug(f"Gio.AppInfo.launch_default_for_uri failed (attempt {attempt + 1}): {error_msg}")
+            
+            # Check if it's a "not mounted" error that might resolve with retry
+            if "not mounted" in error_msg.lower() and attempt < max_retries:
+                logger.info(f"SFTP connection not ready, retrying in {retry_delay}s...")
+                import time
+                time.sleep(retry_delay)
+                retry_delay *= 1.5  # Increase delay for next retry
+                continue
+            
+            # Fall back to xdg-open if Gio failed
+            try:
+                result = subprocess.run(["xdg-open", uri], capture_output=True, text=True, timeout=15)
+                if result.returncode == 0:
+                    logger.info(f"Successfully launched file manager via xdg-open for {user}@{host}")
+                    return True, None
+                else:
+                    # Capture the error output for better error reporting
+                    error_msg = result.stderr.strip() if result.stderr else error_msg
+                    logger.debug(f"xdg-open failed (attempt {attempt + 1}): {error_msg}")
+                    
+                    # Check if it's a "not mounted" error that might resolve with retry
+                    if "not mounted" in error_msg.lower() and attempt < max_retries:
+                        logger.info(f"SFTP connection not ready via xdg-open, retrying in {retry_delay}s...")
+                        import time
+                        time.sleep(retry_delay)
+                        retry_delay *= 1.5  # Increase delay for next retry
+                        continue
+                    
+                    return False, error_msg
+            except subprocess.TimeoutExpired:
+                error_msg = "Connection timeout - SFTP server may not be available"
+                logger.warning(f"xdg-open timeout (attempt {attempt + 1}): {error_msg}")
+                if attempt < max_retries:
+                    logger.info(f"Retrying after timeout in {retry_delay}s...")
+                    import time
+                    time.sleep(retry_delay)
+                    retry_delay *= 1.5
+                    continue
                 return False, error_msg
-        except subprocess.TimeoutExpired:
-            error_msg = "Connection timeout - SFTP server may not be available"
-            return False, error_msg
-        except FileNotFoundError:
-            error_msg = "No file manager found to handle SFTP connections"
-            return False, error_msg
-        except Exception as sub_e:
-            error_msg = f"{error_msg} (fallback failed: {str(sub_e)})"
-            return False, error_msg
+            except FileNotFoundError:
+                error_msg = "No file manager found to handle SFTP connections"
+                logger.error(f"xdg-open not found: {error_msg}")
+                return False, error_msg
+            except Exception as sub_e:
+                error_msg = f"{error_msg} (fallback failed: {str(sub_e)})"
+                logger.error(f"xdg-open exception (attempt {attempt + 1}): {error_msg}")
+                if attempt < max_retries:
+                    logger.info(f"Retrying after exception in {retry_delay}s...")
+                    import time
+                    time.sleep(retry_delay)
+                    retry_delay *= 1.5
+                    continue
+                return False, error_msg
+    
+    # If we get here, all attempts failed
+    final_error = f"Failed to open file manager after {max_retries + 1} attempts. Last error: {error_msg}"
+    logger.error(final_error)
+    return False, final_error
 
 
 # =========================
@@ -1890,6 +1938,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.upload_button.set_sensitive(False)
         self.upload_button.connect('clicked', self.on_upload_file_clicked)
         toolbar.append(self.upload_button)
+
+        # Manage files button
+        self.manage_files_button = Gtk.Button.new_from_icon_name('folder-symbolic')
+        self.manage_files_button.set_tooltip_text('Open file manager for remote server')
+        self.manage_files_button.set_sensitive(False)
+        self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
+        toolbar.append(self.manage_files_button)
         
         # Delete button
         self.delete_button = Gtk.Button.new_from_icon_name('user-trash-symbolic')
@@ -2769,6 +2824,8 @@ class MainWindow(Adw.ApplicationWindow):
             self.copy_key_button.set_sensitive(has_selection)
         if hasattr(self, 'upload_button'):
             self.upload_button.set_sensitive(has_selection)
+        if hasattr(self, 'manage_files_button'):
+            self.manage_files_button.set_sensitive(has_selection)
         self.delete_button.set_sensitive(has_selection)
 
     def on_add_connection_clicked(self, button):
@@ -2883,6 +2940,36 @@ class MainWindow(Adw.ApplicationWindow):
             intro.present()
         except Exception as e:
             logger.error(f'Upload dialog failed: {e}')
+
+    def on_manage_files_button_clicked(self, button):
+        """Handle manage files button click from toolbar"""
+        try:
+            selected_row = self.connection_list.get_selected_row()
+            if not selected_row:
+                return
+            connection = getattr(selected_row, 'connection', None)
+            if not connection:
+                return
+            
+            # Use the same logic as the context menu action
+            try:
+                success, error_msg = open_remote_in_file_manager(
+                    user=connection.username,
+                    host=connection.host,
+                    port=connection.port if connection.port != 22 else None
+                )
+                if success:
+                    logger.info(f"Opened file manager for {connection.nickname}")
+                else:
+                    logger.error(f"Failed to open file manager for {connection.nickname}: {error_msg}")
+                    # Show error dialog to user
+                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
+            except Exception as e:
+                logger.error(f"Error opening file manager: {e}")
+                # Show error dialog to user
+                self._show_manage_files_error(connection.nickname, str(e))
+        except Exception as e:
+            logger.error(f"Manage files button click failed: {e}")
 
     def _show_ssh_copy_id_terminal_using_main_widget(self, connection, ssh_key):
         """Show a window with header bar and embedded terminal running ssh-copy-id.
@@ -4380,20 +4467,52 @@ class MainWindow(Adw.ApplicationWindow):
     def _show_manage_files_error(self, connection_name: str, error_message: str):
         """Show error dialog for manage files failure"""
         try:
-            # Show generic error dialog
-            msg = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_("File Manager Error"),
-                body=_("Failed to open file manager for remote server.")
-            )
+            # Determine if this is a "not mounted" error that might be temporary
+            is_mount_error = "not mounted" in error_message.lower()
             
-            # Add technical details if available
-            if error_message and error_message.strip():
-                detail_label = Gtk.Label(label=error_message)
-                detail_label.add_css_class("dim-label")
-                detail_label.set_wrap(True)
-                msg.set_extra_child(detail_label)
+            if is_mount_error:
+                # Provide more helpful guidance for mount errors
+                heading = _("SFTP Connection Not Ready")
+                body = _("The file manager couldn't establish an SFTP connection to the server. This is often temporary and can be resolved by:")
+                
+                # Create a list of suggestions
+                suggestions_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+                suggestions_box.set_margin_top(12)
+                
+                suggestions = [
+                    _("• Waiting a moment and trying again"),
+                    _("• Manually opening the SFTP URL in your file manager"),
+                    _("• Ensuring the server is accessible via SSH")
+                ]
+                
+                for suggestion in suggestions:
+                    label = Gtk.Label(label=suggestion)
+                    label.set_halign(Gtk.Align.START)
+                    label.set_wrap(True)
+                    suggestions_box.append(label)
+                
+                msg = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=heading,
+                    body=body
+                )
+                msg.set_extra_child(suggestions_box)
+            else:
+                # Show generic error dialog for other issues
+                msg = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("File Manager Error"),
+                    body=_("Failed to open file manager for remote server.")
+                )
+                
+                # Add technical details if available
+                if error_message and error_message.strip():
+                    detail_label = Gtk.Label(label=error_message)
+                    detail_label.add_css_class("dim-label")
+                    detail_label.set_wrap(True)
+                    msg.set_extra_child(detail_label)
             
             msg.add_response("ok", _("OK"))
             msg.set_default_response("ok")
