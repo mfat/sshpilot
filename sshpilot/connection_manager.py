@@ -24,7 +24,7 @@ except Exception:
 import socket
 import time
 from gi.repository import GObject, GLib
-from .askpass_utils import get_ssh_env_with_askpass
+from .askpass_utils import get_ssh_env_with_askpass, get_ssh_env_with_askpass_for_password
 
 # Set up asyncio event loop for GTK integration
 if os.name == 'posix':
@@ -130,6 +130,7 @@ class Connection:
                 if compression:
                     ssh_cmd.append('-C')
             ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
+            ssh_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
 
             # Apply default host key behavior when not explicitly set
             try:
@@ -344,12 +345,19 @@ class Connection:
             # Log the full command (without sensitive data)
             logger.debug(f"SSH command: {' '.join(ssh_cmd[:10])}...")
             
+            # Set up askpass environment to prevent Flatpak from using system askpass
+            from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
+            ensure_askpass_script()
+            env = os.environ.copy()
+            env.update(get_ssh_env_with_askpass_for_password(self.host, self.username))
+            
             # Start the SSH process
             logger.info(f"Starting dynamic port forwarding with command: {' '.join(ssh_cmd)}")
             self.process = await asyncio.create_subprocess_exec(
                 *ssh_cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                env=env
             )
             
             # Wait a bit to catch any immediate errors
@@ -421,11 +429,18 @@ class Connection:
                 '-L', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"
             ]
             
+            # Set up askpass environment to prevent Flatpak from using system askpass
+            from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
+            ensure_askpass_script()
+            env = os.environ.copy()
+            env.update(get_ssh_env_with_askpass_for_password(self.host, self.username))
+            
             # Start the SSH process
             self.process = await asyncio.create_subprocess_exec(
                 *ssh_cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                env=env
             )
             
             # Check if the process started successfully
@@ -455,6 +470,56 @@ class Connection:
                 await self.process.wait()
             raise
 
+    async def start_remote_forwarding(self, listen_addr: str, listen_port: int, remote_host: str, remote_port: int):
+        """Start remote port forwarding using system SSH client"""
+        try:
+            # Build the SSH command for remote port forwarding
+            ssh_cmd = self.ssh_cmd + [
+                '-N',  # No remote command
+                '-R', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"
+            ]
+            
+            # Set up askpass environment to prevent Flatpak from using system askpass
+            from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
+            ensure_askpass_script()
+            env = os.environ.copy()
+            env.update(get_ssh_env_with_askpass_for_password(self.host, self.username))
+            
+            # Start the SSH process
+            self.process = await asyncio.create_subprocess_exec(
+                *ssh_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env
+            )
+            
+            # Check if the process started successfully
+            if self.process.returncode is not None and self.process.returncode != 0:
+                stderr = await self.process.stderr.read()
+                raise Exception(f"SSH remote port forwarding failed: {stderr.decode().strip()}")
+            
+            logger.info(f"Remote forwarding started: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
+            
+            # Store the forwarding rule
+            self.forwarding_rules.append({
+                'type': 'remote',
+                'listen_addr': listen_addr,
+                'listen_port': listen_port,
+                'remote_host': remote_host,
+                'remote_port': remote_port,
+                'process': self.process
+            })
+            
+            # Wait for the process to complete
+            await self.process.wait()
+            
+        except Exception as e:
+            logger.error(f"Remote forwarding failed: {e}")
+            if hasattr(self, 'process') and self.process:
+                self.process.terminate()
+                await self.process.wait()
+            raise
+
     def update_data(self, new_data: Dict[str, Any]):
         """Update connection data while preserving object identity"""
         self.data.update(new_data)
@@ -473,10 +538,12 @@ class Connection:
         self.remote_command = data.get('remote_command', '')
         
         # Authentication method: 0 = key-based, 1 = password
-        try:
-            self.auth_method = int(data.get('auth_method', 0))
-        except Exception:
-            self.auth_method = 0
+        # Preserve existing auth_method if not present in new data
+        if 'auth_method' in data:
+            try:
+                self.auth_method = int(data.get('auth_method', 0))
+            except Exception:
+                self.auth_method = 0
             
         # X11 forwarding preference
         self.x11_forwarding = bool(data.get('x11_forwarding', False))
@@ -612,16 +679,28 @@ class ConnectionManager(GObject.Object):
                                     if existing:
                                         # Update existing connection with new data
                                         existing.update_data(connection_data)
+                                        # Apply per-connection metadata from app config (auth method, etc.)
+                                        try:
+                                            from .config import Config
+                                            cfg = Config()
+                                            meta = cfg.get_connection_meta(existing.nickname)
+                                            if isinstance(meta, dict):
+                                                if 'auth_method' in meta:
+                                                    existing.auth_method = meta['auth_method']
+                                        except Exception:
+                                            pass
                                         self.connections.append(existing)
                                     else:
                                         # Create new connection only if none exists
                                         conn = Connection(connection_data)
+                                        # Apply per-connection metadata from app config (auth method, etc.)
                                         try:
                                             from .config import Config
                                             cfg = Config()
                                             meta = cfg.get_connection_meta(conn.nickname)
-                                            if isinstance(meta, dict) and 'auth_method' in meta:
-                                                conn.auth_method = meta['auth_method']
+                                            if isinstance(meta, dict):
+                                                if 'auth_method' in meta:
+                                                    conn.auth_method = meta['auth_method']
                                         except Exception:
                                             pass
                                         self.connections.append(conn)
@@ -648,6 +727,16 @@ class ConnectionManager(GObject.Object):
                     if existing:
                         # Update existing connection with new data
                         existing.update_data(connection_data)
+                        # Apply per-connection metadata from app config (auth method, etc.)
+                        try:
+                            from .config import Config
+                            cfg = Config()
+                            meta = cfg.get_connection_meta(existing.nickname)
+                            if isinstance(meta, dict):
+                                if 'auth_method' in meta:
+                                    existing.auth_method = meta['auth_method']
+                        except Exception:
+                            pass
                         self.connections.append(existing)
                     else:
                         # Create new connection only if none exists
@@ -680,6 +769,10 @@ class ConnectionManager(GObject.Object):
 
             host = _unwrap(config.get('host', ''))
             if not host:
+                return None
+
+            # ⬇️ Ignore global defaults (Host *)
+            if str(host).strip() == '*':
                 return None
                 
             # Extract relevant configuration
@@ -1047,56 +1140,13 @@ class ConnectionManager(GObject.Object):
 
     def add_key_to_agent(self, key_path: str) -> bool:
         """Add SSH key to ssh-agent using secure SSH_ASKPASS script"""
-        if not os.path.isfile(key_path):
-            logger.error(f"Key file not found: {key_path}")
-            return False
-
-        if not self._ensure_ssh_agent():
-            return False
-
-        # Use secure SSH_ASKPASS environment and ensure script exists
-        env = get_ssh_env_with_askpass()
-        # Ensure the askpass script exists before using it
-        from .askpass_utils import ensure_askpass_script
-        ensure_askpass_script()
-
-        result = subprocess.run(
-            ['ssh-add', key_path],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        return result.returncode == 0
+        from .askpass_utils import ensure_key_in_agent
+        return ensure_key_in_agent(key_path)
 
     def prepare_key_for_connection(self, key_path: str) -> bool:
         """Prepare SSH key for connection by adding it to ssh-agent"""
-        try:
-            if not key_path or not os.path.isfile(key_path):
-                logger.debug("No valid key path provided")
-                return False
-            
-            # Check if key is already in ssh-agent
-            if os.environ.get('SSH_AUTH_SOCK'):
-                try:
-                    result = subprocess.run(
-                        ['ssh-add', '-l'],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-                    if result.returncode == 0 and key_path in result.stdout:
-                        logger.debug(f"Key already in ssh-agent: {key_path}")
-                        return True
-                except Exception:
-                    pass
-            
-            # Add key to ssh-agent
-            return self.add_key_to_agent(key_path)
-            
-        except Exception as e:
-            logger.error(f"Error preparing key for connection: {e}")
-            return False
+        from .askpass_utils import prepare_key_for_connection
+        return prepare_key_for_connection(key_path)
 
     def format_ssh_config_entry(self, data: Dict[str, Any]) -> str:
         """Format connection data as SSH config entry"""

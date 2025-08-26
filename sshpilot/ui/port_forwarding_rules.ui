@@ -98,7 +98,7 @@
   </template>
   
   <template class="PortForwardingRuleDialog" parent="AdwWindow">
-    <property name="title" translatable="yes">Port Forwarding Rule</property>
+    <property name="title" translatable="yes">Port Forwarding Rule Editor</property>
     <property name="modal">true</property>
     <property name="default-width">400</property>
     <property name="default-height">400</property>

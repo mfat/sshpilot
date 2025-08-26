@@ -16,8 +16,8 @@ import asyncio
 import threading
 import weakref
 import subprocess
-import shutil
 from datetime import datetime
+from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
@@ -111,16 +111,23 @@ class SSHProcessManager:
     def _terminate_process_by_pid(self, pid):
         """Terminate a process by PID"""
         try:
+            # Always try process group first
             pgid = os.getpgid(pid)
             os.killpg(pgid, signal.SIGTERM)
-            time.sleep(1)
-            try:
-                os.kill(pid, 0)
-                os.killpg(pgid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        except (ProcessLookupError, OSError) as e:
-            logger.debug(f"Process {pid} cleanup: {e}")
+            
+            # Wait with timeout
+            for _ in range(50):  # 5 seconds max
+                try:
+                    os.killpg(pgid, 0)
+                    time.sleep(0.1)
+                except ProcessLookupError:
+                    return True
+                    
+            # Force kill if still alive
+            os.killpg(pgid, signal.SIGKILL)
+            return True
+        except Exception:
+            return False
         finally:
             with self.lock:
                 if pid in self.processes:
@@ -133,28 +140,46 @@ class SSHProcessManager:
     
     def cleanup_all(self):
         """Clean up all managed processes"""
-        logger.info("Cleaning up all SSH processes...")
-        with self.lock:
-            # Make a copy of PIDs to avoid modifying the dict during iteration
-            pids = list(self.processes.keys())
-            for pid in pids:
-                self._terminate_process_by_pid(pid)
+        import signal
+        
+        def timeout_handler(signum, frame):
+            logger.warning("Cleanup timeout - forcing exit")
+            os._exit(1)
+        
+        # Set 10-second timeout for entire cleanup
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(10)
+        
+        try:
+            logger.info("Cleaning up all SSH processes...")
             
-            # Clear all tracked processes
-            self.processes.clear()
-            
-            # Clean up any remaining terminals
+            # First, mark all terminals as quitting to suppress signal handlers
             for terminal in list(self.terminals):
-                try:
-                    if hasattr(terminal, 'disconnect'):
-                        terminal.disconnect()
-                except Exception as e:
-                    logger.error(f"Error cleaning up terminal {id(terminal)}: {e}")
+                terminal._is_quitting = True
             
-            # Clear terminal references
-            self.terminals.clear()
+            with self.lock:
+                # Atomically extract and clear all processes
+                processes_to_clean = dict(self.processes)
+                self.processes.clear()
             
-        logger.info("SSH process cleanup completed")
+            # Clean up without holding the lock
+            for pid, info in processes_to_clean.items():
+                self._terminate_process_by_pid(pid)
+                
+                # Clean up any remaining terminals (only if they're still connected)
+                for terminal in list(self.terminals):
+                    try:
+                        if hasattr(terminal, 'disconnect') and hasattr(terminal, 'is_connected') and terminal.is_connected:
+                            terminal.disconnect()
+                    except Exception as e:
+                        logger.error(f"Error cleaning up terminal {id(terminal)}: {e}")
+                
+                # Clear terminal references
+                self.terminals.clear()
+                
+            logger.info("SSH process cleanup completed")
+        finally:
+            signal.alarm(0)  # Cancel timeout
 
 # Global process manager instance
 process_manager = SSHProcessManager()
@@ -188,6 +213,7 @@ class TerminalWidget(Gtk.Box):
         self.watch_id = 0
         self.ssh_client = None
         self.session_id = str(id(self))  # Unique ID for this session
+        self._is_quitting = False  # Flag to suppress signal handlers during quit
         
         # Register with process manager
         process_manager.register_terminal(self)
@@ -462,6 +488,19 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 password_auth_selected = False
 
+            # Check if we have a saved password for password authentication
+            has_saved_password = False
+            password_value = None
+            if password_auth_selected:
+                try:
+                    # Try to fetch without storing in argv
+                    password_value = getattr(self.connection, 'password', None)
+                    if (not password_value) and hasattr(self, 'connection_manager') and self.connection_manager:
+                        password_value = self.connection_manager.get_password(self.connection.host, self.connection.username)
+                    has_saved_password = bool(password_value)
+                except Exception:
+                    has_saved_password = False
+
             # Apply advanced args only when user explicitly enabled them
             if apply_adv:
                 # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
@@ -552,39 +591,6 @@ class TerminalWidget(Gtk.Box):
                 # Prefer password/interactive methods when user chose password auth
                 ssh_cmd.extend(['-o', 'PreferredAuthentications=password,keyboard-interactive'])
                 ssh_cmd.extend(['-o', 'PubkeyAuthentication=no'])
-
-                # If we have a stored password and sshpass is available, use it to avoid prompts
-                password_value = None
-                try:
-                    password_value = getattr(self.connection, 'password', None)
-                    if (not password_value) and hasattr(self, 'connection_manager') and self.connection_manager:
-                        password_value = self.connection_manager.get_password(self.connection.host, self.connection.username)
-                except Exception:
-                    password_value = None
-
-                # Check for sshpass in multiple locations for Flatpak compatibility
-                sshpass_path = None
-                if shutil.which('sshpass'):
-                    sshpass_path = 'sshpass'
-                elif os.path.exists('/app/bin/sshpass'):
-                    sshpass_path = '/app/bin/sshpass'
-                # If we're in Flatpak and sshpass exists at /app/bin/sshpass, use the full path
-                elif os.environ.get('SSHPILOT_FLATPAK') and os.path.exists('/app/bin/sshpass'):
-                    sshpass_path = '/app/bin/sshpass'
-                
-                # In Flatpak environment, always use the full path to sshpass if it exists
-                if os.environ.get('SSHPILOT_FLATPAK') and os.path.exists('/app/bin/sshpass'):
-                    sshpass_path = '/app/bin/sshpass'
-                
-                if password_value and sshpass_path:
-                    # Prepend sshpass and move current ssh_cmd after it
-                    ssh_cmd = [sshpass_path, '-p', str(password_value), 'ssh'] + ssh_cmd[1:]
-                    # Do not log plaintext password
-                    try:
-                        masked = [part if part != str(password_value) else '******' for part in ssh_cmd]
-                        logger.debug("Using sshpass with command: %s", ' '.join(masked))
-                    except Exception:
-                        pass
             
             # Add X11 forwarding if enabled
             if hasattr(self.connection, 'x11_forwarding') and self.connection.x11_forwarding:
@@ -655,6 +661,9 @@ class TerminalWidget(Gtk.Box):
                         except Exception as e:
                             logger.error(f"Failed to set up remote forwarding: {e}")
             
+            # Add NumberOfPasswordPrompts option before hostname and command
+            ssh_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
+            
             # Add host and user
             ssh_cmd.append(f"{self.connection.username}@{self.connection.host}" if hasattr(self.connection, 'username') and self.connection.username else self.connection.host)
 
@@ -668,14 +677,14 @@ class TerminalWidget(Gtk.Box):
                 # Append as single argument; let shell on remote parse quotes. Keep as-is to allow user quoting.
                 ssh_cmd.append(final_remote_cmd)
             
-            # Avoid logging password when sshpass is used
+            # Make sure ssh will prompt in our VTE if no saved password:
+            if password_auth_selected and not has_saved_password:
+                if '-t' not in ssh_cmd and '-tt' not in ssh_cmd:
+                    ssh_cmd.append('-t')  # force a TTY for interactive password
+            
+            # Log the SSH command
             try:
-                if len(ssh_cmd) > 2 and ssh_cmd[1] == '-p' and (ssh_cmd[0] == 'sshpass' or ssh_cmd[0] == '/app/bin/sshpass'):
-                    masked_cmd = ssh_cmd.copy()
-                    masked_cmd[2] = '******'
-                    logger.debug(f"SSH command: {' '.join(masked_cmd)}")
-                else:
-                    logger.debug(f"SSH command: {' '.join(ssh_cmd)}")
+                logger.debug(f"SSH command: {' '.join(ssh_cmd)}")
             except Exception:
                 logger.debug("Prepared SSH command")
             
@@ -685,8 +694,64 @@ class TerminalWidget(Gtk.Box):
             # Start the SSH process using VTE's spawn_async with our PTY
             logger.debug(f"Flatpak debug: About to spawn SSH with command: {ssh_cmd}")
             
-            # Ensure proper environment for Flatpak
+            # Handle password authentication with sshpass if available
             env = os.environ.copy()
+            logger.debug(f"Initial environment SSH_ASKPASS: {env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE: {env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
+            if password_auth_selected and has_saved_password and password_value:
+                # Use sshpass for password authentication
+                import shutil
+                sshpass_path = None
+                
+                # Check if sshpass is available and executable
+                if os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
+                    sshpass_path = '/app/bin/sshpass'
+                    logger.debug("Found sshpass at /app/bin/sshpass")
+                elif shutil.which('sshpass'):
+                    sshpass_path = shutil.which('sshpass')
+                    logger.debug(f"Found sshpass in PATH: {sshpass_path}")
+                else:
+                    logger.debug("sshpass not found or not executable")
+                
+                if sshpass_path:
+                    # Use the same approach as ssh_password_exec.py for consistency
+                    from .ssh_password_exec import _mk_priv_dir, _write_once_fifo
+                    import threading
+                    
+                    # Create private temp directory and FIFO
+                    tmpdir = _mk_priv_dir()
+                    fifo = os.path.join(tmpdir, "pw.fifo")
+                    os.mkfifo(fifo, 0o600)
+                    
+                    # Start writer thread that writes the password exactly once
+                    t = threading.Thread(target=_write_once_fifo, args=(fifo, password_value), daemon=True)
+                    t.start()
+                    
+                    # Use sshpass with FIFO
+                    ssh_cmd = [sshpass_path, "-f", fifo] + ssh_cmd
+                    
+                    # Important: strip askpass vars so OpenSSH won't try the askpass helper for passwords
+                    env.pop("SSH_ASKPASS", None)
+                    env.pop("SSH_ASKPASS_REQUIRE", None)
+                    
+                    logger.debug("Using sshpass with FIFO for password authentication")
+                    logger.debug(f"Environment after removing SSH_ASKPASS: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
+                    
+                    # Store tmpdir for cleanup
+                    self._sshpass_tmpdir = tmpdir
+                else:
+                    # sshpass not available, fallback to askpass for password prompts
+                    ensure_askpass_script()
+                    askpass_env = get_ssh_env_with_askpass_for_password(self.connection.host, self.connection.username)
+                    env.update(askpass_env)
+            elif password_auth_selected and not has_saved_password:
+                # Password auth selected but no saved password - let SSH prompt interactively
+                # Don't set any askpass environment variables
+                logger.debug("Password auth selected but no saved password - using interactive prompt")
+            else:
+                # Use askpass for passphrase prompts (key-based auth)
+                from .askpass_utils import get_ssh_env_with_askpass
+                askpass_env = get_ssh_env_with_askpass("force")
+                env.update(askpass_env)
             env['TERM'] = env.get('TERM', 'xterm-256color')
             env['SHELL'] = env.get('SHELL', '/bin/bash')
             env['SSHPILOT_FLATPAK'] = '1'
@@ -701,19 +766,38 @@ class TerminalWidget(Gtk.Box):
             for key, value in env.items():
                 env_list.append(f"{key}={value}")
             
-            self.vte.spawn_async(
-                Vte.PtyFlags.DEFAULT,
-                os.path.expanduser('~') or '/',
-                ssh_cmd,
-                env_list,  # Use environment list for Flatpak
-                GLib.SpawnFlags.DEFAULT,
-                None,  # Child setup function
-                None,  # Child setup data
-                -1,    # Timeout (-1 = default)
-                None,  # Cancellable
-                self._on_spawn_complete,
-                ()     # User data - empty tuple for Flatpak VTE compatibility
-            )
+            # Log the command being executed for debugging
+            logger.debug(f"Spawning SSH command: {ssh_cmd}")
+            logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
+            
+            try:
+                self.vte.spawn_async(
+                    Vte.PtyFlags.DEFAULT,
+                    os.path.expanduser('~') or '/',
+                    ssh_cmd,
+                    env_list,  # Use environment list for Flatpak
+                    GLib.SpawnFlags.DEFAULT,
+                    None,  # Child setup function
+                    None,  # Child setup data
+                    -1,    # Timeout (-1 = default)
+                    None,  # Cancellable
+                    self._on_spawn_complete,
+                    ()     # User data - empty tuple for Flatpak VTE compatibility
+                )
+            except GLib.Error as e:
+                logger.error(f"VTE spawn failed with GLib error: {e}")
+                # Check if it's a "No such file or directory" error for sshpass
+                if "sshpass" in str(e) and "No such file or directory" in str(e):
+                    logger.error("sshpass binary not found, falling back to askpass")
+                    # Fall back to askpass method
+                    self._fallback_to_askpass(ssh_cmd, env_list)
+                else:
+                    self._on_connection_failed(str(e))
+                return
+            except Exception as e:
+                logger.error(f"VTE spawn failed with exception: {e}")
+                self._on_connection_failed(str(e))
+                return
             
             # Store the PTY for later cleanup
             self.pty = pty
@@ -744,8 +828,51 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Failed to setup SSH terminal: {e}")
             self._on_connection_failed(str(e))
     
+    def _fallback_to_askpass(self, ssh_cmd, env_list):
+        """Fallback method when sshpass fails - use askpass instead"""
+        try:
+            logger.info("Falling back to askpass method for password authentication")
+            
+            # Remove sshpass from the command
+            if ssh_cmd[0] == 'sshpass':
+                ssh_cmd = ssh_cmd[3:]  # Remove sshpass, -f, and fifo_path
+            
+            # Set up askpass environment
+            from .askpass_utils import get_ssh_env_with_askpass_for_password
+            askpass_env = get_ssh_env_with_askpass_for_password(self.connection.host, self.connection.username)
+            
+            # Update environment list
+            for key, value in askpass_env.items():
+                env_list.append(f"{key}={value}")
+            
+            logger.debug(f"Fallback SSH command: {ssh_cmd}")
+            
+            # Try spawning again with askpass
+            self.vte.spawn_async(
+                Vte.PtyFlags.DEFAULT,
+                os.path.expanduser('~') or '/',
+                ssh_cmd,
+                env_list,
+                GLib.SpawnFlags.DEFAULT,
+                None,
+                None,
+                -1,
+                None,
+                self._on_spawn_complete,
+                ()
+            )
+            
+        except Exception as e:
+            logger.error(f"Fallback to askpass also failed: {e}")
+            self._on_connection_failed(str(e))
+    
     def _on_spawn_complete(self, terminal, pid, error, user_data=None):
         """Called when terminal spawn is complete"""
+        # Skip if terminal is quitting
+        if getattr(self, '_is_quitting', False):
+            logger.debug("Terminal is quitting, skipping spawn complete handler")
+            return
+            
         logger.debug(f"Flatpak debug: _on_spawn_complete called with pid={pid}, error={error}, user_data={user_data}")
         
         if error:
@@ -806,6 +933,11 @@ class TerminalWidget(Gtk.Box):
     
     def _fallback_hide_spinner(self):
         """Fallback method to hide spinner if spawn completion doesn't fire"""
+        # Skip if terminal is quitting
+        if getattr(self, '_is_quitting', False):
+            logger.debug("Terminal is quitting, skipping fallback hide spinner")
+            return False
+            
         logger.debug("Flatpak debug: Fallback hide spinner called")
         if not self.is_connected:
             logger.warning("Flatpak: Spawn completion callback didn't fire, forcing connection state")
@@ -1397,8 +1529,12 @@ class TerminalWidget(Gtk.Box):
         was_connected = self.is_connected
         self.is_connected = False
         
-        # Update connection status in the connection manager if we were connected
-        if was_connected and hasattr(self, 'connection') and self.connection:
+        # Guard UI emissions when the root window is quitting
+        root = self.get_root() if hasattr(self, 'get_root') else None
+        is_quitting = bool(getattr(root, '_is_quitting', False))
+        
+        # Only update manager / UI if not quitting
+        if was_connected and hasattr(self, 'connection') and self.connection and not is_quitting:
             self.connection.is_connected = False
             if hasattr(self, 'connection_manager') and self.connection_manager:
                 GLib.idle_add(self.connection_manager.emit, 'connection-status-changed', self.connection, False)
@@ -1450,6 +1586,17 @@ class TerminalWidget(Gtk.Box):
                 finally:
                     self.pty = None
             
+            # Clean up sshpass temporary directory if it exists
+            if hasattr(self, '_sshpass_tmpdir') and self._sshpass_tmpdir:
+                try:
+                    import shutil
+                    shutil.rmtree(self._sshpass_tmpdir, ignore_errors=True)
+                    logger.debug(f"Cleaned up sshpass tmpdir: {self._sshpass_tmpdir}")
+                except Exception as e:
+                    logger.debug(f"Error cleaning up sshpass tmpdir: {e}")
+                finally:
+                    self._sshpass_tmpdir = None
+            
             # Clean up from process manager
             with process_manager.lock:
                 for proc_pid in list(process_manager.processes.keys()):
@@ -1468,8 +1615,9 @@ class TerminalWidget(Gtk.Box):
             self.process_pid = None
             self.process_pgid = None
             
-            # Ensure we always emit the connection-lost signal
-            self.emit('connection-lost')
+            # Only emit connection-lost signal if not quitting
+            if not is_quitting:
+                self.emit('connection-lost')
             logger.debug(f"SSH session {self.session_id} disconnected")
     
     def _on_connection_failed(self, error_message):
@@ -1510,6 +1658,11 @@ class TerminalWidget(Gtk.Box):
 
     def on_child_exited(self, terminal, status):
         """Handle terminal child process exit"""
+        # Skip if terminal is quitting
+        if getattr(self, '_is_quitting', False):
+            logger.debug("Terminal is quitting, skipping child exit handler")
+            return
+            
         logger.debug(f"Terminal child exited with status: {status}")
         
         # Defer the heavy work to avoid blocking the signal handler

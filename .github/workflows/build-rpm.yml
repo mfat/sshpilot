@@ -87,8 +87,8 @@ jobs:
           Requires:       python3-cryptography
           Requires:       python3-secretstorage 
           Requires:       libsecret
-          Requires:       python3-matplotlib
           Requires:       sshpass
+          Requires:       openssh-askpass
           
           %description
           sshPilot provides SSH connection management, integrated terminal using VTE,

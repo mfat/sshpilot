@@ -5,6 +5,7 @@ Primary UI with connection list, tabs, and terminal management
 
 import os
 import logging
+import math
 from typing import Optional, Dict, Any, List, Tuple
 
 import gi
@@ -18,9 +19,11 @@ except Exception:
     _HAS_VTE = False
 
 from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango
+import subprocess
 
 # Feature detection for libadwaita versions across distros
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
+HAS_TIMED_ANIMATION = hasattr(Adw, 'TimedAnimation')
 
 from gettext import gettext as _
 
@@ -30,8 +33,509 @@ from .config import Config
 from .key_manager import KeyManager, SSHKey
 from .port_forwarding_ui import PortForwardingRules
 from .connection_dialog import ConnectionDialog
+from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
 
 logger = logging.getLogger(__name__)
+
+
+def open_remote_in_file_manager(user: str, host: str, port: int|None = None, path: str|None = None):
+    """Open remote server in file manager using SFTP URI"""
+    # Build sftp URI (avoid spaces/newlines)
+    p = path or "/"
+    if port:
+        uri = f"sftp://{user}@{host}:{port}{p}"
+    else:
+        uri = f"sftp://{user}@{host}{p}"
+    
+    # Try multiple approaches with retries for SFTP connection issues
+    max_retries = 2
+    retry_delay = 1.0  # seconds
+    
+    for attempt in range(max_retries + 1):
+        try:
+            # First try: Use Gio.AppInfo.launch_default_for_uri
+            Gio.AppInfo.launch_default_for_uri(uri, None)
+            logger.info(f"Successfully launched file manager for {user}@{host}")
+            return True, None
+        except Exception as e:
+            error_msg = str(e)
+            logger.debug(f"Gio.AppInfo.launch_default_for_uri failed (attempt {attempt + 1}): {error_msg}")
+            
+            # Check if it's a "not mounted" error that might resolve with retry
+            if "not mounted" in error_msg.lower() and attempt < max_retries:
+                logger.info(f"SFTP connection not ready, retrying in {retry_delay}s...")
+                import time
+                time.sleep(retry_delay)
+                retry_delay *= 1.5  # Increase delay for next retry
+                continue
+            
+            # Fall back to xdg-open if Gio failed
+            try:
+                result = subprocess.run(["xdg-open", uri], capture_output=True, text=True, timeout=15)
+                if result.returncode == 0:
+                    logger.info(f"Successfully launched file manager via xdg-open for {user}@{host}")
+                    return True, None
+                else:
+                    # Capture the error output for better error reporting
+                    error_msg = result.stderr.strip() if result.stderr else error_msg
+                    logger.debug(f"xdg-open failed (attempt {attempt + 1}): {error_msg}")
+                    
+                    # Check if it's a "not mounted" error that might resolve with retry
+                    if "not mounted" in error_msg.lower() and attempt < max_retries:
+                        logger.info(f"SFTP connection not ready via xdg-open, retrying in {retry_delay}s...")
+                        import time
+                        time.sleep(retry_delay)
+                        retry_delay *= 1.5  # Increase delay for next retry
+                        continue
+                    
+                    return False, error_msg
+            except subprocess.TimeoutExpired:
+                error_msg = "Connection timeout - SFTP server may not be available"
+                logger.warning(f"xdg-open timeout (attempt {attempt + 1}): {error_msg}")
+                if attempt < max_retries:
+                    logger.info(f"Retrying after timeout in {retry_delay}s...")
+                    import time
+                    time.sleep(retry_delay)
+                    retry_delay *= 1.5
+                    continue
+                return False, error_msg
+            except FileNotFoundError:
+                error_msg = "No file manager found to handle SFTP connections"
+                logger.error(f"xdg-open not found: {error_msg}")
+                return False, error_msg
+            except Exception as sub_e:
+                error_msg = f"{error_msg} (fallback failed: {str(sub_e)})"
+                logger.error(f"xdg-open exception (attempt {attempt + 1}): {error_msg}")
+                if attempt < max_retries:
+                    logger.info(f"Retrying after exception in {retry_delay}s...")
+                    import time
+                    time.sleep(retry_delay)
+                    retry_delay *= 1.5
+                    continue
+                return False, error_msg
+    
+    # If we get here, all attempts failed
+    final_error = f"Failed to open file manager after {max_retries + 1} attempts. Last error: {error_msg}"
+    logger.error(final_error)
+    return False, final_error
+
+
+# =========================
+# SSH Copy-ID Full Window
+# =========================
+class SshCopyIdWindow(Adw.Window):
+    """
+    Full Adwaita-styled window for installing a public key on a server.
+    - Shows selected server nickname
+    - Two modes:
+        1) Use existing key (DropDown)
+        2) Generate new key (embedded key-generator form)
+    - Pressing OK triggers:
+        - Either copy selected existing key
+        - Or generate a new key, then copy it
+    - Uses your existing terminal flow:
+        parent._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
+    """
+
+    def __init__(self, parent, connection, key_manager, connection_manager):
+        logger.info("SshCopyIdWindow: Initializing window")
+        logger.debug(f"SshCopyIdWindow: Constructor called with connection: {getattr(connection, 'nickname', 'unknown')}")
+        logger.debug(f"SshCopyIdWindow: Connection object type: {type(connection)}")
+        logger.debug(f"SshCopyIdWindow: Key manager type: {type(key_manager)}")
+        logger.debug(f"SshCopyIdWindow: Connection manager type: {type(connection_manager)}")
+        
+        try:
+            super().__init__(transient_for=parent, modal=False)
+            self.set_title("Install Public Key on Server")
+            self.set_resizable(False)
+            logger.debug("SshCopyIdWindow: Base window initialized")
+
+            self._parent = parent
+            self._conn = connection
+            self._km = key_manager
+            self._cm = connection_manager
+            logger.debug("SshCopyIdWindow: Instance variables set")
+            
+            logger.info(f"SshCopyIdWindow: Window initialized for connection {getattr(connection, 'nickname', 'unknown')}")
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Failed to initialize window: {e}")
+            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {str(e)}")
+            raise
+
+        # ---------- Outer layout ----------
+        logger.info("SshCopyIdWindow: Creating outer layout")
+        try:
+            tv = Adw.ToolbarView()
+            self.set_content(tv)
+            
+            # ---------- Header Bar ----------
+            logger.info("SshCopyIdWindow: Creating header bar")
+            hb = Adw.HeaderBar()
+            tv.add_top_bar(hb)
+
+            # Cancel button
+            btn_cancel = Gtk.Button(label="Cancel")
+            btn_cancel.connect("clicked", self._on_close_clicked)
+            hb.pack_start(btn_cancel)
+
+            self.btn_ok = Gtk.Button(label="OK")
+            self.btn_ok.add_css_class("suggested-action")
+            self.btn_ok.connect("clicked", self._on_ok_clicked)
+            hb.pack_end(self.btn_ok)
+            logger.info("SshCopyIdWindow: Header bar created successfully")
+
+            content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            content.set_margin_top(18); content.set_margin_bottom(18)
+            content.set_margin_start(18); content.set_margin_end(18)
+            tv.set_content(content)
+
+            # ---------- Intro text ----------
+            server_name = getattr(self._conn, "nickname", None) or \
+                          f"{getattr(self._conn, 'username', 'user')}@{getattr(self._conn, 'host', 'host')}"
+            
+            # Create a simple label instead of StatusPage for normal font size
+            intro_label = Gtk.Label()
+            intro_label.set_markup(f'Copy your public key to "{server_name}".')
+            intro_label.set_halign(Gtk.Align.CENTER)
+            intro_label.set_margin_bottom(12)
+            content.append(intro_label)
+            logger.info(f"SshCopyIdWindow: Intro text created for server: {server_name}")
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Failed to create outer layout: {e}")
+            raise
+
+        # ---------- Options group ----------
+        logger.info("SshCopyIdWindow: Creating options group")
+        try:
+            group = Adw.PreferencesGroup(title="")
+
+            # Radio option 1: Use existing key (using CheckButton with group for radio behavior)
+            self.radio_existing = Gtk.CheckButton(label="Copy existing key")
+            self.radio_generate = Gtk.CheckButton(label="Generate new key")
+
+            # Make them behave like radio buttons (GTK4)
+            self.radio_generate.set_group(self.radio_existing)
+            self.radio_existing.set_active(True)
+            logger.info("SshCopyIdWindow: Radio buttons created successfully")
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Failed to create radio buttons: {e}")
+            raise
+
+        # Existing key row with dropdown
+        logger.info("SshCopyIdWindow: Creating existing key dropdown")
+        try:
+            existing_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            existing_box.set_margin_start(12)
+            existing_box.set_margin_bottom(6)
+            self.dropdown_existing = Gtk.DropDown()
+            existing_box.append(Gtk.Label(label="Select key:", xalign=0))
+            existing_box.append(self.dropdown_existing)
+
+            # Fill dropdown with discovered keys
+            self._reload_existing_keys()
+            logger.info("SshCopyIdWindow: Existing key dropdown created successfully")
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Failed to create existing key dropdown: {e}")
+            raise
+
+        # Generate form (embedded)
+        logger.info("SshCopyIdWindow: Creating key generation form")
+        try:
+            self.generate_revealer = Gtk.Revealer()
+            self.generate_revealer.set_reveal_child(False)
+            self.generate_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+
+            gen_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            gen_box.set_margin_start(12)
+            gen_box.set_margin_top(6)
+
+            # Key name
+            self.row_key_name = Adw.EntryRow()
+            self.row_key_name.set_title("Key file name")
+            self.row_key_name.set_text("id_ed25519")
+            gen_box.append(self.row_key_name)
+
+            # Key type
+            self.type_row = Adw.ComboRow()
+            self.type_row.set_title("Key type")
+            self._types_model = Gtk.StringList.new(["ed25519", "rsa"])
+            self.type_row.set_model(self._types_model)
+            self.type_row.set_selected(0)
+            gen_box.append(self.type_row)
+
+            # Passphrase toggle + entries
+            self.row_pass_toggle = Adw.SwitchRow()
+            self.row_pass_toggle.set_title("Encrypt with passphrase")
+            gen_box.append(self.row_pass_toggle)
+
+            pass_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            self.pass1 = Gtk.PasswordEntry()
+            self.pass1.set_property("placeholder-text", "Passphrase")
+            self.pass2 = Gtk.PasswordEntry()
+            self.pass2.set_property("placeholder-text", "Confirm passphrase")
+            pass_box.append(self.pass1); pass_box.append(self.pass2)
+            pass_box.set_visible(False)
+            gen_box.append(pass_box)
+
+            def _on_pass_toggle(*_):
+                pass_box.set_visible(self.row_pass_toggle.get_active())
+            self.row_pass_toggle.connect("notify::active", _on_pass_toggle)
+
+            self.generate_revealer.set_child(gen_box)
+            logger.info("SshCopyIdWindow: Key generation form created successfully")
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Failed to create key generation form: {e}")
+            raise
+
+        # Pack into PreferencesGroup
+        logger.info("SshCopyIdWindow: Packing UI elements")
+        try:
+            # Row 1: Existing
+            existing_row = Adw.ActionRow()
+            existing_row.add_prefix(self.radio_existing)
+            existing_row.add_suffix(existing_box)
+            group.add(existing_row)
+
+            # Row 2: Generate
+            generate_row = Adw.ActionRow()
+            generate_row.add_prefix(self.radio_generate)
+            group.add(generate_row)
+            # Embedded generator UI under row 2
+            group.add(self.generate_revealer)
+
+            content.append(group)
+
+            # Radio change behavior
+            self.radio_existing.connect("toggled", self._on_mode_toggled)
+            self.radio_generate.connect("toggled", self._on_mode_toggled)
+
+            logger.info("SshCopyIdWindow: UI elements packed successfully")
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Failed to pack UI elements: {e}")
+            raise
+
+        logger.info("SshCopyIdWindow: Window construction completed, presenting")
+        self.present()
+
+    # ---------- Helpers ----------
+
+    def _on_mode_toggled(self, *_):
+        # Reveal generator only when "Generate new key" is selected
+        logger.info(f"SshCopyIdWindow: Mode toggled, generate active: {self.radio_generate.get_active()}")
+        self.generate_revealer.set_reveal_child(self.radio_generate.get_active())
+
+    def _reload_existing_keys(self):
+        logger.info("SshCopyIdWindow: Reloading existing keys")
+        logger.debug("SshCopyIdWindow: Calling key_manager.discover_keys()")
+        try:
+            keys = self._km.discover_keys()
+            logger.info(f"SshCopyIdWindow: Discovered {len(keys)} keys")
+            logger.debug(f"SshCopyIdWindow: Key discovery returned {len(keys)} keys")
+            
+            # Log details of each discovered key
+            for i, key in enumerate(keys):
+                logger.debug(f"SshCopyIdWindow: Key {i+1}: private_path='{key.private_path}', "
+                           f"public_path='{key.public_path}', exists={os.path.exists(key.private_path)}")
+            
+            names = [os.path.basename(k.private_path) for k in keys] or ["No keys found"]
+            logger.debug(f"SshCopyIdWindow: Key names for dropdown: {names}")
+            
+            dd = Gtk.DropDown.new_from_strings(names)
+            if keys:
+                dd.set_selected(0)
+                logger.debug(f"SshCopyIdWindow: Selected first key in dropdown")
+            
+            self.dropdown_existing.set_model(dd.get_model())
+            self.dropdown_existing.set_selected(dd.get_selected())
+            # keep a cached list to resolve on OK
+            self._existing_keys_cache = keys
+            logger.info(f"SshCopyIdWindow: Dropdown populated with {len(names)} items")
+            logger.debug(f"SshCopyIdWindow: Cached {len(keys)} keys for later use")
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Failed to load existing keys: {e}")
+            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {str(e)}")
+            self._existing_keys_cache = []
+            dd = Gtk.DropDown.new_from_strings(["Error loading keys"])
+            self.dropdown_existing.set_model(dd.get_model())
+            self.dropdown_existing.set_selected(0)
+
+    def _info(self, title, body):
+        try:
+            md = Adw.MessageDialog(transient_for=self, modal=True, heading=title, body=body)
+            md.add_response("ok", "OK")
+            md.set_default_response("ok")
+            md.set_close_response("ok")
+            md.present()
+        except Exception:
+            pass
+
+    def _error(self, title, body, detail=""):
+        try:
+            text = body + (f"\n\n{detail}" if detail else "")
+            md = Adw.MessageDialog(transient_for=self, modal=True, heading=title, body=text)
+            md.add_response("close", "Close")
+            md.set_default_response("close")
+            md.set_close_response("close")
+            md.present()
+        except Exception:
+            logger.error("%s: %s | %s", title, body, detail)
+
+    def _on_close_clicked(self, *_):
+        logger.info("SshCopyIdWindow: Close button clicked")
+        self.close()
+
+    # ---------- OK (main action) ----------
+    def _on_ok_clicked(self, *_):
+        logger.info("SshCopyIdWindow: OK button clicked")
+        logger.debug("SshCopyIdWindow: Starting main action processing")
+        
+        # Log current UI state
+        existing_active = self.radio_existing.get_active()
+        generate_active = self.radio_generate.get_active()
+        logger.debug(f"SshCopyIdWindow: UI state - existing_active={existing_active}, generate_active={generate_active}")
+        
+        try:
+            if self.radio_existing.get_active():
+                logger.info("SshCopyIdWindow: Copying existing key")
+                logger.debug("SshCopyIdWindow: Calling _do_copy_existing()")
+                self._do_copy_existing()
+            else:
+                logger.info("SshCopyIdWindow: Generating new key and copying")
+                logger.debug("SshCopyIdWindow: Calling _do_generate_and_copy()")
+                self._do_generate_and_copy()
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Operation failed: {e}")
+            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {str(e)}")
+            self._error("Operation failed", "Could not start the requested action.", str(e))
+
+    # ---------- Mode: existing ----------
+    def _do_copy_existing(self):
+        logger.info("SshCopyIdWindow: Starting copy existing key operation")
+        logger.debug("SshCopyIdWindow: Processing existing key selection")
+        
+        try:
+            keys = getattr(self, "_existing_keys_cache", []) or []
+            logger.info(f"SshCopyIdWindow: Found {len(keys)} cached keys")
+            logger.debug(f"SshCopyIdWindow: Cached keys list length: {len(keys)}")
+            
+            if not keys:
+                logger.debug("SshCopyIdWindow: No cached keys available")
+                raise RuntimeError("No keys available in ~/.ssh")
+            
+            idx = self.dropdown_existing.get_selected()
+            logger.info(f"SshCopyIdWindow: Selected key index: {idx}")
+            logger.debug(f"SshCopyIdWindow: Dropdown selection index: {idx}")
+            
+            if idx < 0 or idx >= len(keys):
+                logger.debug(f"SshCopyIdWindow: Invalid index {idx} for keys list of length {len(keys)}")
+                raise RuntimeError("Please select a key to copy")
+            
+            ssh_key = keys[idx]
+            logger.info(f"SshCopyIdWindow: Selected key: {ssh_key.private_path}")
+            logger.debug(f"SshCopyIdWindow: Selected key details - private_path='{ssh_key.private_path}', "
+                       f"public_path='{ssh_key.public_path}', exists={os.path.exists(ssh_key.private_path)}")
+            
+            # Launch your existing terminal ssh-copy-id flow
+            logger.debug("SshCopyIdWindow: Calling _show_ssh_copy_id_terminal_using_main_widget()")
+            self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, ssh_key)
+            logger.debug("SshCopyIdWindow: Terminal window launched, closing dialog")
+            self.close()
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Copy existing failed: {e}")
+            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {str(e)}")
+            self._error("Copy failed", "Could not copy the selected key to the server.", str(e))
+
+    # ---------- Mode: generate ----------
+    def _do_generate_and_copy(self):
+        logger.info("SshCopyIdWindow: Starting generate and copy operation")
+        logger.debug("SshCopyIdWindow: Processing key generation request")
+        
+        try:
+            key_name = (self.row_key_name.get_text() or "").strip()
+            logger.info(f"SshCopyIdWindow: Key name: '{key_name}'")
+            logger.debug(f"SshCopyIdWindow: Raw key name from UI: '{self.row_key_name.get_text()}'")
+            
+            if not key_name:
+                logger.debug("SshCopyIdWindow: Empty key name provided")
+                raise ValueError("Enter a key file name (e.g. id_ed25519)")
+            if "/" in key_name or key_name.startswith("."):
+                logger.debug(f"SshCopyIdWindow: Invalid key name '{key_name}' - contains '/' or starts with '.'")
+                raise ValueError("Key file name must not contain '/' or start with '.'")
+
+            # Key type
+            type_selection = self.type_row.get_selected()
+            kt = "ed25519" if type_selection == 0 else "rsa"
+            logger.info(f"SshCopyIdWindow: Key type: {kt}")
+            logger.debug(f"SshCopyIdWindow: Type selection index: {type_selection}, resolved to: {kt}")
+
+            passphrase = None
+            passphrase_enabled = self.row_pass_toggle.get_active()
+            logger.debug(f"SshCopyIdWindow: Passphrase toggle state: {passphrase_enabled}")
+            
+            if passphrase_enabled:
+                p1 = self.pass1.get_text() or ""
+                p2 = self.pass2.get_text() or ""
+                logger.debug(f"SshCopyIdWindow: Passphrase lengths - p1: {len(p1)}, p2: {len(p2)}")
+                if p1 != p2:
+                    logger.debug("SshCopyIdWindow: Passphrases do not match")
+                    raise ValueError("Passphrases do not match")
+                passphrase = p1
+                logger.info("SshCopyIdWindow: Passphrase enabled")
+                logger.debug("SshCopyIdWindow: Passphrase validation successful")
+
+            logger.info(f"SshCopyIdWindow: Calling key_manager.generate_key with name='{key_name}', type='{kt}'")
+            logger.debug(f"SshCopyIdWindow: Key generation parameters - name='{key_name}', type='{kt}', "
+                       f"size={3072 if kt == 'rsa' else 0}, passphrase={'<set>' if passphrase else 'None'}")
+            
+            new_key = self._km.generate_key(
+                key_name=key_name,
+                key_type=kt,
+                key_size=3072 if kt == "rsa" else 0,
+                comment=None,
+                passphrase=passphrase,
+            )
+            
+            if not new_key:
+                logger.debug("SshCopyIdWindow: Key generation returned None")
+                raise RuntimeError("Key generation failed. See logs for details.")
+
+            logger.info(f"SshCopyIdWindow: Key generated successfully: {new_key.private_path}")
+            logger.debug(f"SshCopyIdWindow: Generated key details - private_path='{new_key.private_path}', "
+                       f"public_path='{new_key.public_path}'")
+            
+            # Ensure the key files are properly written and accessible
+            import time
+            logger.debug("SshCopyIdWindow: Waiting 0.5s for files to be written")
+            time.sleep(0.5)  # Small delay to ensure files are written
+            
+            # Verify the key files exist and are accessible
+            private_exists = os.path.exists(new_key.private_path)
+            public_exists = os.path.exists(new_key.public_path)
+            logger.debug(f"SshCopyIdWindow: File existence check - private: {private_exists}, public: {public_exists}")
+            
+            if not private_exists:
+                logger.debug(f"SshCopyIdWindow: Private key file missing: {new_key.private_path}")
+                raise RuntimeError(f"Private key file not found: {new_key.private_path}")
+            if not public_exists:
+                logger.debug(f"SshCopyIdWindow: Public key file missing: {new_key.public_path}")
+                raise RuntimeError(f"Public key file not found: {new_key.public_path}")
+            
+            logger.info(f"SshCopyIdWindow: Key files verified, starting ssh-copy-id")
+            logger.debug("SshCopyIdWindow: All key files verified successfully")
+            
+            # Run your terminal ssh-copy-id flow
+            logger.debug("SshCopyIdWindow: Calling _show_ssh_copy_id_terminal_using_main_widget()")
+            self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, new_key)
+            logger.debug("SshCopyIdWindow: Terminal window launched, closing dialog")
+            self.close()
+
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Generate and copy failed: {e}")
+            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {str(e)}")
+            self._error("Generate & Copy failed",
+                        "Could not generate a new key and copy it to the server.",
+                        str(e))
+
 
 class ConnectionRow(Gtk.ListBoxRow):
     """Row widget for connection list"""
@@ -40,17 +544,21 @@ class ConnectionRow(Gtk.ListBoxRow):
         super().__init__()
         self.connection = connection
         
-        # Create main box
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        box.set_margin_start(12)
-        box.set_margin_end(12)
-        box.set_margin_top(6)
-        box.set_margin_bottom(6)
+        # Create overlay for pulse effect
+        overlay = Gtk.Overlay()
+        self.set_child(overlay)
+        
+        # Create main content box
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        content.set_margin_start(12)
+        content.set_margin_end(12)
+        content.set_margin_top(6)
+        content.set_margin_bottom(6)
         
         # Connection icon
         icon = Gtk.Image.new_from_icon_name('computer-symbolic')
         icon.set_icon_size(Gtk.IconSize.NORMAL)
-        box.append(icon)
+        content.append(icon)
         
         # Connection info
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -69,20 +577,30 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._apply_host_label_text()
         info_box.append(self.host_label)
         
-        box.append(info_box)
+        content.append(info_box)
         
         # Port forwarding indicators (L/R/D)
         self.indicator_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.indicator_box.set_halign(Gtk.Align.CENTER)
         self.indicator_box.set_valign(Gtk.Align.CENTER)
-        box.append(self.indicator_box)
+        content.append(self.indicator_box)
 
         # Connection status indicator
         self.status_icon = Gtk.Image.new_from_icon_name('network-offline-symbolic')
         self.status_icon.set_pixel_size(16)  # GTK4 uses pixel size instead of IconSize
-        box.append(self.status_icon)
+        content.append(self.status_icon)
         
-        self.set_child(box)
+        # Set content as the main child of overlay
+        overlay.set_child(content)
+        
+        # Create pulse layer
+        self._pulse = Gtk.Box()
+        self._pulse.add_css_class("pulse-highlight")
+        self._pulse.set_can_target(False)  # Don't intercept mouse events
+        self._pulse.set_hexpand(True)
+        self._pulse.set_vexpand(True)
+        overlay.add_overlay(self._pulse)
+        
         self.set_selectable(True)  # Make the row selectable for keyboard navigation
         
         # Update status
@@ -112,6 +630,8 @@ class ConnectionRow(Gtk.ListBoxRow):
             setattr(display, '_pf_css_installed', True)
         except Exception:
             pass
+
+
 
     def _update_forwarding_indicators(self):
         # Ensure CSS exists
@@ -275,6 +795,9 @@ class WelcomePage(Gtk.Box):
         
         shortcuts = [
             ('Ctrl+N', 'New Connection'),
+            ('Ctrl+Alt+N', 'Open New Connection Tab'),
+            ('Ctrl+Enter', 'Open New Connection Tab'),
+            ('F9', 'Toggle Sidebar'),
             ('Ctrl+L', 'Focus connection list to select server'),
             ('Ctrl+Shift+K', 'New SSH Key'),
             ('Alt+Right', 'Next Tab'),
@@ -537,12 +1060,20 @@ class PreferencesWindow(Adw.PreferencesWindow):
             advanced_group.add(self.debug_enabled_row)
 
             # Reset button
-            reset_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-            reset_btn = Gtk.Button.new_with_label("Reset Advanced SSH to Defaults")
+            # Add spacing before reset button
+            advanced_group.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+            
+            # Use Adw.ActionRow for proper spacing and layout
+            reset_row = Adw.ActionRow()
+            reset_row.set_title("Reset Advanced SSH Settings")
+            reset_row.set_subtitle("Restore all advanced SSH settings to their default values")
+            
+            reset_btn = Gtk.Button.new_with_label("Reset")
             reset_btn.add_css_class('destructive-action')
             reset_btn.connect('clicked', self.on_reset_advanced_ssh)
-            reset_box.append(reset_btn)
-            advanced_group.add(reset_box)
+            reset_row.add_suffix(reset_btn)
+            
+            advanced_group.add(reset_row)
 
             # Disable/enable advanced controls based on toggle
             def _sync_advanced_sensitivity(row=None, *_):
@@ -678,7 +1209,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
         except Exception as e:
             logger.error(f"Failed to save advanced SSH settings: {e}")
 
-    def on_reset_advanced_ssh(self, *_args):
+    def on_reset_advanced_ssh(self, *args):
         """Reset only advanced SSH keys to defaults and update UI."""
         try:
             defaults = self.config.get_default_config().get('ssh', {})
@@ -816,6 +1347,31 @@ class MainWindow(Adw.ApplicationWindow):
         self.open_new_connection_action = Gio.SimpleAction.new('open-new-connection', None)
         self.open_new_connection_action.connect('activate', self.on_open_new_connection_action)
         self.add_action(self.open_new_connection_action)
+        
+        # Global action for opening new connection tab (Ctrl+Alt+N)
+        self.open_new_connection_tab_action = Gio.SimpleAction.new('open-new-connection-tab', None)
+        self.open_new_connection_tab_action.connect('activate', self.on_open_new_connection_tab_action)
+        self.add_action(self.open_new_connection_tab_action)
+        
+        # Action for managing files on remote server
+        self.manage_files_action = Gio.SimpleAction.new('manage-files', None)
+        self.manage_files_action.connect('activate', self.on_manage_files_action)
+        self.add_action(self.manage_files_action)
+        
+        # Action for editing connections via context menu
+        self.edit_connection_action = Gio.SimpleAction.new('edit-connection', None)
+        self.edit_connection_action.connect('activate', self.on_edit_connection_action)
+        self.add_action(self.edit_connection_action)
+        
+        # Action for deleting connections via context menu
+        self.delete_connection_action = Gio.SimpleAction.new('delete-connection', None)
+        self.delete_connection_action.connect('activate', self.on_delete_connection_action)
+        self.add_action(self.delete_connection_action)
+        
+        # Action for opening connections in system terminal
+        self.open_in_system_terminal_action = Gio.SimpleAction.new('open-in-system-terminal', None)
+        self.open_in_system_terminal_action.connect('activate', self.on_open_in_system_terminal_action)
+        self.add_action(self.open_in_system_terminal_action)
         # (Toasts disabled) Remove any toast-related actions if previously defined
         try:
             if hasattr(self, '_toast_reconnect_action'):
@@ -830,11 +1386,181 @@ class MainWindow(Adw.ApplicationWindow):
         
         logger.info("Main window initialized")
 
+        # Install sidebar CSS
+        try:
+            self._install_sidebar_css()
+        except Exception as e:
+            logger.error(f"Failed to install sidebar CSS: {e}")
+
         # On startup, focus the first item in the connection list (not the toolbar buttons)
         try:
             GLib.idle_add(self._focus_connection_list_first_row)
         except Exception:
             pass
+
+    def _install_sidebar_css(self):
+        """Install sidebar focus CSS"""
+        try:
+            # Install CSS for sidebar focus highlighting once per display
+            display = Gdk.Display.get_default()
+            if not display:
+                logger.warning("No display available for CSS installation")
+                return
+            # Use an attribute on the display to avoid re-adding provider
+            if getattr(display, '_sidebar_css_installed', False):
+                return
+            provider = Gtk.CssProvider()
+            css = """
+            /* Pulse highlight for selected rows */
+            .pulse-highlight {
+              background: alpha(@accent_bg_color, 0.5);
+              border-radius: 8px;
+              box-shadow: 0 0 0 0.5px alpha(@accent_bg_color, 0.28) inset;
+              opacity: 0;
+              transition: opacity 0.3s ease-in-out;
+            }
+            .pulse-highlight.on {
+              opacity: 1;
+            }
+
+            /* optional: a subtle focus ring while the list is focused */
+            row:selected:focus-within {
+            #   box-shadow: 0 0 8px 2px @accent_bg_color inset;
+            #border: 2px solid @accent_bg_color;  /* Adds a solid border of 2px thickness */
+              border-radius: 8px;
+            }
+            """
+            provider.load_from_data(css.encode('utf-8'))
+            Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            setattr(display, '_sidebar_css_installed', True)
+            logger.debug("Sidebar CSS installed successfully")
+        except Exception as e:
+            logger.error(f"Failed to install sidebar CSS: {e}")
+            import traceback
+            logger.debug(f"CSS installation traceback: {traceback.format_exc()}")
+
+    def _toggle_class(self, widget, name, on):
+        """Helper to toggle CSS class on a widget"""
+        if on: 
+            widget.add_css_class(name)
+        else:  
+            widget.remove_css_class(name)
+
+
+
+    def pulse_selected_row(self, list_box: Gtk.ListBox, repeats=3, duration_ms=280):
+        """Pulse the selected row with highlight effect"""
+        row = list_box.get_selected_row() or (list_box.get_selected_rows()[0] if list_box.get_selected_rows() else None)
+        if not row:
+            return
+        if not hasattr(row, "_pulse"):
+            return
+        # Ensure it's realized so opacity changes render
+        if not row.get_mapped():
+            row.realize()
+        
+        # Use CSS-based pulse for now
+        pulse = row._pulse
+        cycle_duration = max(300, duration_ms // repeats)  # Minimum 300ms per cycle for faster pulses
+        
+        def do_cycle(count):
+            if count == 0:
+                return False
+            pulse.add_css_class("on")
+            # Keep the pulse visible for a shorter time for snappier effect
+            GLib.timeout_add(cycle_duration // 2, lambda: (
+                pulse.remove_css_class("on"),
+                # Add a shorter delay before the next pulse
+                GLib.timeout_add(cycle_duration // 2, lambda: do_cycle(count - 1)) or True
+            ) and False)
+            return False
+
+        GLib.idle_add(lambda: do_cycle(repeats))
+
+    def _test_css_pulse(self, action, param):
+        """Simple test to manually toggle CSS class"""
+        row = self.connection_list.get_selected_row()
+        if row and hasattr(row, "_pulse"):
+            pulse = row._pulse
+            pulse.add_css_class("on")
+            GLib.timeout_add(1000, lambda: (
+                pulse.remove_css_class("on")
+            ) or False)
+
+    def _setup_interaction_stop_pulse(self):
+        """Set up event controllers to stop pulse effect on user interaction"""
+        # Mouse click controller
+        click_ctl = Gtk.GestureClick()
+        click_ctl.connect("pressed", self._stop_pulse_on_interaction)
+        self.connection_list.add_controller(click_ctl)
+        
+        # Key controller
+        key_ctl = Gtk.EventControllerKey()
+        key_ctl.connect("key-pressed", self._on_connection_list_key_pressed)
+        self.connection_list.add_controller(key_ctl)
+        
+        # Scroll controller
+        scroll_ctl = Gtk.EventControllerScroll()
+        scroll_ctl.connect("scroll", self._stop_pulse_on_interaction)
+        self.connection_list.add_controller(scroll_ctl)
+
+    def _on_connection_list_key_pressed(self, controller, keyval, keycode, state):
+        """Handle key presses in the connection list"""
+        # Stop pulse effect on any key press
+        self._stop_pulse_on_interaction(controller)
+        
+        # Handle Enter key specifically
+        if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+            selected_row = self.connection_list.get_selected_row()
+            if selected_row and hasattr(selected_row, 'connection'):
+                connection = selected_row.connection
+                self._focus_most_recent_tab_or_open_new(connection)
+            return True  # Consume the event to prevent row-activated
+        return False
+
+    def _stop_pulse_on_interaction(self, controller, *args):
+        """Stop any ongoing pulse effect when user interacts"""
+        # Stop pulse on any row that has the 'on' class
+        for row in self.connection_list:
+            if hasattr(row, "_pulse"):
+                pulse = row._pulse
+                if "on" in pulse.get_css_classes():
+                    pulse.remove_css_class("on")
+
+    def _wire_pulses(self):
+        """Wire pulse effects to trigger on focus-in only"""
+        # Track if this is the initial startup focus
+        self._is_initial_focus = True
+        
+        # When list gains keyboard focus (e.g., after Ctrl+L)
+        focus_ctl = Gtk.EventControllerFocus()
+        def on_focus_enter(*args):
+            # Don't pulse on initial startup focus
+            if self._is_initial_focus:
+                self._is_initial_focus = False
+                return
+            self.pulse_selected_row(self.connection_list, repeats=1, duration_ms=600)
+        focus_ctl.connect("enter", on_focus_enter)
+        self.connection_list.add_controller(focus_ctl)
+        
+        # Stop pulse effect when user interacts with the list
+        self._setup_interaction_stop_pulse()
+        
+        # Add sidebar toggle action and accelerators
+        try:
+            # Add window-scoped action for sidebar toggle
+            sidebar_action = Gio.SimpleAction.new("toggle_sidebar", None)
+            sidebar_action.connect("activate", self.on_toggle_sidebar_action)
+            self.add_action(sidebar_action)
+            
+
+            
+            # Bind accelerators (F9 primary, Ctrl+B alternate)
+            app = self.get_application()
+            if app:
+                app.set_accels_for_action("win.toggle_sidebar", ["F9", "<Control>b"])
+        except Exception as e:
+            logger.warning(f"Failed to add sidebar toggle action: {e}")
 
     def setup_window(self):
         """Configure main window properties"""
@@ -883,6 +1609,7 @@ class MainWindow(Adw.ApplicationWindow):
                 Gtk.ShortcutTrigger.parse_string('<Alt>Left'),
                 Gtk.CallbackAction.new(_cb_prev)
             ))
+            
             self.add_controller(nav)
         except Exception:
             pass
@@ -909,6 +1636,19 @@ class MainWindow(Adw.ApplicationWindow):
         self.header_bar.set_show_start_title_buttons(True)
         self.header_bar.set_show_end_title_buttons(True)
         
+        # Add sidebar toggle button to the left side of header bar
+        self.sidebar_toggle_button = Gtk.ToggleButton()
+        self.sidebar_toggle_button.set_can_focus(False)  # Remove focus from sidebar toggle
+        
+        # Sidebar always starts visible
+        sidebar_visible = True
+        
+        self.sidebar_toggle_button.set_icon_name('sidebar-show-symbolic')
+        self.sidebar_toggle_button.set_tooltip_text('Hide Sidebar (F9, Ctrl+B)')
+        self.sidebar_toggle_button.set_active(sidebar_visible)
+        self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
+        self.header_bar.pack_start(self.sidebar_toggle_button)
+        
         # Add header bar to main container
         main_box.append(self.header_bar)
         
@@ -929,6 +1669,9 @@ class MainWindow(Adw.ApplicationWindow):
             self.split_view.set_vexpand(True)
             self._split_variant = 'paned'
         
+        # Sidebar always starts visible
+        sidebar_visible = True
+        
         # Create sidebar
         self.setup_sidebar()
         
@@ -937,9 +1680,13 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Add split view to main container
         main_box.append(self.split_view)
+        
+        # Sidebar is always visible on startup
 
-        # Set main content (no toasts preferred)
-        self.set_content(main_box)
+        # Create toast overlay and set main content
+        self.toast_overlay = Adw.ToastOverlay()
+        self.toast_overlay.set_child(main_box)
+        self.set_content(self.toast_overlay)
 
     def _set_sidebar_widget(self, widget: Gtk.Widget) -> None:
         if HAS_OVERLAY_SPLIT:
@@ -986,6 +1733,7 @@ class MainWindow(Adw.ApplicationWindow):
     def setup_sidebar(self):
         """Set up the sidebar with connection list"""
         sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        sidebar_box.add_css_class('sidebar')
         
         # Sidebar header
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -1010,6 +1758,14 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception:
             pass
         header.append(add_button)
+
+        # Menu button
+        menu_button = Gtk.MenuButton()
+        menu_button.set_can_focus(False)
+        menu_button.set_icon_name('open-menu-symbolic')
+        menu_button.set_tooltip_text('Menu')
+        menu_button.set_menu_model(self.create_menu())
+        header.append(menu_button)
 
         # Hide/Show hostnames button (eye icon)
         def _update_eye_icon(btn):
@@ -1059,6 +1815,9 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception:
             pass
         
+        # Wire pulse effects
+        self._wire_pulses()
+        
         # Connect signals
         self.connection_list.connect('row-selected', self.on_connection_selected)  # For button sensitivity
         self.connection_list.connect('row-activated', self.on_connection_activated)  # For Enter key/double-click
@@ -1091,7 +1850,13 @@ class MainWindow(Adw.ApplicationWindow):
                     self.connection_list.select_row(row)
                     self._context_menu_connection = getattr(row, 'connection', None)
                     menu = Gio.Menu()
-                    menu.append(_('Open New Connection'), 'win.open-new-connection')
+                    
+                    # Add menu items
+                    menu.append(_('+ Open New Connection'), 'win.open-new-connection')
+                    menu.append(_('✏ Edit Connection'), 'win.edit-connection')
+                    menu.append(_('🗄 Manage Files'), 'win.manage-files')
+                    menu.append(_('💻 Open in System Terminal'), 'win.open-in-system-terminal')
+                    menu.append(_('🗑 Delete Connection'), 'win.delete-connection')
                     pop = Gtk.PopoverMenu.new_from_model(menu)
                     pop.set_parent(self.connection_list)
                     try:
@@ -1110,6 +1875,30 @@ class MainWindow(Adw.ApplicationWindow):
             self.connection_list.add_controller(context_click)
         except Exception:
             pass
+        
+        # Add keyboard controller for Ctrl+Enter to open new connection
+        try:
+            key_controller = Gtk.ShortcutController()
+            key_controller.set_scope(Gtk.ShortcutScope.LOCAL)
+            
+            def _on_ctrl_enter(widget, *args):
+                try:
+                    selected_row = self.connection_list.get_selected_row()
+                    if selected_row and hasattr(selected_row, 'connection'):
+                        connection = selected_row.connection
+                        self.connect_to_host(connection, force_new=True)
+                except Exception as e:
+                    logger.error(f"Failed to open new connection with Ctrl+Enter: {e}")
+                return True
+            
+            key_controller.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string('<Control>Return'),
+                Gtk.CallbackAction.new(_on_ctrl_enter)
+            ))
+            
+            self.connection_list.add_controller(key_controller)
+        except Exception as e:
+            logger.debug(f"Failed to add Ctrl+Enter shortcut: {e}")
         
         scrolled.set_child(self.connection_list)
         sidebar_box.append(scrolled)
@@ -1155,6 +1944,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.upload_button.set_sensitive(False)
         self.upload_button.connect('clicked', self.on_upload_file_clicked)
         toolbar.append(self.upload_button)
+
+        # Manage files button
+        self.manage_files_button = Gtk.Button.new_from_icon_name('folder-symbolic')
+        self.manage_files_button.set_tooltip_text('Open file manager for remote server')
+        self.manage_files_button.set_sensitive(False)
+        self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
+        toolbar.append(self.manage_files_button)
         
         # Delete button
         self.delete_button = Gtk.Button.new_from_icon_name('user-trash-symbolic')
@@ -1167,13 +1963,6 @@ class MainWindow(Adw.ApplicationWindow):
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
         toolbar.append(spacer)
-        
-        # Menu button
-        menu_button = Gtk.MenuButton()
-        menu_button.set_icon_name('open-menu-symbolic')
-        menu_button.set_tooltip_text('Menu')
-        menu_button.set_menu_model(self.create_menu())
-        toolbar.append(menu_button)
         
         sidebar_box.append(toolbar)
         
@@ -1205,7 +1994,7 @@ class MainWindow(Adw.ApplicationWindow):
         try:
             # Capture the toolbar variable from this scope for measurement
             local_toolbar = locals().get('toolbar', None)
-            def _sync_banner_heights(*_args):
+            def _sync_banner_heights(*args):
                 try:
                     # Re-measure toolbar height in case style/theme changed
                     try:
@@ -1274,6 +2063,7 @@ class MainWindow(Adw.ApplicationWindow):
         menu.append('New Connection', 'app.new-connection')
         menu.append('Generate SSH Key', 'app.new-key')
         menu.append('Preferences', 'app.preferences')
+        menu.append('Help', 'app.help')
         menu.append('About', 'app.about')
         menu.append('Quit', 'app.quit')
         
@@ -1348,6 +2138,29 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception:
             pass
         return False
+
+    def focus_connection_list(self):
+        """Focus the connection list and show a toast notification."""
+        try:
+            if hasattr(self, 'connection_list') and self.connection_list:
+                # If sidebar is hidden, show it first
+                if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
+                    if not self.sidebar_toggle_button.get_active():
+                        self.sidebar_toggle_button.set_active(True)
+                
+                self.connection_list.grab_focus()
+                
+                # Pulse the selected row
+                self.pulse_selected_row(self.connection_list, repeats=1, duration_ms=600)
+                
+                # Show toast notification
+                toast = Adw.Toast.new(
+                    "Switched to connection list — ↑/↓ navigate, Enter open, Ctrl+Enter new tab"
+                )
+                toast.set_timeout(3)  # seconds
+                self.toast_overlay.add_toast(toast)
+        except Exception as e:
+            logger.error(f"Error focusing connection list: {e}")
     
     def show_tab_view(self):
         """Show the tab view when connections are active"""
@@ -1369,122 +2182,225 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.connect('connection-saved', self.on_connection_saved)
         dialog.present()
 
-    def show_key_dialog(self):
-        """Show SSH key generation dialog"""
+    # --- Helpers (use your existing ones if already present) ---------------------
+
+    def _error_dialog(self, heading: str, body: str, detail: str = ""):
         try:
-            dialog = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_("Generate SSH Key Pair"),
-                body=_("We will create a private key and its matching public key (.pub). Choose how to generate the key pair:")
-            )
-            dialog.add_response('cancel', _("Cancel"))
-            dialog.add_response('builtin', _("Generate (Built-in)"))
-            dialog.add_response('ssh-keygen', _("Generate (ssh-keygen)"))
-            dialog.set_default_response('builtin')
-            dialog.set_close_response('cancel')
+            msg = Adw.MessageDialog(transient_for=self, modal=True,
+                                    heading=heading, body=(body + (f"\n\n{detail}" if detail else "")))
+            msg.add_response("ok", _("OK"))
+            msg.set_default_response("ok")
+            msg.set_close_response("ok")
+            msg.present()
+        except Exception:
+            pass
 
-            def _on_resp(dlg, response):
-                dlg.close()
-                if response in ('builtin', 'ssh-keygen'):
-                    self._present_key_generator(response)
-
-            dialog.connect('response', _on_resp)
-            dialog.present()
-        except Exception as e:
-            logger.error(f"Failed to show key dialog: {e}")
-
-    def _present_key_generator(self, method: str):
-        """Present a minimal key generation UI and generate the key."""
+    def _info_dialog(self, heading: str, body: str):
         try:
-            # Simple inline generator dialog
-            gen = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_("New SSH Key Pair"),
-                body=_("Enter a file name and choose a key type. We will generate both private and public keys.")
-            )
-            # Inputs
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-            name_row = Adw.EntryRow(title=_("Key name"))
+            msg = Adw.MessageDialog(transient_for=self, modal=True,
+                                    heading=heading, body=body)
+            msg.add_response("ok", _("OK"))
+            msg.set_default_response("ok")
+            msg.set_close_response("ok")
+            msg.present()
+        except Exception:
+            pass
+
+
+    # --- Single, simplified key generator (no copy-to-server inside) ------------
+
+    def show_key_dialog(self, on_success=None):
+        """
+        Single key generation dialog (Adw). Optional passphrase.
+        No copy-to-server in this dialog. If provided, `on_success(key)` is called.
+        """
+        try:
+            dlg = Adw.Dialog.new()
+            dlg.set_title(_("Generate SSH Key"))
+
+            tv = Adw.ToolbarView()
+            hb = Adw.HeaderBar()
+            hb.set_title_widget(Gtk.Label(label=_("New SSH Key")))
+            tv.add_top_bar(hb)
+
+            content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            content.set_margin_top(18); content.set_margin_bottom(18)
+            content.set_margin_start(18); content.set_margin_end(18)
+            content.set_size_request(500, -1)
+
+            form = Adw.PreferencesGroup()
+
+            name_row = Adw.EntryRow()
+            name_row.set_title(_("Key file name"))
             name_row.set_text("id_ed25519")
-            # Use a simple DropDown so both options are clearly visible
-            type_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            type_label = Gtk.Label(label=_("Key type"))
-            type_label.set_halign(Gtk.Align.START)
-            type_label.set_hexpand(True)
-            key_type_dropdown = Gtk.DropDown.new_from_strings(["ed25519", "rsa"])
-            key_type_dropdown.set_selected(0)
-            type_box.append(type_label)
-            type_box.append(key_type_dropdown)
-            box.append(name_row)
-            box.append(type_box)
-            gen.set_extra_child(box)
-            gen.add_response('cancel', _("Cancel"))
-            gen.add_response('generate', _("Generate"))
-            gen.set_default_response('generate')
-            gen.set_close_response('cancel')
+            
+            # Add real-time validation
+            def on_name_changed(entry):
+                key_name = (entry.get_text() or "").strip()
+                if key_name and not key_name.startswith(".") and "/" not in key_name:
+                    key_path = self.key_manager.ssh_dir / key_name
+                    if key_path.exists():
+                        entry.add_css_class("error")
+                        entry.set_title(_("Key file name (already exists)"))
+                    else:
+                        entry.remove_css_class("error")
+                        entry.set_title(_("Key file name"))
+                else:
+                    entry.remove_css_class("error")
+                    entry.set_title(_("Key file name"))
+            
+            name_row.connect("changed", on_name_changed)
+            form.add(name_row)
 
-            def _on_gen(dlg, response):
-                dlg.close()
-                if response != 'generate':
-                    return
-                key_name = name_row.get_text().strip() or 'id_ed25519'
-                key_type = ['ed25519', 'rsa'][key_type_dropdown.get_selected()]
+            type_row = Adw.ComboRow()
+            type_row.set_title(_("Key type"))
+            types = Gtk.StringList.new(["ed25519", "rsa"])
+            type_row.set_model(types)
+            type_row.set_selected(0)
+            form.add(type_row)
+
+            pass_switch = Adw.SwitchRow()
+            pass_switch.set_title(_("Encrypt with passphrase"))
+            pass_switch.set_active(False)
+            form.add(pass_switch)
+
+            pass_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            pass1 = Gtk.PasswordEntry()
+            pass1.set_property("placeholder-text", _("Passphrase"))
+            pass2 = Gtk.PasswordEntry()
+            pass2.set_property("placeholder-text", _("Confirm passphrase"))
+            pass_box.append(pass1); pass_box.append(pass2)
+            pass_box.set_visible(False)
+
+
+
+            def on_pass_toggle(*_):
+                pass_box.set_visible(pass_switch.get_active())
+            pass_switch.connect("notify::active", on_pass_toggle)
+
+            # Buttons
+            btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            btn_box.set_halign(Gtk.Align.END)
+            btn_cancel = Gtk.Button.new_with_label(_("Cancel"))
+            btn_primary = Gtk.Button.new_with_label(_("Generate"))
+            try:
+                btn_primary.add_css_class("suggested-action")
+            except Exception:
+                pass
+            btn_box.append(btn_cancel); btn_box.append(btn_primary)
+
+            # Compose
+            content.append(form)
+            content.append(pass_box)
+            content.append(btn_box)
+            tv.set_content(content)
+            dlg.set_child(tv)
+
+            def close_dialog(*args):
                 try:
-                    if method == 'ssh-keygen':
-                        ssh_key = self.key_manager.generate_key_with_ssh_keygen(
-                            key_name=key_name,
-                            key_type=key_type,
-                            key_size=4096 if key_type == 'rsa' else 0,
-                            comment=f"{os.getenv('USER')}@{os.uname().nodename}"
-                        )
-                    else:
-                        ssh_key = self.key_manager.generate_key(
-                            key_name=key_name,
-                            key_type=key_type,
-                            key_size=4096 if key_type == 'rsa' else 0,
-                            comment=f"{os.getenv('USER')}@{os.uname().nodename}"
-                        )
-                    if ssh_key:
-                        dlg = Adw.MessageDialog(
-                            transient_for=self,
-                            modal=True,
-                            heading=_("Success"),
-                            body=_("SSH key pair generated:\nPrivate: {}\nPublic: {}.pub").format(ssh_key.path, ssh_key.path)
-                        )
-                        dlg.add_response('ok', _("OK"))
-                        dlg.set_default_response('ok')
-                        dlg.set_close_response('ok')
-                        dlg.present()
-                    else:
-                        dlg = Adw.MessageDialog(
-                            transient_for=self,
-                            modal=True,
-                            heading=_("Error"),
-                            body=_("Failed to generate SSH key pair")
-                        )
-                        dlg.add_response('ok', _("OK"))
-                        dlg.set_default_response('ok')
-                        dlg.set_close_response('ok')
-                        dlg.present()
-                except Exception as e:
-                    logger.error(f"Key generation failed: {e}")
-                    dlg = Adw.MessageDialog(
-                        transient_for=self,
-                        modal=True,
-                        heading=_("Error"),
-                        body=str(e)
-                    )
-                    dlg.add_response('ok', _("OK"))
-                    dlg.set_default_response('ok')
-                    dlg.set_close_response('ok')
-                    dlg.present()
+                    dlg.force_close()
+                except Exception:
+                    pass
 
-            gen.connect('response', _on_gen)
-            gen.present()
+            btn_cancel.connect("clicked", close_dialog)
+
+            def do_generate(*args):
+                try:
+                    key_name = (name_row.get_text() or "").strip()
+                    if not key_name:
+                        raise ValueError(_("Enter a key file name (e.g. id_ed25519)"))
+                    if "/" in key_name or key_name.startswith("."):
+                        raise ValueError(_("Key file name must not contain '/' or start with '.'"))
+
+                    # Check if key already exists before attempting generation
+                    key_path = self.key_manager.ssh_dir / key_name
+                    if key_path.exists():
+                        # Suggest alternative names
+                        base_name = key_name
+                        counter = 1
+                        while (self.key_manager.ssh_dir / f"{base_name}_{counter}").exists():
+                            counter += 1
+                        suggestion = f"{base_name}_{counter}"
+                        
+                        raise ValueError(_("A key named '{}' already exists. Try '{}' instead.").format(key_name, suggestion))
+
+                    kt = "ed25519" if type_row.get_selected() == 0 else "rsa"
+
+                    passphrase = None
+                    if pass_switch.get_active():
+                        p1 = pass1.get_text() or ""
+                        p2 = pass2.get_text() or ""
+                        if p1 != p2:
+                            raise ValueError(_("Passphrases do not match"))
+                        passphrase = p1
+
+                    key = self.key_manager.generate_key(
+                        key_name=key_name,
+                        key_type=kt,
+                        key_size=3072 if kt == "rsa" else 0,
+                        comment=None,
+                        passphrase=passphrase,
+                    )
+                    if not key:
+                        raise RuntimeError(_("Key generation failed. See logs for details."))
+
+                    self._info_dialog(_("Key Created"),
+                                     _("Private: {priv}\nPublic: {pub}").format(
+                                         priv=key.private_path, pub=key.public_path))
+
+                    try:
+                        dlg.force_close()
+                    except Exception:
+                        pass
+
+                    if callable(on_success):
+                        on_success(key)
+
+                except Exception as e:
+                    self._error_dialog(_("Key Generation Error"),
+                                      _("Could not create the SSH key."), str(e))
+
+            btn_primary.connect("clicked", do_generate)
+            dlg.present()
+            return dlg
         except Exception as e:
-            logger.error(f"Failed to present key generator: {e}")
+            logger.error("Failed to present key generator: %s", e)
+
+
+    # --- Integrate generator into ssh-copy-id chooser ---------------------------
+
+    def on_copy_key_to_server_clicked(self, _button):
+        logger.info("Main window: ssh-copy-id button clicked")
+        logger.debug("Main window: Starting ssh-copy-id process")
+        
+        selected_row = self.connection_list.get_selected_row()
+        if not selected_row or not getattr(selected_row, "connection", None):
+            logger.warning("Main window: No connection selected for ssh-copy-id")
+            return
+        connection = selected_row.connection
+        logger.info(f"Main window: Selected connection: {getattr(connection, 'nickname', 'unknown')}")
+        logger.debug(f"Main window: Connection details - host: {getattr(connection, 'host', 'unknown')}, "
+                    f"username: {getattr(connection, 'username', 'unknown')}, "
+                    f"port: {getattr(connection, 'port', 22)}")
+
+        try:
+            logger.info("Main window: Creating SshCopyIdWindow")
+            logger.debug("Main window: Initializing SshCopyIdWindow with key_manager and connection_manager")
+            win = SshCopyIdWindow(self, connection, self.key_manager, self.connection_manager)
+            logger.info("Main window: SshCopyIdWindow created successfully, presenting")
+            win.present()
+        except Exception as e:
+            logger.error(f"Main window: ssh-copy-id window failed: {e}")
+            logger.debug(f"Main window: Exception details: {type(e).__name__}: {str(e)}")
+            # Fallback error if window cannot be created
+            try:
+                md = Adw.MessageDialog(transient_for=self, modal=True,
+                                       heading="Error",
+                                       body=f"Could not open the Copy Key window.\n\n{e}")
+                md.add_response("ok", "OK")
+                md.present()
+            except Exception:
+                pass
 
     def show_preferences(self):
         """Show preferences dialog"""
@@ -1565,6 +2481,35 @@ class MainWindow(Adw.ApplicationWindow):
         
         about.present()
 
+    def open_help_url(self):
+        """Open the SSH Pilot wiki in the default browser"""
+        try:
+            import subprocess
+            import webbrowser
+            
+            # Try to open the URL using the default browser
+            url = "https://github.com/mfat/sshpilot/wiki"
+            
+            # Use webbrowser module which handles platform differences
+            webbrowser.open(url)
+            
+            logger.info(f"Opened help URL: {url}")
+        except Exception as e:
+            logger.error(f"Failed to open help URL: {e}")
+            # Fallback: show an error dialog
+            try:
+                dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    message_type=Gtk.MessageType.ERROR,
+                    buttons=Gtk.ButtonsType.OK,
+                    text="Failed to open help",
+                    secondary_text=f"Could not open the help URL. Please visit:\n{url}"
+                )
+                dialog.present()
+            except Exception:
+                pass
+
     def toggle_list_focus(self):
         """Toggle focus between connection list and terminal"""
         if self.connection_list.has_focus():
@@ -1575,8 +2520,8 @@ class MainWindow(Adw.ApplicationWindow):
                 if hasattr(child, 'vte'):
                     child.vte.grab_focus()
         else:
-            # Focus connection list
-            self.connection_list.grab_focus()
+            # Focus connection list with toast notification
+            self.focus_connection_list()
 
     def _select_tab_relative(self, delta: int):
         """Select tab relative to current index, wrapping around."""
@@ -1794,6 +2739,47 @@ class MainWindow(Adw.ApplicationWindow):
         if row:
             self._cycle_connection_tabs_or_open(row.connection)
 
+    def _focus_most_recent_tab_or_open_new(self, connection: Connection):
+        """If there are open tabs for this server, focus the most recent one.
+        Otherwise open a new tab for the server.
+        """
+        try:
+            # Check if there are open tabs for this connection
+            terms_for_conn = []
+            try:
+                n = self.tab_view.get_n_pages()
+            except Exception:
+                n = 0
+            for i in range(n):
+                page = self.tab_view.get_nth_page(i)
+                child = page.get_child() if hasattr(page, 'get_child') else None
+                if child is not None and self.terminal_to_connection.get(child) == connection:
+                    terms_for_conn.append(child)
+
+            if terms_for_conn:
+                # Focus the most recent tab for this connection
+                most_recent_term = self.active_terminals.get(connection)
+                if most_recent_term and most_recent_term in terms_for_conn:
+                    # Use the most recent terminal
+                    target_term = most_recent_term
+                else:
+                    # Fallback to the first tab for this connection
+                    target_term = terms_for_conn[0]
+                
+                page = self.tab_view.get_page(target_term)
+                if page is not None:
+                    self.tab_view.set_selected_page(page)
+                    # Update most-recent mapping
+                    self.active_terminals[connection] = target_term
+                    # Give focus to the VTE terminal so user can start typing immediately
+                    target_term.vte.grab_focus()
+                    return
+
+            # No existing tabs for this connection -> open a new one
+            self.connect_to_host(connection, force_new=False)
+        except Exception as e:
+            logger.error(f"Failed to focus most recent tab or open new for {getattr(connection, 'nickname', '')}: {e}")
+
     def _cycle_connection_tabs_or_open(self, connection: Connection):
         """If there are open tabs for this server, cycle to the next one (wrap).
         Otherwise open a new tab for the server.
@@ -1844,6 +2830,8 @@ class MainWindow(Adw.ApplicationWindow):
             self.copy_key_button.set_sensitive(has_selection)
         if hasattr(self, 'upload_button'):
             self.upload_button.set_sensitive(has_selection)
+        if hasattr(self, 'manage_files_button'):
+            self.manage_files_button.set_sensitive(has_selection)
         self.delete_button.set_sensitive(has_selection)
 
     def on_add_connection_clicked(self, button):
@@ -1856,96 +2844,65 @@ class MainWindow(Adw.ApplicationWindow):
         if selected_row:
             self.show_connection_dialog(selected_row.connection)
 
-    def on_copy_key_to_server_clicked(self, button):
-        """Copy selected SSH public key to selected server using ssh-copy-id"""
+    def on_sidebar_toggle(self, button):
+        """Handle sidebar toggle button click"""
         try:
-            selected_row = self.connection_list.get_selected_row()
-            if not selected_row:
-                return
-            connection = getattr(selected_row, 'connection', None)
-            if not connection:
-                return
-
-            # Discover keys
-            keys = self.key_manager.discover_keys() if hasattr(self, 'key_manager') else []
-            if not keys:
-                # Offer to generate a key first
-                dlg = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading=_('No SSH keys found'),
-                    body=_('You have no SSH keys in ~/.ssh. Generate a new key pair now?')
-                )
-                dlg.add_response('cancel', _('Cancel'))
-                dlg.add_response('generate', _('Generate SSH Key'))
-                dlg.set_default_response('generate')
-                dlg.set_close_response('cancel')
-
-                def _resp(d, response):
-                    d.close()
-                    if response == 'generate':
-                        self.show_key_dialog()
-                dlg.connect('response', _resp)
-                dlg.present()
-                return
-
-            # Picker dialog for available keys
-            picker = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_('Select SSH key to copy'),
-                body=_('Choose which public key to add to the server using ssh-copy-id')
-            )
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            names = [os.path.basename(k.path) for k in keys]
-            dropdown = Gtk.DropDown.new_from_strings(names)
-            dropdown.set_selected(0)
-            box.append(dropdown)
-            picker.set_extra_child(box)
-            picker.add_response('cancel', _('Cancel'))
-            picker.add_response('copy', _('Copy Key'))
-            picker.set_default_response('copy')
-            picker.set_close_response('cancel')
-
-            def _on_pick(d, response):
-                d.close()
-                if response != 'copy':
-                    return
-                idx = dropdown.get_selected()
-                if idx < 0 or idx >= len(keys):
-                    return
-                ssh_key = keys[idx]
-                if _HAS_VTE:
-                    self._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
-                else:
-                    ok = self.key_manager.copy_key_to_host(ssh_key, connection)
-                    if ok:
-                        msg = Adw.MessageDialog(
-                            transient_for=self,
-                            modal=True,
-                            heading=_('Success'),
-                            body=_('Public key copied to {}@{}').format(connection.username, connection.host)
-                        )
-                        msg.add_response('ok', _('OK'))
-                        msg.set_default_response('ok')
-                        msg.set_close_response('ok')
-                        msg.present()
-                    else:
-                        msg = Adw.MessageDialog(
-                            transient_for=self,
-                            modal=True,
-                            heading=_('Error'),
-                            body=_('Failed to copy the public key. Check logs for details.')
-                        )
-                        msg.add_response('ok', _('OK'))
-                        msg.set_default_response('ok')
-                        msg.set_close_response('ok')
-                        msg.present()
-
-            picker.connect('response', _on_pick)
-            picker.present()
+            is_visible = button.get_active()
+            self._toggle_sidebar_visibility(is_visible)
+            
+            # Update button icon and tooltip
+            if is_visible:
+                button.set_icon_name('sidebar-show-symbolic')
+                button.set_tooltip_text('Hide Sidebar (F9, Ctrl+B)')
+            else:
+                button.set_icon_name('sidebar-show-symbolic')
+                button.set_tooltip_text('Show Sidebar (F9, Ctrl+B)')
+            
+            # No need to save state - sidebar always starts visible
+                
         except Exception as e:
-            logger.error(f'Copy key to server failed: {e}')
+            logger.error(f"Failed to toggle sidebar: {e}")
+
+    def on_toggle_sidebar_action(self, action, param):
+        """Handle sidebar toggle action (for keyboard shortcuts)"""
+        try:
+            # Get current sidebar visibility
+            if HAS_OVERLAY_SPLIT:
+                current_visible = self.split_view.get_show_sidebar()
+            else:
+                sidebar_widget = self.split_view.get_start_child()
+                current_visible = sidebar_widget.get_visible() if sidebar_widget else True
+            
+            # Toggle to opposite state
+            new_visible = not current_visible
+            
+            # Update sidebar visibility
+            self._toggle_sidebar_visibility(new_visible)
+            
+            # Update button state if it exists
+            if hasattr(self, 'sidebar_toggle_button'):
+                self.sidebar_toggle_button.set_active(new_visible)
+            
+            # No need to save state - sidebar always starts visible
+                
+        except Exception as e:
+            logger.error(f"Failed to toggle sidebar via action: {e}")
+
+    def _toggle_sidebar_visibility(self, is_visible):
+        """Helper method to toggle sidebar visibility"""
+        try:
+            if HAS_OVERLAY_SPLIT:
+                # For Adw.OverlaySplitView
+                self.split_view.set_show_sidebar(is_visible)
+            else:
+                # For Gtk.Paned fallback
+                sidebar_widget = self.split_view.get_start_child()
+                if sidebar_widget:
+                    sidebar_widget.set_visible(is_visible)
+        except Exception as e:
+            logger.error(f"Failed to toggle sidebar visibility: {e}")
+
+
 
     def on_upload_file_clicked(self, button):
         """Show SCP intro dialog and start upload to selected server."""
@@ -1990,6 +2947,36 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as e:
             logger.error(f'Upload dialog failed: {e}')
 
+    def on_manage_files_button_clicked(self, button):
+        """Handle manage files button click from toolbar"""
+        try:
+            selected_row = self.connection_list.get_selected_row()
+            if not selected_row:
+                return
+            connection = getattr(selected_row, 'connection', None)
+            if not connection:
+                return
+            
+            # Use the same logic as the context menu action
+            try:
+                success, error_msg = open_remote_in_file_manager(
+                    user=connection.username,
+                    host=connection.host,
+                    port=connection.port if connection.port != 22 else None
+                )
+                if success:
+                    logger.info(f"Opened file manager for {connection.nickname}")
+                else:
+                    logger.error(f"Failed to open file manager for {connection.nickname}: {error_msg}")
+                    # Show error dialog to user
+                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
+            except Exception as e:
+                logger.error(f"Error opening file manager: {e}")
+                # Show error dialog to user
+                self._show_manage_files_error(connection.nickname, str(e))
+        except Exception as e:
+            logger.error(f"Manage files button click failed: {e}")
+
     def _show_ssh_copy_id_terminal_using_main_widget(self, connection, ssh_key):
         """Show a window with header bar and embedded terminal running ssh-copy-id.
 
@@ -1997,13 +2984,23 @@ class MainWindow(Adw.ApplicationWindow):
         - Terminal expands horizontally, no borders around it
         - Header bar contains Cancel and Close buttons
         """
+        logger.info("Main window: Starting ssh-copy-id terminal window creation")
+        logger.debug(f"Main window: Connection details - host: {getattr(connection, 'host', 'unknown')}, "
+                    f"username: {getattr(connection, 'username', 'unknown')}, "
+                    f"port: {getattr(connection, 'port', 22)}")
+        logger.debug(f"Main window: SSH key details - private_path: {getattr(ssh_key, 'private_path', 'unknown')}, "
+                    f"public_path: {getattr(ssh_key, 'public_path', 'unknown')}")
+        
         try:
             target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
             pub_name = os.path.basename(getattr(ssh_key, 'public_path', '') or '')
             body_text = _('This will add your public key to the server\'s ~/.ssh/authorized_keys so future logins can use SSH keys.')
+            logger.debug(f"Main window: Target: {target}, public key name: {pub_name}")
+            
             dlg = Adw.Window()
             dlg.set_transient_for(self)
             dlg.set_modal(True)
+            logger.debug("Main window: Created modal window")
             try:
                 dlg.set_title(_('ssh-copy-id'))
             except Exception:
@@ -2029,12 +3026,6 @@ class MainWindow(Adw.ApplicationWindow):
             title_widget.append(subtitle_label)
             header.set_title_widget(title_widget)
 
-            cancel_btn = Gtk.Button(label=_('Cancel'))
-            try:
-                cancel_btn.add_css_class('flat')
-            except Exception:
-                pass
-            header.pack_start(cancel_btn)
             # Close button is omitted; window has native close (X)
 
             # Content: TerminalWidget without connecting spinner/banner
@@ -2071,6 +3062,20 @@ class MainWindow(Adw.ApplicationWindow):
             # No frame: avoid borders around the terminal
             content_box.append(term_widget)
 
+            # Bottom button area with Close button
+            button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            button_box.set_halign(Gtk.Align.END)
+            button_box.set_margin_top(12)
+            
+            cancel_btn = Gtk.Button(label=_('Close'))
+            try:
+                cancel_btn.add_css_class('suggested-action')
+            except Exception:
+                pass
+            button_box.append(cancel_btn)
+            
+            content_box.append(button_box)
+
             # Root container combines header and content
             root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             root_box.append(header)
@@ -2081,7 +3086,7 @@ class MainWindow(Adw.ApplicationWindow):
                 # GTK fallback
                 dlg.set_child(root_box)
 
-            def _on_cancel(_btn):
+            def _on_cancel(btn):
                 try:
                     if hasattr(term_widget, 'disconnect'):
                         term_widget.disconnect()
@@ -2092,9 +3097,13 @@ class MainWindow(Adw.ApplicationWindow):
             # No explicit close button; use window close (X)
 
             # Build ssh-copy-id command with options derived from connection settings
+            logger.debug("Main window: Building ssh-copy-id command arguments")
             argv = self._build_ssh_copy_id_argv(connection, ssh_key)
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
             logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
+            logger.info("Full command line: %s", cmdline)
+            logger.debug(f"Main window: Command argv: {argv}")
+            logger.debug(f"Main window: Shell-quoted command: {cmdline}")
 
             # Helper to write colored lines into the terminal
             def _feed_colored_line(text: str, color: str):
@@ -2113,12 +3122,141 @@ class MainWindow(Adw.ApplicationWindow):
             # Initial info line
             _feed_colored_line(_('Running ssh-copy-id…'), 'yellow')
 
+            # Handle password authentication consistently with terminal connections
+            logger.debug("Main window: Setting up authentication environment")
+            env = os.environ.copy()
+            logger.debug(f"Main window: Environment variables count: {len(env)}")
+            
+            # Determine auth method and check for saved password
+            prefer_password = False
+            logger.debug("Main window: Determining authentication preferences")
             try:
+                cfg = Config()
+                meta = cfg.get_connection_meta(connection.nickname) if hasattr(cfg, 'get_connection_meta') else {}
+                logger.debug(f"Main window: Connection metadata: {meta}")
+                if isinstance(meta, dict) and 'auth_method' in meta:
+                    prefer_password = int(meta.get('auth_method', 0) or 0) == 1
+                    logger.debug(f"Main window: Auth method from metadata: {meta.get('auth_method')} -> prefer_password={prefer_password}")
+            except Exception as e:
+                logger.debug(f"Main window: Failed to get auth method from metadata: {e}")
+                try:
+                    prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
+                    logger.debug(f"Main window: Auth method from connection object: {getattr(connection, 'auth_method', 0)} -> prefer_password={prefer_password}")
+                except Exception as e2:
+                    logger.debug(f"Main window: Failed to get auth method from connection object: {e2}")
+                    prefer_password = False
+            
+            has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username))
+            logger.debug(f"Main window: Has saved password: {has_saved_password}")
+            logger.debug(f"Main window: Authentication setup - prefer_password={prefer_password}, has_saved_password={has_saved_password}")
+            
+            if prefer_password and has_saved_password:
+                # Use sshpass for password authentication
+                logger.debug("Main window: Using sshpass for password authentication")
+                import shutil
+                sshpass_path = None
+                
+                # Check if sshpass is available and executable
+                logger.debug("Main window: Checking for sshpass availability")
+                if os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
+                    sshpass_path = '/app/bin/sshpass'
+                    logger.debug("Found sshpass at /app/bin/sshpass")
+                elif shutil.which('sshpass'):
+                    sshpass_path = shutil.which('sshpass')
+                    logger.debug(f"Found sshpass in PATH: {sshpass_path}")
+                else:
+                    logger.debug("sshpass not found or not executable")
+                
+                if sshpass_path:
+                    # Use the same approach as ssh_password_exec.py for consistency
+                    logger.debug("Main window: Setting up sshpass with FIFO")
+                    from .ssh_password_exec import _mk_priv_dir, _write_once_fifo
+                    import threading
+                    
+                    # Create private temp directory and FIFO
+                    logger.debug("Main window: Creating private temp directory")
+                    tmpdir = _mk_priv_dir()
+                    fifo = os.path.join(tmpdir, "pw.fifo")
+                    logger.debug(f"Main window: FIFO path: {fifo}")
+                    os.mkfifo(fifo, 0o600)
+                    logger.debug("Main window: FIFO created with permissions 0o600")
+                    
+                    # Start writer thread that writes the password exactly once
+                    saved_password = self.connection_manager.get_password(connection.host, connection.username)
+                    logger.debug(f"Main window: Retrieved saved password, length: {len(saved_password) if saved_password else 0}")
+                    t = threading.Thread(target=_write_once_fifo, args=(fifo, saved_password), daemon=True)
+                    t.start()
+                    logger.debug("Main window: Password writer thread started")
+                    
+                    # Use sshpass with FIFO
+                    original_argv = argv.copy()
+                    argv = [sshpass_path, "-f", fifo] + argv
+                    logger.debug(f"Main window: Modified argv - added sshpass: {argv}")
+                    
+                    # Important: strip askpass vars so OpenSSH won't try the askpass helper for passwords
+                    env.pop("SSH_ASKPASS", None)
+                    env.pop("SSH_ASKPASS_REQUIRE", None)
+                    logger.debug("Main window: Removed SSH_ASKPASS environment variables")
+                    
+                    logger.debug("Using sshpass with FIFO for ssh-copy-id password authentication")
+                    
+                    # Store tmpdir for cleanup (will be cleaned up when process exits)
+                    def cleanup_tmpdir():
+                        try:
+                            import shutil
+                            shutil.rmtree(tmpdir, ignore_errors=True)
+                        except Exception:
+                            pass
+                    import atexit
+                    atexit.register(cleanup_tmpdir)
+                else:
+                    # sshpass not available, fallback to askpass
+                    logger.debug("Main window: sshpass not available, falling back to askpass")
+                    from .askpass_utils import get_ssh_env_with_askpass
+                    askpass_env = get_ssh_env_with_askpass("force")
+                    logger.debug(f"Main window: Askpass environment variables: {list(askpass_env.keys())}")
+                    env.update(askpass_env)
+            elif prefer_password and not has_saved_password:
+                # Password auth selected but no saved password - let SSH prompt interactively
+                # Don't set any askpass environment variables
+                logger.debug("Main window: Password auth selected but no saved password - using interactive prompt")
+            else:
+                # Use askpass for passphrase prompts (key-based auth)
+                logger.debug("Main window: Using askpass for key-based authentication")
+                from .askpass_utils import get_ssh_env_with_askpass
+                askpass_env = get_ssh_env_with_askpass("force")
+                logger.debug(f"Main window: Askpass environment variables: {list(askpass_env.keys())}")
+                env.update(askpass_env)
+
+            # Ensure /app/bin is first in PATH for Flatpak compatibility
+            logger.debug("Main window: Setting up PATH for Flatpak compatibility")
+            if os.path.exists('/app/bin'):
+                current_path = env.get('PATH', '')
+                logger.debug(f"Main window: Current PATH: {current_path}")
+                if '/app/bin' not in current_path:
+                    env['PATH'] = f"/app/bin:{current_path}"
+                    logger.debug(f"Main window: Updated PATH: {env['PATH']}")
+                else:
+                    logger.debug("Main window: /app/bin already in PATH")
+            else:
+                logger.debug("Main window: /app/bin does not exist, skipping PATH modification")
+            
+            cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
+            logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
+            logger.debug(f"Main window: Final command line: {cmdline}")
+            envv = [f"{k}={v}" for k, v in env.items()]
+            logger.debug(f"Main window: Environment variables count: {len(envv)}")
+
+            try:
+                logger.debug("Main window: Spawning ssh-copy-id process in VTE terminal")
+                logger.debug(f"Main window: Working directory: {os.path.expanduser('~') or '/'}")
+                logger.debug(f"Main window: Command: ['bash', '-lc', '{cmdline}']")
+                
                 term_widget.vte.spawn_async(
                     Vte.PtyFlags.DEFAULT,
                     os.path.expanduser('~') or '/',
                     ['bash', '-lc', cmdline],
-                    [f"{k}={v}" for k, v in os.environ.items()],
+                    envv,  # <— use merged env
                     GLib.SpawnFlags.DEFAULT,
                     None,
                     None,
@@ -2126,29 +3264,42 @@ class MainWindow(Adw.ApplicationWindow):
                     None,
                     None
                 )
+                logger.debug("Main window: ssh-copy-id process spawned successfully")
 
                 # Show result modal when the command finishes
-                def _on_copyid_exited(_vte, status):
+                def _on_copyid_exited(vte, status):
+                    logger.debug(f"Main window: ssh-copy-id process exited with raw status: {status}")
                     # Normalize exit code
                     exit_code = None
                     try:
                         if os.WIFEXITED(status):
                             exit_code = os.WEXITSTATUS(status)
+                            logger.debug(f"Main window: Process exited normally, exit code: {exit_code}")
                         else:
                             exit_code = status if 0 <= int(status) < 256 else ((int(status) >> 8) & 0xFF)
-                    except Exception:
+                            logger.debug(f"Main window: Process did not exit normally, normalized exit code: {exit_code}")
+                    except Exception as e:
+                        logger.debug(f"Main window: Error normalizing exit status: {e}")
                         try:
                             exit_code = int(status)
-                        except Exception:
+                            logger.debug(f"Main window: Converted status to int: {exit_code}")
+                        except Exception as e2:
+                            logger.debug(f"Main window: Failed to convert status to int: {e2}")
                             exit_code = status
 
+                    logger.info(f"ssh-copy-id exited with status: {status}, normalized exit_code: {exit_code}")
                     ok = (exit_code == 0)
                     if ok:
+                        logger.info("ssh-copy-id completed successfully")
+                        logger.debug("Main window: ssh-copy-id succeeded, showing success message")
                         _feed_colored_line(_('Public key was installed successfully.'), 'green')
                     else:
+                        logger.error(f"ssh-copy-id failed with exit code: {exit_code}")
+                        logger.debug(f"Main window: ssh-copy-id failed with exit code {exit_code}")
                         _feed_colored_line(_('Failed to install the public key.'), 'red')
 
                     def _present_result_dialog():
+                        logger.debug(f"Main window: Presenting result dialog - success: {ok}")
                         msg = Adw.MessageDialog(
                             transient_for=dlg,
                             modal=True,
@@ -2160,6 +3311,7 @@ class MainWindow(Adw.ApplicationWindow):
                         msg.set_default_response('ok')
                         msg.set_close_response('ok')
                         msg.present()
+                        logger.debug("Main window: Result dialog presented")
                         return False
 
                     GLib.idle_add(_present_result_dialog)
@@ -2170,80 +3322,131 @@ class MainWindow(Adw.ApplicationWindow):
                     pass
             except Exception as e:
                 logger.error(f'Failed to spawn ssh-copy-id in TerminalWidget: {e}')
+                logger.debug(f'Main window: Exception details: {type(e).__name__}: {str(e)}')
                 dlg.close()
-                ok = self.key_manager.copy_key_to_host(ssh_key, connection)
-                msg = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading=_('Success') if ok else _('Error'),
-                    body=(_('Public key copied to {}@{}').format(connection.username, connection.host)
-                         if ok else _('Failed to copy the public key. Check logs for details.'))
-                )
-                msg.add_response('ok', _('OK'))
-                msg.set_default_response('ok')
-                msg.set_close_response('ok')
-                msg.present()
+                # No fallback method available
+                logger.error(f'Terminal ssh-copy-id failed: {e}')
+                self._error_dialog(_("SSH Key Copy Error"),
+                                  _("Failed to copy SSH key to server."), 
+                                  f"Terminal error: {str(e)}\n\nPlease check:\n• Network connectivity\n• SSH server configuration\n• User permissions")
                 return
 
             dlg.present()
+            logger.debug("Main window: ssh-copy-id terminal window presented successfully")
         except Exception as e:
             logger.error(f'VTE ssh-copy-id window failed: {e}')
+            logger.debug(f'Main window: Exception details: {type(e).__name__}: {str(e)}')
+            self._error_dialog(_("SSH Key Copy Error"),
+                              _("Failed to create ssh-copy-id terminal window."), 
+                              f"Error: {str(e)}\n\nThis could be due to:\n• Missing VTE terminal widget\n• Display/GTK issues\n• System resource limitations")
 
     def _build_ssh_copy_id_argv(self, connection, ssh_key):
         """Construct argv for ssh-copy-id honoring saved UI auth preferences."""
+        logger.info(f"Building ssh-copy-id argv for key: {getattr(ssh_key, 'public_path', 'unknown')}")
+        logger.debug(f"Main window: Building ssh-copy-id command arguments")
+        logger.debug(f"Main window: Connection object: {type(connection)}")
+        logger.debug(f"Main window: SSH key object: {type(ssh_key)}")
+        logger.info(f"Key object attributes: private_path={getattr(ssh_key, 'private_path', 'unknown')}, public_path={getattr(ssh_key, 'public_path', 'unknown')}")
+        
+        # Verify the public key file exists
+        logger.debug(f"Main window: Checking if public key file exists: {ssh_key.public_path}")
+        if not os.path.exists(ssh_key.public_path):
+            logger.error(f"Public key file does not exist: {ssh_key.public_path}")
+            logger.debug(f"Main window: Public key file missing: {ssh_key.public_path}")
+            raise RuntimeError(f"Public key file not found: {ssh_key.public_path}")
+        
+        logger.debug(f"Main window: Public key file verified: {ssh_key.public_path}")
         argv = ['ssh-copy-id', '-i', ssh_key.public_path]
+        logger.debug(f"Main window: Base command: {argv}")
         try:
-            if getattr(connection, 'port', 22) and connection.port != 22:
+            port = getattr(connection, 'port', 22)
+            logger.debug(f"Main window: Connection port: {port}")
+            if port and port != 22:
                 argv += ['-p', str(connection.port)]
-        except Exception:
+                logger.debug(f"Main window: Added port option: -p {connection.port}")
+        except Exception as e:
+            logger.debug(f"Main window: Error getting port: {e}")
             pass
         # Honor app SSH settings: strict host key checking / auto-add
+        logger.debug("Main window: Loading SSH configuration")
         try:
             cfg = Config()
             ssh_cfg = cfg.get_ssh_config() if hasattr(cfg, 'get_ssh_config') else {}
+            logger.debug(f"Main window: SSH config: {ssh_cfg}")
             strict_val = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
             auto_add = bool(ssh_cfg.get('auto_add_host_keys', True))
+            logger.debug(f"Main window: SSH settings - strict_val='{strict_val}', auto_add={auto_add}")
             if strict_val:
                 argv += ['-o', f'StrictHostKeyChecking={strict_val}']
+                logger.debug(f"Main window: Added strict host key checking: {strict_val}")
             elif auto_add:
                 argv += ['-o', 'StrictHostKeyChecking=accept-new']
-        except Exception:
+                logger.debug("Main window: Added auto-accept new host keys")
+        except Exception as e:
+            logger.debug(f"Main window: Error loading SSH config: {e}")
             argv += ['-o', 'StrictHostKeyChecking=accept-new']
+            logger.debug("Main window: Using default strict host key checking: accept-new")
         # Derive auth prefs from saved config and connection
+        logger.debug("Main window: Determining authentication preferences")
         prefer_password = False
         key_mode = 0
         keyfile = getattr(connection, 'keyfile', '') or ''
+        logger.debug(f"Main window: Connection keyfile: '{keyfile}'")
+        
         try:
             cfg = Config()
             meta = cfg.get_connection_meta(connection.nickname) if hasattr(cfg, 'get_connection_meta') else {}
+            logger.debug(f"Main window: Connection metadata: {meta}")
             if isinstance(meta, dict) and 'auth_method' in meta:
                 prefer_password = int(meta.get('auth_method', 0) or 0) == 1
-        except Exception:
+                logger.debug(f"Main window: Auth method from metadata: {meta.get('auth_method')} -> prefer_password={prefer_password}")
+        except Exception as e:
+            logger.debug(f"Main window: Error getting auth method from metadata: {e}")
             try:
                 prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
-            except Exception:
+                logger.debug(f"Main window: Auth method from connection object: {getattr(connection, 'auth_method', 0)} -> prefer_password={prefer_password}")
+            except Exception as e2:
+                logger.debug(f"Main window: Error getting auth method from connection object: {e2}")
                 prefer_password = False
+        
         try:
             # key_select_mode is saved in ssh config, our connection object should have it post-load
             key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
-        except Exception:
+            logger.debug(f"Main window: Key select mode: {key_mode}")
+        except Exception as e:
+            logger.debug(f"Main window: Error getting key select mode: {e}")
             key_mode = 0
+        
         # Validate keyfile path
         try:
             keyfile_ok = bool(keyfile) and os.path.isfile(keyfile)
-        except Exception:
+            logger.debug(f"Main window: Keyfile validation - keyfile='{keyfile}', exists={keyfile_ok}")
+        except Exception as e:
+            logger.debug(f"Main window: Error validating keyfile: {e}")
             keyfile_ok = False
 
         # Priority: if UI selected a specific key and it exists, use it; otherwise fall back to password prefs/try-all
+        logger.debug(f"Main window: Applying authentication options - key_mode={key_mode}, keyfile_ok={keyfile_ok}, prefer_password={prefer_password}")
+        
+        # For ssh-copy-id, we should NOT add IdentityFile options because:
+        # 1. ssh-copy-id should use the same key for authentication that it's copying
+        # 2. The -i parameter already specifies which key to copy
+        # 3. Adding IdentityFile would cause ssh-copy-id to use a different key for auth
+        
         if key_mode == 1 and keyfile_ok:
-            argv += ['-o', f'IdentityFile={keyfile}', '-o', 'IdentitiesOnly=yes', '-o', 'IdentityAgent=none']
+            # Don't add IdentityFile for ssh-copy-id - it should use the key being copied
+            logger.debug(f"Main window: Skipping IdentityFile for ssh-copy-id - using key being copied for authentication")
         else:
             # Only force password when user selected password auth
             if prefer_password:
                 argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password,keyboard-interactive']
+                logger.debug("Main window: Added password authentication options - PubkeyAuthentication=no, PreferredAuthentications=password,keyboard-interactive")
+        
         # Target
         target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
         argv.append(target)
+        logger.debug(f"Main window: Added target: {target}")
+        logger.debug(f"Main window: Final argv: {argv}")
         return argv
 
     def _on_files_chosen(self, chooser, response, connection):
@@ -2371,7 +3574,19 @@ class MainWindow(Adw.ApplicationWindow):
             except Exception:
                 dlg.set_child(root_box)
 
-            def _on_cancel(_btn):
+            def _on_cancel(btn):
+                # Clean up askpass helper scripts
+                try:
+                    if hasattr(self, '_scp_askpass_helpers'):
+                        for helper_path in self._scp_askpass_helpers:
+                            try:
+                                os.unlink(helper_path)
+                            except Exception:
+                                pass
+                        self._scp_askpass_helpers.clear()
+                except Exception:
+                    pass
+                
                 try:
                     if hasattr(term_widget, 'disconnect'):
                         term_widget.disconnect()
@@ -2382,7 +3597,45 @@ class MainWindow(Adw.ApplicationWindow):
 
             # Build and run scp command in the terminal
             argv = self._build_scp_argv(connection, local_paths, remote_dir)
+
+            # Handle environment variables for authentication
+            env = os.environ.copy()
+            
+            # Check if we have stored askpass environment from key passphrase handling
+            if hasattr(self, '_scp_askpass_env') and self._scp_askpass_env:
+                env.update(self._scp_askpass_env)
+                logger.debug(f"SCP: Using askpass environment for key passphrase: {list(self._scp_askpass_env.keys())}")
+                # Clear the stored environment after use
+                self._scp_askpass_env = {}
+                
+                # For key-based auth, ensure the key is loaded in SSH agent first
+                try:
+                    keyfile = getattr(connection, 'keyfile', '') or ''
+                    if keyfile and os.path.isfile(keyfile):
+                        # Prepare key for connection (add to ssh-agent if needed)
+                        if hasattr(self, 'connection_manager') and self.connection_manager:
+                            key_prepared = self.connection_manager.prepare_key_for_connection(keyfile)
+                            if key_prepared:
+                                logger.debug(f"SCP: Key prepared for connection: {keyfile}")
+                            else:
+                                logger.warning(f"SCP: Failed to prepare key for connection: {keyfile}")
+                except Exception as e:
+                    logger.warning(f"SCP: Error preparing key for connection: {e}")
+            else:
+                # Handle password authentication - sshpass is already handled in _build_scp_argv
+                # No additional environment setup needed here
+                logger.debug("SCP: Password authentication handled by sshpass in command line")
+
+            # Ensure /app/bin is first in PATH for Flatpak compatibility
+            if os.path.exists('/app/bin'):
+                current_path = env.get('PATH', '')
+                if '/app/bin' not in current_path:
+                    env['PATH'] = f"/app/bin:{current_path}"
+            
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
+            envv = [f"{k}={v}" for k, v in env.items()]
+            logger.debug(f"SCP: Final environment variables: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
+            logger.debug(f"SCP: Command line: {cmdline}")
 
             # Helper to write colored lines
             def _feed_colored_line(text: str, color: str):
@@ -2405,7 +3658,7 @@ class MainWindow(Adw.ApplicationWindow):
                     Vte.PtyFlags.DEFAULT,
                     os.path.expanduser('~') or '/',
                     ['bash', '-lc', cmdline],
-                    [f"{k}={v}" for k, v in os.environ.items()],
+                    envv,  # <— use merged env (ASKPASS + DISPLAY + SSHPILOT_* )
                     GLib.SpawnFlags.DEFAULT,
                     None,
                     None,
@@ -2414,7 +3667,7 @@ class MainWindow(Adw.ApplicationWindow):
                     None
                 )
 
-                def _on_scp_exited(_vte, status):
+                def _on_scp_exited(vte, status):
                     # Normalize exit code
                     exit_code = None
                     try:
@@ -2434,6 +3687,18 @@ class MainWindow(Adw.ApplicationWindow):
                         _feed_colored_line(_('Upload failed. See output above.'), 'red')
 
                     def _present_result_dialog():
+                        # Clean up askpass helper scripts
+                        try:
+                            if hasattr(self, '_scp_askpass_helpers'):
+                                for helper_path in self._scp_askpass_helpers:
+                                    try:
+                                        os.unlink(helper_path)
+                                    except Exception:
+                                        pass
+                                self._scp_askpass_helpers.clear()
+                        except Exception:
+                            pass
+                        
                         msg = Adw.MessageDialog(
                             transient_for=dlg,
                             modal=True,
@@ -2505,10 +3770,95 @@ class MainWindow(Adw.ApplicationWindow):
             keyfile_ok = bool(keyfile) and os.path.isfile(keyfile)
         except Exception:
             keyfile_ok = False
+        # Handle authentication with saved credentials
         if key_mode == 1 and keyfile_ok:
-            argv += ['-i', keyfile, '-o', 'IdentitiesOnly=yes', '-o', 'IdentityAgent=none']
+            argv += ['-i', keyfile, '-o', 'IdentitiesOnly=yes']
+            
+            # Try to get saved passphrase for the key
+            try:
+                if hasattr(self, 'connection_manager') and self.connection_manager:
+                    saved_passphrase = self.connection_manager.get_key_passphrase(keyfile)
+                    if saved_passphrase:
+                        # Use the secure askpass script for passphrase authentication
+                        # This avoids storing passphrases in plain text temporary files
+                        from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
+                        askpass_env = get_ssh_env_with_forced_askpass()
+                        # Store for later use in the main execution
+                        if not hasattr(self, '_scp_askpass_env'):
+                            self._scp_askpass_env = {}
+                        self._scp_askpass_env.update(askpass_env)
+                        logger.debug(f"SCP: Stored askpass environment for key passphrase: {list(askpass_env.keys())}")
+                        
+                        # Add SSH options to force public key authentication and prevent password fallback
+                        argv += get_scp_ssh_options()
+            except Exception as e:
+                logger.debug(f"Failed to get saved passphrase for SCP: {e}")
+                
         elif prefer_password:
             argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password,keyboard-interactive']
+            
+            # Try to get saved password
+            try:
+                if hasattr(self, 'connection_manager') and self.connection_manager:
+                    saved_password = self.connection_manager.get_password(connection.host, connection.username)
+                    if saved_password:
+                        # Use sshpass for password authentication
+                        import shutil
+                        sshpass_path = None
+                        
+                        # Check if sshpass is available and executable
+                        if os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
+                            sshpass_path = '/app/bin/sshpass'
+                            logger.debug("Found sshpass at /app/bin/sshpass")
+                        elif shutil.which('sshpass'):
+                            sshpass_path = shutil.which('sshpass')
+                            logger.debug(f"Found sshpass in PATH: {sshpass_path}")
+                        else:
+                            logger.debug("sshpass not found or not executable")
+                        
+                        if sshpass_path:
+                            # Use the same approach as ssh_password_exec.py for consistency
+                            from .ssh_password_exec import _mk_priv_dir, _write_once_fifo
+                            import threading
+                            
+                            # Create private temp directory and FIFO
+                            tmpdir = _mk_priv_dir()
+                            fifo = os.path.join(tmpdir, "pw.fifo")
+                            os.mkfifo(fifo, 0o600)
+                            
+                            # Start writer thread that writes the password exactly once
+                            t = threading.Thread(target=_write_once_fifo, args=(fifo, saved_password), daemon=True)
+                            t.start()
+                            
+                            # Use sshpass with FIFO
+                            argv = [sshpass_path, "-f", fifo] + argv
+                            
+                            logger.debug("Using sshpass with FIFO for SCP password authentication")
+                            
+                            # Store tmpdir for cleanup (will be cleaned up when process exits)
+                            def cleanup_tmpdir():
+                                try:
+                                    import shutil
+                                    shutil.rmtree(tmpdir, ignore_errors=True)
+                                except Exception:
+                                    pass
+                            import atexit
+                            atexit.register(cleanup_tmpdir)
+                        else:
+                            # sshpass not available → use askpass env (same pattern as in ssh-copy-id path)
+                            from .askpass_utils import get_ssh_env_with_askpass
+                            askpass_env = get_ssh_env_with_askpass("force")
+                            # Store for later use in the main execution
+                            if not hasattr(self, '_scp_askpass_env'):
+                                self._scp_askpass_env = {}
+                            self._scp_askpass_env.update(askpass_env)
+                            logger.debug("SCP: sshpass unavailable, using SSH_ASKPASS fallback")
+                    else:
+                        # No saved password - will use interactive prompt
+                        logger.debug("SCP: Password auth selected but no saved password - using interactive prompt")
+            except Exception as e:
+                logger.debug(f"Failed to get saved password for SCP: {e}")
+        
         # Paths
         for p in local_paths:
             argv.append(p)
@@ -3001,7 +4351,7 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.add_response('cancel', 'Cancel')
         dialog.add_response('quit', 'Quit Anyway')
         dialog.set_response_appearance('quit', Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_default_response('cancel')
+        dialog.set_default_response('quit')
         dialog.set_close_response('cancel')
         
         dialog.connect('response', self.on_quit_confirmation_response)
@@ -3029,6 +4379,296 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as e:
             logger.error(f"Failed to open new connection tab: {e}")
 
+    def on_open_new_connection_tab_action(self, action, param=None):
+        """Open a new tab for the selected connection via global shortcut (Ctrl+Alt+N)."""
+        try:
+            # Get the currently selected connection
+            row = self.connection_list.get_selected_row()
+            if row and hasattr(row, 'connection'):
+                connection = row.connection
+                self.connect_to_host(connection, force_new=True)
+            else:
+                # If no connection is selected, show a message or fall back to new connection dialog
+                logger.debug("No connection selected for Ctrl+Alt+N, opening new connection dialog")
+                self.show_connection_dialog()
+        except Exception as e:
+            logger.error(f"Failed to open new connection tab with Ctrl+Alt+N: {e}")
+
+    def on_manage_files_action(self, action, param=None):
+        """Handle manage files action from context menu"""
+        if hasattr(self, '_context_menu_connection') and self._context_menu_connection:
+            connection = self._context_menu_connection
+            try:
+                success, error_msg = open_remote_in_file_manager(
+                    user=connection.username,
+                    host=connection.host,
+                    port=connection.port if connection.port != 22 else None
+                )
+                if success:
+                    logger.info(f"Opened file manager for {connection.nickname}")
+                else:
+                    logger.error(f"Failed to open file manager for {connection.nickname}: {error_msg}")
+                    # Show error dialog to user
+                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
+            except Exception as e:
+                logger.error(f"Error opening file manager: {e}")
+                # Show error dialog to user
+                self._show_manage_files_error(connection.nickname, str(e))
+
+    def on_edit_connection_action(self, action, param=None):
+        """Handle edit connection action from context menu"""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                # Fallback to selected row if any
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+            self.show_connection_dialog(connection)
+        except Exception as e:
+            logger.error(f"Failed to edit connection: {e}")
+
+    def on_delete_connection_action(self, action, param=None):
+        """Handle delete connection action from context menu"""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                # Fallback to selected row if any
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+            
+            # Use the same logic as the button click handler
+            # If host has active connections/tabs, warn about closing them first
+            has_active_terms = bool(self.connection_to_terminals.get(connection, []))
+            if getattr(connection, 'is_connected', False) or has_active_terms:
+                dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_('Remove host?'),
+                    body=_('Close connections and remove host?')
+                )
+                dialog.add_response('cancel', _('Cancel'))
+                dialog.add_response('close_remove', _('Close and Remove'))
+                dialog.set_response_appearance('close_remove', Adw.ResponseAppearance.DESTRUCTIVE)
+                dialog.set_default_response('close')
+                dialog.set_close_response('cancel')
+            else:
+                # Simple delete confirmation when not connected
+                dialog = Adw.MessageDialog.new(self, _('Delete Connection?'),
+                                             _('Are you sure you want to delete "{}"?').format(connection.nickname))
+                dialog.add_response('cancel', _('Cancel'))
+                dialog.add_response('delete', _('Delete'))
+                dialog.add_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
+                dialog.set_default_response('cancel')
+                dialog.set_close_response('cancel')
+
+            dialog.connect('response', self.on_delete_connection_response, connection)
+            dialog.present()
+        except Exception as e:
+            logger.error(f"Failed to delete connection: {e}")
+
+    def on_open_in_system_terminal_action(self, action, param=None):
+        """Handle open in system terminal action from context menu"""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                # Fallback to selected row if any
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+            
+            self.open_in_system_terminal(connection)
+        except Exception as e:
+            logger.error(f"Failed to open in system terminal: {e}")
+
+    def open_in_system_terminal(self, connection):
+        """Open the connection in the system's default terminal"""
+        try:
+            # Build the SSH command
+            port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
+            ssh_command = f"ssh{port_text} {connection.username}@{connection.host}"
+            
+            # Get the default terminal
+            terminal_command = self._get_default_terminal_command()
+            
+            if not terminal_command:
+                # Fallback to common terminals
+                common_terminals = [
+                    'gnome-terminal', 'konsole', 'xterm', 'alacritty', 
+                    'kitty', 'terminator', 'tilix', 'xfce4-terminal'
+                ]
+                
+                for term in common_terminals:
+                    try:
+                        result = subprocess.run(['which', term], capture_output=True, text=True, timeout=2)
+                        if result.returncode == 0:
+                            terminal_command = term
+                            break
+                    except Exception:
+                        continue
+            
+            if not terminal_command:
+                # Last resort: try xdg-terminal
+                try:
+                    result = subprocess.run(['which', 'xdg-terminal'], capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0:
+                        terminal_command = 'xdg-terminal'
+                except Exception:
+                    pass
+            
+            if not terminal_command:
+                # Show error dialog
+                self._show_terminal_error_dialog()
+                return
+            
+            # Launch the terminal with SSH command
+            if terminal_command in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
+                # These terminals use -- to separate options from command
+                cmd = [terminal_command, '--', 'bash', '-c', f'{ssh_command}; exec bash']
+            elif terminal_command in ['konsole', 'terminator']:
+                # These terminals use -e for command execution
+                cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
+            elif terminal_command in ['alacritty', 'kitty']:
+                # These terminals use -e for command execution
+                cmd = [terminal_command, '-e', 'bash', '-c', f'{ssh_command}; exec bash']
+            elif terminal_command == 'xterm':
+                # xterm uses -e for command execution
+                cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
+            elif terminal_command == 'xdg-terminal':
+                # xdg-terminal opens the default terminal
+                cmd = [terminal_command, ssh_command]
+            else:
+                # Generic fallback
+                cmd = [terminal_command, ssh_command]
+            
+            logger.info(f"Launching system terminal: {' '.join(cmd)}")
+            subprocess.Popen(cmd, start_new_session=True)
+            
+        except Exception as e:
+            logger.error(f"Failed to open system terminal: {e}")
+            self._show_terminal_error_dialog()
+
+    def _get_default_terminal_command(self):
+        """Get the default terminal command from desktop environment"""
+        try:
+            # Check for desktop-specific terminals
+            desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
+            
+            if 'gnome' in desktop:
+                return 'gnome-terminal'
+            elif 'kde' in desktop or 'plasma' in desktop:
+                return 'konsole'
+            elif 'xfce' in desktop:
+                return 'xfce4-terminal'
+            elif 'cinnamon' in desktop:
+                return 'gnome-terminal'  # Cinnamon uses gnome-terminal
+            elif 'mate' in desktop:
+                return 'mate-terminal'
+            elif 'lxqt' in desktop:
+                return 'qterminal'
+            elif 'lxde' in desktop:
+                return 'lxterminal'
+            
+            # Check for common terminals in PATH
+            common_terminals = [
+                'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty', 
+                'kitty', 'terminator', 'tilix'
+            ]
+            
+            for term in common_terminals:
+                try:
+                    result = subprocess.run(['which', term], capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0:
+                        return term
+                except Exception:
+                    continue
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get default terminal: {e}")
+            return None
+
+    def _show_terminal_error_dialog(self):
+        """Show error dialog when no terminal is found"""
+        try:
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("No Terminal Found"),
+                body=_("Could not find a suitable terminal application. Please install a terminal like gnome-terminal, konsole, or xterm.")
+            )
+            
+            dialog.add_response("ok", _("OK"))
+            dialog.set_default_response("ok")
+            dialog.set_close_response("ok")
+            dialog.present()
+            
+        except Exception as e:
+            logger.error(f"Failed to show terminal error dialog: {e}")
+
+    def _show_manage_files_error(self, connection_name: str, error_message: str):
+        """Show error dialog for manage files failure"""
+        try:
+            # Determine if this is a "not mounted" error that might be temporary
+            is_mount_error = "not mounted" in error_message.lower()
+            
+            if is_mount_error:
+                # Provide more helpful guidance for mount errors
+                heading = _("SFTP Connection Not Ready")
+                body = _("The file manager couldn't establish an SFTP connection to the server. This is often temporary and can be resolved by:")
+                
+                # Create a list of suggestions
+                suggestions_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+                suggestions_box.set_margin_top(12)
+                
+                suggestions = [
+                    _("• Waiting a moment and trying again"),
+                    _("• Manually opening the SFTP URL in your file manager"),
+                    _("• Ensuring the server is accessible via SSH")
+                ]
+                
+                for suggestion in suggestions:
+                    label = Gtk.Label(label=suggestion)
+                    label.set_halign(Gtk.Align.START)
+                    label.set_wrap(True)
+                    suggestions_box.append(label)
+                
+                msg = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=heading,
+                    body=body
+                )
+                msg.set_extra_child(suggestions_box)
+            else:
+                # Show generic error dialog for other issues
+                msg = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("File Manager Error"),
+                    body=_("Failed to open file manager for remote server.")
+                )
+                
+                # Add technical details if available
+                if error_message and error_message.strip():
+                    detail_label = Gtk.Label(label=error_message)
+                    detail_label.add_css_class("dim-label")
+                    detail_label.set_wrap(True)
+                    msg.set_extra_child(detail_label)
+            
+            msg.add_response("ok", _("OK"))
+            msg.set_default_response("ok")
+            msg.set_close_response("ok")
+            msg.present()
+            
+        except Exception as e:
+            logger.error(f"Failed to show manage files error dialog: {e}")
+
     def _cleanup_and_quit(self):
         """Clean up all connections and quit - SIMPLIFIED VERSION"""
         if self._is_quitting:
@@ -3054,6 +4694,11 @@ class MainWindow(Adw.ApplicationWindow):
         self._show_cleanup_progress(total)
         # Schedule cleanup to run after the dialog has a chance to render
         GLib.idle_add(self._perform_cleanup_and_quit, connections_to_disconnect, priority=GLib.PRIORITY_DEFAULT_IDLE)
+        # Force-quit watchdog (last resort)
+        try:
+            GLib.timeout_add_seconds(5, self._do_quit)
+        except Exception:
+            pass
 
     def _perform_cleanup_and_quit(self, connections_to_disconnect):
         """Disconnect terminals with UI progress, then quit. Runs on idle."""
@@ -3082,6 +4727,22 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as e:
             logger.error(f"Cleanup during quit encountered an error: {e}")
         finally:
+            # Final sweep of any lingering processes (but skip terminal cleanup since we already did that)
+            try:
+                from .terminal import SSHProcessManager
+                # Only clean up processes, not terminals
+                process_manager = SSHProcessManager()
+                with process_manager.lock:
+                    # Make a copy of PIDs to avoid modifying the dict during iteration
+                    pids = list(process_manager.processes.keys())
+                    for pid in pids:
+                        process_manager._terminate_process_by_pid(pid)
+                    # Clear all tracked processes
+                    process_manager.processes.clear()
+                    # Clear terminal references
+                    process_manager.terminals.clear()
+            except Exception as e:
+                logger.debug(f"Final SSH cleanup failed: {e}")
             # Clear active terminals and hide progress
             self.active_terminals.clear()
             self._hide_cleanup_progress()

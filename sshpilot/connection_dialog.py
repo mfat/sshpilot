@@ -890,8 +890,8 @@ class ConnectionDialog(Adw.PreferencesDialog):
             paths = []
             for k in keys:
                 try:
-                    names.append(os.path.basename(k.path))
-                    paths.append(k.path)
+                    names.append(os.path.basename(k.private_path))
+                    paths.append(k.private_path)
                 except Exception:
                     pass
             # Add placeholder when none
@@ -948,7 +948,18 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 logger.debug(f"Syncing dropdown to keyfile: {current_path} (index {preselect_idx})")
                 self.key_dropdown.set_selected(preselect_idx)
             else:
-                logger.debug(f"Could not find keyfile '{current_path}' in dropdown paths")
+                # If the key is not in the dropdown, add it and then select it
+                if current_path and hasattr(self, '_key_paths') and hasattr(self, 'key_dropdown'):
+                    self._key_paths.append(current_path)
+                    model = self.key_dropdown.get_model()
+                    if model:
+                        filename = os.path.basename(current_path)
+                        model.append(filename)
+                        preselect_idx = len(self._key_paths) - 1
+                        logger.debug(f"Added external key to dropdown: {filename} (path: {current_path}, index {preselect_idx})")
+                        self.key_dropdown.set_selected(preselect_idx)
+                else:
+                    logger.debug(f"Could not find keyfile '{current_path}' in dropdown paths")
         except Exception as e:
             logger.debug(f"Failed to sync key dropdown: {e}")
 
@@ -1038,7 +1049,7 @@ class ConnectionDialog(Adw.PreferencesDialog):
         basic_group = Adw.PreferencesGroup(title=_("Basic Settings"))
         
         # Nickname
-        self.nickname_row = Adw.EntryRow(title=_("Nickname"))
+        self.nickname_row = Adw.EntryRow(title=_("Nickname (Only letters, digits, dot, underscore, dash)"))
         basic_group.add(self.nickname_row)
         
         # Host
@@ -1669,7 +1680,24 @@ class ConnectionDialog(Adw.PreferencesDialog):
         if response == Gtk.ResponseType.ACCEPT:
             key_file = dialog.get_file()
             if key_file:
-                self.keyfile_row.set_subtitle(key_file.get_path())
+                key_path = key_file.get_path()
+                self.keyfile_row.set_subtitle(key_path)
+                
+                # Add the browsed key to the dropdown if it's not already there
+                if hasattr(self, '_key_paths') and key_path not in self._key_paths:
+                    self._key_paths.append(key_path)
+                    # Update the dropdown model with just the filename
+                    if hasattr(self, 'key_dropdown'):
+                        model = self.key_dropdown.get_model()
+                        if model:
+                            filename = os.path.basename(key_path)
+                            model.append(filename)
+                
+                # Set the selected keyfile path
+                self._selected_keyfile_path = key_path
+                
+                # Sync the dropdown to select the browsed key
+                self._sync_key_dropdown_with_current_keyfile()
         dialog.destroy()
     
     def on_delete_forwarding_rule_clicked(self, button, rule):
@@ -1699,9 +1727,12 @@ class ConnectionDialog(Adw.PreferencesDialog):
         """Open a small Gtk.Dialog to add/edit a forwarding rule (compatible across lib versions)."""
         # Create dialog
         parent_win = self.get_transient_for() if hasattr(self, 'get_transient_for') else None
-        dialog = Gtk.Dialog(title=_("Port Forwarding Rule"), transient_for=parent_win, modal=True)
+        dialog = Gtk.Dialog(title=_("Port Forwarding Rule Editor"), transient_for=parent_win, modal=True)
         dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
         dialog.add_button(_("Save"), Gtk.ResponseType.OK)
+        
+        # Set default size to make dialog wider
+        dialog.set_default_size(500, -1)  # 500px width, auto height
 
         content = dialog.get_content_area()
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)

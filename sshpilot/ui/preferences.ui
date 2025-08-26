@@ -216,56 +216,6 @@
       </object>
     </child>
     
-    <!-- Monitoring Page -->
-    <child>
-      <object class="AdwPreferencesPage">
-        <property name="title">Monitoring</property>
-        <property name="icon-name">utilities-system-monitor-symbolic</property>
-        
-        <child>
-          <object class="AdwPreferencesGroup">
-            <property name="title">Resource Monitoring</property>
-            
-            <child>
-              <object class="AdwSwitchRow" id="enable_monitoring_switch">
-                <property name="title">Enable Monitoring</property>
-                <property name="subtitle">Monitor system resources on remote hosts</property>
-                <property name="active">true</property>
-              </object>
-            </child>
-            
-            <child>
-              <object class="AdwSpinRow" id="update_interval_spin">
-                <property name="title">Update Interval</property>
-                <property name="subtitle">Update interval in seconds</property>
-                <property name="adjustment">
-                  <object class="GtkAdjustment">
-                    <property name="lower">1</property>
-                    <property name="upper">60</property>
-                    <property name="value">5</property>
-                    <property name="step-increment">1</property>
-                  </object>
-                </property>
-              </object>
-            </child>
-            
-            <child>
-              <object class="AdwSpinRow" id="history_length_spin">
-                <property name="title">History Length</property>
-                <property name="subtitle">Number of data points to keep</property>
-                <property name="adjustment">
-                  <object class="GtkAdjustment">
-                    <property name="lower">60</property>
-                    <property name="upper">3600</property>
-                    <property name="value">300</property>
-                    <property name="step-increment">60</property>
-                  </object>
-                </property>
-              </object>
-            </child>
-          </object>
-        </child>
-      </object>
-    </child>
+
   </template>
 </interface>

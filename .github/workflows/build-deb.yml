@@ -72,7 +72,8 @@ jobs:
             echo "         python3-paramiko,"
             echo "         python3-cryptography,"
             echo "         python3-secretstorage,"
-            echo "         python3-matplotlib,"
+
+            echo "         ssh-askpass,"
             echo "         sshpass"
           } >> debian/control
           echo "Description: SSH connection manager with integrated terminal" >> debian/control
