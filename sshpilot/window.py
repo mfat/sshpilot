@@ -1952,6 +1952,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
         toolbar.append(self.manage_files_button)
         
+        # System terminal button
+        self.system_terminal_button = Gtk.Button.new_from_icon_name('utilities-terminal-symbolic')
+        self.system_terminal_button.set_tooltip_text('Open connection in system terminal')
+        self.system_terminal_button.set_sensitive(False)
+        self.system_terminal_button.connect('clicked', self.on_system_terminal_button_clicked)
+        toolbar.append(self.system_terminal_button)
+        
         # Delete button
         self.delete_button = Gtk.Button.new_from_icon_name('user-trash-symbolic')
         self.delete_button.set_tooltip_text('Delete Connection')
@@ -2832,6 +2839,8 @@ class MainWindow(Adw.ApplicationWindow):
             self.upload_button.set_sensitive(has_selection)
         if hasattr(self, 'manage_files_button'):
             self.manage_files_button.set_sensitive(has_selection)
+        if hasattr(self, 'system_terminal_button'):
+            self.system_terminal_button.set_sensitive(has_selection)
         self.delete_button.set_sensitive(has_selection)
 
     def on_add_connection_clicked(self, button):
@@ -2976,6 +2985,21 @@ class MainWindow(Adw.ApplicationWindow):
                 self._show_manage_files_error(connection.nickname, str(e))
         except Exception as e:
             logger.error(f"Manage files button click failed: {e}")
+
+    def on_system_terminal_button_clicked(self, button):
+        """Handle system terminal button click from toolbar"""
+        try:
+            selected_row = self.connection_list.get_selected_row()
+            if not selected_row:
+                return
+            connection = getattr(selected_row, 'connection', None)
+            if not connection:
+                return
+            
+            # Use the same logic as the context menu action
+            self.open_in_system_terminal(connection)
+        except Exception as e:
+            logger.error(f"System terminal button click failed: {e}")
 
     def _show_ssh_copy_id_terminal_using_main_widget(self, connection, ssh_key):
         """Show a window with header bar and embedded terminal running ssh-copy-id.
