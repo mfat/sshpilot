@@ -1314,6 +1314,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.edit_connection_action = Gio.SimpleAction.new('edit-connection', None)
         self.edit_connection_action.connect('activate', self.on_edit_connection_action)
         self.add_action(self.edit_connection_action)
+        
+        # Action for deleting connections via context menu
+        self.delete_connection_action = Gio.SimpleAction.new('delete-connection', None)
+        self.delete_connection_action.connect('activate', self.on_delete_connection_action)
+        self.add_action(self.delete_connection_action)
         # (Toasts disabled) Remove any toast-related actions if previously defined
         try:
             if hasattr(self, '_toast_reconnect_action'):
@@ -1797,6 +1802,7 @@ class MainWindow(Adw.ApplicationWindow):
                     menu.append(_('+ Open New Connection'), 'win.open-new-connection')
                     menu.append(_('✏ Edit Connection'), 'win.edit-connection')
                     menu.append(_('🗄 Manage Files'), 'win.manage-files')
+                    menu.append(_('🗑 Delete Connection'), 'win.delete-connection')
                     pop = Gtk.PopoverMenu.new_from_model(menu)
                     pop.set_parent(self.connection_list)
                     try:
@@ -4329,6 +4335,47 @@ class MainWindow(Adw.ApplicationWindow):
             self.show_connection_dialog(connection)
         except Exception as e:
             logger.error(f"Failed to edit connection: {e}")
+
+    def on_delete_connection_action(self, action, param=None):
+        """Handle delete connection action from context menu"""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                # Fallback to selected row if any
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+            
+            # Use the same logic as the button click handler
+            # If host has active connections/tabs, warn about closing them first
+            has_active_terms = bool(self.connection_to_terminals.get(connection, []))
+            if getattr(connection, 'is_connected', False) or has_active_terms:
+                dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_('Remove host?'),
+                    body=_('Close connections and remove host?')
+                )
+                dialog.add_response('cancel', _('Cancel'))
+                dialog.add_response('close_remove', _('Close and Remove'))
+                dialog.set_response_appearance('close_remove', Adw.ResponseAppearance.DESTRUCTIVE)
+                dialog.set_default_response('close')
+                dialog.set_close_response('cancel')
+            else:
+                # Simple delete confirmation when not connected
+                dialog = Adw.MessageDialog.new(self, _('Delete Connection?'),
+                                             _('Are you sure you want to delete "{}"?').format(connection.nickname))
+                dialog.add_response('cancel', _('Cancel'))
+                dialog.add_response('delete', _('Delete'))
+                dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
+                dialog.set_default_response('cancel')
+                dialog.set_close_response('cancel')
+
+            dialog.connect('response', self.on_delete_connection_response, connection)
+            dialog.present()
+        except Exception as e:
+            logger.error(f"Failed to delete connection: {e}")
 
     def _show_manage_files_error(self, connection_name: str, error_message: str):
         """Show error dialog for manage files failure"""
