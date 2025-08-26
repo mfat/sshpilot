@@ -1367,6 +1367,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.delete_connection_action = Gio.SimpleAction.new('delete-connection', None)
         self.delete_connection_action.connect('activate', self.on_delete_connection_action)
         self.add_action(self.delete_connection_action)
+        
+        # Action for opening connections in system terminal
+        self.open_in_system_terminal_action = Gio.SimpleAction.new('open-in-system-terminal', None)
+        self.open_in_system_terminal_action.connect('activate', self.on_open_in_system_terminal_action)
+        self.add_action(self.open_in_system_terminal_action)
         # (Toasts disabled) Remove any toast-related actions if previously defined
         try:
             if hasattr(self, '_toast_reconnect_action'):
@@ -1850,6 +1855,7 @@ class MainWindow(Adw.ApplicationWindow):
                     menu.append(_('+ Open New Connection'), 'win.open-new-connection')
                     menu.append(_('✏ Edit Connection'), 'win.edit-connection')
                     menu.append(_('🗄 Manage Files'), 'win.manage-files')
+                    menu.append(_('💻 Open in System Terminal'), 'win.open-in-system-terminal')
                     menu.append(_('🗑 Delete Connection'), 'win.delete-connection')
                     pop = Gtk.PopoverMenu.new_from_model(menu)
                     pop.set_parent(self.connection_list)
@@ -4455,7 +4461,7 @@ class MainWindow(Adw.ApplicationWindow):
                                              _('Are you sure you want to delete "{}"?').format(connection.nickname))
                 dialog.add_response('cancel', _('Cancel'))
                 dialog.add_response('delete', _('Delete'))
-                dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
+                dialog.add_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
                 dialog.set_default_response('cancel')
                 dialog.set_close_response('cancel')
 
@@ -4463,6 +4469,147 @@ class MainWindow(Adw.ApplicationWindow):
             dialog.present()
         except Exception as e:
             logger.error(f"Failed to delete connection: {e}")
+
+    def on_open_in_system_terminal_action(self, action, param=None):
+        """Handle open in system terminal action from context menu"""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                # Fallback to selected row if any
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+            
+            self.open_in_system_terminal(connection)
+        except Exception as e:
+            logger.error(f"Failed to open in system terminal: {e}")
+
+    def open_in_system_terminal(self, connection):
+        """Open the connection in the system's default terminal"""
+        try:
+            # Build the SSH command
+            port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
+            ssh_command = f"ssh{port_text} {connection.username}@{connection.host}"
+            
+            # Get the default terminal
+            terminal_command = self._get_default_terminal_command()
+            
+            if not terminal_command:
+                # Fallback to common terminals
+                common_terminals = [
+                    'gnome-terminal', 'konsole', 'xterm', 'alacritty', 
+                    'kitty', 'terminator', 'tilix', 'xfce4-terminal'
+                ]
+                
+                for term in common_terminals:
+                    try:
+                        result = subprocess.run(['which', term], capture_output=True, text=True, timeout=2)
+                        if result.returncode == 0:
+                            terminal_command = term
+                            break
+                    except Exception:
+                        continue
+            
+            if not terminal_command:
+                # Last resort: try xdg-terminal
+                try:
+                    result = subprocess.run(['which', 'xdg-terminal'], capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0:
+                        terminal_command = 'xdg-terminal'
+                except Exception:
+                    pass
+            
+            if not terminal_command:
+                # Show error dialog
+                self._show_terminal_error_dialog()
+                return
+            
+            # Launch the terminal with SSH command
+            if terminal_command in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
+                # These terminals use -- to separate options from command
+                cmd = [terminal_command, '--', 'bash', '-c', f'{ssh_command}; exec bash']
+            elif terminal_command in ['konsole', 'terminator']:
+                # These terminals use -e for command execution
+                cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
+            elif terminal_command in ['alacritty', 'kitty']:
+                # These terminals use -e for command execution
+                cmd = [terminal_command, '-e', 'bash', '-c', f'{ssh_command}; exec bash']
+            elif terminal_command == 'xterm':
+                # xterm uses -e for command execution
+                cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
+            elif terminal_command == 'xdg-terminal':
+                # xdg-terminal opens the default terminal
+                cmd = [terminal_command, ssh_command]
+            else:
+                # Generic fallback
+                cmd = [terminal_command, ssh_command]
+            
+            logger.info(f"Launching system terminal: {' '.join(cmd)}")
+            subprocess.Popen(cmd, start_new_session=True)
+            
+        except Exception as e:
+            logger.error(f"Failed to open system terminal: {e}")
+            self._show_terminal_error_dialog()
+
+    def _get_default_terminal_command(self):
+        """Get the default terminal command from desktop environment"""
+        try:
+            # Check for desktop-specific terminals
+            desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
+            
+            if 'gnome' in desktop:
+                return 'gnome-terminal'
+            elif 'kde' in desktop or 'plasma' in desktop:
+                return 'konsole'
+            elif 'xfce' in desktop:
+                return 'xfce4-terminal'
+            elif 'cinnamon' in desktop:
+                return 'gnome-terminal'  # Cinnamon uses gnome-terminal
+            elif 'mate' in desktop:
+                return 'mate-terminal'
+            elif 'lxqt' in desktop:
+                return 'qterminal'
+            elif 'lxde' in desktop:
+                return 'lxterminal'
+            
+            # Check for common terminals in PATH
+            common_terminals = [
+                'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty', 
+                'kitty', 'terminator', 'tilix'
+            ]
+            
+            for term in common_terminals:
+                try:
+                    result = subprocess.run(['which', term], capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0:
+                        return term
+                except Exception:
+                    continue
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get default terminal: {e}")
+            return None
+
+    def _show_terminal_error_dialog(self):
+        """Show error dialog when no terminal is found"""
+        try:
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("No Terminal Found"),
+                body=_("Could not find a suitable terminal application. Please install a terminal like gnome-terminal, konsole, or xterm.")
+            )
+            
+            dialog.add_response("ok", _("OK"))
+            dialog.set_default_response("ok")
+            dialog.set_close_response("ok")
+            dialog.present()
+            
+        except Exception as e:
+            logger.error(f"Failed to show terminal error dialog: {e}")
 
     def _show_manage_files_error(self, connection_name: str, error_message: str):
         """Show error dialog for manage files failure"""
