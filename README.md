@@ -38,9 +38,91 @@ The app is currently distributed as deb and rpm packages (see releases) and can 
 
 ### macOS
 
-(WIP) On the [Mac branch](https://github.com/mfat/sshpilot/tree/mac) there are [instructions](https://github.com/mfat/sshpilot/blob/mac/INSTALL-macos.md) for running sshPilot on macOS
+#### Option 1: Using the Launcher Script (Recommended)
+```bash
+# Make the launcher executable and run it
+chmod +x sshpilot-mac.sh
+./sshpilot-mac.sh
+```
 
+The launcher script will:
+- Check and install required dependencies via Homebrew
+- Set up environment variables automatically
+- Test the setup and launch the application
 
+#### Option 2: Manual Setup
+```bash
+# Install dependencies
+brew install gtk4 libadwaita vte3 adwaita-icon-theme gobject-introspection pygobject3 sshpass
+
+# Set up environment variables
+export BREW_PREFIX=$(brew --prefix)
+export PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+export PYTHONPATH="$BREW_PREFIX/lib/python$PYTHON_VERSION/site-packages:$PYTHONPATH"
+export GI_TYPELIB_PATH="$BREW_PREFIX/lib/girepository-1.0"
+export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_LIBRARY_PATH"
+export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+
+# Run the application
+python3 run.py
+```
+
+#### Option 3: Development Setup
+```bash
+# Use the development setup script
+./setup_dev_env.sh
+```
+
+## Features
+
+- SSH connection management
+- Integrated terminal
+- Key management
+- Port forwarding
+- Resource monitoring
+
+## Building
+
+### macOS Application Bundles
+
+The project includes GitHub Actions workflows to build macOS application bundles:
+
+- **py2app**: Creates `.app` bundles using py2app
+- **PyInstaller**: Creates `.app` bundles using PyInstaller
+- **Nuitka**: Creates standalone executables
+- **GTK4**: Multi-platform GTK4 builds
+
+Workflows are triggered on pushes to the `mac` branch or manually via GitHub Actions.
+
+## Development
+
+### Prerequisites
+
+- Python 3.11+
+- GTK4 and libadwaita
+- VTE terminal widget
+- PyGObject bindings
+
+### Installation
+
+1. Clone the repository
+2. Install dependencies (see Quick Start section)
+3. Run the application
+
+### Environment Variables
+
+The following environment variables are required for PyGObject and GTK4:
+
+```bash
+export PYTHONPATH="$BREW_PREFIX/lib/python$PYTHON_VERSION/site-packages:$PYTHONPATH"
+export GI_TYPELIB_PATH="$BREW_PREFIX/lib/girepository-1.0"
+export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_LIBRARY_PATH"
+export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+```
+
+## License
+
+[Add your license information here]
 
 ## Download
 
