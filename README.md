@@ -2,7 +2,7 @@
 <img width="154" height="154" alt="logo" src="https://github.com/user-attachments/assets/42b73dbf-778c-45ff-9361-22a52988f1b3" />
 </p>
 
-**sshPilot** is a user-friendly, modern and lightweight SSH connection manager for Linux. It's a free (as in freedom) alternative to Putty and Termius.
+**sshPilot** is a user-friendly, modern and lightweight SSH connection manager for Linux, with an integrated terminal. It's a free (as in freedom) alternative to Putty and Termius.
 
 <img width="1057" height="705" alt="Screenshot From 2025-08-20 18-32-09" src="https://github.com/user-attachments/assets/f57b25a9-c3ce-4355-891e-caad17a906f9" />
 
