@@ -6,7 +6,7 @@ Primary UI with connection list, tabs, and terminal management
 import os
 import logging
 import math
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, Callable
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -38,8 +38,14 @@ from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_p
 logger = logging.getLogger(__name__)
 
 
-def open_remote_in_file_manager(user: str, host: str, port: int|None = None, path: str|None = None, error_callback=None):
-    """Open remote server in file manager using SFTP URI with proper GVFS mounting"""
+def is_running_in_flatpak() -> bool:
+    """Check if running inside Flatpak sandbox"""
+    return os.path.exists("/.flatpak-info") or os.environ.get("FLATPAK_ID") is not None
+
+def open_remote_in_file_manager(user: str, host: str, port: Optional[int] = None, 
+                               path: Optional[str] = None, error_callback: Optional[Callable] = None) -> Tuple[bool, Optional[str]]:
+    """Open remote server in file manager using SFTP URI with Flatpak-compatible methods"""
+    
     # Build sftp URI
     p = path or "/"
     port_part = f":{port}" if port else ""
@@ -48,33 +54,22 @@ def open_remote_in_file_manager(user: str, host: str, port: int|None = None, pat
     logger.info(f"Opening SFTP URI: {uri}")
     
     # Verify SSH connection first
-    logger.info(f"Verifying SSH connection to {user}@{host}...")
-    
-    ssh_cmd = ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
-    if port:
-        ssh_cmd.extend(["-p", str(port)])
-    ssh_cmd.extend([f"{user}@{host}", "echo", "READY"])
-    
-    try:
-        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=15)
-        if result.returncode != 0:
-            error_msg = f"SSH connection failed: {result.stderr.strip() if result.stderr else 'Connection refused'}"
-            logger.error(f"SSH connection failed for {user}@{host}: {error_msg}")
-            return False, error_msg
-        
-        logger.info(f"SSH connection verified for {user}@{host}")
-        
-    except subprocess.TimeoutExpired:
-        error_msg = "SSH connection timeout"
-        logger.error(f"SSH connection timeout for {user}@{host}")
-        return False, error_msg
-    except Exception as e:
-        error_msg = f"SSH connection error: {str(e)}"
-        logger.error(f"SSH connection error for {user}@{host}: {e}")
+    if not _verify_ssh_connection(user, host, port):
+        error_msg = "SSH connection failed - check credentials and network connectivity"
+        logger.error(f"SSH verification failed for {user}@{host}")
+        if error_callback:
+            error_callback(error_msg)
         return False, error_msg
     
-    # Use proper GVFS mount operation
-    return _mount_and_open_sftp(uri, user, host, error_callback)
+    logger.info(f"SSH connection verified for {user}@{host}")
+    
+    # Use Flatpak-compatible approach
+    if is_running_in_flatpak():
+        logger.info("Running in Flatpak, using portal-compatible methods")
+        return _open_sftp_flatpak_compatible(uri, user, host, port, error_callback)
+    else:
+        # Native installation - try GVFS first, then fallbacks
+        return _open_sftp_native(uri, user, host, error_callback)
 
 def _mount_and_open_sftp(uri: str, user: str, host: str, error_callback=None):
     """Mount SFTP location and open in file manager"""
@@ -122,7 +117,15 @@ def _mount_and_open_sftp(uri: str, user: str, host: str, error_callback=None):
                     logger.error(f"Mount failed for {user}@{host}: {error_msg}")
                     progress_dialog.update_progress(0.0, f"Mount failed: {e.message}")
                     progress_dialog.show_error(error_msg)
-                    if error_callback:
+                    
+                    # Try Flatpak-compatible methods as fallback
+                    if is_running_in_flatpak():
+                        logger.info("Falling back to Flatpak-compatible methods")
+                        progress_dialog.close()
+                        success, msg = _try_flatpak_compatible_mount(uri, user, host, None, error_callback)
+                        if not success and error_callback:
+                            error_callback(msg)
+                    elif error_callback:
                         error_callback(error_msg)
             except Exception as e:
                 error_msg = f"Unexpected error during mount: {str(e)}"
@@ -149,7 +152,337 @@ def _mount_and_open_sftp(uri: str, user: str, host: str, error_callback=None):
     except Exception as e:
         error_msg = f"Failed to start mount operation: {str(e)}"
         logger.error(f"Mount operation failed for {user}@{host}: {e}")
+        
+        # Try Flatpak-compatible methods as fallback
+        if is_running_in_flatpak():
+            logger.info("Primary mount failed, trying Flatpak-compatible methods")
+            return _try_flatpak_compatible_mount(uri, user, host, None, error_callback)
+        
         return False, error_msg
+
+def _verify_ssh_connection(user: str, host: str, port: Optional[int]) -> bool:
+    """Verify SSH connection without full mount"""
+    ssh_cmd = ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", 
+               "-o", "StrictHostKeyChecking=accept-new"]
+    if port:
+        ssh_cmd.extend(["-p", str(port)])
+    ssh_cmd.extend([f"{user}@{host}", "echo", "READY"])
+    
+    try:
+        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=15)
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, Exception):
+        return False
+
+def _open_sftp_flatpak_compatible(uri: str, user: str, host: str, port: Optional[int], 
+                                 error_callback: Optional[Callable]) -> Tuple[bool, Optional[str]]:
+    """Open SFTP using Flatpak-compatible methods with proper portal usage"""
+    
+    # Method 1: Use XDG Desktop Portal File Chooser to access GVFS mounts
+    try:
+        success = _try_portal_file_access(uri, user, host)
+        if success:
+            return True, None
+    except Exception as e:
+        logger.warning(f"Portal file access failed: {e}")
+    
+    # Method 2: Try to launch external file manager that can handle SFTP
+    try:
+        success = _try_external_file_managers(uri, user, host)
+        if success:
+            return True, None
+    except Exception as e:
+        logger.warning(f"External file managers failed: {e}")
+    
+    # Method 3: Use host's GVFS if accessible
+    try:
+        success = _try_host_gvfs_access(uri, user, host, port)
+        if success:
+            return True, None
+    except Exception as e:
+        logger.warning(f"Host GVFS access failed: {e}")
+    
+    # Method 4: Show connection dialog for manual setup
+    success = _show_manual_connection_dialog(user, host, port, uri)
+    if success:
+        return True, "Manual connection dialog opened"
+    
+    error_msg = "Could not open SFTP connection - try mounting the location manually first"
+    if error_callback:
+        error_callback(error_msg)
+    return False, error_msg
+
+def _try_portal_file_access(uri: str, user: str, host: str) -> bool:
+    """Try to access SFTP location via XDG Desktop Portal"""
+    
+    # Create a file chooser dialog that can access GVFS mounts
+    # This leverages the host system's GVFS through the portal
+    try:
+        dialog = Gtk.FileDialog()
+        dialog.set_title(f"Connect to {user}@{host}")
+        
+        # Try to set initial folder to the SFTP location if it's mounted
+        try:
+            gfile = Gio.File.new_for_uri(uri)
+            dialog.set_initial_folder(gfile)
+        except Exception:
+            pass  # Fall back to default folder
+        
+        def on_dialog_response(dialog, result, user_data):
+            try:
+                folder = dialog.open_finish(result)
+                if folder:
+                    # Open the selected folder in the default file manager
+                    folder_uri = folder.get_uri()
+                    Gio.AppInfo.launch_default_for_uri(folder_uri, None)
+                    return True
+            except Exception as e:
+                logger.warning(f"File dialog failed: {e}")
+                return False
+        
+        # This will use the host's file chooser, which can access GVFS mounts
+        dialog.open(None, None, on_dialog_response, None)
+        return True
+        
+    except Exception as e:
+        logger.warning(f"Portal file access failed: {e}")
+        return False
+
+def _try_external_file_managers(uri: str, user: str, host: str) -> bool:
+    """Try launching external file managers that handle SFTP"""
+    
+    # File managers known to handle SFTP URIs well
+    managers = [
+        ("nautilus", [uri]),
+        ("thunar", [uri]), 
+        ("dolphin", [uri]),
+        ("nemo", [uri]),
+        ("pcmanfm", [uri]),
+        ("caja", [uri])
+    ]
+    
+    for manager, cmd in managers:
+        try:
+            # Use flatpak-spawn to run on the host if available
+            if subprocess.run(["which", "flatpak-spawn"], capture_output=True).returncode == 0:
+                spawn_cmd = ["flatpak-spawn", "--host"] + [manager] + cmd[1:]
+                subprocess.Popen(spawn_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                logger.info(f"Launched {manager} via flatpak-spawn")
+                return True
+            
+            # Try direct launch (may work if permissions allow)
+            elif subprocess.run(["which", manager], capture_output=True).returncode == 0:
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                logger.info(f"Launched {manager} directly")
+                return True
+                
+        except Exception as e:
+            logger.debug(f"Failed to launch {manager}: {e}")
+            continue
+    
+    return False
+
+def _try_host_gvfs_access(uri: str, user: str, host: str, port: Optional[int]) -> bool:
+    """Try accessing GVFS mounts on the host system"""
+    
+    # Check if we can access the host's GVFS mounts
+    gvfs_paths = [
+        f"/run/user/{os.getuid()}/gvfs",
+        f"/var/run/user/{os.getuid()}/gvfs",
+        f"{os.path.expanduser('~')}/.gvfs"
+    ]
+    
+    for gvfs_path in gvfs_paths:
+        if os.path.exists(gvfs_path):
+            # Look for existing SFTP mount
+            sftp_pattern = f"sftp:host={host}"
+            try:
+                for mount_dir in os.listdir(gvfs_path):
+                    if sftp_pattern in mount_dir:
+                        mount_path = os.path.join(gvfs_path, mount_dir)
+                        # Open in file manager
+                        subprocess.Popen(["xdg-open", mount_path], 
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        logger.info(f"Opened existing GVFS mount: {mount_path}")
+                        return True
+            except Exception as e:
+                logger.debug(f"Could not access GVFS path {gvfs_path}: {e}")
+                continue
+    
+    return False
+
+def _show_manual_connection_dialog(user: str, host: str, port: Optional[int], uri: str) -> bool:
+    """Show dialog with manual connection instructions"""
+    
+    dialog = SftpConnectionDialog(user, host, port, uri)
+    dialog.present()
+    return True
+
+def _open_sftp_native(uri: str, user: str, host: str, error_callback: Optional[Callable]) -> Tuple[bool, Optional[str]]:
+    """Native installation SFTP opening with GVFS"""
+    
+    # Try direct GVFS mount first
+    try:
+        success = _mount_and_open_sftp_native(uri, user, host, error_callback)
+        if success:
+            return True, None
+    except Exception as e:
+        logger.warning(f"Native GVFS mount failed: {e}")
+    
+    # Fall back to Flatpak-compatible methods
+    return _open_sftp_flatpak_compatible(uri, user, host, None, error_callback)
+
+def _mount_and_open_sftp_native(uri: str, user: str, host: str, error_callback: Optional[Callable]) -> bool:
+    """Original native GVFS mounting method"""
+    
+    logger.info(f"Mounting SFTP location: {uri}")
+    
+    progress_dialog = MountProgressDialog(user, host)
+    progress_dialog.present()
+    
+    gfile = Gio.File.new_for_uri(uri)
+    op = Gio.MountOperation()
+    
+    def on_mounted(source, res, data=None):
+        try:
+            source.mount_enclosing_volume_finish(res)
+            logger.info(f"SFTP mount successful for {user}@{host}")
+            progress_dialog.update_progress(1.0, "Mount successful! Opening file manager...")
+            Gio.AppInfo.launch_default_for_uri(uri, None)
+            GLib.timeout_add(1000, progress_dialog.close)
+            
+        except GLib.Error as e:
+            if "already mounted" in e.message.lower():
+                logger.info(f"SFTP location already mounted for {user}@{host}")
+                progress_dialog.update_progress(1.0, "Location already mounted! Opening file manager...")
+                Gio.AppInfo.launch_default_for_uri(uri, None)
+                GLib.timeout_add(1000, progress_dialog.close)
+            else:
+                error_msg = f"Could not mount {uri}: {e.message}"
+                logger.error(f"Mount failed for {user}@{host}: {error_msg}")
+                progress_dialog.show_error(error_msg)
+                if error_callback:
+                    error_callback(error_msg)
+    
+    progress_dialog.start_progress_updates()
+    gfile.mount_enclosing_volume(Gio.MountMountFlags.NONE, op, None, on_mounted, None)
+    logger.info(f"Mount operation started for {user}@{host}")
+    return True
+
+def _try_flatpak_compatible_mount(uri: str, user: str, host: str, port: int|None, error_callback=None):
+    """Try various methods to open SFTP in Flatpak environment"""
+    
+    # Method 1: Try direct URI launch (sometimes works if gvfs is available)
+    try:
+        logger.info("Trying direct URI launch...")
+        Gio.AppInfo.launch_default_for_uri(uri, None)
+        logger.info(f"Direct URI launch successful for {user}@{host}")
+        return True, None
+    except Exception as e:
+        logger.warning(f"Direct URI launch failed: {e}")
+    
+    # Method 2: Try external file managers that handle SFTP
+    external_managers = [
+        ("nautilus", [uri]),  # GNOME Files
+        ("thunar", [uri]),    # XFCE Thunar
+        ("dolphin", [uri]),   # KDE Dolphin
+        ("pcmanfm", [uri]),   # PCManFM
+        ("nemo", [uri]),      # Nemo
+    ]
+    
+    for manager, cmd in external_managers:
+        try:
+            # Check if the file manager exists
+            if subprocess.run(["which", manager], capture_output=True).returncode == 0:
+                logger.info(f"Trying external file manager: {manager}")
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                logger.info(f"External file manager {manager} launched for {user}@{host}")
+                return True, None
+        except Exception as e:
+            logger.warning(f"Failed to launch {manager}: {e}")
+    
+    # Method 3: Try mounting via command line tools
+    return _try_command_line_mount(user, host, port, error_callback)
+
+def _try_command_line_mount(user: str, host: str, port: int|None, error_callback=None):
+    """Try mounting via command line utilities"""
+    
+    # Create a mount point in user's home directory
+    mount_point = os.path.expanduser(f"~/sftp-{host}")
+    
+    try:
+        # Create mount point if it doesn't exist
+        os.makedirs(mount_point, exist_ok=True)
+        
+        # Try sshfs if available
+        sshfs_cmd = ["sshfs"]
+        if port:
+            sshfs_cmd.extend(["-p", str(port)])
+        
+        sshfs_cmd.extend([
+            "-o", "reconnect,ServerAliveInterval=15,ServerAliveCountMax=3",
+            f"{user}@{host}:/",
+            mount_point
+        ])
+        
+        logger.info(f"Trying sshfs mount: {' '.join(sshfs_cmd)}")
+        result = subprocess.run(sshfs_cmd, capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0:
+            logger.info(f"sshfs mount successful at {mount_point}")
+            # Open the mount point in file manager
+            try:
+                subprocess.Popen(["xdg-open", mount_point])
+                return True, None
+            except Exception as e:
+                logger.warning(f"Failed to open mount point: {e}")
+                return True, f"Mounted at {mount_point} but couldn't open file manager"
+        else:
+            logger.warning(f"sshfs failed: {result.stderr}")
+            
+    except subprocess.TimeoutExpired:
+        logger.error("sshfs mount timeout")
+    except Exception as e:
+        logger.error(f"sshfs mount error: {e}")
+    
+    # Method 4: Fall back to terminal-based SFTP client
+    return _launch_terminal_sftp(user, host, port, error_callback)
+
+def _launch_terminal_sftp(user: str, host: str, port: int|None, error_callback=None):
+    """Launch terminal-based SFTP client as last resort"""
+    
+    terminals = ["gnome-terminal", "konsole", "xfce4-terminal", "xterm"]
+    
+    sftp_cmd = ["sftp"]
+    if port:
+        sftp_cmd.extend(["-P", str(port)])
+    sftp_cmd.append(f"{user}@{host}")
+    
+    for terminal in terminals:
+        try:
+            if subprocess.run(["which", terminal], capture_output=True).returncode == 0:
+                logger.info(f"Launching terminal SFTP with {terminal}")
+                
+                if terminal == "gnome-terminal":
+                    cmd = [terminal, "--", *sftp_cmd]
+                elif terminal == "konsole":
+                    cmd = [terminal, "-e", *sftp_cmd]
+                elif terminal == "xfce4-terminal":
+                    cmd = [terminal, "-e", " ".join(sftp_cmd)]
+                else:
+                    cmd = [terminal, "-e", " ".join(sftp_cmd)]
+                
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True, f"Opened SFTP connection in {terminal}"
+                
+        except Exception as e:
+            logger.warning(f"Failed to launch {terminal}: {e}")
+    
+    error_msg = "Could not open SFTP connection - no compatible file manager or terminal found"
+    logger.error(error_msg)
+    if error_callback:
+        error_callback(error_msg)
+    return False, error_msg
 
 def _create_mount_progress_dialog(user: str, host: str):
     """Create a progress dialog for SFTP mount operation"""
@@ -164,10 +497,11 @@ class MountProgressDialog(Adw.Window):
         self.host = host
         self.progress_value = 0.0
         self.is_cancelled = False
+        self.progress_timer = None
         
         self.set_title("Mounting SFTP Connection")
-        self.set_default_size(500, 300)
-        self.set_resizable(True)
+        self.set_default_size(500, 200)
+        self.set_resizable(False)
         self.set_modal(True)
         
         # Main container
@@ -178,172 +512,237 @@ class MountProgressDialog(Adw.Window):
         main_box.set_margin_bottom(20)
         
         # Header
-        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        
-        # Icon
-        icon = Gtk.Image.new_from_icon_name("folder-remote-symbolic")
-        icon.set_pixel_size(32)
-        header_box.append(icon)
-        
-        # Title and subtitle
-        title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        title_label = Gtk.Label()
-        title_label.set_markup(f"<b>Mounting SFTP Connection</b>")
-        title_label.set_halign(Gtk.Align.START)
-        title_box.append(title_label)
-        
-        subtitle_label = Gtk.Label()
-        subtitle_label.set_text(f"{user}@{host}")
-        subtitle_label.add_css_class("dim-label")
-        subtitle_label.set_halign(Gtk.Align.START)
-        title_box.append(subtitle_label)
-        
-        header_box.append(title_box)
-        header_box.set_hexpand(True)
-        main_box.append(header_box)
+        header_label = Gtk.Label()
+        header_label.set_markup(f"<b>Connecting to {user}@{host}</b>")
+        main_box.append(header_label)
         
         # Progress bar
         self.progress_bar = Gtk.ProgressBar()
         self.progress_bar.set_show_text(True)
-        self.progress_bar.set_text("Initializing mount...")
+        self.progress_bar.set_text("Initializing connection...")
         main_box.append(self.progress_bar)
         
         # Status label
         self.status_label = Gtk.Label()
-        self.status_label.set_text("Preparing to mount SFTP connection...")
-        self.status_label.set_halign(Gtk.Align.START)
-        self.status_label.set_wrap(True)
+        self.status_label.set_text("Preparing SFTP mount...")
         main_box.append(self.status_label)
         
-        # Terminal toggle button
-        terminal_toggle_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        terminal_toggle_box.set_halign(Gtk.Align.START)
-        
-        self.terminal_toggle_button = Gtk.ToggleButton()
-        self.terminal_toggle_button.set_label("Show Terminal Logs")
-        self.terminal_toggle_button.set_icon_name("utilities-terminal-symbolic")
-        self.terminal_toggle_button.connect('toggled', self._on_terminal_toggle)
-        terminal_toggle_box.append(self.terminal_toggle_button)
-        
-        main_box.append(terminal_toggle_box)
-        
-        # Terminal widget (hidden by default)
-        self.terminal_widget = None
-        self.terminal_revealer = Gtk.Revealer()
-        self.terminal_revealer.set_reveal_child(False)
-        main_box.append(self.terminal_revealer)
-        
-        # Buttons
-        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        button_box.set_halign(Gtk.Align.END)
-        
+        # Cancel button
         self.cancel_button = Gtk.Button.new_with_label("Cancel")
         self.cancel_button.connect('clicked', self._on_cancel)
-        button_box.append(self.cancel_button)
-        
-        self.close_button = Gtk.Button.new_with_label("Close")
-        self.close_button.connect('clicked', self.close)
-        self.close_button.set_sensitive(False)
-        button_box.append(self.close_button)
-        
-        main_box.append(button_box)
+        self.cancel_button.set_halign(Gtk.Align.CENTER)
+        main_box.append(self.cancel_button)
         
         self.set_content(main_box)
-        
-        # Start progress simulation
-        self.progress_timer = None
-    
-    def _create_terminal_widget(self):
-        """Create terminal widget for showing logs"""
-        if self.terminal_widget is None:
-            # Create a simple text view for logs
-            scrolled_window = Gtk.ScrolledWindow()
-            scrolled_window.set_min_content_height(150)
-            scrolled_window.set_max_content_height(300)
-            
-            self.terminal_text_view = Gtk.TextView()
-            self.terminal_text_view.set_editable(False)
-            self.terminal_text_view.set_monospace(True)
-            self.terminal_text_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-            
-            # Add some initial content
-            buffer = self.terminal_text_view.get_buffer()
-            buffer.set_text(f"SFTP Mount Log for {self.user}@{self.host}\n")
-            buffer.insert_at_cursor("=" * 50 + "\n")
-            buffer.insert_at_cursor("Initializing mount operation...\n")
-            
-            scrolled_window.set_child(self.terminal_text_view)
-            self.terminal_widget = scrolled_window
-            
-            self.terminal_revealer.set_child(self.terminal_widget)
-    
-    def _on_terminal_toggle(self, button):
-        """Handle terminal toggle button"""
-        if button.get_active():
-            self._create_terminal_widget()
-            self.terminal_revealer.set_reveal_child(True)
-        else:
-            self.terminal_revealer.set_reveal_child(False)
     
     def _on_cancel(self, button):
-        """Handle cancel button"""
+        """Cancel mount operation"""
         self.is_cancelled = True
-        self.update_progress(0.0, "Operation cancelled")
-        self.cancel_button.set_sensitive(False)
-        self.close_button.set_sensitive(True)
+        if self.progress_timer:
+            GLib.source_remove(self.progress_timer)
+        self.close()
     
     def start_progress_updates(self):
-        """Start progress bar updates"""
+        """Start simulated progress updates"""
+        self.progress_value = 0.0
         self.progress_timer = GLib.timeout_add(100, self._update_progress_simulation)
-    
+        
     def _update_progress_simulation(self):
-        """Simulate progress updates"""
+        """Simulate mounting progress"""
         if self.is_cancelled:
             return False
-        
-        if self.progress_value < 0.8:  # Don't go to 100% until mount completes
-            self.progress_value += 0.02
-            self.update_progress(self.progress_value, "Mounting SFTP connection...")
-            return True
-        return False
-    
-    def update_progress(self, value: float, status: str):
-        """Update progress bar and status"""
-        self.progress_value = max(0.0, min(1.0, value))
-        self.progress_bar.set_fraction(self.progress_value)
-        self.progress_bar.set_text(status)
-        self.status_label.set_text(status)
-        
-        # Add to terminal if visible
-        if self.terminal_widget and self.terminal_revealer.get_reveal_child():
-            buffer = self.terminal_text_view.get_buffer()
-            buffer.insert_at_cursor(f"[{self._get_timestamp()}] {status}\n")
             
-            # Scroll to bottom
-            iter = buffer.get_end_iter()
-            self.terminal_text_view.scroll_to_iter(iter, 0.0, False, 0.0, 0.0)
-    
-    def show_error(self, error_message: str):
-        """Show error in dialog"""
-        self.update_progress(0.0, f"Error: {error_message}")
-        self.cancel_button.set_sensitive(False)
-        self.close_button.set_sensitive(True)
+        self.progress_value += 0.02
+        if self.progress_value >= 0.9:
+            self.progress_value = 0.9
+            
+        self.update_progress(self.progress_value, "Establishing SFTP connection...")
+        return True
         
-        # Add error to terminal
-        if self.terminal_widget and self.terminal_revealer.get_reveal_child():
-            buffer = self.terminal_text_view.get_buffer()
-            buffer.insert_at_cursor(f"[{self._get_timestamp()}] ERROR: {error_message}\n")
-    
-    def _get_timestamp(self):
-        """Get current timestamp for logs"""
-        from datetime import datetime
-        return datetime.now().strftime("%H:%M:%S")
+    def update_progress(self, fraction: float, text: str):
+        """Update progress bar and status"""
+        self.progress_bar.set_fraction(fraction)
+        self.progress_bar.set_text(text)
+        self.status_label.set_text(text)
+        
+    def show_error(self, error_text: str):
+        """Show error state"""
+        self.progress_bar.add_css_class("error")
+        self.cancel_button.set_label("Close")
     
     def close(self, widget=None):
         """Close the dialog"""
         if self.progress_timer:
             GLib.source_remove(self.progress_timer)
         self.destroy()
+
+class SftpConnectionDialog(Adw.Window):
+    """Dialog showing manual connection options for SFTP"""
+    
+    def __init__(self, user: str, host: str, port: Optional[int], uri: str):
+        super().__init__()
+        self.user = user
+        self.host = host  
+        self.port = port
+        self.uri = uri
+        
+        self.set_title("SFTP Connection")
+        self.set_default_size(600, 400)
+        self.set_modal(True)
+        
+        # Main container
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        main_box.set_margin_start(24)
+        main_box.set_margin_end(24)
+        main_box.set_margin_top(24)
+        main_box.set_margin_bottom(24)
+        
+        # Header
+        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
+        
+        icon = Gtk.Image.new_from_icon_name("folder-remote-symbolic")
+        icon.set_pixel_size(48)
+        header_box.append(icon)
+        
+        title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        title_label = Gtk.Label()
+        title_label.set_markup("<b>SFTP Connection Options</b>")
+        title_label.set_halign(Gtk.Align.START)
+        title_box.append(title_label)
+        
+        subtitle_label = Gtk.Label()
+        subtitle_label.set_text(f"Connect to {user}@{host}")
+        subtitle_label.add_css_class("dim-label")
+        subtitle_label.set_halign(Gtk.Align.START)
+        title_box.append(subtitle_label)
+        
+        header_box.append(title_box)
+        main_box.append(header_box)
+        
+        # Instructions
+        instructions = Gtk.Label()
+        instructions.set_markup(
+            "Due to Flatpak security restrictions, direct SFTP mounting is limited.\n"
+            "Please choose one of the following options:"
+        )
+        instructions.set_wrap(True)
+        instructions.set_halign(Gtk.Align.START)
+        main_box.append(instructions)
+        
+        # Options list
+        options_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        
+        # Option 1: File Manager
+        option1_box = self._create_option_box(
+            "Open in File Manager",
+            "Try opening the SFTP location directly in your system's file manager",
+            "folder-symbolic",
+            lambda: self._try_file_manager()
+        )
+        options_box.append(option1_box)
+        
+        # Option 2: Copy URI
+        option2_box = self._create_option_box(
+            "Copy SFTP URI",
+            f"Copy the SFTP URI to clipboard: {uri}",
+            "edit-copy-symbolic", 
+            lambda: self._copy_uri()
+        )
+        options_box.append(option2_box)
+        
+        # Option 3: Terminal
+        option3_box = self._create_option_box(
+            "Open in Terminal",
+            "Open an SFTP connection in terminal",
+            "utilities-terminal-symbolic",
+            lambda: self._open_terminal()
+        )
+        options_box.append(option3_box)
+        
+        main_box.append(options_box)
+        
+        # Close button
+        close_button = Gtk.Button.new_with_label("Close")
+        close_button.connect('clicked', lambda b: self.close())
+        close_button.set_halign(Gtk.Align.END)
+        main_box.append(close_button)
+        
+        self.set_content(main_box)
+    
+    def _create_option_box(self, title: str, description: str, icon_name: str, callback: Callable) -> Gtk.Box:
+        """Create an option box with icon, text, and button"""
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        box.add_css_class("card")
+        box.set_margin_start(12)
+        box.set_margin_end(12) 
+        box.set_margin_top(8)
+        box.set_margin_bottom(8)
+        
+        icon = Gtk.Image.new_from_icon_name(icon_name)
+        icon.set_pixel_size(24)
+        box.append(icon)
+        
+        text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        text_box.set_hexpand(True)
+        
+        title_label = Gtk.Label()
+        title_label.set_markup(f"<b>{title}</b>")
+        title_label.set_halign(Gtk.Align.START)
+        text_box.append(title_label)
+        
+        desc_label = Gtk.Label()
+        desc_label.set_text(description)
+        desc_label.set_halign(Gtk.Align.START)
+        desc_label.add_css_class("dim-label")
+        desc_label.set_wrap(True)
+        text_box.append(desc_label)
+        
+        box.append(text_box)
+        
+        button = Gtk.Button.new_with_label("Try")
+        button.connect('clicked', lambda b: callback())
+        box.append(button)
+        
+        return box
+    
+    def _try_file_manager(self):
+        """Try opening in file manager"""
+        try:
+            Gio.AppInfo.launch_default_for_uri(self.uri, None)
+        except Exception:
+            # Fall back to xdg-open
+            subprocess.Popen(["xdg-open", self.uri], 
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
+    def _copy_uri(self):
+        """Copy URI to clipboard"""
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        clipboard.set_text(self.uri, -1)
+    
+    def _open_terminal(self):
+        """Open SFTP in terminal"""
+        sftp_cmd = ["sftp"]
+        if self.port:
+            sftp_cmd.extend(["-P", str(self.port)])
+        sftp_cmd.append(f"{self.user}@{self.host}")
+        
+        terminals = ["gnome-terminal", "konsole", "xfce4-terminal", "xterm"]
+        
+        for terminal in terminals:
+            try:
+                if subprocess.run(["which", terminal], capture_output=True).returncode == 0:
+                    if terminal == "gnome-terminal":
+                        cmd = [terminal, "--", *sftp_cmd]
+                    elif terminal == "konsole":
+                        cmd = [terminal, "-e", *sftp_cmd] 
+                    else:
+                        cmd = [terminal, "-e", " ".join(sftp_cmd)]
+                    
+                    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    break
+            except Exception:
+                continue
 
 
 # =========================
@@ -1594,10 +1993,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.delete_connection_action.connect('activate', self.on_delete_connection_action)
         self.add_action(self.delete_connection_action)
         
-        # Action for opening connections in system terminal
-        self.open_in_system_terminal_action = Gio.SimpleAction.new('open-in-system-terminal', None)
-        self.open_in_system_terminal_action.connect('activate', self.on_open_in_system_terminal_action)
-        self.add_action(self.open_in_system_terminal_action)
+        # Action for opening connections in system terminal (only when not in Flatpak)
+        if not is_running_in_flatpak():
+            self.open_in_system_terminal_action = Gio.SimpleAction.new('open-in-system-terminal', None)
+            self.open_in_system_terminal_action.connect('activate', self.on_open_in_system_terminal_action)
+            self.add_action(self.open_in_system_terminal_action)
         # (Toasts disabled) Remove any toast-related actions if previously defined
         try:
             if hasattr(self, '_toast_reconnect_action'):
@@ -2081,7 +2481,9 @@ class MainWindow(Adw.ApplicationWindow):
                     menu.append(_('+ Open New Connection'), 'win.open-new-connection')
                     menu.append(_('✏ Edit Connection'), 'win.edit-connection')
                     menu.append(_('🗄 Manage Files'), 'win.manage-files')
-                    menu.append(_('💻 Open in System Terminal'), 'win.open-in-system-terminal')
+                    # Only show system terminal option when not in Flatpak
+                    if not is_running_in_flatpak():
+                        menu.append(_('💻 Open in System Terminal'), 'win.open-in-system-terminal')
                     menu.append(_('🗑 Delete Connection'), 'win.delete-connection')
                     pop = Gtk.PopoverMenu.new_from_model(menu)
                     pop.set_parent(self.connection_list)
@@ -2178,12 +2580,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
         toolbar.append(self.manage_files_button)
         
-        # System terminal button
-        self.system_terminal_button = Gtk.Button.new_from_icon_name('utilities-terminal-symbolic')
-        self.system_terminal_button.set_tooltip_text('Open connection in system terminal')
-        self.system_terminal_button.set_sensitive(False)
-        self.system_terminal_button.connect('clicked', self.on_system_terminal_button_clicked)
-        toolbar.append(self.system_terminal_button)
+        # System terminal button (only when not in Flatpak)
+        if not is_running_in_flatpak():
+            self.system_terminal_button = Gtk.Button.new_from_icon_name('utilities-terminal-symbolic')
+            self.system_terminal_button.set_tooltip_text('Open connection in system terminal')
+            self.system_terminal_button.set_sensitive(False)
+            self.system_terminal_button.connect('clicked', self.on_system_terminal_button_clicked)
+            toolbar.append(self.system_terminal_button)
         
         # Delete button
         self.delete_button = Gtk.Button.new_from_icon_name('user-trash-symbolic')
@@ -3065,7 +3468,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.upload_button.set_sensitive(has_selection)
         if hasattr(self, 'manage_files_button'):
             self.manage_files_button.set_sensitive(has_selection)
-        if hasattr(self, 'system_terminal_button'):
+        if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
             self.system_terminal_button.set_sensitive(has_selection)
         self.delete_button.set_sensitive(has_selection)
 
