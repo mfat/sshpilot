@@ -6,6 +6,7 @@ Primary UI with connection list, tabs, and terminal management
 import os
 import logging
 import math
+import time
 from typing import Optional, Dict, Any, List, Tuple, Callable
 
 import gi
@@ -46,7 +47,7 @@ def is_running_in_flatpak() -> bool:
 def open_remote_in_file_manager(user: str, host: str, port: Optional[int] = None,
                                path: Optional[str] = None, error_callback: Optional[Callable] = None,
                                parent_window=None) -> Tuple[bool, Optional[str]]:
-    """Open remote server in file manager using SFTP URI with asynchronous verification"""
+    """Open remote server in file manager using SFTP URI"""
 
     # Build sftp URI
     p = path or "/"
@@ -55,16 +56,24 @@ def open_remote_in_file_manager(user: str, host: str, port: Optional[int] = None
 
     logger.info(f"Opening SFTP URI: {uri}")
 
-    # Create progress dialog and start verification asynchronously
+    # For Flatpak environments, use compatible methods immediately
+    if is_running_in_flatpak():
+        logger.info("Running in Flatpak, using compatible methods")
+        return _open_sftp_flatpak_compatible(uri, user, host, port, error_callback, parent_window)
+
+    # For non-Flatpak environments, perform synchronous verification and mounting
+    logger.info("Running in native environment, performing synchronous operations")
+    
+    # Create progress dialog
     progress_dialog = MountProgressDialog(user, host, parent_window)
     progress_dialog.present()
     progress_dialog.start_progress_updates()
     progress_dialog.update_progress(0.05, "Verifying SSH connection...")
 
-    def _on_verify_complete(success: bool):
-        if progress_dialog.is_cancelled:
-            return
-        if not success:
+    try:
+        # Verify SSH connection synchronously
+        ssh_verified = _verify_ssh_connection(user, host, port)
+        if not ssh_verified:
             error_msg = "SSH connection failed - check credentials and network connectivity"
             logger.error(f"SSH verification failed for {user}@{host}")
             progress_dialog.update_progress(0.0, "SSH connection failed")
@@ -72,15 +81,33 @@ def open_remote_in_file_manager(user: str, host: str, port: Optional[int] = None
             GLib.timeout_add(1500, progress_dialog.close)
             if error_callback:
                 error_callback(error_msg)
-            return
+            return False, error_msg
 
         logger.info(f"SSH connection verified for {user}@{host}")
         progress_dialog.update_progress(0.3, "SSH verified, mounting...")
-        _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog)
-
-    _verify_ssh_connection_async(user, host, port, _on_verify_complete)
-
-    return True, None
+        
+        # Perform synchronous mount and open
+        success, error_msg = _mount_and_open_sftp_sync(uri, user, host, progress_dialog)
+        
+        if success:
+            progress_dialog.update_progress(1.0, "Success! File manager opened...")
+            GLib.timeout_add(1000, progress_dialog.close)
+            return True, None
+        else:
+            progress_dialog.show_error(error_msg or "Failed to mount SFTP location")
+            GLib.timeout_add(1500, progress_dialog.close)
+            if error_callback:
+                error_callback(error_msg)
+            return False, error_msg
+            
+    except Exception as e:
+        error_msg = f"Failed to open file manager: {str(e)}"
+        logger.error(f"Error opening file manager for {user}@{host}: {e}")
+        progress_dialog.show_error(error_msg)
+        GLib.timeout_add(1500, progress_dialog.close)
+        if error_callback:
+            error_callback(error_msg)
+        return False, error_msg
 
 def _mount_and_open_sftp(uri: str, user: str, host: str, error_callback=None, progress_dialog=None):
     """Mount SFTP location and open in file manager"""
@@ -171,6 +198,89 @@ def _mount_and_open_sftp(uri: str, user: str, host: str, error_callback=None, pr
             logger.info("Primary mount failed, trying Flatpak-compatible methods")
             return _try_flatpak_compatible_mount(uri, user, host, None, error_callback)
         
+        return False, error_msg
+
+def _mount_and_open_sftp_sync(uri: str, user: str, host: str, progress_dialog=None) -> Tuple[bool, Optional[str]]:
+    """Mount SFTP location and open in file manager synchronously"""
+    
+    result = {"success": False, "error": None, "completed": False}
+    
+    def on_mounted(source, res, data=None):
+        try:
+            source.mount_enclosing_volume_finish(res)
+            logger.info(f"SFTP mount successful, opening file manager...")
+
+            # Update progress dialog
+            if progress_dialog:
+                progress_dialog.update_progress(1.0, "Mount successful! Opening file manager...")
+
+            # Now it's mounted → open in the default file manager
+            Gio.AppInfo.launch_default_for_uri(uri, None)
+            logger.info(f"File manager launched successfully")
+
+            result["success"] = True
+            result["completed"] = True
+
+        except GLib.Error as e:
+            # Check if the error is "already mounted" - this is actually a success case
+            if "already mounted" in e.message.lower():
+                logger.info(f"SFTP location already mounted, opening file manager...")
+
+                # Update progress dialog
+                if progress_dialog:
+                    progress_dialog.update_progress(1.0, "Location already mounted! Opening file manager...")
+
+                # Open in the default file manager
+                try:
+                    Gio.AppInfo.launch_default_for_uri(uri, None)
+                    logger.info(f"File manager launched successfully")
+                    result["success"] = True
+                except Exception as launch_error:
+                    result["error"] = f"Failed to launch file manager: {str(launch_error)}"
+            else:
+                error_msg = f"Could not mount {uri}: {e.message}"
+                logger.error(f"Mount failed: {error_msg}")
+                result["error"] = error_msg
+            
+            result["completed"] = True
+            
+        except Exception as e:
+            error_msg = f"Unexpected error during mount: {str(e)}"
+            logger.error(f"Mount error: {e}")
+            result["error"] = error_msg
+            result["completed"] = True
+
+    try:
+        gfile = Gio.File.new_for_uri(uri)
+        op = Gio.MountOperation()
+
+        # Start the async mount operation
+        gfile.mount_enclosing_volume(
+            Gio.MountMountFlags.NONE,
+            op,
+            None,  # cancellable
+            on_mounted,
+            None
+        )
+
+        # Wait for completion with timeout
+        timeout = 30  # 30 seconds timeout
+        start_time = time.time()
+        
+        while not result["completed"] and (time.time() - start_time) < timeout:
+            # Process GTK events to allow the callback to execute
+            while Gtk.events_pending():
+                Gtk.main_iteration()
+            time.sleep(0.1)
+        
+        if not result["completed"]:
+            return False, "Mount operation timed out"
+        
+        return result["success"], result["error"]
+        
+    except Exception as e:
+        error_msg = f"Failed to start mount operation: {str(e)}"
+        logger.error(f"Mount operation failed: {e}")
         return False, error_msg
 
 def _verify_ssh_connection(user: str, host: str, port: Optional[int]) -> bool:
