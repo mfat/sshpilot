@@ -46,6 +46,8 @@ The app is currently distributed as deb and rpm packages (see releases) and can 
 
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
 
+Arch linux package via AUR: https://aur.archlinux.org/packages/sshpilot
+
 If your distro doesn't use DEB or RPM, the Flatpak version should work. 
 
 You can also run the app from source. Install the modules listed in requirements.txt and a fairly recent version of GNOME and it should run.
