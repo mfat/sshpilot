@@ -38,16 +38,16 @@
 
 ## Download
 
-### DEB/RPM/Flatpak
+- ### DEB/RPM/Flatpak
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
 
-### Arch linux
+- ### Arch linux
 Arch linux package via AUR: https://aur.archlinux.org/packages/sshpilot
 
-### macOS
+- ### macOS (not extensively tested)
 (WIP) On the [Mac branch](https://github.com/mfat/sshpilot/tree/mac) there are [instructions](https://github.com/mfat/sshpilot/blob/mac/INSTALL-macos.md) for running sshPilot on macOS
 
-### Run from source
+- ### Run from source
 You can also run the app from source. Install the modules listed in requirements.txt and a fairly recent version of GNOME and it should run.
 
 `
