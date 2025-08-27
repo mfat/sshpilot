@@ -750,7 +750,7 @@ class TerminalWidget(Gtk.Box):
             else:
                 # Use askpass for passphrase prompts (key-based auth)
                 from .askpass_utils import get_ssh_env_with_askpass
-                askpass_env = get_ssh_env_with_askpass("force")
+                askpass_env = get_ssh_env_with_askpass()
                 env.update(askpass_env)
             env['TERM'] = env.get('TERM', 'xterm-256color')
             env['SHELL'] = env.get('SHELL', '/bin/bash')
