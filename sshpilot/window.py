@@ -69,14 +69,20 @@ def open_remote_in_file_manager(user: str, host: str, port: Optional[int] = None
             logger.error(f"SSH verification failed for {user}@{host}")
             progress_dialog.update_progress(0.0, "SSH connection failed")
             progress_dialog.show_error(error_msg)
-            GLib.timeout_add(1500, progress_dialog.close)
+            GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
             if error_callback:
                 error_callback(error_msg)
             return
 
         logger.info(f"SSH connection verified for {user}@{host}")
         progress_dialog.update_progress(0.3, "SSH verified, mounting...")
-        _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog)
+        if is_running_in_flatpak():
+            if host in ("localhost", "127.0.0.1", "::1"):
+                _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog)
+            else:
+                _open_sftp_flatpak_compatible(uri, user, host, port, error_callback, progress_dialog)
+        else:
+            _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog)
 
     _verify_ssh_connection_async(user, host, port, _on_verify_complete)
 
@@ -108,7 +114,7 @@ def _mount_and_open_sftp(uri: str, user: str, host: str, error_callback=None, pr
                 logger.info(f"File manager launched successfully for {user}@{host}")
 
                 # Close progress dialog after a short delay
-                GLib.timeout_add(1000, progress_dialog.close)
+                GLib.timeout_add(1000, lambda: GLib.idle_add(progress_dialog.close))
 
             except GLib.Error as e:
                 # Check if the error is "already mounted" - this is actually a success case
@@ -123,7 +129,7 @@ def _mount_and_open_sftp(uri: str, user: str, host: str, error_callback=None, pr
                     logger.info(f"File manager launched successfully for {user}@{host}")
 
                     # Close progress dialog after a short delay
-                    GLib.timeout_add(1000, progress_dialog.close)
+                    GLib.timeout_add(1000, lambda: GLib.idle_add(progress_dialog.close))
                 else:
                     error_msg = f"Could not mount {uri}: {e.message}"
                     logger.error(f"Mount failed for {user}@{host}: {error_msg}")
@@ -133,17 +139,20 @@ def _mount_and_open_sftp(uri: str, user: str, host: str, error_callback=None, pr
                     # Try Flatpak-compatible methods as fallback
                     if is_running_in_flatpak():
                         logger.info("Falling back to Flatpak-compatible methods")
-                        progress_dialog.close()
+                        GLib.idle_add(progress_dialog.close)
                         success, msg = _try_flatpak_compatible_mount(uri, user, host, None, error_callback)
                         if not success and error_callback:
                             error_callback(msg)
-                    elif error_callback:
-                        error_callback(error_msg)
+                    else:
+                        GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
+                        if error_callback:
+                            error_callback(error_msg)
             except Exception as e:
                 error_msg = f"Unexpected error during mount: {str(e)}"
                 logger.error(f"Mount error for {user}@{host}: {e}")
                 progress_dialog.update_progress(0.0, f"Error: {str(e)}")
                 progress_dialog.show_error(error_msg)
+                GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
                 if error_callback:
                     error_callback(error_msg)
 
@@ -165,12 +174,15 @@ def _mount_and_open_sftp(uri: str, user: str, host: str, error_callback=None, pr
     except Exception as e:
         error_msg = f"Failed to start mount operation: {str(e)}"
         logger.error(f"Mount operation failed for {user}@{host}: {e}")
-        
+        GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
+
         # Try Flatpak-compatible methods as fallback
         if is_running_in_flatpak():
             logger.info("Primary mount failed, trying Flatpak-compatible methods")
             return _try_flatpak_compatible_mount(uri, user, host, None, error_callback)
-        
+
+        if error_callback:
+            error_callback(error_msg)
         return False, error_msg
 
 def _verify_ssh_connection(user: str, host: str, port: Optional[int]) -> bool:
@@ -196,14 +208,17 @@ def _verify_ssh_connection_async(user: str, host: str, port: Optional[int], call
 
     threading.Thread(target=worker, daemon=True).start()
 
-def _open_sftp_flatpak_compatible(uri: str, user: str, host: str, port: Optional[int], 
-                                 error_callback: Optional[Callable], parent_window=None) -> Tuple[bool, Optional[str]]:
+def _open_sftp_flatpak_compatible(uri: str, user: str, host: str, port: Optional[int],
+                                 error_callback: Optional[Callable], progress_dialog=None,
+                                 parent_window=None) -> Tuple[bool, Optional[str]]:
     """Open SFTP using Flatpak-compatible methods with proper portal usage"""
-    
-    # Create and show progress dialog immediately
-    progress_dialog = MountProgressDialog(user, host, parent_window)
-    progress_dialog.present()
-    progress_dialog.start_progress_updates()
+
+    # Reuse existing progress dialog if provided
+    if progress_dialog is None:
+        progress_dialog = MountProgressDialog(user, host, parent_window)
+        progress_dialog.present()
+    if not getattr(progress_dialog, 'progress_timer', None):
+        progress_dialog.start_progress_updates()
     
     # Method 1: Use XDG Desktop Portal File Chooser to access GVFS mounts
     try:
@@ -211,7 +226,7 @@ def _open_sftp_flatpak_compatible(uri: str, user: str, host: str, port: Optional
         success = _try_portal_file_access(uri, user, host)
         if success:
             progress_dialog.update_progress(1.0, "Success! Opening file manager...")
-            GLib.timeout_add(1000, progress_dialog.close)
+            GLib.timeout_add(1000, lambda: GLib.idle_add(progress_dialog.close))
             return True, None
     except Exception as e:
         logger.warning(f"Portal file access failed: {e}")
@@ -222,7 +237,7 @@ def _open_sftp_flatpak_compatible(uri: str, user: str, host: str, port: Optional
         success = _try_external_file_managers(uri, user, host)
         if success:
             progress_dialog.update_progress(1.0, "Success! File manager opened...")
-            GLib.timeout_add(1000, progress_dialog.close)
+            GLib.timeout_add(1000, lambda: GLib.idle_add(progress_dialog.close))
             return True, None
     except Exception as e:
         logger.warning(f"External file managers failed: {e}")
@@ -233,7 +248,7 @@ def _open_sftp_flatpak_compatible(uri: str, user: str, host: str, port: Optional
         success = _try_host_gvfs_access(uri, user, host, port)
         if success:
             progress_dialog.update_progress(1.0, "Success! Found existing mount...")
-            GLib.timeout_add(1000, progress_dialog.close)
+            GLib.timeout_add(1000, lambda: GLib.idle_add(progress_dialog.close))
             return True, None
     except Exception as e:
         logger.warning(f"Host GVFS access failed: {e}")
@@ -242,14 +257,15 @@ def _open_sftp_flatpak_compatible(uri: str, user: str, host: str, port: Optional
     progress_dialog.update_progress(0.8, "Preparing manual connection options...")
     success = _show_manual_connection_dialog(user, host, port, uri)
     if success:
-        progress_dialog.close()
+        GLib.idle_add(progress_dialog.close)
         return True, "Manual connection dialog opened"
     
     # All methods failed
     error_msg = "Could not open SFTP connection - try mounting the location manually first"
     progress_dialog.show_error(error_msg)
+    GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
     if error_callback:
-        error_callback(error_msg)
+        GLib.idle_add(error_callback, error_msg)
     return False, error_msg
 
 def _try_portal_file_access(uri: str, user: str, host: str) -> bool:
@@ -279,9 +295,9 @@ def _try_dbus_gvfs_mount(uri: str, user: str, host: str) -> bool:
                 result = subprocess.run(mount_cmd, capture_output=True, text=True, timeout=30)
                 
                 logger.info(f"gio mount result: returncode={result.returncode}, stdout={result.stdout}, stderr={result.stderr}")
-                
-                if result.returncode == 0 or "already mounted" in result.stderr.lower() or "Operation not supported" not in result.stderr:
-                    logger.info(f"gio mount successful or location already accessible")
+
+                if result.returncode == 0 or "already mounted" in result.stderr.lower():
+                    logger.info("gio mount successful or location already accessible")
                     
                     # Give it a moment for the mount to be ready
                     import time
@@ -486,7 +502,7 @@ def _open_sftp_native(uri: str, user: str, host: str, error_callback: Optional[C
         logger.warning(f"Native GVFS mount failed: {e}")
     
     # Fall back to Flatpak-compatible methods
-    return _open_sftp_flatpak_compatible(uri, user, host, None, error_callback, parent_window)
+    return _open_sftp_flatpak_compatible(uri, user, host, None, error_callback, parent_window=parent_window)
 
 def _mount_and_open_sftp_native(uri: str, user: str, host: str, error_callback: Optional[Callable], parent_window=None) -> bool:
     """Original native GVFS mounting method"""
@@ -700,6 +716,7 @@ class MountProgressDialog(Adw.Window):
         self.is_cancelled = True
         if self.progress_timer:
             GLib.source_remove(self.progress_timer)
+            self.progress_timer = None
         self.close()
     
     def start_progress_updates(self):
@@ -734,6 +751,7 @@ class MountProgressDialog(Adw.Window):
         """Close the dialog"""
         if self.progress_timer:
             GLib.source_remove(self.progress_timer)
+            self.progress_timer = None
         self.destroy()
 
 class SftpConnectionDialog(Adw.Window):
