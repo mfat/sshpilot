@@ -43,7 +43,8 @@ def is_running_in_flatpak() -> bool:
     return os.path.exists("/.flatpak-info") or os.environ.get("FLATPAK_ID") is not None
 
 def open_remote_in_file_manager(user: str, host: str, port: Optional[int] = None, 
-                               path: Optional[str] = None, error_callback: Optional[Callable] = None) -> Tuple[bool, Optional[str]]:
+                               path: Optional[str] = None, error_callback: Optional[Callable] = None, 
+                               parent_window=None) -> Tuple[bool, Optional[str]]:
     """Open remote server in file manager using SFTP URI with Flatpak-compatible methods"""
     
     # Build sftp URI
@@ -59,17 +60,17 @@ def open_remote_in_file_manager(user: str, host: str, port: Optional[int] = None
         logger.error(f"SSH verification failed for {user}@{host}")
         if error_callback:
             error_callback(error_msg)
-        return False, error_msg
-    
-    logger.info(f"SSH connection verified for {user}@{host}")
-    
+            return False, error_msg
+        
+        logger.info(f"SSH connection verified for {user}@{host}")
+        
     # Use Flatpak-compatible approach
     if is_running_in_flatpak():
         logger.info("Running in Flatpak, using portal-compatible methods")
-        return _open_sftp_flatpak_compatible(uri, user, host, port, error_callback)
+        return _open_sftp_flatpak_compatible(uri, user, host, port, error_callback, parent_window)
     else:
         # Native installation - try GVFS first, then fallbacks
-        return _open_sftp_native(uri, user, host, error_callback)
+        return _open_sftp_native(uri, user, host, error_callback, parent_window)
 
 def _mount_and_open_sftp(uri: str, user: str, host: str, error_callback=None):
     """Mount SFTP location and open in file manager"""
@@ -175,39 +176,57 @@ def _verify_ssh_connection(user: str, host: str, port: Optional[int]) -> bool:
         return False
 
 def _open_sftp_flatpak_compatible(uri: str, user: str, host: str, port: Optional[int], 
-                                 error_callback: Optional[Callable]) -> Tuple[bool, Optional[str]]:
+                                 error_callback: Optional[Callable], parent_window=None) -> Tuple[bool, Optional[str]]:
     """Open SFTP using Flatpak-compatible methods with proper portal usage"""
+    
+    # Create and show progress dialog immediately
+    progress_dialog = MountProgressDialog(user, host, parent_window)
+    progress_dialog.present()
+    progress_dialog.start_progress_updates()
     
     # Method 1: Use XDG Desktop Portal File Chooser to access GVFS mounts
     try:
+        progress_dialog.update_progress(0.2, "Trying portal file access...")
         success = _try_portal_file_access(uri, user, host)
         if success:
+            progress_dialog.update_progress(1.0, "Success! Opening file manager...")
+            GLib.timeout_add(1000, progress_dialog.close)
             return True, None
     except Exception as e:
         logger.warning(f"Portal file access failed: {e}")
     
     # Method 2: Try to launch external file manager that can handle SFTP
     try:
+        progress_dialog.update_progress(0.4, "Trying external file managers...")
         success = _try_external_file_managers(uri, user, host)
         if success:
+            progress_dialog.update_progress(1.0, "Success! File manager opened...")
+            GLib.timeout_add(1000, progress_dialog.close)
             return True, None
     except Exception as e:
         logger.warning(f"External file managers failed: {e}")
     
     # Method 3: Use host's GVFS if accessible
     try:
+        progress_dialog.update_progress(0.6, "Checking host GVFS mounts...")
         success = _try_host_gvfs_access(uri, user, host, port)
         if success:
+            progress_dialog.update_progress(1.0, "Success! Found existing mount...")
+            GLib.timeout_add(1000, progress_dialog.close)
             return True, None
     except Exception as e:
         logger.warning(f"Host GVFS access failed: {e}")
     
     # Method 4: Show connection dialog for manual setup
+    progress_dialog.update_progress(0.8, "Preparing manual connection options...")
     success = _show_manual_connection_dialog(user, host, port, uri)
     if success:
+        progress_dialog.close()
         return True, "Manual connection dialog opened"
     
+    # All methods failed
     error_msg = "Could not open SFTP connection - try mounting the location manually first"
+    progress_dialog.show_error(error_msg)
     if error_callback:
         error_callback(error_msg)
     return False, error_msg
@@ -434,26 +453,26 @@ def _show_manual_connection_dialog(user: str, host: str, port: Optional[int], ur
     dialog.present()
     return True
 
-def _open_sftp_native(uri: str, user: str, host: str, error_callback: Optional[Callable]) -> Tuple[bool, Optional[str]]:
+def _open_sftp_native(uri: str, user: str, host: str, error_callback: Optional[Callable], parent_window=None) -> Tuple[bool, Optional[str]]:
     """Native installation SFTP opening with GVFS"""
     
     # Try direct GVFS mount first
     try:
-        success = _mount_and_open_sftp_native(uri, user, host, error_callback)
+        success = _mount_and_open_sftp_native(uri, user, host, error_callback, parent_window)
         if success:
             return True, None
     except Exception as e:
         logger.warning(f"Native GVFS mount failed: {e}")
     
     # Fall back to Flatpak-compatible methods
-    return _open_sftp_flatpak_compatible(uri, user, host, None, error_callback)
+    return _open_sftp_flatpak_compatible(uri, user, host, None, error_callback, parent_window)
 
-def _mount_and_open_sftp_native(uri: str, user: str, host: str, error_callback: Optional[Callable]) -> bool:
+def _mount_and_open_sftp_native(uri: str, user: str, host: str, error_callback: Optional[Callable], parent_window=None) -> bool:
     """Original native GVFS mounting method"""
     
     logger.info(f"Mounting SFTP location: {uri}")
     
-    progress_dialog = MountProgressDialog(user, host)
+    progress_dialog = MountProgressDialog(user, host, parent_window)
     progress_dialog.present()
     
     gfile = Gio.File.new_for_uri(uri)
@@ -598,7 +617,7 @@ def _launch_terminal_sftp(user: str, host: str, port: int|None, error_callback=N
     logger.error(error_msg)
     if error_callback:
         error_callback(error_msg)
-    return False, error_msg
+        return False, error_msg
 
 def _create_mount_progress_dialog(user: str, host: str):
     """Create a progress dialog for SFTP mount operation"""
@@ -607,7 +626,7 @@ def _create_mount_progress_dialog(user: str, host: str):
 class MountProgressDialog(Adw.Window):
     """Progress dialog for SFTP mount operations"""
     
-    def __init__(self, user: str, host: str):
+    def __init__(self, user: str, host: str, parent_window=None):
         super().__init__()
         self.user = user
         self.host = host
@@ -619,6 +638,10 @@ class MountProgressDialog(Adw.Window):
         self.set_default_size(500, 200)
         self.set_resizable(False)
         self.set_modal(True)
+        
+        # Set as transient for parent window if provided
+        if parent_window:
+            self.set_transient_for(parent_window)
         
         # Main container
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -784,7 +807,7 @@ class SftpConnectionDialog(Adw.Window):
         main_box.append(close_button)
         
         self.set_content(main_box)
-    
+        
     def _create_option_box(self, title: str, description: str, icon_name: str, callback: Callable) -> Gtk.Box:
         """Create an option box with icon, text, and button"""
         
@@ -3723,7 +3746,8 @@ class MainWindow(Adw.ApplicationWindow):
                     user=connection.username,
                     host=connection.host,
                     port=connection.port if connection.port != 22 else None,
-                    error_callback=error_callback
+                    error_callback=error_callback,
+                    parent_window=self
                 )
                 if success:
                     logger.info(f"Started file manager process for {connection.nickname}")
@@ -5178,7 +5202,8 @@ class MainWindow(Adw.ApplicationWindow):
                     user=connection.username,
                     host=connection.host,
                     port=connection.port if connection.port != 22 else None,
-                    error_callback=error_callback
+                    error_callback=error_callback,
+                    parent_window=self
                 )
                 if success:
                     logger.info(f"Started file manager process for {connection.nickname}")
