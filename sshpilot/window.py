@@ -1993,10 +1993,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.delete_connection_action.connect('activate', self.on_delete_connection_action)
         self.add_action(self.delete_connection_action)
         
-        # Action for opening connections in system terminal
-        self.open_in_system_terminal_action = Gio.SimpleAction.new('open-in-system-terminal', None)
-        self.open_in_system_terminal_action.connect('activate', self.on_open_in_system_terminal_action)
-        self.add_action(self.open_in_system_terminal_action)
+        # Action for opening connections in system terminal (only when not in Flatpak)
+        if not is_running_in_flatpak():
+            self.open_in_system_terminal_action = Gio.SimpleAction.new('open-in-system-terminal', None)
+            self.open_in_system_terminal_action.connect('activate', self.on_open_in_system_terminal_action)
+            self.add_action(self.open_in_system_terminal_action)
         # (Toasts disabled) Remove any toast-related actions if previously defined
         try:
             if hasattr(self, '_toast_reconnect_action'):
@@ -2480,7 +2481,9 @@ class MainWindow(Adw.ApplicationWindow):
                     menu.append(_('+ Open New Connection'), 'win.open-new-connection')
                     menu.append(_('✏ Edit Connection'), 'win.edit-connection')
                     menu.append(_('🗄 Manage Files'), 'win.manage-files')
-                    menu.append(_('💻 Open in System Terminal'), 'win.open-in-system-terminal')
+                    # Only show system terminal option when not in Flatpak
+                    if not is_running_in_flatpak():
+                        menu.append(_('💻 Open in System Terminal'), 'win.open-in-system-terminal')
                     menu.append(_('🗑 Delete Connection'), 'win.delete-connection')
                     pop = Gtk.PopoverMenu.new_from_model(menu)
                     pop.set_parent(self.connection_list)
@@ -2577,12 +2580,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
         toolbar.append(self.manage_files_button)
         
-        # System terminal button
-        self.system_terminal_button = Gtk.Button.new_from_icon_name('utilities-terminal-symbolic')
-        self.system_terminal_button.set_tooltip_text('Open connection in system terminal')
-        self.system_terminal_button.set_sensitive(False)
-        self.system_terminal_button.connect('clicked', self.on_system_terminal_button_clicked)
-        toolbar.append(self.system_terminal_button)
+        # System terminal button (only when not in Flatpak)
+        if not is_running_in_flatpak():
+            self.system_terminal_button = Gtk.Button.new_from_icon_name('utilities-terminal-symbolic')
+            self.system_terminal_button.set_tooltip_text('Open connection in system terminal')
+            self.system_terminal_button.set_sensitive(False)
+            self.system_terminal_button.connect('clicked', self.on_system_terminal_button_clicked)
+            toolbar.append(self.system_terminal_button)
         
         # Delete button
         self.delete_button = Gtk.Button.new_from_icon_name('user-trash-symbolic')
@@ -3464,7 +3468,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.upload_button.set_sensitive(has_selection)
         if hasattr(self, 'manage_files_button'):
             self.manage_files_button.set_sensitive(has_selection)
-        if hasattr(self, 'system_terminal_button'):
+        if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
             self.system_terminal_button.set_sensitive(has_selection)
         self.delete_button.set_sensitive(has_selection)
 
