@@ -77,7 +77,11 @@ def open_remote_in_file_manager(user: str, host: str, port: Optional[int] = None
         logger.info(f"SSH connection verified for {user}@{host}")
         progress_dialog.update_progress(0.3, "SSH verified, mounting...")
         if is_running_in_flatpak():
-            _open_sftp_flatpak_compatible(uri, user, host, port, error_callback, progress_dialog)
+            if host in ("localhost", "127.0.0.1", "::1"):
+                _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog)
+            else:
+                _open_sftp_flatpak_compatible(uri, user, host, port, error_callback, progress_dialog)
+
         else:
             _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog)
 
@@ -292,9 +296,9 @@ def _try_dbus_gvfs_mount(uri: str, user: str, host: str) -> bool:
                 result = subprocess.run(mount_cmd, capture_output=True, text=True, timeout=30)
                 
                 logger.info(f"gio mount result: returncode={result.returncode}, stdout={result.stdout}, stderr={result.stderr}")
-                
-                if result.returncode == 0 or "already mounted" in result.stderr.lower() or "Operation not supported" not in result.stderr:
-                    logger.info(f"gio mount successful or location already accessible")
+
+                if result.returncode == 0 or "already mounted" in result.stderr.lower():
+                    logger.info("gio mount successful or location already accessible")
                     
                     # Give it a moment for the mount to be ready
                     import time
@@ -713,6 +717,7 @@ class MountProgressDialog(Adw.Window):
         self.is_cancelled = True
         if self.progress_timer:
             GLib.source_remove(self.progress_timer)
+            self.progress_timer = None
         self.close()
     
     def start_progress_updates(self):
@@ -747,6 +752,7 @@ class MountProgressDialog(Adw.Window):
         """Close the dialog"""
         if self.progress_timer:
             GLib.source_remove(self.progress_timer)
+            self.progress_timer = None
         self.destroy()
 
 class SftpConnectionDialog(Adw.Window):
