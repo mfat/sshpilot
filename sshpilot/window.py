@@ -81,6 +81,7 @@ def open_remote_in_file_manager(user: str, host: str, port: Optional[int] = None
                 _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog)
             else:
                 _open_sftp_flatpak_compatible(uri, user, host, port, error_callback, progress_dialog)
+
         else:
             _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog)
 
