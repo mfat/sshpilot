@@ -213,72 +213,188 @@ def _open_sftp_flatpak_compatible(uri: str, user: str, host: str, port: Optional
     return False, error_msg
 
 def _try_portal_file_access(uri: str, user: str, host: str) -> bool:
-    """Try to access SFTP location via XDG Desktop Portal"""
+    """Try to access SFTP location via XDG Desktop Portal - skip file chooser"""
     
-    # Create a file chooser dialog that can access GVFS mounts
-    # This leverages the host system's GVFS through the portal
+    # Skip the file chooser dialog approach - it's not what we want
+    # Instead, try to use the portal to trigger a mount and then open directly
     try:
-        dialog = Gtk.FileDialog()
-        dialog.set_title(f"Connect to {user}@{host}")
+        # Try to mount via D-Bus portal interface directly
+        return _try_dbus_gvfs_mount(uri, user, host)
+    except Exception as e:
+        logger.warning(f"Portal D-Bus mount failed: {e}")
+        return False
+
+def _try_dbus_gvfs_mount(uri: str, user: str, host: str) -> bool:
+    """Try to mount GVFS via gio command and open directly"""
+    
+    try:
+        if subprocess.run(["which", "flatpak-spawn"], capture_output=True).returncode == 0:
+            # Check if gio is available on host (it should be)
+            check_cmd = ["flatpak-spawn", "--host", "which", "gio"]
+            if subprocess.run(check_cmd, capture_output=True).returncode == 0:
+                logger.info(f"Using gio mount for {uri}")
+                
+                # Mount using host's gio mount
+                mount_cmd = ["flatpak-spawn", "--host", "gio", "mount", uri]
+                result = subprocess.run(mount_cmd, capture_output=True, text=True, timeout=30)
+                
+                logger.info(f"gio mount result: returncode={result.returncode}, stdout={result.stdout}, stderr={result.stderr}")
+                
+                if result.returncode == 0 or "already mounted" in result.stderr.lower() or "Operation not supported" not in result.stderr:
+                    logger.info(f"gio mount successful or location already accessible")
+                    
+                    # Give it a moment for the mount to be ready
+                    import time
+                    time.sleep(1)
+                    
+                    # Find the actual mount point and open that instead of the URI
+                    mount_point = _find_gvfs_mount_point(user, host)
+                    if mount_point:
+                        open_cmd = ["flatpak-spawn", "--host", "xdg-open", mount_point]
+                        subprocess.Popen(open_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        logger.info(f"File manager opened at mount point: {mount_point}")
+                        return True
+                    else:
+                        # Try opening the URI directly with specific file managers
+                        logger.info("Mount point not found, trying file managers with URI")
+                        return _try_specific_file_managers_with_uri(uri)
+                else:
+                    logger.warning(f"gio mount failed: {result.stderr}")
+                    # Still try file managers in case they can handle it
+                    return _try_specific_file_managers_with_uri(uri)
+            else:
+                logger.warning("gio not available on host system")
+                return _try_specific_file_managers_with_uri(uri)
         
-        # Try to set initial folder to the SFTP location if it's mounted
-        try:
-            gfile = Gio.File.new_for_uri(uri)
-            dialog.set_initial_folder(gfile)
-        except Exception:
-            pass  # Fall back to default folder
-        
-        def on_dialog_response(dialog, result, user_data):
-            try:
-                folder = dialog.open_finish(result)
-                if folder:
-                    # Open the selected folder in the default file manager
-                    folder_uri = folder.get_uri()
-                    Gio.AppInfo.launch_default_for_uri(folder_uri, None)
-                    return True
-            except Exception as e:
-                logger.warning(f"File dialog failed: {e}")
-                return False
-        
-        # This will use the host's file chooser, which can access GVFS mounts
-        dialog.open(None, None, on_dialog_response, None)
-        return True
+        return False
         
     except Exception as e:
-        logger.warning(f"Portal file access failed: {e}")
+        logger.warning(f"gio mount failed: {e}")
         return False
+
+def _find_gvfs_mount_point(user: str, host: str) -> Optional[str]:
+    """Find the actual GVFS mount point for the SFTP connection"""
+    
+    gvfs_paths = [
+        f"/run/user/{os.getuid()}/gvfs",
+        f"/var/run/user/{os.getuid()}/gvfs"
+    ]
+    
+    for gvfs_path in gvfs_paths:
+        try:
+            if os.path.exists(gvfs_path):
+                for mount_dir in os.listdir(gvfs_path):
+                    # Look for SFTP mount matching our host
+                    if f"sftp:host={host}" in mount_dir and f"user={user}" in mount_dir:
+                        mount_point = os.path.join(gvfs_path, mount_dir)
+                        logger.info(f"Found GVFS mount point: {mount_point}")
+                        return mount_point
+        except Exception as e:
+            logger.debug(f"Could not check GVFS path {gvfs_path}: {e}")
+    
+    return None
+
+def _try_specific_file_managers_with_uri(uri: str) -> bool:
+    """Try specific file managers that handle SFTP URIs properly"""
+    
+    # File managers that are known to handle SFTP URIs well
+    managers = [
+        ["flatpak-spawn", "--host", "nautilus", uri],
+        ["flatpak-spawn", "--host", "thunar", uri],
+        ["flatpak-spawn", "--host", "dolphin", uri],
+        ["flatpak-spawn", "--host", "nemo", uri]
+    ]
+    
+    for cmd in managers:
+        try:
+            # Check if the file manager exists on host
+            check_cmd = ["flatpak-spawn", "--host", "which", cmd[2]]
+            if subprocess.run(check_cmd, capture_output=True).returncode == 0:
+                logger.info(f"Trying {cmd[2]} with SFTP URI")
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                logger.info(f"Launched {cmd[2]} via flatpak-spawn")
+                return True
+        except Exception as e:
+            logger.debug(f"Failed to launch {cmd[2]}: {e}")
+    
+    return False
 
 def _try_external_file_managers(uri: str, user: str, host: str) -> bool:
     """Try launching external file managers that handle SFTP"""
     
-    # File managers known to handle SFTP URIs well
+    # File managers with their specific SFTP handling
     managers = [
-        ("nautilus", [uri]),
-        ("thunar", [uri]), 
-        ("dolphin", [uri]),
-        ("nemo", [uri]),
-        ("pcmanfm", [uri]),
-        ("caja", [uri])
+        ("nautilus", [uri]),  # Usually handles SFTP URIs well
+        ("thunar", [uri]),    # Good SFTP support
+        ("dolphin", [uri]),   # KDE file manager
+        ("nemo", [uri]),      # Cinnamon file manager
+        ("pcmanfm", [uri]),   # Lightweight option
     ]
     
     for manager, cmd in managers:
         try:
             # Use flatpak-spawn to run on the host if available
             if subprocess.run(["which", "flatpak-spawn"], capture_output=True).returncode == 0:
-                spawn_cmd = ["flatpak-spawn", "--host"] + [manager] + cmd[1:]
-                subprocess.Popen(spawn_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                logger.info(f"Launched {manager} via flatpak-spawn")
-                return True
+                # Check if manager exists on host
+                check_cmd = ["flatpak-spawn", "--host", "which", manager]
+                if subprocess.run(check_cmd, capture_output=True).returncode == 0:
+                    spawn_cmd = ["flatpak-spawn", "--host", manager, uri]
+                    subprocess.Popen(spawn_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    logger.info(f"Launched {manager} via flatpak-spawn with URI")
+                    return True
             
-            # Try direct launch (may work if permissions allow)
+            # Try direct launch as fallback
             elif subprocess.run(["which", manager], capture_output=True).returncode == 0:
                 subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                logger.info(f"Launched {manager} directly")
+                logger.info(f"Launched {manager} directly with URI")
                 return True
                 
         except Exception as e:
             logger.debug(f"Failed to launch {manager}: {e}")
             continue
+    
+    # If no file manager worked with URI, try a different approach
+    logger.warning("No file manager could handle SFTP URI directly")
+    return _try_alternative_approaches(uri, user, host)
+
+def _try_alternative_approaches(uri: str, user: str, host: str) -> bool:
+    """Try alternative approaches when direct URI opening fails"""
+    
+    # Method 1: Try opening network locations in file managers
+    network_locations = [
+        "network:///",
+        "sftp://",
+        f"sftp://{host}/"
+    ]
+    
+    for location in network_locations:
+        try:
+            if subprocess.run(["which", "flatpak-spawn"], capture_output=True).returncode == 0:
+                cmd = ["flatpak-spawn", "--host", "nautilus", location]
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                logger.info(f"Opened network location: {location}")
+                return True
+        except Exception as e:
+            logger.debug(f"Failed to open {location}: {e}")
+    
+    # Method 2: Try using gio mount command
+    try:
+        if subprocess.run(["which", "flatpak-spawn"], capture_output=True).returncode == 0:
+            # Check if gio is available
+            check_cmd = ["flatpak-spawn", "--host", "which", "gio"]
+            if subprocess.run(check_cmd, capture_output=True).returncode == 0:
+                # Use gio to mount
+                mount_cmd = ["flatpak-spawn", "--host", "gio", "mount", uri]
+                result = subprocess.run(mount_cmd, capture_output=True, text=True, timeout=30)
+                
+                if result.returncode == 0:
+                    # Try to open with nautilus after mounting
+                    open_cmd = ["flatpak-spawn", "--host", "nautilus", uri]
+                    subprocess.Popen(open_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    logger.info(f"Mounted with gio and opened with nautilus")
+                    return True
+    except Exception as e:
+        logger.debug(f"gio mount failed: {e}")
     
     return False
 
