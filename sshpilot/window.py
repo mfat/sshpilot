@@ -34,7 +34,7 @@ from .config import Config
 from .key_manager import KeyManager, SSHKey
 from .port_forwarding_ui import PortForwardingRules
 from .connection_dialog import ConnectionDialog
-from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
+from .askpass_utils import ensure_askpass_script
 
 logger = logging.getLogger(__name__)
 
@@ -4043,7 +4043,7 @@ class MainWindow(Adw.ApplicationWindow):
                     # sshpass not available, fallback to askpass
                     logger.debug("Main window: sshpass not available, falling back to askpass")
                     from .askpass_utils import get_ssh_env_with_askpass
-                    askpass_env = get_ssh_env_with_askpass("force")
+                    askpass_env = get_ssh_env_with_askpass()
                     logger.debug(f"Main window: Askpass environment variables: {list(askpass_env.keys())}")
                     env.update(askpass_env)
             elif prefer_password and not has_saved_password:
@@ -4054,7 +4054,7 @@ class MainWindow(Adw.ApplicationWindow):
                 # Use askpass for passphrase prompts (key-based auth)
                 logger.debug("Main window: Using askpass for key-based authentication")
                 from .askpass_utils import get_ssh_env_with_askpass
-                askpass_env = get_ssh_env_with_askpass("force")
+                askpass_env = get_ssh_env_with_askpass()
                 logger.debug(f"Main window: Askpass environment variables: {list(askpass_env.keys())}")
                 env.update(askpass_env)
 
