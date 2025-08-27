@@ -30,26 +30,24 @@
 - Load/save standard .ssh/config entries
 - Free software (GPL v3 license)
 
-## Installation 
 
-### Linux
-The app is currently distributed as deb and rpm packages (see releases) and can be installed on recent versions of Debian (testing/unstable), Ubuntu and Fedora. Debian bookworm is not supported due to older libadwaita version. A flatpak is also provided that should work on any distro with flatpak support. (Do NOT install deb/rpm and Flatpak together as the desktop launcher will not work)
-[Download](https://github.com/mfat/sshpilot/releases/)
 
-### macOS
 
-(WIP) On the [Mac branch](https://github.com/mfat/sshpilot/tree/mac) there are [instructions](https://github.com/mfat/sshpilot/blob/mac/INSTALL-macos.md) for running sshPilot on macOS
 
 
 
 ## Download
 
+### DEB/RPM/Flatpak
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
 
+### Arch linux
 Arch linux package via AUR: https://aur.archlinux.org/packages/sshpilot
 
-If your distro doesn't use DEB or RPM, the Flatpak version should work. 
+### macOS
+(WIP) On the [Mac branch](https://github.com/mfat/sshpilot/tree/mac) there are [instructions](https://github.com/mfat/sshpilot/blob/mac/INSTALL-macos.md) for running sshPilot on macOS
 
+### Run from source
 You can also run the app from source. Install the modules listed in requirements.txt and a fairly recent version of GNOME and it should run.
 
 `
