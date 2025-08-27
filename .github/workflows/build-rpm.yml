@@ -188,13 +188,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rpm-packages-${{ steps.version.outputs.version }}
-          path: artifacts/*.rpm
+          path: artifacts/*.noarch.rpm
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/*.rpm
+          files: artifacts/*.noarch.rpm
           generate_release_notes: false
           body: ""
         env:
