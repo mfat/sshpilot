@@ -265,7 +265,7 @@ def _open_sftp_flatpak_compatible(uri: str, user: str, host: str, port: Optional
     progress_dialog.show_error(error_msg)
     GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
     if error_callback:
-        GLib.idle_add(error_callback, error_msg)
+        error_callback(error_msg)
     return False, error_msg
 
 def _try_portal_file_access(uri: str, user: str, host: str) -> bool:
