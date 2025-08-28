@@ -1635,11 +1635,6 @@ class GroupRow(Gtk.ListBoxRow):
         
         content.append(info_box)
         
-        # Drag handle
-        drag_handle = Gtk.Image.new_from_icon_name('drag-handle-symbolic')
-        drag_handle.add_css_class('dim-label')
-        content.append(drag_handle)
-        
         self.set_child(content)
         self.set_selectable(False)
         self.set_can_focus(False)
@@ -1666,9 +1661,9 @@ class GroupRow(Gtk.ListBoxRow):
         
         count = len(actual_connections)
         if count == 1:
-            self.count_label.set_text("1 connection")
+            self.count_label.set_text("1")
         else:
-            self.count_label.set_text(f"{count} connections")
+            self.count_label.set_text(f"{count}")
     
     def _on_expand_clicked(self, button):
         """Handle expand/collapse button click"""
