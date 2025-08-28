@@ -1775,6 +1775,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         drag_source = Gtk.DragSource()
         drag_source.set_actions(Gdk.DragAction.MOVE)
         drag_source.connect('prepare', self._on_drag_prepare)
+        drag_source.connect('drag-begin', self._on_drag_begin)
+        drag_source.connect('drag-end', self._on_drag_end)
         self.add_controller(drag_source)
     
     def _on_drag_prepare(self, source, x, y):
@@ -1784,6 +1786,26 @@ class ConnectionRow(Gtk.ListBoxRow):
             'connection_nickname': self.connection.nickname
         }
         return Gdk.ContentProvider.new_for_value(GObject.Value(GObject.TYPE_PYOBJECT, data))
+    
+    def _on_drag_begin(self, source, drag):
+        """Handle drag begin - show ungrouped area"""
+        try:
+            # Get the main window to show ungrouped area
+            window = self.get_root()
+            if hasattr(window, '_show_ungrouped_area'):
+                window._show_ungrouped_area()
+        except Exception as e:
+            logger.error(f"Error in drag begin: {e}")
+    
+    def _on_drag_end(self, source, drag, delete_data):
+        """Handle drag end - hide ungrouped area"""
+        try:
+            # Get the main window to hide ungrouped area
+            window = self.get_root()
+            if hasattr(window, '_hide_ungrouped_area'):
+                window._hide_ungrouped_area()
+        except Exception as e:
+            logger.error(f"Error in drag end: {e}")
 
     @staticmethod
     def _install_pf_css():
@@ -2820,6 +2842,16 @@ class MainWindow(Adw.ApplicationWindow):
         self.delete_group_action = Gio.SimpleAction.new('delete-group', None)
         self.delete_group_action.connect('activate', self.on_delete_group_action)
         self.add_action(self.delete_group_action)
+        
+        # Add move to ungrouped action
+        self.move_to_ungrouped_action = Gio.SimpleAction.new('move-to-ungrouped', None)
+        self.move_to_ungrouped_action.connect('activate', self.on_move_to_ungrouped_action)
+        self.add_action(self.move_to_ungrouped_action)
+        
+        # Add move to group action
+        self.move_to_group_action = Gio.SimpleAction.new('move-to-group', None)
+        self.move_to_group_action.connect('activate', self.on_move_to_group_action)
+        self.add_action(self.move_to_group_action)
         # (Toasts disabled) Remove any toast-related actions if previously defined
         try:
             if hasattr(self, '_toast_reconnect_action'):
@@ -2921,6 +2953,20 @@ class MainWindow(Adw.ApplicationWindow):
             row.drop-below {
               border-bottom: 3px solid @accent_bg_color;
               background: alpha(@accent_bg_color, 0.1);
+            }
+            
+            /* Ungrouped area indicator */
+            .ungrouped-area {
+              background: alpha(@accent_bg_color, 0.05);
+              border: 2px dashed alpha(@accent_bg_color, 0.3);
+              border-radius: 8px;
+              margin: 8px;
+              padding: 12px;
+            }
+            
+            .ungrouped-area.drag-over {
+              background: alpha(@accent_bg_color, 0.1);
+              border-color: @accent_bg_color;
             }
             """
             provider.load_from_data(css.encode('utf-8'))
@@ -3361,6 +3407,16 @@ class MainWindow(Adw.ApplicationWindow):
                         if not is_running_in_flatpak():
                             menu.append(_('💻 Open in System Terminal'), 'win.open-in-system-terminal')
                         menu.append(_('🗑 Delete Connection'), 'win.delete-connection')
+                        
+                        # Add grouping options
+                        current_group_id = self.group_manager.get_connection_group(row.connection.nickname)
+                        if current_group_id:
+                            menu.append(_('📁 Move to Ungrouped'), 'win.move-to-ungrouped')
+                        else:
+                            # Show available groups to move to
+                            available_groups = self.get_available_groups()
+                            if available_groups:
+                                menu.append(_('📁 Move to Group'), 'win.move-to-group')
                     pop = Gtk.PopoverMenu.new_from_model(menu)
                     pop.set_parent(self.connection_list)
                     try:
@@ -3574,6 +3630,10 @@ class MainWindow(Adw.ApplicationWindow):
         # Store drop indicator state
         self._drop_indicator_row = None
         self._drop_indicator_position = None
+        
+        # Store ungrouped area state
+        self._ungrouped_area_row = None
+        self._ungrouped_area_visible = False
     
     def _on_connection_list_motion(self, target, x, y):
         """Handle motion over the connection list for visual feedback"""
@@ -3581,9 +3641,20 @@ class MainWindow(Adw.ApplicationWindow):
             # Clear previous indicator
             self._clear_drop_indicator()
             
+            # Show ungrouped area when dragging
+            self._show_ungrouped_area()
+            
             # Find the row at the current position
             row = self.connection_list.get_row_at_y(int(y))
             if not row:
+                return Gdk.DragAction.MOVE
+            
+            # Check if this is the ungrouped area
+            if hasattr(row, 'ungrouped_area') and row.ungrouped_area:
+                # Show ungrouped area highlight
+                row.add_css_class('drag-over')
+                self._drop_indicator_row = row
+                self._drop_indicator_position = 'ungrouped'
                 return Gdk.DragAction.MOVE
             
             # Determine drop position (above/below the row)
@@ -3607,6 +3678,7 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_connection_list_leave(self, target):
         """Handle leaving the drop target area"""
         self._clear_drop_indicator()
+        self._hide_ungrouped_area()
         return True
     
     def _show_drop_indicator(self, row, position):
@@ -3623,12 +3695,73 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as e:
             logger.error(f"Error showing drop indicator: {e}")
     
+    def _create_ungrouped_area(self):
+        """Create the ungrouped area row"""
+        if self._ungrouped_area_row:
+            return self._ungrouped_area_row
+            
+        ungrouped_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        ungrouped_area.add_css_class('ungrouped-area')
+        
+        # Add icon and label
+        icon = Gtk.Image.new_from_icon_name('folder-open-symbolic')
+        icon.set_pixel_size(24)
+        icon.add_css_class('dim-label')
+        
+        label = Gtk.Label(label=_("Drop connections here to ungroup them"))
+        label.add_css_class('dim-label')
+        label.add_css_class('caption')
+        
+        ungrouped_area.append(icon)
+        ungrouped_area.append(label)
+        
+        # Make it a list box row
+        ungrouped_row = Gtk.ListBoxRow()
+        ungrouped_row.set_child(ungrouped_area)
+        ungrouped_row.set_selectable(False)
+        ungrouped_row.set_activatable(False)
+        ungrouped_row.ungrouped_area = True
+        
+        self._ungrouped_area_row = ungrouped_row
+        return ungrouped_row
+    
+    def _show_ungrouped_area(self):
+        """Show the ungrouped area at the bottom of the list"""
+        try:
+            if self._ungrouped_area_visible:
+                return
+                
+            # Only show if there are groups
+            hierarchy = self.group_manager.get_group_hierarchy()
+            if not hierarchy:
+                return
+                
+            ungrouped_row = self._create_ungrouped_area()
+            self.connection_list.append(ungrouped_row)
+            self._ungrouped_area_visible = True
+            
+        except Exception as e:
+            logger.error(f"Error showing ungrouped area: {e}")
+    
+    def _hide_ungrouped_area(self):
+        """Hide the ungrouped area"""
+        try:
+            if not self._ungrouped_area_visible or not self._ungrouped_area_row:
+                return
+                
+            self.connection_list.remove(self._ungrouped_area_row)
+            self._ungrouped_area_visible = False
+            
+        except Exception as e:
+            logger.error(f"Error hiding ungrouped area: {e}")
+    
     def _clear_drop_indicator(self):
         """Clear visual drop indicator"""
         try:
             if self._drop_indicator_row:
                 self._drop_indicator_row.remove_css_class('drop-above')
                 self._drop_indicator_row.remove_css_class('drop-below')
+                self._drop_indicator_row.remove_css_class('drag-over')
                 self._drop_indicator_row = None
                 self._drop_indicator_position = None
         except Exception as e:
@@ -3637,8 +3770,9 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_connection_list_drop(self, target, value, x, y):
         """Handle drops on the connection list"""
         try:
-            # Clear drop indicator
+            # Clear drop indicator and hide ungrouped area
             self._clear_drop_indicator()
+            self._hide_ungrouped_area()
             
             if not isinstance(value, dict):
                 return False
@@ -3653,7 +3787,17 @@ class MainWindow(Adw.ApplicationWindow):
                     # Find the target row and position
                     target_row = self.connection_list.get_row_at_y(int(y))
                     if not target_row:
-                        return False
+                        # Dropping in empty space - move to ungrouped
+                        self.group_manager.move_connection(connection_nickname, None)
+                        self.rebuild_connection_list()
+                        return True
+                    
+                    # Check if dropping on ungrouped area
+                    if hasattr(target_row, 'ungrouped_area') and target_row.ungrouped_area:
+                        # Move to ungrouped
+                        self.group_manager.move_connection(connection_nickname, None)
+                        self.rebuild_connection_list()
+                        return True
                     
                     # Get drop position (above/below)
                     row_y = target_row.get_allocation().y
@@ -3810,6 +3954,9 @@ class MainWindow(Adw.ApplicationWindow):
             # Add ungrouped connections
             for conn in sorted(ungrouped_connections, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
+        
+        # Store reference to ungrouped area (hidden by default)
+        self._ungrouped_area_row = None
     
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list"""
@@ -6787,6 +6934,122 @@ class MainWindow(Adw.ApplicationWindow):
             
         except Exception as e:
             logger.error(f"Failed to show delete group dialog: {e}")
+    
+    def on_move_to_ungrouped_action(self, action, param=None):
+        """Handle move to ungrouped action"""
+        try:
+            # Get the connection from context menu or selected row
+            selected_row = getattr(self, '_context_menu_connection', None)
+            if not selected_row:
+                selected_row = self.connection_list.get_selected_row()
+                if selected_row and hasattr(selected_row, 'connection'):
+                    selected_row = selected_row.connection
+            
+            if not selected_row:
+                return
+            
+            connection_nickname = selected_row.nickname if hasattr(selected_row, 'nickname') else selected_row
+            
+            # Move to ungrouped (None group)
+            self.group_manager.move_connection(connection_nickname, None)
+            self.rebuild_connection_list()
+            
+        except Exception as e:
+            logger.error(f"Failed to move connection to ungrouped: {e}")
+    
+    def on_move_to_group_action(self, action, param=None):
+        """Handle move to group action"""
+        try:
+            # Get the connection from context menu or selected row
+            selected_row = getattr(self, '_context_menu_connection', None)
+            if not selected_row:
+                selected_row = self.connection_list.get_selected_row()
+                if selected_row and hasattr(selected_row, 'connection'):
+                    selected_row = selected_row.connection
+            
+            if not selected_row:
+                return
+            
+            connection_nickname = selected_row.nickname if hasattr(selected_row, 'nickname') else selected_row
+            
+            # Get available groups
+            available_groups = self.get_available_groups()
+            if not available_groups:
+                return
+            
+            # Show group selection dialog
+            dialog = Gtk.Dialog(
+                title=_("Move to Group"),
+                transient_for=self,
+                modal=True,
+                destroy_with_parent=True
+            )
+            
+            dialog.set_default_size(400, 300)
+            dialog.set_resizable(False)
+            
+            content_area = dialog.get_content_area()
+            content_area.set_margin_start(20)
+            content_area.set_margin_end(20)
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
+            content_area.set_spacing(12)
+            
+            # Add label
+            label = Gtk.Label(label=_("Select a group to move the connection to:"))
+            label.set_wrap(True)
+            label.set_xalign(0)
+            content_area.append(label)
+            
+            # Add list box for groups
+            listbox = Gtk.ListBox()
+            listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            listbox.set_vexpand(True)
+            
+            # Add groups to list
+            selected_group_id = None
+            for group in available_groups:
+                row = Gtk.ListBoxRow()
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+                
+                # Add group icon
+                icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+                icon.set_pixel_size(16)
+                box.append(icon)
+                
+                # Add group name
+                label = Gtk.Label(label=group['name'])
+                label.set_xalign(0)
+                label.set_hexpand(True)
+                box.append(label)
+                
+                row.set_child(box)
+                row.group_id = group['id']
+                listbox.append(row)
+            
+            content_area.append(listbox)
+            
+            # Add buttons
+            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
+            move_button = dialog.add_button(_('Move'), Gtk.ResponseType.OK)
+            move_button.get_style_context().add_class('suggested-action')
+            
+            dialog.set_default_response(Gtk.ResponseType.OK)
+            
+            def on_response(dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    selected_row = listbox.get_selected_row()
+                    if selected_row:
+                        target_group_id = selected_row.group_id
+                        self.group_manager.move_connection(connection_nickname, target_group_id)
+                        self.rebuild_connection_list()
+                dialog.destroy()
+            
+            dialog.connect('response', on_response)
+            dialog.present()
+            
+        except Exception as e:
+            logger.error(f"Failed to show move to group dialog: {e}")
     
     def move_connection_to_group(self, connection_nickname: str, target_group_id: str = None):
         """Move a connection to a specific group"""
