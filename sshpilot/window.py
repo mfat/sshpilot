@@ -3015,6 +3015,7 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception:
             pass
         
+
         # Wire pulse effects
         self._wire_pulses()
         
@@ -3367,6 +3368,7 @@ class MainWindow(Adw.ApplicationWindow):
         """Load and display existing connections grouped by folders."""
         self.rebuild_connection_sidebar()
 
+
     def setup_signals(self):
         """Connect to manager signals"""
         # Connection manager signals - use connect_after to avoid conflict with GObject.connect
@@ -3395,6 +3397,7 @@ class MainWindow(Adw.ApplicationWindow):
     def add_connection_row(self, connection: Connection):
         """Add a connection and refresh the grouped sidebar"""
         self.rebuild_connection_sidebar()
+
 
     def show_welcome_view(self):
         """Show the welcome/help view when no connections are active"""
