@@ -418,23 +418,37 @@ class Config(GObject.Object):
 
     # --- Per-connection metadata helpers ---
     def get_connection_meta(self, key: str) -> Dict[str, Any]:
-        """Return stored metadata for a connection keyed by nickname (or unique key)."""
+        """Return stored metadata for a connection keyed by nickname (or unique key).
+
+        Ensures the returned mapping always contains a ``group`` key for
+        convenience when grouping connections in the UI.
+        """
         try:
             meta_all = self.get_setting('connections_meta', {})
             if isinstance(meta_all, dict):
                 value = meta_all.get(key, {})
-                return value if isinstance(value, dict) else {}
+                if isinstance(value, dict):
+                    value.setdefault('group', '')
+                    return value
         except Exception:
             pass
-        return {}
+        return {'group': ''}
 
     def set_connection_meta(self, key: str, meta: Dict[str, Any]):
-        """Store metadata for a connection (e.g., {'auth_method': 1})."""
+        """Store metadata for a connection (e.g., {'auth_method': 1, 'group': ''}).
+
+        Existing metadata for the connection is merged rather than replaced to
+        avoid clobbering unrelated fields.
+        """
         try:
             meta_all = self.get_setting('connections_meta', {})
             if not isinstance(meta_all, dict):
                 meta_all = {}
-            meta_all[key] = meta or {}
+            current = meta_all.get(key, {}) if isinstance(meta_all, dict) else {}
+            if not isinstance(current, dict):
+                current = {}
+            current.update(meta or {})
+            meta_all[key] = current
             self.set_setting('connections_meta', meta_all)
         except Exception:
             logger.error(f"Failed to persist connection meta for {key}")

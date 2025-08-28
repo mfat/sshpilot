@@ -671,6 +671,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # Load basic connection data
             if hasattr(self.connection, 'nickname'):
                 self.nickname_row.set_text(self.connection.nickname or "")
+            if hasattr(self.connection, 'group'):
+                self.group_row.set_text(self.connection.group or "")
             if hasattr(self.connection, 'host'):
                 self.host_row.set_text(self.connection.host or "")
             if hasattr(self.connection, 'username'):
@@ -1516,7 +1518,26 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Nickname
         self.nickname_row = Adw.EntryRow(title=_("Nickname (Only letters, digits, dot, underscore, dash)"))
         basic_group.add(self.nickname_row)
-        
+
+        # Group
+        self.group_row = Adw.EntryRow(title=_("Group"))
+        try:
+            if self.connection_manager:
+                groups = sorted({getattr(c, 'group', '') for c in self.connection_manager.get_connections() if getattr(c, 'group', '')})
+                if groups:
+                    entry = self.group_row.get_child()
+                    completion = Gtk.EntryCompletion()
+                    store = Gtk.ListStore(str)
+                    for g in groups:
+                        store.append([g])
+                    completion.set_model(store)
+                    completion.set_text_column(0)
+                    if hasattr(entry, 'set_completion'):
+                        entry.set_completion(completion)
+        except Exception:
+            pass
+        basic_group.add(self.group_row)
+
         # Host
         self.host_row = Adw.EntryRow(title=_("Host"))
         basic_group.add(self.host_row)
@@ -2716,6 +2737,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Gather connection data
         connection_data = {
             'nickname': self.nickname_row.get_text().strip(),
+            'group': self.group_row.get_text().strip(),
             'host': self.host_row.get_text().strip(),
             'username': self.username_row.get_text().strip(),
             'port': int(self.port_row.get_text().strip() or '22'),
@@ -3322,7 +3344,8 @@ Host {host_nickname}
                                                 main_window.config.set_connection_meta(self.connection.nickname, {
                                                     'auth_method': getattr(self.connection, 'auth_method', 0),
                                                     'use_raw_sshconfig': True,
-                                                    'raw_ssh_config_block': content
+                                                    'raw_ssh_config_block': content,
+                                                    'group': getattr(self.connection, 'group', '')
                                                 })
                                                 logger.debug(f"Saved connection metadata for '{self.connection.nickname}' with use_raw_sshconfig=True")
                                         except Exception as e:

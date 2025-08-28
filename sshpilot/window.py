@@ -1492,6 +1492,12 @@ class ConnectionRow(Gtk.ListBoxRow):
         # Update forwarding indicators
         self._update_forwarding_indicators()
 
+        # Enable drag support so the row can be moved between groups
+        drag = Gtk.DragSource.new()
+        drag.set_actions(Gdk.DragAction.MOVE)
+        drag.connect('prepare', self._on_drag_prepare)
+        self.add_controller(drag)
+
     @staticmethod
     def _install_pf_css():
         try:
@@ -1628,6 +1634,13 @@ class ConnectionRow(Gtk.ListBoxRow):
         
         self.update_status()
 
+    def _on_drag_prepare(self, source, x, y):
+        """Provide nickname when dragging this row."""
+        try:
+            return Gdk.ContentProvider.new_for_value(self.connection.nickname)
+        except Exception:
+            return None
+
     def show_error(self, message):
         """Show error message"""
         dialog = Adw.MessageDialog(
@@ -1638,6 +1651,39 @@ class ConnectionRow(Gtk.ListBoxRow):
         dialog.add_response('ok', 'OK')
         dialog.set_default_response('ok')
         dialog.present()
+
+
+class GroupRow(Adw.ExpanderRow):
+    """Expandable group row that can contain connections or sub-groups."""
+
+    def __init__(self, title: str, path: str, window: "MainWindow"):
+        super().__init__()
+        self.window = window
+        self.path = path
+        self.set_title(title or _("Ungrouped"))
+
+        self.listbox = Gtk.ListBox()
+        self.listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.listbox.set_reorderable(True)
+        self.set_child(self.listbox)
+
+        # Allow dropping connections onto this group to move them
+        drop = Gtk.DropTarget.new(type=str, actions=Gdk.DragAction.MOVE)
+        drop.connect('drop', self._on_drop)
+        self.add_controller(drop)
+
+    def _on_drop(self, target, value, x, y):
+        nickname = value
+        for conn in self.window.connection_manager.get_connections():
+            if conn.nickname == nickname:
+                conn.group = self.path
+                try:
+                    self.window.config.set_connection_meta(conn.nickname, {'group': self.path})
+                except Exception:
+                    pass
+                self.window.rebuild_connection_sidebar()
+                return True
+        return False
 
 class WelcomePage(Gtk.Box):
     """Welcome page shown when no tabs are open"""
@@ -2964,6 +3010,10 @@ class MainWindow(Adw.ApplicationWindow):
             self.connection_list.set_can_focus(True)
         except Exception:
             pass
+        try:
+            self.connection_list.set_header_func(self._group_header_func, None)
+        except Exception:
+            pass
         
         # Wire pulse effects
         self._wire_pulses()
@@ -3210,10 +3260,92 @@ class MainWindow(Adw.ApplicationWindow):
         
         self._set_content_widget(self.content_stack)
 
+    def rebuild_connection_sidebar(self):
+        """Rebuild the sidebar using GNOME-style expandable groups."""
+        if not hasattr(self, 'connection_list'):
+            return
+
+        # Clear existing rows
+        child = self.connection_list.get_first_child()
+        while child:
+            next_child = child.get_next_sibling()
+            self.connection_list.remove(child)
+            child = next_child
+        self.connection_rows = {}
+
+        connections = list(self.connection_manager.get_connections())
+
+        tree: Dict[str, Dict[str, Any]] = {}
+        ungrouped: List[Connection] = []
+
+        for c in connections:
+            group_path = getattr(c, 'group', '') or ''
+            if group_path:
+                parts = [p for p in group_path.split('/') if p]
+                node = tree
+                path = ''
+                for i, part in enumerate(parts):
+                    path = f"{path}/{part}".strip('/')
+                    node = node.setdefault(part, {'_path': path, '_children': {}, '_connections': []})
+                    if i == len(parts) - 1:
+                        node['_connections'].append(c)
+                    node = node['_children']
+            else:
+                ungrouped.append(c)
+
+        def build(parent_box: Gtk.ListBox, subtree: Dict[str, Dict[str, Any]]):
+            for name in sorted(subtree.keys()):
+                data = subtree[name]
+                row = GroupRow(name, data['_path'], self)
+                build(row.listbox, data['_children'])
+                for conn in sorted(data['_connections'], key=lambda cc: cc.nickname.lower()):
+                    c_row = ConnectionRow(conn)
+                    row.listbox.append(c_row)
+                    self.connection_rows[conn] = c_row
+                parent_box.append(row)
+
+        build(self.connection_list, tree)
+
+        # Ungrouped connections section
+        if ungrouped:
+            un_row = GroupRow(_('Ungrouped'), '', self)
+            for conn in sorted(ungrouped, key=lambda cc: cc.nickname.lower()):
+                c_row = ConnectionRow(conn)
+                un_row.listbox.append(c_row)
+                self.connection_rows[conn] = c_row
+            self.connection_list.append(un_row)
+
+        # Allow manual sorting of groups
+        self.connection_list.set_reorderable(True)
+
+        # Select the first connection for convenience
+        first_group = self.connection_list.get_row_at_index(0)
+        if first_group and isinstance(first_group, GroupRow):
+            first_conn = first_group.listbox.get_row_at_index(0)
+            if first_conn:
+                first_group.listbox.select_row(first_conn)
+                GLib.idle_add(lambda: first_group.listbox.grab_focus() or False)
+
     def setup_connection_list_dnd(self):
         """Set up drag and drop for connection list reordering"""
-        # TODO: Implement drag and drop reordering
-        pass
+        # Allow dropping onto empty space to ungroup
+        root_drop = Gtk.DropTarget.new(type=str, actions=Gdk.DragAction.MOVE)
+        root_drop.connect('drop', self._on_root_drop)
+        self.connection_list.add_controller(root_drop)
+
+    def _on_root_drop(self, target, value, x, y):
+        """Handle dropping a connection onto the root to remove its group."""
+        nickname = value
+        for conn in self.connection_manager.get_connections():
+            if conn.nickname == nickname:
+                conn.group = ''
+                try:
+                    self.config.set_connection_meta(conn.nickname, {'group': ''})
+                except Exception:
+                    pass
+                self.rebuild_connection_sidebar()
+                return True
+        return False
 
     def create_menu(self):
         """Create application menu"""
@@ -3232,19 +3364,8 @@ class MainWindow(Adw.ApplicationWindow):
         return menu
 
     def setup_connections(self):
-        """Load and display existing connections"""
-        connections = self.connection_manager.get_connections()
-        
-        for connection in connections:
-            self.add_connection_row(connection)
-        
-        # Select first connection if available
-        if connections:
-            first_row = self.connection_list.get_row_at_index(0)
-            if first_row:
-                self.connection_list.select_row(first_row)
-                # Defer focus to the list to ensure keyboard navigation works immediately
-                GLib.idle_add(self._focus_connection_list_first_row)
+        """Load and display existing connections grouped by folders."""
+        self.rebuild_connection_sidebar()
 
     def setup_signals(self):
         """Connect to manager signals"""
@@ -3252,18 +3373,28 @@ class MainWindow(Adw.ApplicationWindow):
         self.connection_manager.connect_after('connection-added', self.on_connection_added)
         self.connection_manager.connect_after('connection-removed', self.on_connection_removed)
         self.connection_manager.connect_after('connection-status-changed', self.on_connection_status_changed)
-        
+
         # Config signals
         self.config.connect('setting-changed', self.on_setting_changed)
+    def _group_header_func(self, row, before_row, data):
+        """Gtk.ListBox header func to group connections by their ``group`` attribute."""
+        try:
+            conn = getattr(row, 'connection', None)
+            prev = getattr(before_row, 'connection', None) if before_row else None
+            if conn is None:
+                return
+            if prev is None or getattr(prev, 'group', '') != getattr(conn, 'group', ''):
+                header = Gtk.Label(label=conn.group or _("Ungrouped"))
+                header.set_xalign(0)
+                row.set_header(header)
+            else:
+                row.set_header(None)
+        except Exception:
+            row.set_header(None)
 
     def add_connection_row(self, connection: Connection):
-        """Add a connection row to the list"""
-        row = ConnectionRow(connection)
-        self.connection_list.append(row)
-        self.connection_rows[connection] = row
-        # Apply current hide-hosts setting to new row
-        if hasattr(row, 'apply_hide_hosts'):
-            row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
+        """Add a connection and refresh the grouped sidebar"""
+        self.rebuild_connection_sidebar()
 
     def show_welcome_view(self):
         """Show the welcome/help view when no connections are active"""
@@ -5502,7 +5633,7 @@ class MainWindow(Adw.ApplicationWindow):
     def on_connection_added(self, manager, connection):
         """Handle new connection added to the connection manager"""
         logger.info(f"New connection added: {connection.nickname}")
-        self.add_connection_row(connection)
+        self.rebuild_connection_sidebar()
         
     def on_terminal_title_changed(self, terminal, title):
         """Handle terminal title change"""
@@ -5517,12 +5648,7 @@ class MainWindow(Adw.ApplicationWindow):
     def on_connection_removed(self, manager, connection):
         """Handle connection removed from the connection manager"""
         logger.info(f"Connection removed: {connection.nickname}")
-
-        # Remove from UI if it exists
-        if connection in self.connection_rows:
-            row = self.connection_rows[connection]
-            self.connection_list.remove(row)
-            del self.connection_rows[connection]
+        self.rebuild_connection_sidebar()
 
         # Close all terminals for this connection and clean up maps
         terminals = list(self.connection_to_terminals.get(connection, []))
@@ -5558,15 +5684,11 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_connection_added(self, manager, connection):
         """Handle new connection added"""
-        self.add_connection_row(connection)
+        self.rebuild_connection_sidebar()
 
     def on_connection_removed(self, manager, connection):
         """Handle connection removed (multi-tab aware)"""
-        # Remove from UI
-        if connection in self.connection_rows:
-            row = self.connection_rows[connection]
-            self.connection_list.remove(row)
-            del self.connection_rows[connection]
+        self.rebuild_connection_sidebar()
 
         # Close all terminals for this connection and clean up maps
         terminals = list(self.connection_to_terminals.get(connection, []))
@@ -6605,6 +6727,7 @@ class MainWindow(Adw.ApplicationWindow):
                 old_connection.password = connection_data['password']
                 old_connection.key_passphrase = connection_data['key_passphrase']
                 old_connection.auth_method = connection_data['auth_method']
+                old_connection.group = connection_data.get('group', '')
                 # Persist key selection mode in-memory so the dialog reflects it without restart
                 try:
                     old_connection.key_select_mode = int(connection_data.get('key_select_mode', getattr(old_connection, 'key_select_mode', 0)) or 0)
@@ -6628,7 +6751,8 @@ class MainWindow(Adw.ApplicationWindow):
                     self.config.set_connection_meta(meta_key, {
                         'auth_method': connection_data.get('auth_method', 0),
                         'use_raw_sshconfig': connection_data.get('use_raw_sshconfig', False),
-                        'raw_ssh_config_block': connection_data.get('raw_ssh_config_block', '')
+                        'raw_ssh_config_block': connection_data.get('raw_ssh_config_block', ''),
+                        'group': connection_data.get('group', '')
                     })
                 except Exception:
                     pass
@@ -6698,7 +6822,8 @@ class MainWindow(Adw.ApplicationWindow):
                         self.config.set_connection_meta(connection.nickname, {
                             'auth_method': connection_data.get('auth_method', 0),
                             'use_raw_sshconfig': connection_data.get('use_raw_sshconfig', False),
-                            'raw_ssh_config_block': connection_data.get('raw_ssh_config_block', '')
+                            'raw_ssh_config_block': connection_data.get('raw_ssh_config_block', ''),
+                            'group': connection_data.get('group', '')
                         })
                         try:
                             self.connection_manager.load_ssh_config()
@@ -6746,8 +6871,15 @@ class MainWindow(Adw.ApplicationWindow):
             # Clear mapping
             self.connection_rows.clear()
             # Re-add from manager
-            for conn in self.connection_manager.get_connections():
+            for conn in sorted(
+                self.connection_manager.get_connections(),
+                key=lambda c: ((c.group or '').lower(), c.nickname.lower())
+            ):
                 self.add_connection_row(conn)
+            try:
+                self.connection_list.invalidate_headers()
+            except Exception:
+                pass
         except Exception:
             pass
     def _prompt_reconnect(self, connection):
