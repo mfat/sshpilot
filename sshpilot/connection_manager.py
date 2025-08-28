@@ -1277,6 +1277,9 @@ class ConnectionManager(GObject.Object):
             # Add the original nickname to candidate names for proper matching during renames
             if original_nickname:
                 candidate_names.add(original_nickname)
+            
+            logger.debug(f"Looking for host block with candidate names: {candidate_names}")
+            logger.debug(f"Original nickname: {original_nickname}, New name: {new_name}")
 
             i = 0
             while i < len(lines):
@@ -1289,7 +1292,14 @@ class ConnectionManager(GObject.Object):
                     current_names = parts[1:] if len(parts) > 1 else []
                     
                     # Check if this Host block matches our candidate names
-                    if (full_value in candidate_names) or any(name in candidate_names for name in current_names):
+                    # Split the full_value into individual host names (in case of multiple hosts on one line)
+                    host_names = [name.strip() for name in full_value.split()]
+                    
+                    logger.debug(f"Found Host line: '{lstripped.strip()}' -> full_value='{full_value}' -> host_names={host_names}")
+                    
+                    # Check if any of the host names in this block match our candidate names
+                    if any(host_name in candidate_names for host_name in host_names):
+                        logger.debug(f"MATCH FOUND! Host '{host_names}' matches candidate names {candidate_names}")
                         host_found = True
                         if not replaced_once:
                             updated_config = self.format_ssh_config_entry(new_data)

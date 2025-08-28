@@ -402,6 +402,9 @@ class ConnectionDialog(Adw.PreferencesWindow):
     def _on_edit_ssh_config_clicked(self, button):
         """Handle edit SSH config button click - opens modal editor window"""
         try:
+            # Close the connection dialog
+            self.close()
+            
             # Create and show the SSH config editor window
             editor_window = SSHConfigEditorWindow(self, self.connection)
             # Pass reference to parent dialog for proper connection updates
@@ -2922,6 +2925,54 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 logger.debug(f"No connection manager available for key: {key_path}")
         except Exception as e:
             logger.debug(f"Failed to update passphrase for key {key_path}: {e}")
+    
+    def _refresh_connection_data_from_ssh_config(self):
+        """Refresh connection data from the updated SSH config file"""
+        try:
+            if not self.is_editing or not self.connection:
+                return
+            
+            # Reload the connection manager to get fresh data from SSH config
+            if hasattr(self, 'connection_manager') and self.connection_manager:
+                self.connection_manager.load_ssh_config()
+                
+                # Find the updated connection by nickname
+                updated_connection = self.connection_manager.get_connection_by_nickname(self.connection.nickname)
+                if updated_connection:
+                    self.connection = updated_connection
+                    self.load_connection_data(self.connection) # Reload UI with new data
+                    logger.debug(f"Refreshed connection dialog data for '{self.connection.nickname}'")
+                else:
+                    logger.warning(f"Could not find updated connection '{self.connection.nickname}' after SSH config reload")
+        except Exception as e:
+            logger.error(f"Error refreshing connection data from SSH config: {e}", exc_info=True)
+    
+    def _auto_save_connection(self):
+        """Automatically save the connection without user interaction"""
+        try:
+            if not self.is_editing or not self.connection:
+                return
+            
+            # Get the current connection data from the UI
+            connection_data = self.get_connection_data()
+            
+            # Ensure raw SSH config settings are preserved
+            if hasattr(self.connection, 'use_raw_sshconfig'):
+                connection_data['use_raw_sshconfig'] = self.connection.use_raw_sshconfig
+            if hasattr(self.connection, 'raw_ssh_config_block'):
+                connection_data['raw_ssh_config_block'] = self.connection.raw_ssh_config_block
+            
+            # Update the connection through the connection manager
+            if hasattr(self, 'connection_manager') and self.connection_manager:
+                self.connection_manager.update_connection(self.connection, connection_data)
+                logger.debug(f"Auto-saved connection '{self.connection.nickname}' after raw SSH config edit")
+                
+                # Notify the main window to refresh the connection list
+                if hasattr(self, 'parent_window') and self.parent_window:
+                    if hasattr(self.parent_window, '_rebuild_connections_list'):
+                        GLib.idle_add(self.parent_window._rebuild_connections_list)
+        except Exception as e:
+            logger.error(f"Error auto-saving connection: {e}", exc_info=True)
 
 class SSHConfigEditorWindow(Adw.Window):
     """Modal window for editing SSH config blocks"""
@@ -3191,41 +3242,44 @@ Host {host_nickname}
                 self.show_error(_("SSH Config Syntax Error"), error_msg)
                 return
             
-            # Save to SSH config file
-            success = self._save_ssh_config_to_file(content)
+            # Extract the new host name from the content
+            new_host_name = self._extract_host_name_from_content(content)
+            original_nickname = self.connection.nickname if self.connection else None
             
-            if success:
-                # Extract the new host name from the content
-                new_host_name = self._extract_host_name_from_content(content)
-                original_nickname = self.connection.nickname if self.connection else None
+            # Update the connection's raw SSH config block
+            if self.connection:
+                self.connection.raw_ssh_config_block = content
+                self.connection.use_raw_sshconfig = True
                 
-                # Update the connection's raw SSH config block
-                if self.connection:
-                    self.connection.raw_ssh_config_block = content
-                    self.connection.use_raw_sshconfig = True
-                    
-                    # Update the connection through the connection manager to ensure proper handling
-                    if hasattr(self, 'parent_dialog') and self.parent_dialog and hasattr(self.parent_dialog, 'connection_manager'):
-                        try:
-                            # Create update data with the raw SSH config
-                            update_data = {
-                                'nickname': new_host_name if new_host_name else original_nickname,
-                                'use_raw_sshconfig': True,
-                                'raw_ssh_config_block': content
-                            }
-                            
-                            # Use the connection manager's update method to ensure consistency
-                            self.parent_dialog.connection_manager.update_connection(
-                                self.connection, 
-                                update_data
-                            )
-                            
-                            # Update the connection's nickname if it changed
+                # Update the connection through the connection manager to ensure proper handling
+                if hasattr(self, 'parent_dialog') and self.parent_dialog and hasattr(self.parent_dialog, 'connection_manager'):
+                    try:
+                        # Create update data with the raw SSH config
+                        update_data = {
+                            'nickname': new_host_name if new_host_name else original_nickname,
+                            'use_raw_sshconfig': True,
+                            'raw_ssh_config_block': content
+                        }
+                        
+                        # Update the connection object with the raw SSH config data
+                        self.connection.raw_ssh_config_block = content
+                        self.connection.use_raw_sshconfig = True
+                        
+                        # Use the connection manager's update method to ensure consistency
+                        # Pass the original nickname so the manager can find and replace the existing block
+                        success = self.parent_dialog.connection_manager.update_connection(
+                            self.connection, 
+                            update_data
+                        )
+                        
+                        # Update the connection's nickname if it changed (AFTER the manager update)
+                        if success and new_host_name and new_host_name != original_nickname:
+                            self.connection.nickname = new_host_name
+                            logger.debug(f"Updated connection nickname from '{original_nickname}' to '{new_host_name}'")
+                        
+                        if success:
+                            # Update the connection dialog title to reflect the new nickname
                             if new_host_name and new_host_name != original_nickname:
-                                self.connection.nickname = new_host_name
-                                logger.debug(f"Updated connection nickname from '{original_nickname}' to '{new_host_name}'")
-                                
-                                # Update the connection dialog title to reflect the new nickname
                                 if hasattr(self, 'parent_dialog') and self.parent_dialog:
                                     try:
                                         self.parent_dialog.set_title(f'Edit Connection - {new_host_name}')
@@ -3253,24 +3307,70 @@ Host {host_nickname}
                                 try:
                                     # Parse the SSH config content and update the connection UI
                                     self._sync_connection_ui_from_ssh_config(content)
+                                    # Enable the raw SSH toggle in the parent dialog
+                                    if hasattr(self.parent_dialog, 'raw_ssh_toggle'):
+                                        GLib.idle_add(self.parent_dialog.raw_ssh_toggle.set_active, True)
                                     # Reload the connection data in the dialog to reflect the updated nickname
                                     GLib.idle_add(self.parent_dialog.load_connection_data)
+                                    
+                                    # Save connection metadata to ensure use_raw_sshconfig persists
+                                    if hasattr(self, 'parent_dialog') and self.parent_dialog and hasattr(self.parent_dialog, 'parent_window'):
+                                        try:
+                                            main_window = self.parent_dialog.parent_window
+                                            if hasattr(main_window, 'config') and hasattr(main_window.config, 'set_connection_meta'):
+                                                # Save the connection metadata to ensure use_raw_sshconfig persists
+                                                main_window.config.set_connection_meta(self.connection.nickname, {
+                                                    'auth_method': getattr(self.connection, 'auth_method', 0),
+                                                    'use_raw_sshconfig': True,
+                                                    'raw_ssh_config_block': content
+                                                })
+                                                logger.debug(f"Saved connection metadata for '{self.connection.nickname}' with use_raw_sshconfig=True")
+                                        except Exception as e:
+                                            logger.debug(f"Failed to save connection metadata: {e}")
+                                    
                                     if new_host_name and new_host_name != original_nickname:
                                         logger.debug(f"Refreshed connection dialog data after nickname change to '{new_host_name}'")
                                 except Exception as e:
                                     logger.debug(f"Failed to refresh connection dialog data: {e}")
-                        except Exception as e:
-                            logger.error(f"Failed to update connection through manager: {e}")
-                
-                # Show success message
-                self.show_info(_("SSH Config Saved"), 
-                              _("The SSH configuration has been saved to ~/.ssh/config"))
-                
-                # Close the window
-                self.close()
+                            
+                            # Show success message
+                            self.show_info(_("SSH Config Saved"), 
+                                          _("The SSH configuration has been saved to ~/.ssh/config"))
+                            
+                            # Close the window
+                            self.close()
+                        else:
+                            self.show_error(_("Save Failed"), 
+                                           _("Failed to save SSH configuration to ~/.ssh/config"))
+                    except Exception as e:
+                        logger.error(f"Failed to update connection through manager: {e}")
+                        self.show_error(_("Save Error"), str(e))
+                else:
+                    # No connection manager available, use direct file saving as fallback
+                    success = self._save_ssh_config_to_file(content)
+                    if success:
+                        # Show success message
+                        self.show_info(_("SSH Config Saved"), 
+                                      _("The SSH configuration has been saved to ~/.ssh/config"))
+                        
+                        # Close the window
+                        self.close()
+                    else:
+                        self.show_error(_("Save Failed"), 
+                                       _("Failed to save SSH configuration to ~/.ssh/config"))
             else:
-                self.show_error(_("Save Failed"), 
-                               _("Failed to save SSH configuration to ~/.ssh/config"))
+                # No connection available, use direct file saving as fallback
+                success = self._save_ssh_config_to_file(content)
+                if success:
+                    # Show success message
+                    self.show_info(_("SSH Config Saved"), 
+                                  _("The SSH configuration has been saved to ~/.ssh/config"))
+                    
+                    # Close the window
+                    self.close()
+                else:
+                    self.show_error(_("Save Failed"), 
+                                   _("Failed to save SSH configuration to ~/.ssh/config"))
                 
         except Exception as e:
             logger.error(f"Failed to save SSH config: {e}")
@@ -3324,6 +3424,9 @@ Host {host_nickname}
             else:
                 lines = []
             
+            # Extract the new host name from the content to check if it changed
+            new_host_name = self._extract_host_name_from_content(content)
+            
             # Find and replace the existing host block, or add a new one
             new_lines = []
             in_target_host = False
@@ -3350,8 +3453,9 @@ Host {host_nickname}
                     host_part = stripped_line[5:].strip()
                     host_names = [h.strip() for h in host_part.split()]
                     
-                    # Check if this is our target host
-                    if host_nickname in host_names:
+                    # Check if this is our target host (either old name or new name)
+                    # This handles the case where the user renamed the connection
+                    if (host_nickname in host_names) or (new_host_name and new_host_name in host_names):
                         in_target_host = True
                         # Skip this line and all subsequent lines until next Host directive
                         i += 1
