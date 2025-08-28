@@ -3284,13 +3284,49 @@ class MainWindow(Adw.ApplicationWindow):
             row.set_header(None)
 
     def add_connection_row(self, connection: Connection):
-        """Add a connection row to the list"""
+        """Add a connection row to the list, keeping groups and sort order"""
+        # Create the row for this connection
         row = ConnectionRow(connection)
-        self.connection_list.append(row)
+
+        # Determine where the row should be inserted. We sort by group name
+        # then by nickname to match the initial load order.
+        insert_index = 0
+        try:
+            new_key = ((connection.group or '').lower(), connection.nickname.lower())
+            child = self.connection_list.get_first_child()
+            while child is not None:
+                existing = getattr(child, 'connection', None)
+                if existing is not None:
+                    existing_key = ((existing.group or '').lower(),
+                                    existing.nickname.lower())
+                    if new_key < existing_key:
+                        break
+                insert_index += 1
+                child = child.get_next_sibling()
+        except Exception:
+            # Fallback to appending if anything goes wrong while calculating
+            # the insertion point.
+            insert_index = -1
+
+        if insert_index >= 0:
+            # Insert at the calculated index
+            try:
+                self.connection_list.insert(row, insert_index)
+            except Exception:
+                self.connection_list.append(row)
+        else:
+            # Could not determine position, append to the end
+            self.connection_list.append(row)
+
+        # Track the row and apply the current hide-hosts setting
         self.connection_rows[connection] = row
-        # Apply current hide-hosts setting to new row
         if hasattr(row, 'apply_hide_hosts'):
-            row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
+            try:
+                row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
+            except Exception:
+                pass
+
+        # Safely refresh headers to ensure group labels are updated
         try:
             self.connection_list.invalidate_headers()
         except Exception:
