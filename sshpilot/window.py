@@ -3232,7 +3232,7 @@ class MainWindow(Adw.ApplicationWindow):
         return menu
 
     def setup_connections(self):
-        """Load and display existing connections"""
+        """Load and display existing connections grouped by folders."""
         connections = sorted(
             self.connection_manager.get_connections(),
             key=lambda c: ((c.group or '').lower(), c.nickname.lower())
