@@ -85,6 +85,8 @@ class SshPilotApplication(Adw.Application):
         self.create_action('tab-prev', self.on_tab_prev, ['<alt>Left'])
         # Close tab accelerator (use Ctrl+F4 to avoid conflicts with TUI editors like nano/vim)
         self.create_action('tab-close', self.on_tab_close, ['<primary>F4'])
+        # Broadcast command to all SSH terminals
+        self.create_action('broadcast-command', self.on_broadcast_command, ['<primary><shift>b'])
         
         # Connect to signals
         self.connect('shutdown', self.on_shutdown)
@@ -293,6 +295,13 @@ class SshPilotApplication(Adw.Application):
                 win.tab_view.close_page(page)
         except Exception:
             pass
+
+    def on_broadcast_command(self, action, param):
+        """Handle broadcast command action (Ctrl+Shift+B)"""
+        logging.debug("Broadcast command action triggered")
+        if self.props.active_window:
+            # Forward to the window's action
+            self.props.active_window.broadcast_command_action.activate(None)
 
 def main():
     """Main entry point"""

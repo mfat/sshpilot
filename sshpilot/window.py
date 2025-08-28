@@ -2507,6 +2507,11 @@ class MainWindow(Adw.ApplicationWindow):
             self.open_in_system_terminal_action = Gio.SimpleAction.new('open-in-system-terminal', None)
             self.open_in_system_terminal_action.connect('activate', self.on_open_in_system_terminal_action)
             self.add_action(self.open_in_system_terminal_action)
+            
+        # Action for broadcasting commands to all SSH terminals
+        self.broadcast_command_action = Gio.SimpleAction.new('broadcast-command', None)
+        self.broadcast_command_action.connect('activate', self.on_broadcast_command_action)
+        self.add_action(self.broadcast_command_action)
         # (Toasts disabled) Remove any toast-related actions if previously defined
         try:
             if hasattr(self, '_toast_reconnect_action'):
@@ -3668,6 +3673,46 @@ class MainWindow(Adw.ApplicationWindow):
             
         except Exception as e:
             logger.error(f"Failed to add terminal tab: {e}")
+
+    def broadcast_command(self, command: str):
+        """Send a command to all open SSH terminal tabs (excluding local terminal tabs)"""
+        cmd = (command + "\n").encode("utf-8")
+        sent_count = 0
+        failed_count = 0
+        
+        # Get all open terminals from the tab view
+        for i in range(self.tab_view.get_n_pages()):
+            page = self.tab_view.get_nth_page(i)
+            if page is None:
+                continue
+                
+            # Get the terminal widget from the page
+            terminal_widget = page.get_child()
+            if terminal_widget is None or not hasattr(terminal_widget, 'vte'):
+                continue
+                
+            # Check if this is a local terminal by looking at the connection
+            if hasattr(terminal_widget, 'connection'):
+                # Skip local terminals
+                if (hasattr(terminal_widget.connection, 'nickname') and 
+                    terminal_widget.connection.nickname == "Local Terminal"):
+                    continue
+                    
+                # Skip terminals that don't have a connection (shouldn't happen for SSH terminals)
+                if not hasattr(terminal_widget.connection, 'host'):
+                    continue
+                    
+                # This is an SSH terminal, send the command
+                try:
+                    terminal_widget.vte.feed_child(cmd)
+                    sent_count += 1
+                    logger.debug(f"Sent command to SSH terminal: {terminal_widget.connection.nickname}")
+                except Exception as e:
+                    failed_count += 1
+                    logger.error(f"Failed to send command to terminal {terminal_widget.connection.nickname}: {e}")
+        
+        logger.info(f"Broadcast command completed: {sent_count} terminals received command, {failed_count} failed")
+        return sent_count, failed_count
 
     def show_about_dialog(self):
         """Show about dialog"""
@@ -5818,6 +5863,120 @@ class MainWindow(Adw.ApplicationWindow):
             self.open_in_system_terminal(connection)
         except Exception as e:
             logger.error(f"Failed to open in system terminal: {e}")
+
+    def on_broadcast_command_action(self, action, param=None):
+        """Handle broadcast command action - shows dialog to input command"""
+        try:
+            # Create a custom dialog window instead of using Adw.MessageDialog
+            dialog = Gtk.Dialog(
+                title=_("Broadcast Command"),
+                transient_for=self,
+                modal=True,
+                destroy_with_parent=True
+            )
+            
+            # Set dialog properties
+            dialog.set_default_size(400, 150)
+            dialog.set_resizable(False)
+            
+            # Get the content area
+            content_area = dialog.get_content_area()
+            content_area.set_margin_start(20)
+            content_area.set_margin_end(20)
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
+            content_area.set_spacing(12)
+            
+            # Add label
+            label = Gtk.Label(label=_("Enter a command to send to all open SSH terminals:"))
+            label.set_wrap(True)
+            label.set_xalign(0)
+            content_area.append(label)
+            
+            # Add text entry
+            entry = Gtk.Entry()
+            entry.set_placeholder_text(_("e.g., ls -la"))
+            entry.set_activates_default(True)
+            entry.set_hexpand(True)
+            content_area.append(entry)
+            
+            # Add buttons
+            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
+            send_button = dialog.add_button(_('Send'), Gtk.ResponseType.OK)
+            send_button.get_style_context().add_class('suggested-action')
+            
+            # Set default button
+            dialog.set_default_response(Gtk.ResponseType.OK)
+            
+            # Connect to response signal
+            def on_response(dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    command = entry.get_text().strip()
+                    if command:
+                        sent_count, failed_count = self.broadcast_command(command)
+                        
+                        # Show result dialog
+                        result_dialog = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Command Sent"),
+                            body=_("Command sent to {} SSH terminals. {} failed.").format(sent_count, failed_count)
+                        )
+                        result_dialog.add_response('ok', _('OK'))
+                        result_dialog.present()
+                    else:
+                        # Show error for empty command
+                        error_dialog = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Error"),
+                            body=_("Please enter a command to send.")
+                        )
+                        error_dialog.add_response('ok', _('OK'))
+                        error_dialog.present()
+                dialog.destroy()
+            
+            dialog.connect('response', on_response)
+            
+            # Show the dialog
+            dialog.present()
+            
+            # Focus the entry after the dialog is shown
+            def focus_entry():
+                entry.grab_focus()
+                return False
+            
+            GLib.idle_add(focus_entry)
+            
+        except Exception as e:
+            logger.error(f"Failed to show broadcast command dialog: {e}")
+            # Show error dialog
+            try:
+                error_dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("Error"),
+                    body=_("Failed to open broadcast command dialog: {}").format(str(e))
+                )
+                error_dialog.add_response('ok', _('OK'))
+                error_dialog.present()
+            except Exception:
+                pass
+            
+        except Exception as e:
+            logger.error(f"Failed to show broadcast command dialog: {e}")
+            # Show error dialog
+            try:
+                error_dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("Error"),
+                    body=_("Failed to open broadcast command dialog: {}").format(str(e))
+                )
+                error_dialog.add_response('ok', _('OK'))
+                error_dialog.present()
+            except Exception:
+                pass
 
     def open_in_system_terminal(self, connection):
         """Open the connection in the system's default terminal"""
