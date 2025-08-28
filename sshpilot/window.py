@@ -1911,6 +1911,36 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
             behavior_group.add(self.confirm_disconnect_switch)
             
+            # App startup behavior
+            startup_group = Adw.PreferencesGroup()
+            startup_group.set_title("App Startup")
+            
+            # Radio buttons for startup behavior
+            self.terminal_startup_radio = Gtk.CheckButton(label="Show Terminal")
+            self.terminal_startup_radio.set_can_focus(True)
+            self.welcome_startup_radio = Gtk.CheckButton(label="Show Welcome Page")
+            self.welcome_startup_radio.set_can_focus(True)
+            
+            # Make them behave like radio buttons
+            self.welcome_startup_radio.set_group(self.terminal_startup_radio)
+            
+            # Set current preference (default to terminal)
+            startup_behavior = self.config.get_setting('app-startup-behavior', 'terminal')
+            if startup_behavior == 'welcome':
+                self.welcome_startup_radio.set_active(True)
+            else:
+                self.terminal_startup_radio.set_active(True)
+            
+            # Connect radio button changes
+            self.terminal_startup_radio.connect('toggled', self.on_startup_behavior_changed)
+            self.welcome_startup_radio.connect('toggled', self.on_startup_behavior_changed)
+            
+            # Add radio buttons to group
+            startup_group.add(self.terminal_startup_radio)
+            startup_group.add(self.welcome_startup_radio)
+            
+            behavior_group.add(startup_group)
+            
             interface_page.add(behavior_group)
             
             # Appearance group
@@ -2270,6 +2300,13 @@ class PreferencesWindow(Adw.PreferencesWindow):
         logger.info(f"Confirm before disconnect setting changed to: {confirm}")
         self.config.set_setting('confirm-disconnect', confirm)
     
+    def on_startup_behavior_changed(self, radio_button, *args):
+        """Handle startup behavior radio button change"""
+        show_terminal = self.terminal_startup_radio.get_active()
+        behavior = 'terminal' if show_terminal else 'welcome'
+        logger.info(f"App startup behavior changed to: {behavior}")
+        self.config.set_setting('app-startup-behavior', behavior)
+    
     def on_terminal_choice_changed(self, radio_button, *args):
         """Handle terminal choice radio button change"""
         use_external = self.external_terminal_radio.get_active()
@@ -2501,6 +2538,16 @@ class MainWindow(Adw.ApplicationWindow):
             GLib.idle_add(self._focus_connection_list_first_row)
         except Exception:
             pass
+        
+        # Check startup behavior setting and show appropriate view
+        try:
+            startup_behavior = self.config.get_setting('app-startup-behavior', 'terminal')
+            if startup_behavior == 'terminal':
+                # Show local terminal on startup
+                GLib.idle_add(self.show_local_terminal)
+            # If startup_behavior == 'welcome', the welcome view is already shown by default
+        except Exception as e:
+            logger.error(f"Error handling startup behavior: {e}")
 
     def _install_sidebar_css(self):
         """Install sidebar focus CSS"""
