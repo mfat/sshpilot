@@ -3369,6 +3369,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.rebuild_connection_sidebar()
 
 
+
     def setup_signals(self):
         """Connect to manager signals"""
         # Connection manager signals - use connect_after to avoid conflict with GObject.connect
