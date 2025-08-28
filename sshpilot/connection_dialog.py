@@ -202,8 +202,8 @@ class SSHConnectionValidator:
             logger.error(f"Error verifying passphrase for key {key_path}: {e}")
             return False
 
-class ConnectionDialog(Adw.PreferencesDialog):
-    """Dialog for adding/editing SSH connections using PreferencesDialog layout"""
+class ConnectionDialog(Adw.PreferencesWindow):
+    """Dialog for adding/editing SSH connections using PreferencesWindow layout"""
     
     __gtype_name__ = 'ConnectionDialog'
     
@@ -220,34 +220,17 @@ class ConnectionDialog(Adw.PreferencesDialog):
         self.is_editing = connection is not None
         
         self.set_title('Edit Connection' if self.is_editing else 'New Connection')
-        # PreferencesDialog is modal by nature; just set transient parent
-        try:
-            self.set_transient_for(parent)
-        except Exception:
-            pass
-        # PreferencesDialog doesn't support set_default_size; rely on content sizing
+        # Set modal and transient parent to ensure dialog stays on top
+        self.set_modal(True)
+        self.set_transient_for(parent)
+        # Set default size for better UX
+        self.set_default_size(600, 700)
         
         self.validator = SSHConnectionValidator()
         self.validation_results: Dict[str, ValidationResult] = {}
         self._save_buttons = []
         
         self.setup_ui()
-        try:
-            self.add_response("cancel", _("Cancel"))
-            self.add_response("save", _("Save"))
-            # Mark save as suggested if available
-            try:
-                from gi.repository import Adw as _Adw
-                if hasattr(self, 'set_response_appearance'):
-                    self.set_response_appearance("save", _Adw.ResponseAppearance.SUGGESTED)
-            except Exception:
-                pass
-            self.set_close_response("cancel")
-            self.connect("response", self.on_response)
-            self._has_dialog_responses = True
-        except Exception:
-            # Fallback path when responses API is unavailable
-            self._has_dialog_responses = False
         GLib.idle_add(self.load_connection_data)
         
         # Add ESC key to cancel/close the dialog
@@ -266,6 +249,8 @@ class ConnectionDialog(Adw.PreferencesDialog):
             self.add_controller(key_ctrl)
         except Exception:
             pass
+    
+
     
     def on_auth_method_changed(self, combo_row, param):
         """Handle authentication method change"""
@@ -924,9 +909,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     
     def setup_ui(self):
         """Set up the dialog UI"""
-        # Build pages using PreferencesDialog model
-        # If responses API is unavailable, we will add a single footer later as fallback
-
+        # Build pages using PreferencesWindow model
         general_page = Adw.PreferencesPage()
         general_page.set_title(_("Connection"))
         general_page.set_icon_name("network-server-symbolic")
@@ -2804,11 +2787,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 pass
         return sanitized
 
-    def on_response(self, dialog, response_id):
-        if str(response_id) == 'save':
-            self.on_save_clicked()
-        else:
-            self.close()
+
     
     def on_forwarding_toggled(self, switch, param, settings_box):
         """Handle toggling of port forwarding settings visibility and state"""

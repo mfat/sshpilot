@@ -945,7 +945,7 @@ class SshCopyIdWindow(Gtk.Window):
         try:
             super().__init__()
             self.set_transient_for(parent)
-            self.set_modal(False)
+            self.set_modal(True)
             self.set_title("Install Public Key on Server")
             self.set_resizable(False)
             self.set_default_size(500, 400)
