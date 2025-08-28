@@ -408,6 +408,8 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 self.placeholder.set_sensitive(not is_enabled)
             if hasattr(self, 'add_rule_button'):
                 self.add_rule_button.set_sensitive(not is_enabled)
+            if hasattr(self, 'reload_ssh_config_button'):
+                self.reload_ssh_config_button.set_sensitive(not is_enabled)
                 
         except Exception as e:
             logger.debug(f"Failed to handle raw SSH toggle change: {e}")
@@ -423,8 +425,8 @@ class ConnectionDialog(Adw.PreferencesDialog):
         except Exception as e:
             logger.debug(f"Failed to refresh SSH config editor: {e}")
     
-    def _on_regenerate_ssh_config_clicked(self, button):
-        """Handle regenerate SSH config button click"""
+    def _on_reload_ssh_config_clicked(self, button):
+        """Handle reload SSH config button click"""
         try:
             # Show confirmation dialog
             dialog = Gtk.MessageDialog(
@@ -432,23 +434,97 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 modal=True,
                 message_type=Gtk.MessageType.QUESTION,
                 buttons=Gtk.ButtonsType.YES_NO,
-                text=_("Regenerate SSH Config"),
-                secondary_text=_("This will replace the current SSH config block with one generated from your current connection settings. Continue?")
+                text=_("Reload from .ssh/config"),
+                secondary_text=_("This will replace the current SSH config block with the configuration from your ~/.ssh/config file for this host. Continue?")
             )
             
             def on_response(dialog, response):
                 if response == Gtk.ResponseType.YES:
-                    # Regenerate SSH config from current settings
-                    generated_config = self._generate_ssh_config_from_settings()
-                    if hasattr(self, 'ssh_config_buffer'):
-                        self.ssh_config_buffer.set_text(generated_config)
+                    # Reload SSH config from .ssh/config file
+                    ssh_config_block = self._load_ssh_config_from_file()
+                    if ssh_config_block and hasattr(self, 'ssh_config_buffer'):
+                        self.ssh_config_buffer.set_text(ssh_config_block)
+                    elif not ssh_config_block:
+                        # Show error dialog if no config found
+                        error_dialog = Gtk.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            message_type=Gtk.MessageType.ERROR,
+                            buttons=Gtk.ButtonsType.OK,
+                            text=_("No SSH Config Found"),
+                            secondary_text=_("No SSH configuration found for this host in ~/.ssh/config")
+                        )
+                        error_dialog.connect('response', lambda d, r: d.destroy())
+                        error_dialog.present()
                 dialog.destroy()
             
             dialog.connect('response', on_response)
             dialog.present()
             
         except Exception as e:
-            logger.debug(f"Failed to handle regenerate SSH config: {e}")
+            logger.debug(f"Failed to handle reload SSH config: {e}")
+    
+    def _load_ssh_config_from_file(self):
+        """Load SSH config block for current host from ~/.ssh/config file"""
+        try:
+            import os
+            ssh_config_path = os.path.expanduser('~/.ssh/config')
+            
+            if not os.path.exists(ssh_config_path):
+                logger.warning(f"SSH config file not found: {ssh_config_path}")
+                return None
+            
+            # Get the current host nickname
+            host_nickname = self.connection.nickname if self.connection else None
+            if not host_nickname:
+                logger.warning("No host nickname available")
+                return None
+            
+            # Read and parse the SSH config file
+            current_host = None
+            current_block = []
+            in_target_host = False
+            
+            with open(ssh_config_path, 'r') as f:
+                for line in f:
+                    stripped_line = line.strip()
+                    
+                    # Skip empty lines and comments
+                    if not stripped_line or stripped_line.startswith('#'):
+                        if in_target_host:
+                            current_block.append(line.rstrip())
+                        continue
+                    
+                    # Check if this is a Host directive
+                    if stripped_line.lower().startswith('host '):
+                        # If we were in a target host block, we've reached the end
+                        if in_target_host:
+                            break
+                        
+                        # Extract host name(s)
+                        host_part = stripped_line[5:].strip()
+                        host_names = [h.strip() for h in host_part.split()]
+                        
+                        # Check if our target host is in this Host directive
+                        if host_nickname in host_names:
+                            current_host = host_nickname
+                            in_target_host = True
+                            current_block.append(line.rstrip())
+                        else:
+                            current_host = None
+                    elif in_target_host:
+                        # We're in the target host block, add this line
+                        current_block.append(line.rstrip())
+            
+            if current_block:
+                return '\n'.join(current_block)
+            else:
+                logger.warning(f"No SSH config block found for host: {host_nickname}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to load SSH config from file: {e}")
+            return None
     
     def validate_ssh_config_syntax(self, config_text):
         """Basic SSH config syntax validation"""
@@ -1651,13 +1727,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Add the scrolled window to the group
         self.ssh_config_editor_group.add(scrolled_window)
         
-        # Add a button to regenerate SSH config from current settings
-        regenerate_button = Gtk.Button(label=_("Regenerate from Settings"))
-        regenerate_button.add_css_class('flat')
-        regenerate_button.connect('clicked', self._on_regenerate_ssh_config_clicked)
+        # Add a button to reload SSH config from .ssh/config file
+        self.reload_ssh_config_button = Gtk.Button(label=_("Reload from .ssh/config"))
+        self.reload_ssh_config_button.add_css_class('flat')
+        self.reload_ssh_config_button.connect('clicked', self._on_reload_ssh_config_clicked)
         
         # Add button to the group
-        self.ssh_config_editor_group.add(regenerate_button)
+        self.ssh_config_editor_group.add(self.reload_ssh_config_button)
         
         # Add the group to the auth group (will be shown/hidden based on toggle)
         auth_group.add(self.ssh_config_editor_group)
