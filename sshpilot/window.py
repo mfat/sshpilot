@@ -3223,6 +3223,7 @@ class MainWindow(Adw.ApplicationWindow):
         menu.append('New Connection', 'app.new-connection')
         menu.append('Local Terminal', 'app.local-terminal')
         menu.append('Generate SSH Key', 'app.new-key')
+        menu.append('Broadcast Command', 'app.broadcast-command')
         menu.append('Preferences', 'app.preferences')
         menu.append('Help', 'app.help')
         menu.append('About', 'app.about')
