@@ -2964,6 +2964,10 @@ class MainWindow(Adw.ApplicationWindow):
             self.connection_list.set_can_focus(True)
         except Exception:
             pass
+        try:
+            self.connection_list.set_header_func(self._group_header_func, None)
+        except Exception:
+            pass
         
         # Wire pulse effects
         self._wire_pulses()
@@ -3233,10 +3237,18 @@ class MainWindow(Adw.ApplicationWindow):
 
     def setup_connections(self):
         """Load and display existing connections"""
-        connections = self.connection_manager.get_connections()
-        
+        connections = sorted(
+            self.connection_manager.get_connections(),
+            key=lambda c: ((c.group or '').lower(), c.nickname.lower())
+        )
+
         for connection in connections:
             self.add_connection_row(connection)
+
+        try:
+            self.connection_list.invalidate_headers()
+        except Exception:
+            pass
         
         # Select first connection if available
         if connections:
@@ -3252,9 +3264,24 @@ class MainWindow(Adw.ApplicationWindow):
         self.connection_manager.connect_after('connection-added', self.on_connection_added)
         self.connection_manager.connect_after('connection-removed', self.on_connection_removed)
         self.connection_manager.connect_after('connection-status-changed', self.on_connection_status_changed)
-        
+
         # Config signals
         self.config.connect('setting-changed', self.on_setting_changed)
+    def _group_header_func(self, row, before_row, data):
+        """Gtk.ListBox header func to group connections by their ``group`` attribute."""
+        try:
+            conn = getattr(row, 'connection', None)
+            prev = getattr(before_row, 'connection', None) if before_row else None
+            if conn is None:
+                return
+            if prev is None or getattr(prev, 'group', '') != getattr(conn, 'group', ''):
+                header = Gtk.Label(label=conn.group or _("Ungrouped"))
+                header.set_xalign(0)
+                row.set_header(header)
+            else:
+                row.set_header(None)
+        except Exception:
+            row.set_header(None)
 
     def add_connection_row(self, connection: Connection):
         """Add a connection row to the list"""
@@ -3264,6 +3291,10 @@ class MainWindow(Adw.ApplicationWindow):
         # Apply current hide-hosts setting to new row
         if hasattr(row, 'apply_hide_hosts'):
             row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
+        try:
+            self.connection_list.invalidate_headers()
+        except Exception:
+            pass
 
     def show_welcome_view(self):
         """Show the welcome/help view when no connections are active"""
@@ -6605,6 +6636,7 @@ class MainWindow(Adw.ApplicationWindow):
                 old_connection.password = connection_data['password']
                 old_connection.key_passphrase = connection_data['key_passphrase']
                 old_connection.auth_method = connection_data['auth_method']
+                old_connection.group = connection_data.get('group', '')
                 # Persist key selection mode in-memory so the dialog reflects it without restart
                 try:
                     old_connection.key_select_mode = int(connection_data.get('key_select_mode', getattr(old_connection, 'key_select_mode', 0)) or 0)
@@ -6628,7 +6660,8 @@ class MainWindow(Adw.ApplicationWindow):
                     self.config.set_connection_meta(meta_key, {
                         'auth_method': connection_data.get('auth_method', 0),
                         'use_raw_sshconfig': connection_data.get('use_raw_sshconfig', False),
-                        'raw_ssh_config_block': connection_data.get('raw_ssh_config_block', '')
+                        'raw_ssh_config_block': connection_data.get('raw_ssh_config_block', ''),
+                        'group': connection_data.get('group', '')
                     })
                 except Exception:
                     pass
@@ -6698,7 +6731,8 @@ class MainWindow(Adw.ApplicationWindow):
                         self.config.set_connection_meta(connection.nickname, {
                             'auth_method': connection_data.get('auth_method', 0),
                             'use_raw_sshconfig': connection_data.get('use_raw_sshconfig', False),
-                            'raw_ssh_config_block': connection_data.get('raw_ssh_config_block', '')
+                            'raw_ssh_config_block': connection_data.get('raw_ssh_config_block', ''),
+                            'group': connection_data.get('group', '')
                         })
                         try:
                             self.connection_manager.load_ssh_config()
@@ -6746,8 +6780,15 @@ class MainWindow(Adw.ApplicationWindow):
             # Clear mapping
             self.connection_rows.clear()
             # Re-add from manager
-            for conn in self.connection_manager.get_connections():
+            for conn in sorted(
+                self.connection_manager.get_connections(),
+                key=lambda c: ((c.group or '').lower(), c.nickname.lower())
+            ):
                 self.add_connection_row(conn)
+            try:
+                self.connection_list.invalidate_headers()
+            except Exception:
+                pass
         except Exception:
             pass
     def _prompt_reconnect(self, connection):
