@@ -2964,11 +2964,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.connection_list.set_can_focus(True)
         except Exception:
             pass
-        try:
-            self.connection_list.set_header_func(self._group_header_func, None)
-        except Exception:
-            pass
-        
+
         # Wire pulse effects
         self._wire_pulses()
         
@@ -3267,21 +3263,6 @@ class MainWindow(Adw.ApplicationWindow):
 
         # Config signals
         self.config.connect('setting-changed', self.on_setting_changed)
-    def _group_header_func(self, row, before_row, data):
-        """Gtk.ListBox header func to group connections by their ``group`` attribute."""
-        try:
-            conn = getattr(row, 'connection', None)
-            prev = getattr(before_row, 'connection', None) if before_row else None
-            if conn is None:
-                return
-            if prev is None or getattr(prev, 'group', '') != getattr(conn, 'group', ''):
-                header = Gtk.Label(label=conn.group or _("Ungrouped"))
-                header.set_xalign(0)
-                row.set_header(header)
-            else:
-                row.set_header(None)
-        except Exception:
-            row.set_header(None)
 
     def add_connection_row(self, connection: Connection):
         """Add a connection row to the list, keeping groups and sort order"""
