@@ -1679,14 +1679,14 @@ class WelcomePage(Gtk.Box):
         
         shortcuts = [
             ('Ctrl+N', 'New Connection'),
-            ('Ctrl+Alt+N', 'Open New Connection Tab'),
-            ('Ctrl+Enter', 'Open New Connection Tab'),
+            ('Ctrl+Alt+N', 'Open  Selected Host in a New Tab'),
             ('F9', 'Toggle Sidebar'),
             ('Ctrl+L', 'Focus connection list to select server'),
-            ('Ctrl+Shift+K', 'New SSH Key'),
+            ('Ctrl+Shift+K', 'Copy SSH Key to Server'),
             ('Alt+Right', 'Next Tab'),
             ('Alt+Left', 'Previous Tab'),
             ('Ctrl+F4', 'Close Tab'),
+            ('Ctrl+Shift+T', 'New Local Terminal'),
             ('Ctrl+,', 'Preferences'),
         ]
         
