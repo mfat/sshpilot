@@ -177,7 +177,7 @@ def force_regenerate_askpass_script() -> str:
         _ASKPASS_DIR = None
     return ensure_passphrase_askpass()
 
-def get_ssh_env_with_askpass(require: str = "force") -> dict:
+def get_ssh_env_with_askpass(require: str = "prefer") -> dict:
     """Get SSH environment with askpass for passphrase handling"""
     env = os.environ.copy()
     env["SSH_ASKPASS"] = ensure_passphrase_askpass()

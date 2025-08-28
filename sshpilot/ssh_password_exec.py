@@ -31,7 +31,7 @@ def run_ssh_with_password(host: str, user: str, password: str, *,
     t.start()
 
     ssh_opts = [
-        "-o", "PreferredAuthentications=keyboard-interactive,password",
+        "-o", "PreferredAuthentications=password",
         "-o", "PubkeyAuthentication=no",
         "-o", "NumberOfPasswordPrompts=1",
         "-o", "ServerAliveInterval=30",

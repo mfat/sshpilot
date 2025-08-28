@@ -33,7 +33,7 @@ from .config import Config
 from .key_manager import KeyManager, SSHKey
 from .port_forwarding_ui import PortForwardingRules
 from .connection_dialog import ConnectionDialog
-from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
+from .askpass_utils import ensure_askpass_script
 
 logger = logging.getLogger(__name__)
 
@@ -45,32 +45,44 @@ def is_running_in_flatpak() -> bool:
 def open_remote_in_file_manager(user: str, host: str, port: Optional[int] = None, 
                                path: Optional[str] = None, error_callback: Optional[Callable] = None, 
                                parent_window=None) -> Tuple[bool, Optional[str]]:
-    """Open remote server in file manager using SFTP URI with Flatpak-compatible methods"""
-    
+    """Open remote server in file manager using SFTP URI with asynchronous verification"""
+
     # Build sftp URI
     p = path or "/"
     port_part = f":{port}" if port else ""
     uri = f"sftp://{user}@{host}{port_part}{p}"
     
     logger.info(f"Opening SFTP URI: {uri}")
-    
-    # Verify SSH connection first
-    if not _verify_ssh_connection(user, host, port):
-        error_msg = "SSH connection failed - check credentials and network connectivity"
-        logger.error(f"SSH verification failed for {user}@{host}")
-        if error_callback:
-            error_callback(error_msg)
-            return False, error_msg
-        
+
+    # Create progress dialog and start verification asynchronously
+    progress_dialog = MountProgressDialog(user, host, parent_window)
+    progress_dialog.present()
+    progress_dialog.start_progress_updates()
+    progress_dialog.update_progress(0.05, "Verifying SSH connection...")
+
+    def _on_verify_complete(success: bool):
+        if progress_dialog.is_cancelled:
+            return
+        if not success:
+            error_msg = "SSH connection failed - check credentials and network connectivity"
+            logger.error(f"SSH verification failed for {user}@{host}")
+            progress_dialog.update_progress(0.0, "SSH connection failed")
+            progress_dialog.show_error(error_msg)
+            GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
+            if error_callback:
+                error_callback(error_msg)
+            return
+
         logger.info(f"SSH connection verified for {user}@{host}")
-        
-    # Use Flatpak-compatible approach
-    if is_running_in_flatpak():
-        logger.info("Running in Flatpak, using portal-compatible methods")
-        return _open_sftp_flatpak_compatible(uri, user, host, port, error_callback, parent_window)
-    else:
-        # Native installation - try GVFS first, then fallbacks
-        return _open_sftp_native(uri, user, host, error_callback, parent_window)
+        progress_dialog.update_progress(0.3, "SSH verified, mounting...")
+        if is_running_in_flatpak():
+            _open_sftp_flatpak_compatible(uri, user, host, port, error_callback, progress_dialog)
+        else:
+            _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog)
+
+    _verify_ssh_connection_async(user, host, port, _on_verify_complete)
+
+    return True, None
 
 def _mount_and_open_sftp(uri: str, user: str, host: str, error_callback=None):
     """Mount SFTP location and open in file manager"""
@@ -97,8 +109,8 @@ def _mount_and_open_sftp(uri: str, user: str, host: str, error_callback=None):
                 logger.info(f"File manager launched successfully for {user}@{host}")
                 
                 # Close progress dialog after a short delay
-                GLib.timeout_add(1000, progress_dialog.close)
-                
+                GLib.timeout_add(1000, lambda: GLib.idle_add(progress_dialog.close))
+
             except GLib.Error as e:
                 # Check if the error is "already mounted" - this is actually a success case
                 if "already mounted" in e.message.lower():
@@ -112,7 +124,7 @@ def _mount_and_open_sftp(uri: str, user: str, host: str, error_callback=None):
                     logger.info(f"File manager launched successfully for {user}@{host}")
                     
                     # Close progress dialog after a short delay
-                    GLib.timeout_add(1000, progress_dialog.close)
+                    GLib.timeout_add(1000, lambda: GLib.idle_add(progress_dialog.close))
                 else:
                     error_msg = f"Could not mount {uri}: {e.message}"
                     logger.error(f"Mount failed for {user}@{host}: {error_msg}")
@@ -122,17 +134,20 @@ def _mount_and_open_sftp(uri: str, user: str, host: str, error_callback=None):
                     # Try Flatpak-compatible methods as fallback
                     if is_running_in_flatpak():
                         logger.info("Falling back to Flatpak-compatible methods")
-                        progress_dialog.close()
+                        GLib.idle_add(progress_dialog.close)
                         success, msg = _try_flatpak_compatible_mount(uri, user, host, None, error_callback)
                         if not success and error_callback:
                             error_callback(msg)
-                    elif error_callback:
-                        error_callback(error_msg)
+                    else:
+                        GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
+                        if error_callback:
+                            error_callback(error_msg)
             except Exception as e:
                 error_msg = f"Unexpected error during mount: {str(e)}"
                 logger.error(f"Mount error for {user}@{host}: {e}")
                 progress_dialog.update_progress(0.0, f"Error: {str(e)}")
                 progress_dialog.show_error(error_msg)
+                GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
                 if error_callback:
                     error_callback(error_msg)
         
@@ -153,12 +168,15 @@ def _mount_and_open_sftp(uri: str, user: str, host: str, error_callback=None):
     except Exception as e:
         error_msg = f"Failed to start mount operation: {str(e)}"
         logger.error(f"Mount operation failed for {user}@{host}: {e}")
-        
+        GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
+
         # Try Flatpak-compatible methods as fallback
         if is_running_in_flatpak():
             logger.info("Primary mount failed, trying Flatpak-compatible methods")
             return _try_flatpak_compatible_mount(uri, user, host, None, error_callback)
-        
+
+        if error_callback:
+            error_callback(error_msg)
         return False, error_msg
 
 def _verify_ssh_connection(user: str, host: str, port: Optional[int]) -> bool:
@@ -175,14 +193,26 @@ def _verify_ssh_connection(user: str, host: str, port: Optional[int]) -> bool:
     except (subprocess.TimeoutExpired, Exception):
         return False
 
-def _open_sftp_flatpak_compatible(uri: str, user: str, host: str, port: Optional[int], 
-                                 error_callback: Optional[Callable], parent_window=None) -> Tuple[bool, Optional[str]]:
+def _verify_ssh_connection_async(user: str, host: str, port: Optional[int], callback: Callable[[bool], None]) -> None:
+    """Verify SSH connection on a background thread and invoke callback with the result"""
+
+    def worker():
+        success = _verify_ssh_connection(user, host, port)
+        GLib.idle_add(callback, success)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+def _open_sftp_flatpak_compatible(uri: str, user: str, host: str, port: Optional[int],
+                                 error_callback: Optional[Callable], progress_dialog=None,
+                                 parent_window=None) -> Tuple[bool, Optional[str]]:
     """Open SFTP using Flatpak-compatible methods with proper portal usage"""
-    
-    # Create and show progress dialog immediately
-    progress_dialog = MountProgressDialog(user, host, parent_window)
-    progress_dialog.present()
-    progress_dialog.start_progress_updates()
+
+    # Reuse existing progress dialog if provided
+    if progress_dialog is None:
+        progress_dialog = MountProgressDialog(user, host, parent_window)
+        progress_dialog.present()
+    if not getattr(progress_dialog, 'progress_timer', None):
+        progress_dialog.start_progress_updates()
     
     # Method 1: Use XDG Desktop Portal File Chooser to access GVFS mounts
     try:
@@ -190,7 +220,7 @@ def _open_sftp_flatpak_compatible(uri: str, user: str, host: str, port: Optional
         success = _try_portal_file_access(uri, user, host)
         if success:
             progress_dialog.update_progress(1.0, "Success! Opening file manager...")
-            GLib.timeout_add(1000, progress_dialog.close)
+            GLib.timeout_add(1000, lambda: GLib.idle_add(progress_dialog.close))
             return True, None
     except Exception as e:
         logger.warning(f"Portal file access failed: {e}")
@@ -201,7 +231,7 @@ def _open_sftp_flatpak_compatible(uri: str, user: str, host: str, port: Optional
         success = _try_external_file_managers(uri, user, host)
         if success:
             progress_dialog.update_progress(1.0, "Success! File manager opened...")
-            GLib.timeout_add(1000, progress_dialog.close)
+            GLib.timeout_add(1000, lambda: GLib.idle_add(progress_dialog.close))
             return True, None
     except Exception as e:
         logger.warning(f"External file managers failed: {e}")
@@ -212,7 +242,7 @@ def _open_sftp_flatpak_compatible(uri: str, user: str, host: str, port: Optional
         success = _try_host_gvfs_access(uri, user, host, port)
         if success:
             progress_dialog.update_progress(1.0, "Success! Found existing mount...")
-            GLib.timeout_add(1000, progress_dialog.close)
+            GLib.timeout_add(1000, lambda: GLib.idle_add(progress_dialog.close))
             return True, None
     except Exception as e:
         logger.warning(f"Host GVFS access failed: {e}")
@@ -221,14 +251,15 @@ def _open_sftp_flatpak_compatible(uri: str, user: str, host: str, port: Optional
     progress_dialog.update_progress(0.8, "Preparing manual connection options...")
     success = _show_manual_connection_dialog(user, host, port, uri)
     if success:
-        progress_dialog.close()
+        GLib.idle_add(progress_dialog.close)
         return True, "Manual connection dialog opened"
     
     # All methods failed
     error_msg = "Could not open SFTP connection - try mounting the location manually first"
     progress_dialog.show_error(error_msg)
+    GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
     if error_callback:
-        error_callback(error_msg)
+        GLib.idle_add(error_callback, error_msg)
     return False, error_msg
 
 def _try_portal_file_access(uri: str, user: str, host: str) -> bool:
@@ -465,7 +496,7 @@ def _open_sftp_native(uri: str, user: str, host: str, error_callback: Optional[C
         logger.warning(f"Native GVFS mount failed: {e}")
     
     # Fall back to Flatpak-compatible methods
-    return _open_sftp_flatpak_compatible(uri, user, host, None, error_callback, parent_window)
+    return _open_sftp_flatpak_compatible(uri, user, host, None, error_callback, parent_window=parent_window)
 
 def _mount_and_open_sftp_native(uri: str, user: str, host: str, error_callback: Optional[Callable], parent_window=None) -> bool:
     """Original native GVFS mounting method"""
@@ -887,7 +918,7 @@ class SftpConnectionDialog(Adw.Window):
 # =========================
 # SSH Copy-ID Full Window
 # =========================
-class SshCopyIdWindow(Adw.Window):
+class SshCopyIdWindow(Gtk.Window):
     """
     Full Adwaita-styled window for installing a public key on a server.
     - Shows selected server nickname
@@ -909,9 +940,12 @@ class SshCopyIdWindow(Adw.Window):
         logger.debug(f"SshCopyIdWindow: Connection manager type: {type(connection_manager)}")
         
         try:
-            super().__init__(transient_for=parent, modal=False)
+            super().__init__()
+            self.set_transient_for(parent)
+            self.set_modal(True)
             self.set_title("Install Public Key on Server")
             self.set_resizable(False)
+            self.set_default_size(500, 400)
             logger.debug("SshCopyIdWindow: Base window initialized")
 
             self._parent = parent
@@ -930,7 +964,7 @@ class SshCopyIdWindow(Adw.Window):
         logger.info("SshCopyIdWindow: Creating outer layout")
         try:
             tv = Adw.ToolbarView()
-            self.set_content(tv)
+            self.set_child(tv)
             
             # ---------- Header Bar ----------
             logger.info("SshCopyIdWindow: Creating header bar")
@@ -975,7 +1009,9 @@ class SshCopyIdWindow(Adw.Window):
 
             # Radio option 1: Use existing key (using CheckButton with group for radio behavior)
             self.radio_existing = Gtk.CheckButton(label="Copy existing key")
+            self.radio_existing.set_can_focus(True)  # Make it focusable for tab navigation
             self.radio_generate = Gtk.CheckButton(label="Generate new key")
+            self.radio_generate.set_can_focus(True)  # Make it focusable for tab navigation
 
             # Make them behave like radio buttons (GTK4)
             self.radio_generate.set_group(self.radio_existing)
@@ -992,6 +1028,7 @@ class SshCopyIdWindow(Adw.Window):
             existing_box.set_margin_start(12)
             existing_box.set_margin_bottom(6)
             self.dropdown_existing = Gtk.DropDown()
+            self.dropdown_existing.set_can_focus(True)  # Make it focusable for tab navigation
             existing_box.append(Gtk.Label(label="Select key:", xalign=0))
             existing_box.append(self.dropdown_existing)
 
@@ -1012,38 +1049,26 @@ class SshCopyIdWindow(Adw.Window):
             gen_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
             gen_box.set_margin_start(12)
             gen_box.set_margin_top(6)
+            gen_box.set_can_focus(True)  # Make the box focusable for tab navigation
 
             # Key name
             self.row_key_name = Adw.EntryRow()
             self.row_key_name.set_title("Key file name")
             self.row_key_name.set_text("id_ed25519")
+            self.row_key_name.set_can_focus(True)  # Make it focusable for tab navigation
             gen_box.append(self.row_key_name)
 
             # Key type
-            self.type_row = Adw.ComboRow()
-            self.type_row.set_title("Key type")
+            key_type_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            key_type_label = Gtk.Label(label="Key type:", xalign=0)
+            self.type_dropdown = Gtk.DropDown()
             self._types_model = Gtk.StringList.new(["ed25519", "rsa"])
-            self.type_row.set_model(self._types_model)
-            self.type_row.set_selected(0)
-            gen_box.append(self.type_row)
-
-            # Passphrase toggle + entries
-            self.row_pass_toggle = Adw.SwitchRow()
-            self.row_pass_toggle.set_title("Encrypt with passphrase")
-            gen_box.append(self.row_pass_toggle)
-
-            pass_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            self.pass1 = Gtk.PasswordEntry()
-            self.pass1.set_property("placeholder-text", "Passphrase")
-            self.pass2 = Gtk.PasswordEntry()
-            self.pass2.set_property("placeholder-text", "Confirm passphrase")
-            pass_box.append(self.pass1); pass_box.append(self.pass2)
-            pass_box.set_visible(False)
-            gen_box.append(pass_box)
-
-            def _on_pass_toggle(*_):
-                pass_box.set_visible(self.row_pass_toggle.get_active())
-            self.row_pass_toggle.connect("notify::active", _on_pass_toggle)
+            self.type_dropdown.set_model(self._types_model)
+            self.type_dropdown.set_selected(0)
+            self.type_dropdown.set_can_focus(True)  # Make it focusable for tab navigation
+            key_type_box.append(key_type_label)
+            key_type_box.append(self.type_dropdown)
+            gen_box.append(key_type_box)
 
             self.generate_revealer.set_child(gen_box)
             logger.info("SshCopyIdWindow: Key generation form created successfully")
@@ -1069,9 +1094,73 @@ class SshCopyIdWindow(Adw.Window):
 
             content.append(group)
 
+            # ---------- Passphrase toggle ----------
+            logger.info("SshCopyIdWindow: Creating passphrase toggle")
+            try:
+                passphrase_group = Adw.PreferencesGroup(title="")
+                
+                self.row_pass_toggle = Adw.SwitchRow()
+                self.row_pass_toggle.set_title("Encrypt with passphrase")
+                self.row_pass_toggle.set_activatable(True)  # Make the entire row clickable
+                
+                passphrase_group.add(self.row_pass_toggle)
+                
+                # Passphrase entries (outside revealer)
+                self.pass1 = Gtk.PasswordEntry()
+                self.pass1.set_property("placeholder-text", "Passphrase")
+                self.pass1.set_can_focus(True)  # Make it focusable for tab navigation
+                self.pass2 = Gtk.PasswordEntry()
+                self.pass2.set_property("placeholder-text", "Confirm passphrase")
+                self.pass2.set_can_focus(True)  # Make it focusable for tab navigation
+                
+                # Create a box for passphrase entries
+                self.pass_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+                self.pass_box.set_margin_start(12)
+                self.pass_box.set_margin_end(12)
+                self.pass_box.set_margin_top(6)
+                self.pass_box.set_margin_bottom(6)
+                self.pass_box.append(self.pass1)
+                self.pass_box.append(self.pass2)
+                self.pass_box.set_visible(False)
+                
+                passphrase_group.add(self.pass_box)
+                
+                content.append(passphrase_group)
+                logger.info("SshCopyIdWindow: Passphrase toggle created successfully")
+            except Exception as e:
+                logger.error(f"SshCopyIdWindow: Failed to create passphrase toggle: {e}")
+                raise
+
+            # ---------- Force key transfer toggle ----------
+            logger.info("SshCopyIdWindow: Creating force key transfer toggle")
+            try:
+                force_group = Adw.PreferencesGroup(title="")
+                
+                self.force_toggle = Adw.SwitchRow()
+                self.force_toggle.set_title("Force key transfer")
+                self.force_toggle.set_subtitle("Overwrite existing keys on the server")
+                self.force_toggle.set_active(True)  # Default to enabled
+                force_group.add(self.force_toggle)
+                
+                content.append(force_group)
+                logger.info("SshCopyIdWindow: Force key transfer toggle created successfully")
+            except Exception as e:
+                logger.error(f"SshCopyIdWindow: Failed to create force toggle: {e}")
+                raise
+
             # Radio change behavior
             self.radio_existing.connect("toggled", self._on_mode_toggled)
             self.radio_generate.connect("toggled", self._on_mode_toggled)
+            
+            # Set initial state (since "Copy existing key" is selected by default)
+            self.row_pass_toggle.set_sensitive(False)
+            self.pass_box.set_sensitive(False)
+            
+            # Key type change behavior
+            self.type_dropdown.connect("notify::selected", self._on_key_type_changed)
+            
+            # Passphrase toggle behavior
+            self.row_pass_toggle.connect("notify::active", self._on_pass_toggle)
 
             logger.info("SshCopyIdWindow: UI elements packed successfully")
         except Exception as e:
@@ -1085,8 +1174,32 @@ class SshCopyIdWindow(Adw.Window):
 
     def _on_mode_toggled(self, *_):
         # Reveal generator only when "Generate new key" is selected
-        logger.info(f"SshCopyIdWindow: Mode toggled, generate active: {self.radio_generate.get_active()}")
-        self.generate_revealer.set_reveal_child(self.radio_generate.get_active())
+        generate_active = self.radio_generate.get_active()
+        logger.info(f"SshCopyIdWindow: Mode toggled, generate active: {generate_active}")
+        self.generate_revealer.set_reveal_child(generate_active)
+        
+        # Enable/disable passphrase section based on mode
+        self.row_pass_toggle.set_sensitive(generate_active)
+        self.pass_box.set_sensitive(generate_active)
+        
+        # If switching to "Copy existing key", turn off passphrase and hide fields
+        if not generate_active:
+            self.row_pass_toggle.set_active(False)
+            self.pass_box.set_visible(False)
+    
+    def _on_key_type_changed(self, *_):
+        # Update key name placeholder when key type changes
+        type_selection = self.type_dropdown.get_selected()
+        if type_selection == 1:  # RSA
+            self.row_key_name.set_text("id_rsa")
+        else:  # ed25519
+            self.row_key_name.set_text("id_ed25519")
+    
+
+    
+    def _on_pass_toggle(self, *_):
+        # Show/hide passphrase entries when toggle changes
+        self.pass_box.set_visible(self.row_pass_toggle.get_active())
 
     def _reload_existing_keys(self):
         logger.info("SshCopyIdWindow: Reloading existing keys")
@@ -1201,7 +1314,9 @@ class SshCopyIdWindow(Adw.Window):
             
             # Launch your existing terminal ssh-copy-id flow
             logger.debug("SshCopyIdWindow: Calling _show_ssh_copy_id_terminal_using_main_widget()")
-            self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, ssh_key)
+            force_enabled = self.force_toggle.get_active()
+            logger.debug(f"SshCopyIdWindow: Force option enabled: {force_enabled}")
+            self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, ssh_key, force_enabled)
             logger.debug("SshCopyIdWindow: Terminal window launched, closing dialog")
             self.close()
         except Exception as e:
@@ -1227,7 +1342,7 @@ class SshCopyIdWindow(Adw.Window):
                 raise ValueError("Key file name must not contain '/' or start with '.'")
 
             # Key type
-            type_selection = self.type_row.get_selected()
+            type_selection = self.type_dropdown.get_selected()
             kt = "ed25519" if type_selection == 0 else "rsa"
             logger.info(f"SshCopyIdWindow: Key type: {kt}")
             logger.debug(f"SshCopyIdWindow: Type selection index: {type_selection}, resolved to: {kt}")
@@ -1289,7 +1404,9 @@ class SshCopyIdWindow(Adw.Window):
             
             # Run your terminal ssh-copy-id flow
             logger.debug("SshCopyIdWindow: Calling _show_ssh_copy_id_terminal_using_main_widget()")
-            self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, new_key)
+            force_enabled = self.force_toggle.get_active()
+            logger.debug(f"SshCopyIdWindow: Force option enabled: {force_enabled}")
+            self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, new_key, force_enabled)
             logger.debug("SshCopyIdWindow: Terminal window launched, closing dialog")
             self.close()
 
@@ -1299,6 +1416,295 @@ class SshCopyIdWindow(Adw.Window):
             self._error("Generate & Copy failed",
                         "Could not generate a new key and copy it to the server.",
                         str(e))
+
+
+# ============================================================================
+# Advanced Grouping System
+# ============================================================================
+
+class GroupManager:
+    """Manages hierarchical groups for connections"""
+    
+    def __init__(self, config: Config):
+        self.config = config
+        self.groups = {}  # group_id -> GroupInfo
+        self.connections = {}  # connection_nickname -> group_id
+        self._load_groups()
+    
+    def _load_groups(self):
+        """Load groups from configuration"""
+        try:
+            groups_data = self.config.get_setting('connection_groups', {})
+            self.groups = groups_data.get('groups', {})
+            self.connections = groups_data.get('connections', {})
+        except Exception as e:
+            logger.error(f"Failed to load groups: {e}")
+            self.groups = {}
+            self.connections = {}
+    
+    def _save_groups(self):
+        """Save groups to configuration"""
+        try:
+            groups_data = {
+                'groups': self.groups,
+                'connections': self.connections
+            }
+            self.config.set_setting('connection_groups', groups_data)
+        except Exception as e:
+            logger.error(f"Failed to save groups: {e}")
+    
+    def create_group(self, name: str, parent_id: str = None) -> str:
+        """Create a new group and return its ID"""
+        import uuid
+        group_id = str(uuid.uuid4())
+        
+        self.groups[group_id] = {
+            'id': group_id,
+            'name': name,
+            'parent_id': parent_id,
+            'children': [],
+            'connections': [],
+            'expanded': True,
+            'order': len(self.groups)
+        }
+        
+        if parent_id and parent_id in self.groups:
+            self.groups[parent_id]['children'].append(group_id)
+        
+        self._save_groups()
+        return group_id
+    
+    def delete_group(self, group_id: str):
+        """Delete a group and move its contents to parent or root"""
+        if group_id not in self.groups:
+            return
+        
+        group = self.groups[group_id]
+        parent_id = group.get('parent_id')
+        
+        # Move connections to parent or root
+        for conn_nickname in group['connections']:
+            self.connections[conn_nickname] = parent_id
+        
+        # Move child groups to parent
+        for child_id in group['children']:
+            if child_id in self.groups:
+                self.groups[child_id]['parent_id'] = parent_id
+                if parent_id and parent_id in self.groups:
+                    self.groups[parent_id]['children'].append(child_id)
+        
+        # Remove from parent's children
+        if parent_id and parent_id in self.groups:
+            if group_id in self.groups[parent_id]['children']:
+                self.groups[parent_id]['children'].remove(group_id)
+        
+        # Delete the group
+        del self.groups[group_id]
+        self._save_groups()
+    
+    def move_connection(self, connection_nickname: str, target_group_id: str = None):
+        """Move a connection to a different group"""
+        self.connections[connection_nickname] = target_group_id
+        
+        # Remove from old group
+        for group in self.groups.values():
+            if connection_nickname in group['connections']:
+                group['connections'].remove(connection_nickname)
+        
+        # Add to new group
+        if target_group_id and target_group_id in self.groups:
+            if connection_nickname not in self.groups[target_group_id]['connections']:
+                self.groups[target_group_id]['connections'].append(connection_nickname)
+        
+        self._save_groups()
+    
+    def get_group_hierarchy(self) -> List[Dict]:
+        """Get the complete group hierarchy"""
+        def build_tree(parent_id=None):
+            result = []
+            for group_id, group in self.groups.items():
+                if group.get('parent_id') == parent_id:
+                    group_copy = group.copy()
+                    group_copy['children'] = build_tree(group_id)
+                    result.append(group_copy)
+            return sorted(result, key=lambda x: x.get('order', 0))
+        
+        return build_tree()
+    
+    def get_connection_group(self, connection_nickname: str) -> str:
+        """Get the group ID for a connection"""
+        return self.connections.get(connection_nickname)
+    
+    def set_group_expanded(self, group_id: str, expanded: bool):
+        """Set whether a group is expanded"""
+        if group_id in self.groups:
+            self.groups[group_id]['expanded'] = expanded
+            self._save_groups()
+    
+    def reorder_connection_in_group(self, connection_nickname: str, target_connection_nickname: str, position: str):
+        """Reorder a connection within the same group relative to another connection"""
+        # Get the group for both connections
+        source_group_id = self.connections.get(connection_nickname)
+        target_group_id = self.connections.get(target_connection_nickname)
+        
+        # Both connections must be in the same group
+        if source_group_id != target_group_id or not source_group_id:
+            return
+        
+        group = self.groups.get(source_group_id)
+        if not group:
+            return
+        
+        connections = group['connections']
+        
+        # Remove the source connection from its current position
+        if connection_nickname in connections:
+            connections.remove(connection_nickname)
+        
+        # Find the target connection's position
+        try:
+            target_index = connections.index(target_connection_nickname)
+        except ValueError:
+            # Target not found, append to end
+            connections.append(connection_nickname)
+            self._save_groups()
+            return
+        
+        # Insert at the appropriate position
+        if position == 'above':
+            connections.insert(target_index, connection_nickname)
+        else:  # 'below'
+            connections.insert(target_index + 1, connection_nickname)
+        
+        self._save_groups()
+
+
+class GroupRow(Gtk.ListBoxRow):
+    """Row widget for group headers"""
+    
+    __gsignals__ = {
+        'group-toggled': (GObject.SignalFlags.RUN_FIRST, None, (str, bool))
+    }
+    
+    def __init__(self, group_info: Dict, group_manager: GroupManager, connections_dict: Dict = None):
+        super().__init__()
+        self.group_info = group_info
+        self.group_manager = group_manager
+        self.group_id = group_info['id']
+        self.connections_dict = connections_dict or {}
+        
+        # Create main content box
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        content.set_margin_start(12)
+        content.set_margin_end(12)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+        
+        # Group icon
+        icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+        icon.set_icon_size(Gtk.IconSize.NORMAL)
+        content.append(icon)
+        
+        # Group info
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        info_box.set_hexpand(True)
+        
+        # Group name label
+        self.name_label = Gtk.Label()
+        self.name_label.set_markup(f"<b>{group_info['name']}</b>")
+        self.name_label.set_halign(Gtk.Align.START)
+        info_box.append(self.name_label)
+        
+        # Connection count label
+        self.count_label = Gtk.Label()
+        self.count_label.add_css_class('dim-label')
+        self.count_label.set_halign(Gtk.Align.START)
+        info_box.append(self.count_label)
+        
+        content.append(info_box)
+        
+        # Expand/collapse button
+        self.expand_button = Gtk.Button()
+        self.expand_button.set_icon_name('pan-end-symbolic')
+        self.expand_button.add_css_class('flat')
+        self.expand_button.add_css_class('group-expand-button')
+        self.expand_button.set_can_focus(False)
+        self.expand_button.connect('clicked', self._on_expand_clicked)
+        content.append(self.expand_button)
+        
+        self.set_child(content)
+        self.set_selectable(True)
+        self.set_can_focus(True)
+        
+        # Update display
+        self._update_display()
+        
+        # Setup drag source
+        self._setup_drag_source()
+        
+        # Setup double-click gesture for expand/collapse
+        self._setup_double_click_gesture()
+    
+    def _update_display(self):
+        """Update the display based on current group state"""
+        # Update expand/collapse icon
+        if self.group_info.get('expanded', True):
+            self.expand_button.set_icon_name('pan-down-symbolic')
+        else:
+            self.expand_button.set_icon_name('pan-end-symbolic')
+        
+        # Update connection count - only count connections that actually exist
+        actual_connections = []
+        for conn_nickname in self.group_info.get('connections', []):
+            if conn_nickname in self.connections_dict:
+                actual_connections.append(conn_nickname)
+        
+        count = len(actual_connections)
+        if count == 1:
+            self.count_label.set_text("1")
+        else:
+            self.count_label.set_text(f"{count}")
+    
+    def _on_expand_clicked(self, button):
+        """Handle expand/collapse button click"""
+        self._toggle_expand()
+    
+    def _setup_drag_source(self):
+        """Setup drag source for group reordering"""
+        drag_source = Gtk.DragSource()
+        drag_source.set_actions(Gdk.DragAction.MOVE)
+        drag_source.connect('prepare', self._on_drag_prepare)
+        self.add_controller(drag_source)
+    
+    def _on_drag_prepare(self, source, x, y):
+        """Prepare drag data"""
+        data = {
+            'type': 'group',
+            'group_id': self.group_id
+        }
+        return Gdk.ContentProvider.new_for_value(GObject.Value(GObject.TYPE_PYOBJECT, data))
+    
+    def _setup_double_click_gesture(self):
+        """Setup double-click gesture for expand/collapse"""
+        gesture = Gtk.GestureClick()
+        gesture.set_button(1)  # Left mouse button
+        gesture.connect('pressed', self._on_double_click)
+        self.add_controller(gesture)
+    
+    def _on_double_click(self, gesture, n_press, x, y):
+        """Handle double-click to expand/collapse group"""
+        if n_press == 2:  # Double-click
+            self._toggle_expand()
+    
+    def _toggle_expand(self):
+        """Toggle the expanded state of the group"""
+        expanded = not self.group_info.get('expanded', True)
+        self.group_info['expanded'] = expanded
+        self.group_manager.set_group_expanded(self.group_id, expanded)
+        self._update_display()
+        
+        # Emit signal to parent to rebuild the list
+        self.emit('group-toggled', self.group_id, expanded)
 
 
 class ConnectionRow(Gtk.ListBoxRow):
@@ -1371,6 +1777,46 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.update_status()
         # Update forwarding indicators
         self._update_forwarding_indicators()
+        
+        # Setup drag source for connection reordering
+        self._setup_drag_source()
+    
+    def _setup_drag_source(self):
+        """Setup drag source for connection reordering"""
+        drag_source = Gtk.DragSource()
+        drag_source.set_actions(Gdk.DragAction.MOVE)
+        drag_source.connect('prepare', self._on_drag_prepare)
+        drag_source.connect('drag-begin', self._on_drag_begin)
+        drag_source.connect('drag-end', self._on_drag_end)
+        self.add_controller(drag_source)
+    
+    def _on_drag_prepare(self, source, x, y):
+        """Prepare drag data"""
+        data = {
+            'type': 'connection',
+            'connection_nickname': self.connection.nickname
+        }
+        return Gdk.ContentProvider.new_for_value(GObject.Value(GObject.TYPE_PYOBJECT, data))
+    
+    def _on_drag_begin(self, source, drag):
+        """Handle drag begin - show ungrouped area"""
+        try:
+            # Get the main window to show ungrouped area
+            window = self.get_root()
+            if hasattr(window, '_show_ungrouped_area'):
+                window._show_ungrouped_area()
+        except Exception as e:
+            logger.error(f"Error in drag begin: {e}")
+    
+    def _on_drag_end(self, source, drag, delete_data):
+        """Handle drag end - hide ungrouped area"""
+        try:
+            # Get the main window to hide ungrouped area
+            window = self.get_root()
+            if hasattr(window, '_hide_ungrouped_area'):
+                window._hide_ungrouped_area()
+        except Exception as e:
+            logger.error(f"Error in drag end: {e}")
 
     @staticmethod
     def _install_pf_css():
@@ -1559,14 +2005,14 @@ class WelcomePage(Gtk.Box):
         
         shortcuts = [
             ('Ctrl+N', 'New Connection'),
-            ('Ctrl+Alt+N', 'Open New Connection Tab'),
-            ('Ctrl+Enter', 'Open New Connection Tab'),
+            ('Ctrl+Alt+N', 'Open  Selected Host in a New Tab'),
             ('F9', 'Toggle Sidebar'),
             ('Ctrl+L', 'Focus connection list to select server'),
-            ('Ctrl+Shift+K', 'New SSH Key'),
+            ('Ctrl+Shift+K', 'Copy SSH Key to Server'),
             ('Alt+Right', 'Next Tab'),
             ('Alt+Left', 'Previous Tab'),
             ('Ctrl+F4', 'Close Tab'),
+            ('Ctrl+Shift+T', 'New Local Terminal'),
             ('Ctrl+,', 'Preferences'),
         ]
         
@@ -1678,6 +2124,95 @@ class PreferencesWindow(Adw.PreferencesWindow):
             appearance_group.add(self.color_scheme_row)
             terminal_page.add(appearance_group)
             
+            # Preferred Terminal group (only show when not in Flatpak)
+            if not is_running_in_flatpak():
+                terminal_choice_group = Adw.PreferencesGroup()
+                terminal_choice_group.set_title("Preferred Terminal")
+                
+                # Radio buttons for terminal choice
+                self.builtin_terminal_radio = Gtk.CheckButton(label="Use built-in terminal")
+                self.builtin_terminal_radio.set_can_focus(True)
+                self.external_terminal_radio = Gtk.CheckButton(label="Use other terminal")
+                self.external_terminal_radio.set_can_focus(True)
+                
+                # Make them behave like radio buttons
+                self.external_terminal_radio.set_group(self.builtin_terminal_radio)
+                
+                # Set current preference
+                use_external = self.config.get_setting('use-external-terminal', False)
+                if use_external:
+                    self.external_terminal_radio.set_active(True)
+                else:
+                    self.builtin_terminal_radio.set_active(True)
+                
+                # Connect radio button changes
+                self.builtin_terminal_radio.connect('toggled', self.on_terminal_choice_changed)
+                self.external_terminal_radio.connect('toggled', self.on_terminal_choice_changed)
+                
+                # Add radio buttons to group
+                terminal_choice_group.add(self.builtin_terminal_radio)
+                terminal_choice_group.add(self.external_terminal_radio)
+                
+                # External terminal dropdown and custom path
+                self.external_terminal_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+                self.external_terminal_box.set_margin_start(24)
+                self.external_terminal_box.set_margin_top(6)
+                self.external_terminal_box.set_margin_bottom(6)
+                
+                # Terminal dropdown
+                self.terminal_dropdown = Gtk.DropDown()
+                self.terminal_dropdown.set_can_focus(True)
+                
+                # Populate dropdown with available terminals
+                self._populate_terminal_dropdown()
+                
+                # Set current selection
+                current_terminal = self.config.get_setting('external-terminal', 'gnome-terminal')
+                self._set_terminal_dropdown_selection(current_terminal)
+                
+                # Show/hide custom path entry based on current selection
+                if hasattr(self, 'custom_terminal_box'):
+                    if current_terminal == 'custom':
+                        self.custom_terminal_box.set_visible(True)
+                    else:
+                        self.custom_terminal_box.set_visible(False)
+                
+                # Connect dropdown changes
+                self.terminal_dropdown.connect('notify::selected', self.on_terminal_dropdown_changed)
+                
+                # Custom path entry (initially hidden)
+                self.custom_terminal_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                self.custom_terminal_entry = Gtk.Entry()
+                self.custom_terminal_entry.set_placeholder_text("/usr/bin/gnome-terminal")
+                self.custom_terminal_entry.set_can_focus(True)
+                
+                # Set current custom path if any
+                custom_path = self.config.get_setting('custom-terminal-path', '')
+                if custom_path:
+                    self.custom_terminal_entry.set_text(custom_path)
+                
+                # Connect custom path changes
+                self.custom_terminal_entry.connect('changed', self.on_custom_terminal_path_changed)
+                
+                self.custom_terminal_box.append(self.custom_terminal_entry)
+                
+                # Initially hide custom path entry
+                self.custom_terminal_box.set_visible(False)
+                
+                # Add dropdown and custom path to box
+                self.external_terminal_box.append(self.terminal_dropdown)
+                self.external_terminal_box.append(self.custom_terminal_box)
+                
+                # Initial sensitivity will be set by radio button state
+                
+                # Add to group
+                terminal_choice_group.add(self.external_terminal_box)
+                
+                # Set initial sensitivity based on radio button state
+                self.external_terminal_box.set_sensitive(self.external_terminal_radio.get_active())
+                
+                terminal_page.add(terminal_choice_group)
+            
             # Create Interface preferences page
             interface_page = Adw.PreferencesPage()
             interface_page.set_title("Interface")
@@ -1696,6 +2231,36 @@ class PreferencesWindow(Adw.PreferencesWindow):
             )
             self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
             behavior_group.add(self.confirm_disconnect_switch)
+            
+            # App startup behavior
+            startup_group = Adw.PreferencesGroup()
+            startup_group.set_title("App Startup")
+            
+            # Radio buttons for startup behavior
+            self.terminal_startup_radio = Gtk.CheckButton(label="Show Terminal")
+            self.terminal_startup_radio.set_can_focus(True)
+            self.welcome_startup_radio = Gtk.CheckButton(label="Show Welcome Page")
+            self.welcome_startup_radio.set_can_focus(True)
+            
+            # Make them behave like radio buttons
+            self.welcome_startup_radio.set_group(self.terminal_startup_radio)
+            
+            # Set current preference (default to terminal)
+            startup_behavior = self.config.get_setting('app-startup-behavior', 'terminal')
+            if startup_behavior == 'welcome':
+                self.welcome_startup_radio.set_active(True)
+            else:
+                self.terminal_startup_radio.set_active(True)
+            
+            # Connect radio button changes
+            self.terminal_startup_radio.connect('toggled', self.on_startup_behavior_changed)
+            self.welcome_startup_radio.connect('toggled', self.on_startup_behavior_changed)
+            
+            # Add radio buttons to group
+            startup_group.add(self.terminal_startup_radio)
+            startup_group.add(self.welcome_startup_radio)
+            
+            behavior_group.add(startup_group)
             
             interface_page.add(behavior_group)
             
@@ -2056,6 +2621,137 @@ class PreferencesWindow(Adw.PreferencesWindow):
         logger.info(f"Confirm before disconnect setting changed to: {confirm}")
         self.config.set_setting('confirm-disconnect', confirm)
     
+    def on_startup_behavior_changed(self, radio_button, *args):
+        """Handle startup behavior radio button change"""
+        show_terminal = self.terminal_startup_radio.get_active()
+        behavior = 'terminal' if show_terminal else 'welcome'
+        logger.info(f"App startup behavior changed to: {behavior}")
+        self.config.set_setting('app-startup-behavior', behavior)
+    
+    def on_terminal_choice_changed(self, radio_button, *args):
+        """Handle terminal choice radio button change"""
+        use_external = self.external_terminal_radio.get_active()
+        logger.info(f"Terminal choice changed to: {'external' if use_external else 'built-in'}")
+        
+        # Enable/disable external terminal options
+        self.external_terminal_box.set_sensitive(use_external)
+        
+        # Save preference
+        self.config.set_setting('use-external-terminal', use_external)
+    
+    def on_terminal_dropdown_changed(self, dropdown, *args):
+        """Handle terminal dropdown selection change"""
+        selected = dropdown.get_selected()
+        if selected is None or selected < 0:
+            return
+        
+        # Get the selected terminal from the model
+        model = dropdown.get_model()
+        if model and selected < model.get_n_items():
+            terminal_name = model.get_string(selected)
+            logger.info(f"Terminal dropdown selection changed to: {terminal_name}")
+            
+            # Show/hide custom path entry based on selection
+            if hasattr(self, 'custom_terminal_box'):
+                if terminal_name == "Custom":
+                    self.custom_terminal_box.set_visible(True)
+                else:
+                    self.custom_terminal_box.set_visible(False)
+            
+            # Save the selected terminal
+            if terminal_name != "Custom":
+                self.config.set_setting('external-terminal', terminal_name)
+    
+    def on_custom_terminal_path_changed(self, entry, *args):
+        """Handle custom terminal path entry change"""
+        custom_path = entry.get_text().strip()
+        logger.info(f"Custom terminal path changed to: {custom_path}")
+        
+        # Validate the path
+        if custom_path and self._is_valid_unix_path(custom_path):
+            self.config.set_setting('custom-terminal-path', custom_path)
+            self.config.set_setting('external-terminal', 'custom')
+        else:
+            # Clear invalid path
+            self.config.set_setting('custom-terminal-path', '')
+    
+    def _populate_terminal_dropdown(self):
+        """Populate the terminal dropdown with available terminals"""
+        try:
+            # Create string list for dropdown
+            terminals_list = Gtk.StringList()
+            
+            # Add common terminals
+            common_terminals = [
+                'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty', 
+                'kitty', 'terminator', 'tilix', 'xterm'
+            ]
+            
+            # Check which terminals are available
+            available_terminals = []
+            for terminal in common_terminals:
+                try:
+                    result = subprocess.run(['which', terminal], capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0:
+                        available_terminals.append(terminal)
+                except Exception:
+                    continue
+            
+            # Add available terminals to dropdown
+            for terminal in available_terminals:
+                terminals_list.append(terminal)
+            
+            # Add "Custom" option
+            terminals_list.append("Custom")
+            
+            # Set the model
+            self.terminal_dropdown.set_model(terminals_list)
+            
+            logger.info(f"Populated terminal dropdown with {len(available_terminals)} available terminals")
+            
+        except Exception as e:
+            logger.error(f"Failed to populate terminal dropdown: {e}")
+    
+    def _set_terminal_dropdown_selection(self, terminal_name):
+        """Set the dropdown selection to the specified terminal"""
+        try:
+            model = self.terminal_dropdown.get_model()
+            if not model:
+                return
+            
+            # Find the terminal in the model
+            for i in range(model.get_n_items()):
+                if model.get_string(i) == terminal_name:
+                    self.terminal_dropdown.set_selected(i)
+                    return
+            
+            # If not found, default to first available terminal
+            if model.get_n_items() > 0:
+                self.terminal_dropdown.set_selected(0)
+                
+        except Exception as e:
+            logger.error(f"Failed to set terminal dropdown selection: {e}")
+    
+    def _is_valid_unix_path(self, path):
+        """Validate if the path is a valid Unix path"""
+        if not path:
+            return False
+        
+        # Check if it starts with / (absolute path)
+        if not path.startswith('/'):
+            return False
+        
+        # Check if it contains only valid characters
+        import re
+        if not re.match(r'^[a-zA-Z0-9/._-]+$', path):
+            return False
+        
+        # Check if the file exists and is executable
+        try:
+            return os.path.isfile(path) and os.access(path, os.X_OK)
+        except Exception:
+            return False
+    
     def apply_color_scheme_to_terminals(self, scheme_key):
         """Apply color scheme to all active terminal widgets"""
         try:
@@ -2085,6 +2781,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.connection_manager = ConnectionManager()
         self.config = Config()
         self.key_manager = KeyManager()
+        self.group_manager = GroupManager(self.config)
         
         # UI state
         self.active_terminals: Dict[Connection, TerminalWidget] = {}  # most recent terminal per connection
@@ -2137,6 +2834,35 @@ class MainWindow(Adw.ApplicationWindow):
             self.open_in_system_terminal_action = Gio.SimpleAction.new('open-in-system-terminal', None)
             self.open_in_system_terminal_action.connect('activate', self.on_open_in_system_terminal_action)
             self.add_action(self.open_in_system_terminal_action)
+            
+        # Action for broadcasting commands to all SSH terminals
+        self.broadcast_command_action = Gio.SimpleAction.new('broadcast-command', None)
+        self.broadcast_command_action.connect('activate', self.on_broadcast_command_action)
+        self.add_action(self.broadcast_command_action)
+        
+        # Group management actions
+        self.create_group_action = Gio.SimpleAction.new('create-group', None)
+        self.create_group_action.connect('activate', self.on_create_group_action)
+        self.add_action(self.create_group_action)
+        
+        self.edit_group_action = Gio.SimpleAction.new('edit-group', None)
+        self.edit_group_action.connect('activate', self.on_edit_group_action)
+        self.add_action(self.edit_group_action)
+        logger.debug("Edit group action registered")
+        
+        self.delete_group_action = Gio.SimpleAction.new('delete-group', None)
+        self.delete_group_action.connect('activate', self.on_delete_group_action)
+        self.add_action(self.delete_group_action)
+        
+        # Add move to ungrouped action
+        self.move_to_ungrouped_action = Gio.SimpleAction.new('move-to-ungrouped', None)
+        self.move_to_ungrouped_action.connect('activate', self.on_move_to_ungrouped_action)
+        self.add_action(self.move_to_ungrouped_action)
+        
+        # Add move to group action
+        self.move_to_group_action = Gio.SimpleAction.new('move-to-group', None)
+        self.move_to_group_action.connect('activate', self.on_move_to_group_action)
+        self.add_action(self.move_to_group_action)
         # (Toasts disabled) Remove any toast-related actions if previously defined
         try:
             if hasattr(self, '_toast_reconnect_action'):
@@ -2162,6 +2888,16 @@ class MainWindow(Adw.ApplicationWindow):
             GLib.idle_add(self._focus_connection_list_first_row)
         except Exception:
             pass
+        
+        # Check startup behavior setting and show appropriate view
+        try:
+            startup_behavior = self.config.get_setting('app-startup-behavior', 'terminal')
+            if startup_behavior == 'terminal':
+                # Show local terminal on startup
+                GLib.idle_add(self.show_local_terminal)
+            # If startup_behavior == 'welcome', the welcome view is already shown by default
+        except Exception as e:
+            logger.error(f"Error handling startup behavior: {e}")
 
     def _install_sidebar_css(self):
         """Install sidebar focus CSS"""
@@ -2193,6 +2929,55 @@ class MainWindow(Adw.ApplicationWindow):
             #   box-shadow: 0 0 8px 2px @accent_bg_color inset;
             #border: 2px solid @accent_bg_color;  /* Adds a solid border of 2px thickness */
               border-radius: 8px;
+            }
+            
+            /* Group styling */
+            .group-expand-button {
+              min-width: 16px;
+              min-height: 16px;
+              padding: 2px;
+              border-radius: 4px;
+            }
+            
+            .group-expand-button:hover {
+              background: alpha(@accent_bg_color, 0.1);
+            }
+            
+            .group-separator {
+              margin: 8px 0;
+              background: alpha(@foreground_color, 0.1);
+            }
+            
+            /* Drag and drop visual feedback */
+            row.drag-highlight {
+              background: alpha(@accent_bg_color, 0.2);
+              border: 2px dashed @accent_bg_color;
+              border-radius: 8px;
+            }
+            
+            /* Drop indicators */
+            row.drop-above {
+              border-top: 3px solid @accent_bg_color;
+              background: alpha(@accent_bg_color, 0.1);
+            }
+            
+            row.drop-below {
+              border-bottom: 3px solid @accent_bg_color;
+              background: alpha(@accent_bg_color, 0.1);
+            }
+            
+            /* Ungrouped area indicator */
+            .ungrouped-area {
+              background: alpha(@accent_bg_color, 0.05);
+              border: 2px dashed alpha(@accent_bg_color, 0.3);
+              border-radius: 8px;
+              margin: 8px;
+              padding: 12px;
+            }
+            
+            .ungrouped-area.drag-over {
+              background: alpha(@accent_bg_color, 0.1);
+              border-color: @accent_bg_color;
             }
             """
             provider.load_from_data(css.encode('utf-8'))
@@ -2280,7 +3065,8 @@ class MainWindow(Adw.ApplicationWindow):
             if selected_row and hasattr(selected_row, 'connection'):
                 connection = selected_row.connection
                 self._focus_most_recent_tab_or_open_new(connection)
-            return True  # Consume the event to prevent row-activated
+                return True  # Consume the event to prevent row-activated
+            return False  # Allow group rows to be handled by row-activated
         return False
 
     def _stop_pulse_on_interaction(self, controller, *args):
@@ -2614,16 +3400,35 @@ class MainWindow(Adw.ApplicationWindow):
                         return
                     self.connection_list.select_row(row)
                     self._context_menu_connection = getattr(row, 'connection', None)
+                    self._context_menu_group_row = row if hasattr(row, 'group_id') else None
                     menu = Gio.Menu()
                     
-                    # Add menu items
-                    menu.append(_('+ Open New Connection'), 'win.open-new-connection')
-                    menu.append(_('✏ Edit Connection'), 'win.edit-connection')
-                    menu.append(_('🗄 Manage Files'), 'win.manage-files')
-                    # Only show system terminal option when not in Flatpak
-                    if not is_running_in_flatpak():
-                        menu.append(_('💻 Open in System Terminal'), 'win.open-in-system-terminal')
-                    menu.append(_('🗑 Delete Connection'), 'win.delete-connection')
+                    # Add menu items based on row type
+                    if hasattr(row, 'group_id'):
+                        # Group row context menu
+                        logger.debug(f"Creating context menu for group row: {row.group_id}")
+                        menu.append(_('✏ Edit Group'), 'win.edit-group')
+                        menu.append(_('🗑 Delete Group'), 'win.delete-group')
+                    else:
+                        # Connection row context menu
+                        logger.debug(f"Creating context menu for connection row: {getattr(row, 'connection', None)}")
+                        menu.append(_('+ Open New Connection'), 'win.open-new-connection')
+                        menu.append(_('✏ Edit Connection'), 'win.edit-connection')
+                        menu.append(_('🗄 Manage Files'), 'win.manage-files')
+                        # Only show system terminal option when not in Flatpak
+                        if not is_running_in_flatpak():
+                            menu.append(_('💻 Open in System Terminal'), 'win.open-in-system-terminal')
+                        menu.append(_('🗑 Delete Connection'), 'win.delete-connection')
+                        
+                        # Add grouping options
+                        current_group_id = self.group_manager.get_connection_group(row.connection.nickname)
+                        if current_group_id:
+                            menu.append(_('📁 Move to Ungrouped'), 'win.move-to-ungrouped')
+                        else:
+                            # Show available groups to move to
+                            available_groups = self.get_available_groups()
+                            if available_groups:
+                                menu.append(_('📁 Move to Group'), 'win.move-to-group')
                     pop = Gtk.PopoverMenu.new_from_model(menu)
                     pop.set_parent(self.connection_list)
                     try:
@@ -2827,8 +3632,273 @@ class MainWindow(Adw.ApplicationWindow):
 
     def setup_connection_list_dnd(self):
         """Set up drag and drop for connection list reordering"""
-        # TODO: Implement drag and drop reordering
-        pass
+        # Add drop target to the connection list
+        drop_target = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
+        drop_target.connect('drop', self._on_connection_list_drop)
+        drop_target.connect('motion', self._on_connection_list_motion)
+        drop_target.connect('leave', self._on_connection_list_leave)
+        self.connection_list.add_controller(drop_target)
+        
+        # Store drop indicator state
+        self._drop_indicator_row = None
+        self._drop_indicator_position = None
+        
+        # Store ungrouped area state
+        self._ungrouped_area_row = None
+        self._ungrouped_area_visible = False
+    
+    def _on_connection_list_motion(self, target, x, y):
+        """Handle motion over the connection list for visual feedback"""
+        try:
+            # Clear previous indicator
+            self._clear_drop_indicator()
+            
+            # Show ungrouped area when dragging
+            self._show_ungrouped_area()
+            
+            # Find the row at the current position
+            row = self.connection_list.get_row_at_y(int(y))
+            if not row:
+                return Gdk.DragAction.MOVE
+            
+            # Check if this is the ungrouped area
+            if hasattr(row, 'ungrouped_area') and row.ungrouped_area:
+                # Show ungrouped area highlight
+                row.add_css_class('drag-over')
+                self._drop_indicator_row = row
+                self._drop_indicator_position = 'ungrouped'
+                return Gdk.DragAction.MOVE
+            
+            # Determine drop position (above/below the row)
+            row_y = row.get_allocation().y
+            row_height = row.get_allocation().height
+            relative_y = y - row_y
+            
+            if relative_y < row_height / 2:
+                position = 'above'
+            else:
+                position = 'below'
+            
+            # Show drop indicator
+            self._show_drop_indicator(row, position)
+            
+            return Gdk.DragAction.MOVE
+        except Exception as e:
+            logger.error(f"Error handling motion: {e}")
+            return Gdk.DragAction.MOVE
+    
+    def _on_connection_list_leave(self, target):
+        """Handle leaving the drop target area"""
+        self._clear_drop_indicator()
+        self._hide_ungrouped_area()
+        return True
+    
+    def _show_drop_indicator(self, row, position):
+        """Show visual drop indicator"""
+        try:
+            # Add CSS class to the row for visual feedback
+            if position == 'above':
+                row.add_css_class('drop-above')
+            else:
+                row.add_css_class('drop-below')
+            
+            self._drop_indicator_row = row
+            self._drop_indicator_position = position
+        except Exception as e:
+            logger.error(f"Error showing drop indicator: {e}")
+    
+    def _create_ungrouped_area(self):
+        """Create the ungrouped area row"""
+        if self._ungrouped_area_row:
+            return self._ungrouped_area_row
+            
+        ungrouped_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        ungrouped_area.add_css_class('ungrouped-area')
+        
+        # Add icon and label
+        icon = Gtk.Image.new_from_icon_name('folder-open-symbolic')
+        icon.set_pixel_size(24)
+        icon.add_css_class('dim-label')
+        
+        label = Gtk.Label(label=_("Drop connections here to ungroup them"))
+        label.add_css_class('dim-label')
+        label.add_css_class('caption')
+        
+        ungrouped_area.append(icon)
+        ungrouped_area.append(label)
+        
+        # Make it a list box row
+        ungrouped_row = Gtk.ListBoxRow()
+        ungrouped_row.set_child(ungrouped_area)
+        ungrouped_row.set_selectable(False)
+        ungrouped_row.set_activatable(False)
+        ungrouped_row.ungrouped_area = True
+        
+        self._ungrouped_area_row = ungrouped_row
+        return ungrouped_row
+    
+    def _show_ungrouped_area(self):
+        """Show the ungrouped area at the bottom of the list"""
+        try:
+            if self._ungrouped_area_visible:
+                return
+                
+            # Only show if there are groups
+            hierarchy = self.group_manager.get_group_hierarchy()
+            if not hierarchy:
+                return
+                
+            ungrouped_row = self._create_ungrouped_area()
+            self.connection_list.append(ungrouped_row)
+            self._ungrouped_area_visible = True
+            
+        except Exception as e:
+            logger.error(f"Error showing ungrouped area: {e}")
+    
+    def _hide_ungrouped_area(self):
+        """Hide the ungrouped area"""
+        try:
+            if not self._ungrouped_area_visible or not self._ungrouped_area_row:
+                return
+                
+            self.connection_list.remove(self._ungrouped_area_row)
+            self._ungrouped_area_visible = False
+            
+        except Exception as e:
+            logger.error(f"Error hiding ungrouped area: {e}")
+    
+    def _clear_drop_indicator(self):
+        """Clear visual drop indicator"""
+        try:
+            if self._drop_indicator_row:
+                self._drop_indicator_row.remove_css_class('drop-above')
+                self._drop_indicator_row.remove_css_class('drop-below')
+                self._drop_indicator_row.remove_css_class('drag-over')
+                self._drop_indicator_row = None
+                self._drop_indicator_position = None
+        except Exception as e:
+            logger.error(f"Error clearing drop indicator: {e}")
+    
+    def _on_connection_list_drop(self, target, value, x, y):
+        """Handle drops on the connection list"""
+        try:
+            # Clear drop indicator and hide ungrouped area
+            self._clear_drop_indicator()
+            self._hide_ungrouped_area()
+            
+            if not isinstance(value, dict):
+                return False
+            
+            drop_type = value.get('type')
+            if drop_type == 'connection':
+                connection_nickname = value.get('connection_nickname')
+                if connection_nickname:
+                    # Get current group of the connection
+                    current_group_id = self.group_manager.get_connection_group(connection_nickname)
+                    
+                    # Find the target row and position
+                    target_row = self.connection_list.get_row_at_y(int(y))
+                    if not target_row:
+                        # Dropping in empty space - move to ungrouped
+                        self.group_manager.move_connection(connection_nickname, None)
+                        self.rebuild_connection_list()
+                        return True
+                    
+                    # Check if dropping on ungrouped area
+                    if hasattr(target_row, 'ungrouped_area') and target_row.ungrouped_area:
+                        # Move to ungrouped
+                        self.group_manager.move_connection(connection_nickname, None)
+                        self.rebuild_connection_list()
+                        return True
+                    
+                    # Get drop position (above/below)
+                    row_y = target_row.get_allocation().y
+                    row_height = target_row.get_allocation().height
+                    relative_y = y - row_y
+                    position = 'above' if relative_y < row_height / 2 else 'below'
+                    
+                    # Determine if we're dropping on a group or connection
+                    if hasattr(target_row, 'group_id'):
+                        # Dropping on a group
+                        target_group_id = target_row.group_id
+                        if target_group_id != current_group_id:
+                            # Move to different group
+                            self.group_manager.move_connection(connection_nickname, target_group_id)
+                            self.rebuild_connection_list()
+                    else:
+                        # Dropping on a connection
+                        target_connection = getattr(target_row, 'connection', None)
+                        if target_connection:
+                            target_group_id = self.group_manager.get_connection_group(target_connection.nickname)
+                            if target_group_id != current_group_id:
+                                # Move to different group
+                                self.group_manager.move_connection(connection_nickname, target_group_id)
+                                self.rebuild_connection_list()
+                            else:
+                                # Reorder within the same group
+                                self.group_manager.reorder_connection_in_group(
+                                    connection_nickname, 
+                                    target_connection.nickname, 
+                                    position
+                                )
+                                self.rebuild_connection_list()
+                    
+                    return True
+            
+            elif drop_type == 'group':
+                group_id = value.get('group_id')
+                if group_id:
+                    # Handle group reordering
+                    target_row = self.connection_list.get_row_at_y(int(y))
+                    if target_row and hasattr(target_row, 'group_id'):
+                        target_group_id = target_row.group_id
+                        if target_group_id != group_id:
+                            self._move_group(group_id, target_group_id)
+                            self.rebuild_connection_list()
+                            return True
+            
+            return False
+        except Exception as e:
+            logger.error(f"Error handling drop: {e}")
+            return False
+    
+    def _get_target_group_at_position(self, x, y):
+        """Get the target group ID at the given position"""
+        try:
+            row = self.connection_list.get_row_at_y(int(y))
+            if row and hasattr(row, 'group_id'):
+                return row.group_id
+            elif row and hasattr(row, 'connection'):
+                # If dropping on a connection, get its group
+                connection = row.connection
+                return self.group_manager.get_connection_group(connection.nickname)
+            return None
+        except Exception:
+            return None
+    
+    def _move_group(self, group_id, target_parent_id):
+        """Move a group to a new parent"""
+        try:
+            if group_id not in self.group_manager.groups:
+                return
+            
+            group = self.group_manager.groups[group_id]
+            old_parent_id = group.get('parent_id')
+            
+            # Remove from old parent
+            if old_parent_id and old_parent_id in self.group_manager.groups:
+                if group_id in self.group_manager.groups[old_parent_id]['children']:
+                    self.group_manager.groups[old_parent_id]['children'].remove(group_id)
+            
+            # Add to new parent
+            group['parent_id'] = target_parent_id
+            if target_parent_id and target_parent_id in self.group_manager.groups:
+                if group_id not in self.group_manager.groups[target_parent_id]['children']:
+                    self.group_manager.groups[target_parent_id]['children'].append(group_id)
+            
+            self.group_manager._save_groups()
+        except Exception as e:
+            logger.error(f"Error moving group: {e}")
 
     def create_menu(self):
         """Create application menu"""
@@ -2836,7 +3906,10 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Add all menu items directly to the main menu
         menu.append('New Connection', 'app.new-connection')
+        menu.append('Create Group', 'win.create-group')
+        menu.append('Local Terminal', 'app.local-terminal')
         menu.append('Generate SSH Key', 'app.new-key')
+        menu.append('Broadcast Command', 'app.broadcast-command')
         menu.append('Preferences', 'app.preferences')
         menu.append('Help', 'app.help')
         menu.append('About', 'app.about')
@@ -2845,19 +3918,110 @@ class MainWindow(Adw.ApplicationWindow):
         return menu
 
     def setup_connections(self):
-        """Load and display existing connections"""
-        connections = self.connection_manager.get_connections()
-        
-        for connection in connections:
-            self.add_connection_row(connection)
+        """Load and display existing connections with grouping"""
+        self.rebuild_connection_list()
         
         # Select first connection if available
+        connections = self.connection_manager.get_connections()
         if connections:
             first_row = self.connection_list.get_row_at_index(0)
             if first_row:
                 self.connection_list.select_row(first_row)
                 # Defer focus to the list to ensure keyboard navigation works immediately
                 GLib.idle_add(self._focus_connection_list_first_row)
+    
+    def rebuild_connection_list(self):
+        """Rebuild the connection list with groups"""
+        # Clear existing rows
+        child = self.connection_list.get_first_child()
+        while child:
+            next_child = child.get_next_sibling()
+            self.connection_list.remove(child)
+            child = next_child
+        self.connection_rows.clear()
+        
+        # Get all connections
+        connections = self.connection_manager.get_connections()
+        connections_dict = {conn.nickname: conn for conn in connections}
+        
+        # Get group hierarchy
+        hierarchy = self.group_manager.get_group_hierarchy()
+        
+        # Build the list with groups
+        self._build_grouped_list(hierarchy, connections_dict, 0)
+        
+        # Add ungrouped connections at the end
+        ungrouped_connections = []
+        for conn in connections:
+            if not self.group_manager.get_connection_group(conn.nickname):
+                ungrouped_connections.append(conn)
+        
+        if ungrouped_connections:
+            # Add separator if there are groups above
+            if hierarchy:
+                separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+                separator.add_css_class('group-separator')
+                self.connection_list.append(separator)
+            
+            # Add ungrouped connections
+            for conn in sorted(ungrouped_connections, key=lambda c: c.nickname.lower()):
+                self.add_connection_row(conn)
+        
+        # Store reference to ungrouped area (hidden by default)
+        self._ungrouped_area_row = None
+    
+    def _build_grouped_list(self, hierarchy, connections_dict, level):
+        """Recursively build the grouped connection list"""
+        for group_info in hierarchy:
+            # Add group row
+            group_row = GroupRow(group_info, self.group_manager, connections_dict)
+            group_row.connect('group-toggled', self._on_group_toggled)
+            self.connection_list.append(group_row)
+            
+            # Add connections in this group if expanded
+            if group_info.get('expanded', True):
+                group_connections = []
+                for conn_nickname in group_info.get('connections', []):
+                    if conn_nickname in connections_dict:
+                        group_connections.append(connections_dict[conn_nickname])
+                
+                # Use the order from the group's connections list (preserves custom ordering)
+                for conn_nickname in group_info.get('connections', []):
+                    if conn_nickname in connections_dict:
+                        conn = connections_dict[conn_nickname]
+                        self.add_connection_row(conn, level + 1)
+            
+            # Recursively add child groups
+            if group_info.get('children'):
+                self._build_grouped_list(group_info['children'], connections_dict, level + 1)
+    
+    def _on_group_toggled(self, group_row, group_id, expanded):
+        """Handle group expand/collapse"""
+        self.rebuild_connection_list()
+
+        # Reselect the toggled group so focus doesn't jump to another row
+        for row in self.connection_list:
+            if hasattr(row, "group_id") and row.group_id == group_id:
+                self.connection_list.select_row(row)
+                break
+    
+    def add_connection_row(self, connection: Connection, indent_level: int = 0):
+        """Add a connection row to the list with optional indentation"""
+        row = ConnectionRow(connection)
+        
+        # Apply indentation for grouped connections
+        if indent_level > 0:
+            content = row.get_child()
+            if hasattr(content, 'get_child'):  # Handle overlay
+                content = content.get_child()
+            content.set_margin_start(12 + (indent_level * 20))
+        
+        self.connection_list.append(row)
+        self.connection_rows[connection] = row
+        
+        # Apply current hide-hosts setting to new row
+        if hasattr(row, 'apply_hide_hosts'):
+            row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
 
     def setup_signals(self):
         """Connect to manager signals"""
@@ -2869,14 +4033,7 @@ class MainWindow(Adw.ApplicationWindow):
         # Config signals
         self.config.connect('setting-changed', self.on_setting_changed)
 
-    def add_connection_row(self, connection: Connection):
-        """Add a connection row to the list"""
-        row = ConnectionRow(connection)
-        self.connection_list.append(row)
-        self.connection_rows[connection] = row
-        # Apply current hide-hosts setting to new row
-        if hasattr(row, 'apply_hide_hosts'):
-            row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
+
 
     def show_welcome_view(self):
         """Show the welcome/help view when no connections are active"""
@@ -2922,6 +4079,17 @@ class MainWindow(Adw.ApplicationWindow):
                 if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
                     if not self.sidebar_toggle_button.get_active():
                         self.sidebar_toggle_button.set_active(True)
+                
+                # Ensure a row is selected before focusing
+                selected = self.connection_list.get_selected_row()
+                logger.debug(f"Focus connection list - current selection: {selected}")
+                if not selected:
+                    # Select the first row regardless of type
+                    first_row = self.connection_list.get_row_at_index(0)
+                    logger.debug(f"Focus connection list - first row: {first_row}")
+                    if first_row:
+                        self.connection_list.select_row(first_row)
+                        logger.debug(f"Focus connection list - selected first row: {first_row}")
                 
                 self.connection_list.grab_focus()
                 
@@ -3069,7 +4237,7 @@ class MainWindow(Adw.ApplicationWindow):
             content.append(pass_box)
             content.append(btn_box)
             tv.set_content(content)
-            dlg.set_content(tv)
+            dlg.set_child(tv)
 
             def close_dialog(*args):
                 try:
@@ -3105,35 +4273,66 @@ class MainWindow(Adw.ApplicationWindow):
                     if pass_switch.get_active():
                         p1 = pass1.get_text() or ""
                         p2 = pass2.get_text() or ""
+                        logger.debug(f"SshCopyIdWindow: Passphrase lengths - p1: {len(p1)}, p2: {len(p2)}")
                         if p1 != p2:
-                            raise ValueError(_("Passphrases do not match"))
+                            logger.debug("SshCopyIdWindow: Passphrases do not match")
+                            raise ValueError("Passphrases do not match")
                         passphrase = p1
+                        logger.info("SshCopyIdWindow: Passphrase enabled")
+                        logger.debug("SshCopyIdWindow: Passphrase validation successful")
 
-                    key = self.key_manager.generate_key(
+                    logger.info(f"SshCopyIdWindow: Calling key_manager.generate_key with name='{key_name}', type='{kt}'")
+                    logger.debug(f"SshCopyIdWindow: Key generation parameters - name='{key_name}', type='{kt}', "
+                               f"size={3072 if kt == 'rsa' else 0}, passphrase={'<set>' if passphrase else 'None'}")
+                    
+                    new_key = self._km.generate_key(
                         key_name=key_name,
                         key_type=kt,
                         key_size=3072 if kt == "rsa" else 0,
                         comment=None,
                         passphrase=passphrase,
                     )
-                    if not key:
-                        raise RuntimeError(_("Key generation failed. See logs for details."))
+                    
+                    if not new_key:
+                        logger.debug("SshCopyIdWindow: Key generation returned None")
+                        raise RuntimeError("Key generation failed. See logs for details.")
 
-                    self._info_dialog(_("Key Created"),
-                                     _("Private: {priv}\nPublic: {pub}").format(
-                                         priv=key.private_path, pub=key.public_path))
-
-                    try:
-                        dlg.force_close()
-                    except Exception:
-                        pass
-
-                    if callable(on_success):
-                        on_success(key)
+                    logger.info(f"SshCopyIdWindow: Key generated successfully: {new_key.private_path}")
+                    logger.debug(f"SshCopyIdWindow: Generated key details - private_path='{new_key.private_path}', "
+                               f"public_path='{new_key.public_path}'")
+                    
+                    # Ensure the key files are properly written and accessible
+                    import time
+                    logger.debug("SshCopyIdWindow: Waiting 0.5s for files to be written")
+                    time.sleep(0.5)  # Small delay to ensure files are written
+                    
+                    # Verify the key files exist and are accessible
+                    private_exists = os.path.exists(new_key.private_path)
+                    public_exists = os.path.exists(new_key.public_path)
+                    logger.debug(f"SshCopyIdWindow: File existence check - private: {private_exists}, public: {public_exists}")
+                    
+                    if not private_exists:
+                        logger.debug(f"SshCopyIdWindow: Private key file missing: {new_key.private_path}")
+                        raise RuntimeError(f"Private key file not found: {new_key.private_path}")
+                    if not public_exists:
+                        logger.debug(f"SshCopyIdWindow: Public key file missing: {new_key.public_path}")
+                        raise RuntimeError(f"Public key file not found: {new_key.public_path}")
+                    
+                    logger.info(f"SshCopyIdWindow: Key files verified, starting ssh-copy-id")
+                    logger.debug("SshCopyIdWindow: All key files verified successfully")
+                    
+                    # Run your terminal ssh-copy-id flow
+                    logger.debug("SshCopyIdWindow: Calling _show_ssh_copy_id_terminal_using_main_widget()")
+                    self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, new_key)
+                    logger.debug("SshCopyIdWindow: Terminal window launched, closing dialog")
+                    self.close()
 
                 except Exception as e:
-                    self._error_dialog(_("Key Generation Error"),
-                                      _("Could not create the SSH key."), str(e))
+                    logger.error(f"SshCopyIdWindow: Generate and copy failed: {e}")
+                    logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {str(e)}")
+                    self._error("Generate & Copy failed",
+                                "Could not generate a new key and copy it to the server.",
+                                str(e))
 
             btn_primary.connect("clicked", do_generate)
             dlg.present()
@@ -3185,6 +4384,117 @@ class MainWindow(Adw.ApplicationWindow):
             preferences_window.present()
         except Exception as e:
             logger.error(f"Failed to show preferences dialog: {e}")
+
+    def show_local_terminal(self):
+        """Show a local terminal tab"""
+        logger.info("Show local terminal tab")
+        try:
+            # Create a local terminal widget
+            from .terminal import TerminalWidget
+            
+            # Create a dummy connection object for local terminal
+            class LocalConnection:
+                def __init__(self):
+                    self.nickname = "Local Terminal"
+                    self.host = "localhost"
+                    self.username = os.getenv('USER', 'user')
+                    self.port = 22
+            
+            local_connection = LocalConnection()
+            
+            # Create terminal widget for local shell
+            logger.info("Creating TerminalWidget...")
+            terminal_widget = TerminalWidget(local_connection, self.config, self.connection_manager)
+            logger.info("TerminalWidget created successfully")
+            
+            # Set up the terminal for local shell (not SSH)
+            logger.info("Setting up local shell...")
+            terminal_widget.setup_local_shell()
+            logger.info("Local shell setup completed")
+            
+            # Add to tab view
+            logger.info("Adding terminal to tab view...")
+            self._add_terminal_tab(terminal_widget, "Local Terminal")
+            
+            # Ensure the terminal widget is properly shown
+            GLib.idle_add(terminal_widget.show)
+            GLib.idle_add(terminal_widget.vte.show)
+            
+            logger.info("Local terminal tab created successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to show local terminal: {e}")
+            # Show error dialog
+            try:
+                dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading="Error",
+                    body=f"Could not open local terminal.\n\n{e}"
+                )
+                dialog.add_response("ok", "OK")
+                dialog.present()
+            except Exception:
+                pass
+
+    def _add_terminal_tab(self, terminal_widget, title):
+        """Add a terminal widget to the tab view"""
+        try:
+            # Add to tab view
+            page = self.tab_view.append(terminal_widget)
+            page.set_title(title)
+            page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
+            
+            # Switch to tab view
+            self.show_tab_view()
+            
+            # Activate the new tab
+            self.tab_view.set_selected_page(page)
+            
+            logger.info(f"Added terminal tab: {title}")
+            
+        except Exception as e:
+            logger.error(f"Failed to add terminal tab: {e}")
+
+    def broadcast_command(self, command: str):
+        """Send a command to all open SSH terminal tabs (excluding local terminal tabs)"""
+        cmd = (command + "\n").encode("utf-8")
+        sent_count = 0
+        failed_count = 0
+        
+        # Get all open terminals from the tab view
+        for i in range(self.tab_view.get_n_pages()):
+            page = self.tab_view.get_nth_page(i)
+            if page is None:
+                continue
+                
+            # Get the terminal widget from the page
+            terminal_widget = page.get_child()
+            if terminal_widget is None or not hasattr(terminal_widget, 'vte'):
+                continue
+                
+            # Check if this is a local terminal by looking at the connection
+            if hasattr(terminal_widget, 'connection'):
+                # Skip local terminals
+                if (hasattr(terminal_widget.connection, 'nickname') and 
+                    terminal_widget.connection.nickname == "Local Terminal"):
+                    continue
+                    
+                # Skip terminals that don't have a connection (shouldn't happen for SSH terminals)
+                if not hasattr(terminal_widget.connection, 'host'):
+                    continue
+                    
+                # This is an SSH terminal, send the command
+                try:
+                    terminal_widget.vte.feed_child(cmd)
+                    sent_count += 1
+                    logger.debug(f"Sent command to SSH terminal: {terminal_widget.connection.nickname}")
+                except Exception as e:
+                    failed_count += 1
+                    logger.error(f"Failed to send command to terminal {terminal_widget.connection.nickname}: {e}")
+        
+        logger.info(f"Broadcast command completed: {sent_count} terminals received command, {failed_count} failed")
+        return sent_count, failed_count
 
     def show_about_dialog(self):
         """Show about dialog"""
@@ -3350,30 +4660,39 @@ class MainWindow(Adw.ApplicationWindow):
                     self.tab_view.set_selected_page(page)
                     return
         
-        # Create new terminal
-        terminal = TerminalWidget(connection, self.config, self.connection_manager)
+        # Check preferred terminal setting
+        use_external = self.config.get_setting('use-external-terminal', False)
         
-        # Connect signals
-        terminal.connect('connection-established', self.on_terminal_connected)
-        terminal.connect('connection-failed', lambda w, e: logger.error(f"Connection failed: {e}"))
-        terminal.connect('connection-lost', self.on_terminal_disconnected)
-        terminal.connect('title-changed', self.on_terminal_title_changed)
-        
-        # Add to tab view
-        page = self.tab_view.append(terminal)
-        page.set_title(connection.nickname)
-        page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
-        
-        # Store references for multi-tab tracking
-        self.connection_to_terminals.setdefault(connection, []).append(terminal)
-        self.terminal_to_connection[terminal] = connection
-        self.active_terminals[connection] = terminal
-        
-        # Switch to tab view when first connection is made
-        self.show_tab_view()
-        
-        # Activate the new tab
-        self.tab_view.set_selected_page(page)
+        if use_external and not is_running_in_flatpak():
+            # Use external terminal
+            self._open_connection_in_external_terminal(connection)
+            return
+        else:
+            # Use built-in terminal
+            # Create new terminal
+            terminal = TerminalWidget(connection, self.config, self.connection_manager)
+            
+            # Connect signals
+            terminal.connect('connection-established', self.on_terminal_connected)
+            terminal.connect('connection-failed', lambda w, e: logger.error(f"Connection failed: {e}"))
+            terminal.connect('connection-lost', self.on_terminal_disconnected)
+            terminal.connect('title-changed', self.on_terminal_title_changed)
+            
+            # Add to tab view
+            page = self.tab_view.append(terminal)
+            page.set_title(connection.nickname)
+            page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
+            
+            # Store references for multi-tab tracking
+            self.connection_to_terminals.setdefault(connection, []).append(terminal)
+            self.terminal_to_connection[terminal] = connection
+            self.active_terminals[connection] = terminal
+            
+            # Switch to tab view when first connection is made
+            self.show_tab_view()
+            
+            # Activate the new tab
+            self.tab_view.set_selected_page(page)
         
         # Force set colors after the terminal is added to the UI
         def _set_terminal_colors():
@@ -3486,19 +4805,25 @@ class MainWindow(Adw.ApplicationWindow):
             self.connection_list.select_row(row)
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
         elif n_press == 2:  # Double click - connect
-            self._cycle_connection_tabs_or_open(row.connection)
+            if hasattr(row, 'connection'):
+                self._cycle_connection_tabs_or_open(row.connection)
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
 
     def on_connection_activated(self, list_box, row):
         """Handle connection activation (Enter key)"""
-        if row:
+        logger.debug(f"Connection activated - row: {row}, has connection: {hasattr(row, 'connection') if row else False}")
+        if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
+        elif row and hasattr(row, 'group_id'):
+            # Handle group row activation - toggle expand/collapse
+            logger.debug(f"Group row activated - toggling expand/collapse for group: {row.group_id}")
+            row._toggle_expand()
             
 
         
     def on_connection_activate(self, list_box, row):
         """Handle connection activation (Enter key or double-click)"""
-        if row:
+        if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
             return True  # Stop event propagation
         return False
@@ -3506,13 +4831,10 @@ class MainWindow(Adw.ApplicationWindow):
     def on_activate_connection(self, action, param):
         """Handle the activate-connection action"""
         row = self.connection_list.get_selected_row()
-        if row:
+        if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
             
-    def on_connection_activated(self, list_box, row):
-        """Handle connection activation (double-click)"""
-        if row:
-            self._cycle_connection_tabs_or_open(row.connection)
+
 
     def _focus_most_recent_tab_or_open_new(self, connection: Connection):
         """If there are open tabs for this server, focus the most recent one.
@@ -3619,7 +4941,10 @@ class MainWindow(Adw.ApplicationWindow):
         """Handle edit connection button click"""
         selected_row = self.connection_list.get_selected_row()
         if selected_row:
-            self.show_connection_dialog(selected_row.connection)
+            if hasattr(selected_row, 'connection'):
+                self.show_connection_dialog(selected_row.connection)
+            else:
+                logger.debug("Cannot edit group row")
 
     def on_sidebar_toggle(self, button):
         """Handle sidebar toggle button click"""
@@ -3777,7 +5102,7 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as e:
             logger.error(f"System terminal button click failed: {e}")
 
-    def _show_ssh_copy_id_terminal_using_main_widget(self, connection, ssh_key):
+    def _show_ssh_copy_id_terminal_using_main_widget(self, connection, ssh_key, force=False):
         """Show a window with header bar and embedded terminal running ssh-copy-id.
 
         Requirements:
@@ -3894,7 +5219,7 @@ class MainWindow(Adw.ApplicationWindow):
 
             # Build ssh-copy-id command with options derived from connection settings
             logger.debug("Main window: Building ssh-copy-id command arguments")
-            argv = self._build_ssh_copy_id_argv(connection, ssh_key)
+            argv = self._build_ssh_copy_id_argv(connection, ssh_key, force)
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
             logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
             logger.info("Full command line: %s", cmdline)
@@ -4009,7 +5334,7 @@ class MainWindow(Adw.ApplicationWindow):
                     # sshpass not available, fallback to askpass
                     logger.debug("Main window: sshpass not available, falling back to askpass")
                     from .askpass_utils import get_ssh_env_with_askpass
-                    askpass_env = get_ssh_env_with_askpass("force")
+                    askpass_env = get_ssh_env_with_askpass()
                     logger.debug(f"Main window: Askpass environment variables: {list(askpass_env.keys())}")
                     env.update(askpass_env)
             elif prefer_password and not has_saved_password:
@@ -4020,7 +5345,7 @@ class MainWindow(Adw.ApplicationWindow):
                 # Use askpass for passphrase prompts (key-based auth)
                 logger.debug("Main window: Using askpass for key-based authentication")
                 from .askpass_utils import get_ssh_env_with_askpass
-                askpass_env = get_ssh_env_with_askpass("force")
+                askpass_env = get_ssh_env_with_askpass()
                 logger.debug(f"Main window: Askpass environment variables: {list(askpass_env.keys())}")
                 env.update(askpass_env)
 
@@ -4084,7 +5409,36 @@ class MainWindow(Adw.ApplicationWindow):
                             exit_code = status
 
                     logger.info(f"ssh-copy-id exited with status: {status}, normalized exit_code: {exit_code}")
+                    
+                    # Simple verification: just check exit code like default ssh-copy-id
                     ok = (exit_code == 0)
+                    
+                    # Get error details from output if failed
+                    error_details = None
+                    if not ok:
+                        try:
+                            content = term_widget.vte.get_text_range(0, 0, -1, -1, None)
+                            if content:
+                                # Look for common error patterns in the output
+                                content_lower = content.lower()
+                                if 'permission denied' in content_lower:
+                                    error_details = 'Permission denied - check user credentials and server permissions'
+                                elif 'connection refused' in content_lower:
+                                    error_details = 'Connection refused - check server address and SSH service'
+                                elif 'authentication failed' in content_lower:
+                                    error_details = 'Authentication failed - check username and password/key'
+                                elif 'no such file or directory' in content_lower:
+                                    error_details = 'File not found - check if SSH directory exists on server'
+                                elif 'operation not permitted' in content_lower:
+                                    error_details = 'Operation not permitted - check server permissions'
+                                else:
+                                    # Extract the last few lines of output for context
+                                    lines = content.strip().split('\n')
+                                    if lines:
+                                        error_details = f"Error details: {lines[-1]}"
+                        except Exception as e:
+                            logger.debug(f"Main window: Error extracting error details: {e}")
+                    
                     if ok:
                         logger.info("ssh-copy-id completed successfully")
                         logger.debug("Main window: ssh-copy-id succeeded, showing success message")
@@ -4093,6 +5447,8 @@ class MainWindow(Adw.ApplicationWindow):
                         logger.error(f"ssh-copy-id failed with exit code: {exit_code}")
                         logger.debug(f"Main window: ssh-copy-id failed with exit code {exit_code}")
                         _feed_colored_line(_('Failed to install the public key.'), 'red')
+                        if error_details:
+                            _feed_colored_line(error_details, 'red')
 
                     def _present_result_dialog():
                         logger.debug(f"Main window: Presenting result dialog - success: {ok}")
@@ -4136,12 +5492,15 @@ class MainWindow(Adw.ApplicationWindow):
                               _("Failed to create ssh-copy-id terminal window."), 
                               f"Error: {str(e)}\n\nThis could be due to:\n• Missing VTE terminal widget\n• Display/GTK issues\n• System resource limitations")
 
-    def _build_ssh_copy_id_argv(self, connection, ssh_key):
+
+
+    def _build_ssh_copy_id_argv(self, connection, ssh_key, force=False):
         """Construct argv for ssh-copy-id honoring saved UI auth preferences."""
         logger.info(f"Building ssh-copy-id argv for key: {getattr(ssh_key, 'public_path', 'unknown')}")
         logger.debug(f"Main window: Building ssh-copy-id command arguments")
         logger.debug(f"Main window: Connection object: {type(connection)}")
         logger.debug(f"Main window: SSH key object: {type(ssh_key)}")
+        logger.debug(f"Main window: Force option: {force}")
         logger.info(f"Key object attributes: private_path={getattr(ssh_key, 'private_path', 'unknown')}, public_path={getattr(ssh_key, 'public_path', 'unknown')}")
         
         # Verify the public key file exists
@@ -4152,7 +5511,14 @@ class MainWindow(Adw.ApplicationWindow):
             raise RuntimeError(f"Public key file not found: {ssh_key.public_path}")
         
         logger.debug(f"Main window: Public key file verified: {ssh_key.public_path}")
-        argv = ['ssh-copy-id', '-i', ssh_key.public_path]
+        argv = ['ssh-copy-id']
+        
+        # Add force option if enabled
+        if force:
+            argv.append('-f')
+            logger.debug("Main window: Added force option (-f) to ssh-copy-id")
+        
+        argv.extend(['-i', ssh_key.public_path])
         logger.debug(f"Main window: Base command: {argv}")
         try:
             port = getattr(connection, 'port', 22)
@@ -4235,8 +5601,8 @@ class MainWindow(Adw.ApplicationWindow):
         else:
             # Only force password when user selected password auth
             if prefer_password:
-                argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password,keyboard-interactive']
-                logger.debug("Main window: Added password authentication options - PubkeyAuthentication=no, PreferredAuthentications=password,keyboard-interactive")
+                argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password']
+                logger.debug("Main window: Added password authentication options - PubkeyAuthentication=no, PreferredAuthentications=password")
         
         # Target
         target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
@@ -4588,7 +5954,7 @@ class MainWindow(Adw.ApplicationWindow):
                 logger.debug(f"Failed to get saved passphrase for SCP: {e}")
                 
         elif prefer_password:
-            argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password,keyboard-interactive']
+            argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password']
             
             # Try to get saved password
             try:
@@ -4663,6 +6029,10 @@ class MainWindow(Adw.ApplicationWindow):
         """Handle delete connection button click"""
         selected_row = self.connection_list.get_selected_row()
         if not selected_row:
+            return
+        
+        if not hasattr(selected_row, 'connection'):
+            logger.debug("Cannot delete group row")
             return
         
         connection = selected_row.connection
@@ -4923,7 +6293,7 @@ class MainWindow(Adw.ApplicationWindow):
     def on_connection_added(self, manager, connection):
         """Handle new connection added to the connection manager"""
         logger.info(f"New connection added: {connection.nickname}")
-        self.add_connection_row(connection)
+        self.rebuild_connection_list()
         
     def on_terminal_title_changed(self, terminal, title):
         """Handle terminal title change"""
@@ -4944,6 +6314,10 @@ class MainWindow(Adw.ApplicationWindow):
             row = self.connection_rows[connection]
             self.connection_list.remove(row)
             del self.connection_rows[connection]
+        
+        # Remove from group manager
+        self.group_manager.connections.pop(connection.nickname, None)
+        self.group_manager._save_groups()
 
         # Close all terminals for this connection and clean up maps
         terminals = list(self.connection_to_terminals.get(connection, []))
@@ -4979,7 +6353,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_connection_added(self, manager, connection):
         """Handle new connection added"""
-        self.add_connection_row(connection)
+        self.rebuild_connection_list()
 
     def on_connection_removed(self, manager, connection):
         """Handle connection removed (multi-tab aware)"""
@@ -4988,6 +6362,10 @@ class MainWindow(Adw.ApplicationWindow):
             row = self.connection_rows[connection]
             self.connection_list.remove(row)
             del self.connection_rows[connection]
+        
+        # Remove from group manager
+        self.group_manager.connections.pop(connection.nickname, None)
+        self.group_manager._save_groups()
 
         # Close all terminals for this connection and clean up maps
         terminals = list(self.connection_to_terminals.get(connection, []))
@@ -5286,6 +6664,437 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as e:
             logger.error(f"Failed to open in system terminal: {e}")
 
+    def on_broadcast_command_action(self, action, param=None):
+        """Handle broadcast command action - shows dialog to input command"""
+        try:
+            # Create a custom dialog window instead of using Adw.MessageDialog
+            dialog = Gtk.Dialog(
+                title=_("Broadcast Command"),
+                transient_for=self,
+                modal=True,
+                destroy_with_parent=True
+            )
+            
+            # Set dialog properties
+            dialog.set_default_size(400, 150)
+            dialog.set_resizable(False)
+            
+            # Get the content area
+            content_area = dialog.get_content_area()
+            content_area.set_margin_start(20)
+            content_area.set_margin_end(20)
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
+            content_area.set_spacing(12)
+            
+            # Add label
+            label = Gtk.Label(label=_("Enter a command to send to all open SSH terminals:"))
+            label.set_wrap(True)
+            label.set_xalign(0)
+            content_area.append(label)
+            
+            # Add text entry
+            entry = Gtk.Entry()
+            entry.set_placeholder_text(_("e.g., ls -la"))
+            entry.set_activates_default(True)
+            entry.set_hexpand(True)
+            content_area.append(entry)
+            
+            # Add buttons
+            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
+            send_button = dialog.add_button(_('Send'), Gtk.ResponseType.OK)
+            send_button.get_style_context().add_class('suggested-action')
+            
+            # Set default button
+            dialog.set_default_response(Gtk.ResponseType.OK)
+            
+            # Connect to response signal
+            def on_response(dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    command = entry.get_text().strip()
+                    if command:
+                        sent_count, failed_count = self.broadcast_command(command)
+                        
+                        # Show result dialog
+                        result_dialog = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Command Sent"),
+                            body=_("Command sent to {} SSH terminals. {} failed.").format(sent_count, failed_count)
+                        )
+                        result_dialog.add_response('ok', _('OK'))
+                        result_dialog.present()
+                    else:
+                        # Show error for empty command
+                        error_dialog = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Error"),
+                            body=_("Please enter a command to send.")
+                        )
+                        error_dialog.add_response('ok', _('OK'))
+                        error_dialog.present()
+                dialog.destroy()
+            
+            dialog.connect('response', on_response)
+            
+            # Show the dialog
+            dialog.present()
+            
+            # Focus the entry after the dialog is shown
+            def focus_entry():
+                entry.grab_focus()
+                return False
+            
+            GLib.idle_add(focus_entry)
+            
+        except Exception as e:
+            logger.error(f"Failed to show broadcast command dialog: {e}")
+            # Show error dialog
+            try:
+                error_dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("Error"),
+                    body=_("Failed to open broadcast command dialog: {}").format(str(e))
+                )
+                error_dialog.add_response('ok', _('OK'))
+                error_dialog.present()
+            except Exception:
+                pass
+    
+    def on_create_group_action(self, action, param=None):
+        """Handle create group action"""
+        try:
+            # Create dialog for group name input
+            dialog = Gtk.Dialog(
+                title=_("Create New Group"),
+                transient_for=self,
+                modal=True,
+                destroy_with_parent=True
+            )
+            
+            dialog.set_default_size(400, 150)
+            dialog.set_resizable(False)
+            
+            content_area = dialog.get_content_area()
+            content_area.set_margin_start(20)
+            content_area.set_margin_end(20)
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
+            content_area.set_spacing(12)
+            
+            # Add label
+            label = Gtk.Label(label=_("Enter a name for the new group:"))
+            label.set_wrap(True)
+            label.set_xalign(0)
+            content_area.append(label)
+            
+            # Add text entry
+            entry = Gtk.Entry()
+            entry.set_placeholder_text(_("e.g., Production Servers"))
+            entry.set_activates_default(True)
+            entry.set_hexpand(True)
+            content_area.append(entry)
+            
+            # Add buttons
+            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
+            create_button = dialog.add_button(_('Create'), Gtk.ResponseType.OK)
+            create_button.get_style_context().add_class('suggested-action')
+            
+            dialog.set_default_response(Gtk.ResponseType.OK)
+            
+            def on_response(dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    group_name = entry.get_text().strip()
+                    if group_name:
+                        self.group_manager.create_group(group_name)
+                        self.rebuild_connection_list()
+                    else:
+                        # Show error for empty name
+                        error_dialog = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Error"),
+                            body=_("Please enter a group name.")
+                        )
+                        error_dialog.add_response('ok', _('OK'))
+                        error_dialog.present()
+                dialog.destroy()
+            
+            dialog.connect('response', on_response)
+            dialog.present()
+            
+            def focus_entry():
+                entry.grab_focus()
+                return False
+            
+            GLib.idle_add(focus_entry)
+            
+        except Exception as e:
+            logger.error(f"Failed to show create group dialog: {e}")
+    
+    def on_edit_group_action(self, action, param=None):
+        """Handle edit group action"""
+        try:
+            logger.debug("Edit group action triggered")
+            # Get the group row from context menu or selected row
+            selected_row = getattr(self, '_context_menu_group_row', None)
+            if not selected_row:
+                selected_row = self.connection_list.get_selected_row()
+            logger.debug(f"Selected row: {selected_row}")
+            if not selected_row:
+                logger.debug("No selected row")
+                return
+            if not hasattr(selected_row, 'group_id'):
+                logger.debug("Selected row is not a group row")
+                return
+            
+            group_id = selected_row.group_id
+            logger.debug(f"Group ID: {group_id}")
+            group_info = self.group_manager.groups.get(group_id)
+            if not group_info:
+                logger.debug(f"Group info not found for ID: {group_id}")
+                return
+            
+            # Create dialog for group name editing
+            dialog = Gtk.Dialog(
+                title=_("Edit Group"),
+                transient_for=self,
+                modal=True,
+                destroy_with_parent=True
+            )
+            
+            dialog.set_default_size(400, 150)
+            dialog.set_resizable(False)
+            
+            content_area = dialog.get_content_area()
+            content_area.set_margin_start(20)
+            content_area.set_margin_end(20)
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
+            content_area.set_spacing(12)
+            
+            # Add label
+            label = Gtk.Label(label=_("Enter a new name for the group:"))
+            label.set_wrap(True)
+            label.set_xalign(0)
+            content_area.append(label)
+            
+            # Add text entry
+            entry = Gtk.Entry()
+            entry.set_text(group_info['name'])
+            entry.set_activates_default(True)
+            entry.set_hexpand(True)
+            content_area.append(entry)
+            
+            # Add buttons
+            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
+            save_button = dialog.add_button(_('Save'), Gtk.ResponseType.OK)
+            save_button.get_style_context().add_class('suggested-action')
+            
+            dialog.set_default_response(Gtk.ResponseType.OK)
+            
+            def on_response(dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    new_name = entry.get_text().strip()
+                    if new_name:
+                        group_info['name'] = new_name
+                        self.group_manager._save_groups()
+                        self.rebuild_connection_list()
+                    else:
+                        # Show error for empty name
+                        error_dialog = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Error"),
+                            body=_("Please enter a group name.")
+                        )
+                        error_dialog.add_response('ok', _('OK'))
+                        error_dialog.present()
+                dialog.destroy()
+            
+            dialog.connect('response', on_response)
+            dialog.present()
+            
+            def focus_entry():
+                entry.grab_focus()
+                entry.select_region(0, -1)
+                return False
+            
+            GLib.idle_add(focus_entry)
+            
+        except Exception as e:
+            logger.error(f"Failed to show edit group dialog: {e}")
+    
+    def on_delete_group_action(self, action, param=None):
+        """Handle delete group action"""
+        try:
+            # Get the group row from context menu or selected row
+            selected_row = getattr(self, '_context_menu_group_row', None)
+            if not selected_row:
+                selected_row = self.connection_list.get_selected_row()
+            if not selected_row or not hasattr(selected_row, 'group_id'):
+                return
+            
+            group_id = selected_row.group_id
+            group_info = self.group_manager.groups.get(group_id)
+            if not group_info:
+                return
+            
+            # Show confirmation dialog
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Delete Group"),
+                body=_("Are you sure you want to delete the group '{}'?\n\nThis will move all connections in this group to the parent group or make them ungrouped.").format(group_info['name'])
+            )
+            
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('delete', _('Delete'))
+            dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response('cancel')
+            
+            def on_response(dialog, response):
+                if response == 'delete':
+                    self.group_manager.delete_group(group_id)
+                    self.rebuild_connection_list()
+                dialog.destroy()
+            
+            dialog.connect('response', on_response)
+            dialog.present()
+            
+        except Exception as e:
+            logger.error(f"Failed to show delete group dialog: {e}")
+    
+    def on_move_to_ungrouped_action(self, action, param=None):
+        """Handle move to ungrouped action"""
+        try:
+            # Get the connection from context menu or selected row
+            selected_row = getattr(self, '_context_menu_connection', None)
+            if not selected_row:
+                selected_row = self.connection_list.get_selected_row()
+                if selected_row and hasattr(selected_row, 'connection'):
+                    selected_row = selected_row.connection
+            
+            if not selected_row:
+                return
+            
+            connection_nickname = selected_row.nickname if hasattr(selected_row, 'nickname') else selected_row
+            
+            # Move to ungrouped (None group)
+            self.group_manager.move_connection(connection_nickname, None)
+            self.rebuild_connection_list()
+            
+        except Exception as e:
+            logger.error(f"Failed to move connection to ungrouped: {e}")
+    
+    def on_move_to_group_action(self, action, param=None):
+        """Handle move to group action"""
+        try:
+            # Get the connection from context menu or selected row
+            selected_row = getattr(self, '_context_menu_connection', None)
+            if not selected_row:
+                selected_row = self.connection_list.get_selected_row()
+                if selected_row and hasattr(selected_row, 'connection'):
+                    selected_row = selected_row.connection
+            
+            if not selected_row:
+                return
+            
+            connection_nickname = selected_row.nickname if hasattr(selected_row, 'nickname') else selected_row
+            
+            # Get available groups
+            available_groups = self.get_available_groups()
+            if not available_groups:
+                return
+            
+            # Show group selection dialog
+            dialog = Gtk.Dialog(
+                title=_("Move to Group"),
+                transient_for=self,
+                modal=True,
+                destroy_with_parent=True
+            )
+            
+            dialog.set_default_size(400, 300)
+            dialog.set_resizable(False)
+            
+            content_area = dialog.get_content_area()
+            content_area.set_margin_start(20)
+            content_area.set_margin_end(20)
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
+            content_area.set_spacing(12)
+            
+            # Add label
+            label = Gtk.Label(label=_("Select a group to move the connection to:"))
+            label.set_wrap(True)
+            label.set_xalign(0)
+            content_area.append(label)
+            
+            # Add list box for groups
+            listbox = Gtk.ListBox()
+            listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            listbox.set_vexpand(True)
+            
+            # Add groups to list
+            selected_group_id = None
+            for group in available_groups:
+                row = Gtk.ListBoxRow()
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+                
+                # Add group icon
+                icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+                icon.set_pixel_size(16)
+                box.append(icon)
+                
+                # Add group name
+                label = Gtk.Label(label=group['name'])
+                label.set_xalign(0)
+                label.set_hexpand(True)
+                box.append(label)
+                
+                row.set_child(box)
+                row.group_id = group['id']
+                listbox.append(row)
+            
+            content_area.append(listbox)
+            
+            # Add buttons
+            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
+            move_button = dialog.add_button(_('Move'), Gtk.ResponseType.OK)
+            move_button.get_style_context().add_class('suggested-action')
+            
+            dialog.set_default_response(Gtk.ResponseType.OK)
+            
+            def on_response(dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    selected_row = listbox.get_selected_row()
+                    if selected_row:
+                        target_group_id = selected_row.group_id
+                        self.group_manager.move_connection(connection_nickname, target_group_id)
+                        self.rebuild_connection_list()
+                dialog.destroy()
+            
+            dialog.connect('response', on_response)
+            dialog.present()
+            
+        except Exception as e:
+            logger.error(f"Failed to show move to group dialog: {e}")
+    
+    def move_connection_to_group(self, connection_nickname: str, target_group_id: str = None):
+        """Move a connection to a specific group"""
+        try:
+            self.group_manager.move_connection(connection_nickname, target_group_id)
+            self.rebuild_connection_list()
+        except Exception as e:
+            logger.error(f"Failed to move connection {connection_nickname} to group: {e}")
+    
+    def get_available_groups(self) -> List[Dict]:
+        """Get list of available groups for selection"""
+        return self.group_manager.get_group_hierarchy()
+
     def open_in_system_terminal(self, connection):
         """Open the connection in the system's default terminal"""
         try:
@@ -5293,8 +7102,15 @@ class MainWindow(Adw.ApplicationWindow):
             port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
             ssh_command = f"ssh{port_text} {connection.username}@{connection.host}"
             
-            # Get the default terminal
-            terminal_command = self._get_default_terminal_command()
+            # Check if user prefers external terminal
+            use_external = self.config.get_setting('use-external-terminal', False)
+            
+            if use_external:
+                # Use user's preferred external terminal
+                terminal_command = self._get_user_preferred_terminal()
+            else:
+                # Use built-in terminal (fallback to system default)
+                terminal_command = self._get_default_terminal_command()
             
             if not terminal_command:
                 # Fallback to common terminals
@@ -5353,6 +7169,52 @@ class MainWindow(Adw.ApplicationWindow):
             logger.error(f"Failed to open system terminal: {e}")
             self._show_terminal_error_dialog()
 
+    def _open_connection_in_external_terminal(self, connection):
+        """Open the connection in the user's preferred external terminal"""
+        try:
+            # Build the SSH command
+            port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
+            ssh_command = f"ssh{port_text} {connection.username}@{connection.host}"
+            
+            # Get user's preferred terminal
+            terminal_command = self._get_user_preferred_terminal()
+            
+            if not terminal_command:
+                # Fallback to default terminal
+                terminal_command = self._get_default_terminal_command()
+            
+            if not terminal_command:
+                # Show error dialog
+                self._show_terminal_error_dialog()
+                return
+            
+            # Launch the terminal with SSH command
+            if terminal_command in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
+                # These terminals use -- to separate options from command
+                cmd = [terminal_command, '--', 'bash', '-c', f'{ssh_command}; exec bash']
+            elif terminal_command in ['konsole', 'terminator']:
+                # These terminals use -e for command execution
+                cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
+            elif terminal_command in ['alacritty', 'kitty']:
+                # These terminals use -e for command execution
+                cmd = [terminal_command, '-e', 'bash', '-c', f'{ssh_command}; exec bash']
+            elif terminal_command == 'xterm':
+                # xterm uses -e for command execution
+                cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
+            elif terminal_command == 'xdg-terminal':
+                # xdg-terminal opens the default terminal
+                cmd = [terminal_command, ssh_command]
+            else:
+                # Generic fallback
+                cmd = [terminal_command, ssh_command]
+            
+            logger.info(f"Opening connection in external terminal: {' '.join(cmd)}")
+            subprocess.Popen(cmd, start_new_session=True)
+            
+        except Exception as e:
+            logger.error(f"Failed to open connection in external terminal: {e}")
+            self._show_terminal_error_dialog()
+
     def _get_default_terminal_command(self):
         """Get the default terminal command from desktop environment"""
         try:
@@ -5392,6 +7254,37 @@ class MainWindow(Adw.ApplicationWindow):
             
         except Exception as e:
             logger.error(f"Failed to get default terminal: {e}")
+            return None
+    
+    def _get_user_preferred_terminal(self):
+        """Get the user's preferred terminal from settings"""
+        try:
+            # Get the user's preferred terminal
+            preferred_terminal = self.config.get_setting('external-terminal', 'gnome-terminal')
+            
+            if preferred_terminal == 'custom':
+                # Use custom path
+                custom_path = self.config.get_setting('custom-terminal-path', '')
+                if custom_path and self._is_valid_unix_path(custom_path):
+                    return custom_path
+                else:
+                    logger.warning("Custom terminal path is invalid or not set, falling back to built-in terminal")
+                    return None
+            
+            # Check if the preferred terminal is available
+            try:
+                result = subprocess.run(['which', preferred_terminal], capture_output=True, text=True, timeout=2)
+                if result.returncode == 0:
+                    return preferred_terminal
+                else:
+                    logger.warning(f"Preferred terminal '{preferred_terminal}' not found, falling back to built-in terminal")
+                    return None
+            except Exception as e:
+                logger.error(f"Failed to check preferred terminal '{preferred_terminal}': {e}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to get user preferred terminal: {e}")
             return None
 
     def _show_terminal_error_dialog(self):
@@ -5756,6 +7649,9 @@ class MainWindow(Adw.ApplicationWindow):
                     'port': int(getattr(old_connection, 'port', 22) or 22),
                     'auth_method': int(getattr(old_connection, 'auth_method', 0) or 0),
                     'keyfile': _norm_str(getattr(old_connection, 'keyfile', '')),
+                    'certificate': _norm_str(getattr(old_connection, 'certificate', '')),
+                    'use_raw_sshconfig': bool(getattr(old_connection, 'use_raw_sshconfig', False)),
+                    'raw_ssh_config_block': _norm_str(getattr(old_connection, 'raw_ssh_config_block', '')),
                     'key_select_mode': int(getattr(old_connection, 'key_select_mode', 0) or 0),
                     'password': _norm_str(getattr(old_connection, 'password', '')),
                     'key_passphrase': _norm_str(getattr(old_connection, 'key_passphrase', '')),
@@ -5771,6 +7667,9 @@ class MainWindow(Adw.ApplicationWindow):
                     'port': int(connection_data.get('port') or 22),
                     'auth_method': int(connection_data.get('auth_method') or 0),
                     'keyfile': _norm_str(connection_data.get('keyfile')),
+                    'certificate': _norm_str(connection_data.get('certificate')),
+                    'use_raw_sshconfig': bool(connection_data.get('use_raw_sshconfig', False)),
+                    'raw_ssh_config_block': _norm_str(connection_data.get('raw_ssh_config_block')),
                     'key_select_mode': int(connection_data.get('key_select_mode') or 0),
                     'password': _norm_str(connection_data.get('password')),
                     'key_passphrase': _norm_str(connection_data.get('key_passphrase')),
@@ -5816,6 +7715,9 @@ class MainWindow(Adw.ApplicationWindow):
                 old_connection.username = connection_data['username']
                 old_connection.port = connection_data['port']
                 old_connection.keyfile = connection_data['keyfile']
+                old_connection.certificate = connection_data.get('certificate', '')
+                old_connection.use_raw_sshconfig = connection_data.get('use_raw_sshconfig', False)
+                old_connection.raw_ssh_config_block = connection_data.get('raw_ssh_config_block', '')
                 old_connection.password = connection_data['password']
                 old_connection.key_passphrase = connection_data['key_passphrase']
                 old_connection.auth_method = connection_data['auth_method']
@@ -5840,7 +7742,9 @@ class MainWindow(Adw.ApplicationWindow):
                 try:
                     meta_key = old_connection.nickname
                     self.config.set_connection_meta(meta_key, {
-                        'auth_method': connection_data.get('auth_method', 0)
+                        'auth_method': connection_data.get('auth_method', 0),
+                        'use_raw_sshconfig': connection_data.get('use_raw_sshconfig', False),
+                        'raw_ssh_config_block': connection_data.get('raw_ssh_config_block', '')
                     })
                 except Exception:
                     pass
@@ -5857,7 +7761,7 @@ class MainWindow(Adw.ApplicationWindow):
                     row.update_display()
                 else:
                     # If the connection is not in the rows, rebuild the list
-                    self._rebuild_connections_list()
+                    self.rebuild_connection_list()
                 
                 logger.info(f"Updated connection: {old_connection.nickname}")
                 
@@ -5880,6 +7784,18 @@ class MainWindow(Adw.ApplicationWindow):
                     connection.key_select_mode = int(connection_data.get('key_select_mode', 0) or 0)
                 except Exception:
                     connection.key_select_mode = 0
+                # Ensure certificate is applied immediately
+                try:
+                    connection.certificate = connection_data.get('certificate', '')
+                except Exception:
+                    connection.certificate = ''
+                # Ensure raw SSH config settings are applied immediately
+                try:
+                    connection.use_raw_sshconfig = connection_data.get('use_raw_sshconfig', False)
+                    connection.raw_ssh_config_block = connection_data.get('raw_ssh_config_block', '')
+                except Exception:
+                    connection.use_raw_sshconfig = False
+                    connection.raw_ssh_config_block = ''
                 # Add the new connection to the manager's connections list
                 self.connection_manager.connections.append(connection)
                 
@@ -5890,17 +7806,19 @@ class MainWindow(Adw.ApplicationWindow):
                     # Reload from SSH config and rebuild list immediately
                     try:
                         self.connection_manager.load_ssh_config()
-                        self._rebuild_connections_list()
+                        self.rebuild_connection_list()
                     except Exception:
                         pass
                     # Persist per-connection metadata then reload config
                     try:
                         self.config.set_connection_meta(connection.nickname, {
-                            'auth_method': connection_data.get('auth_method', 0)
+                            'auth_method': connection_data.get('auth_method', 0),
+                            'use_raw_sshconfig': connection_data.get('use_raw_sshconfig', False),
+                            'raw_ssh_config_block': connection_data.get('raw_ssh_config_block', '')
                         })
                         try:
                             self.connection_manager.load_ssh_config()
-                            self._rebuild_connections_list()
+                            self.rebuild_connection_list()
                         except Exception:
                             pass
                     except Exception:
@@ -5935,17 +7853,7 @@ class MainWindow(Adw.ApplicationWindow):
     def _rebuild_connections_list(self):
         """Rebuild the sidebar connections list from manager state, avoiding duplicates."""
         try:
-            # Clear listbox children
-            child = self.connection_list.get_first_child()
-            while child is not None:
-                nxt = child.get_next_sibling()
-                self.connection_list.remove(child)
-                child = nxt
-            # Clear mapping
-            self.connection_rows.clear()
-            # Re-add from manager
-            for conn in self.connection_manager.get_connections():
-                self.add_connection_row(conn)
+            self.rebuild_connection_list()
         except Exception:
             pass
     def _prompt_reconnect(self, connection):

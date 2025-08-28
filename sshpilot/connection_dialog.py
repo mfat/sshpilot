@@ -202,8 +202,8 @@ class SSHConnectionValidator:
             logger.error(f"Error verifying passphrase for key {key_path}: {e}")
             return False
 
-class ConnectionDialog(Adw.PreferencesDialog):
-    """Dialog for adding/editing SSH connections using PreferencesDialog layout"""
+class ConnectionDialog(Adw.PreferencesWindow):
+    """Dialog for adding/editing SSH connections using PreferencesWindow layout"""
     
     __gtype_name__ = 'ConnectionDialog'
     
@@ -220,34 +220,17 @@ class ConnectionDialog(Adw.PreferencesDialog):
         self.is_editing = connection is not None
         
         self.set_title('Edit Connection' if self.is_editing else 'New Connection')
-        # PreferencesDialog is modal by nature; just set transient parent
-        try:
-            self.set_transient_for(parent)
-        except Exception:
-            pass
-        # PreferencesDialog doesn't support set_default_size; rely on content sizing
+        # Set modal and transient parent to ensure dialog stays on top
+        self.set_modal(True)
+        self.set_transient_for(parent)
+        # Set default size for better UX
+        self.set_default_size(600, 700)
         
         self.validator = SSHConnectionValidator()
         self.validation_results: Dict[str, ValidationResult] = {}
         self._save_buttons = []
         
         self.setup_ui()
-        try:
-            self.add_response("cancel", _("Cancel"))
-            self.add_response("save", _("Save"))
-            # Mark save as suggested if available
-            try:
-                from gi.repository import Adw as _Adw
-                if hasattr(self, 'set_response_appearance'):
-                    self.set_response_appearance("save", _Adw.ResponseAppearance.SUGGESTED)
-            except Exception:
-                pass
-            self.set_close_response("cancel")
-            self.connect("response", self.on_response)
-            self._has_dialog_responses = True
-        except Exception:
-            # Fallback path when responses API is unavailable
-            self._has_dialog_responses = False
         GLib.idle_add(self.load_connection_data)
         
         # Add ESC key to cancel/close the dialog
@@ -266,6 +249,8 @@ class ConnectionDialog(Adw.PreferencesDialog):
             self.add_controller(key_ctrl)
         except Exception:
             pass
+    
+
     
     def on_auth_method_changed(self, combo_row, param):
         """Handle authentication method change"""
@@ -288,6 +273,9 @@ class ConnectionDialog(Adw.PreferencesDialog):
             self.on_key_select_changed(self.key_select_row, None)
         except Exception:
             pass
+        
+        # Refresh SSH config editor with authentication method change
+        self._refresh_ssh_config_editor()
 
     def on_key_select_changed(self, combo_row, param):
         """Enable browse button only when 'Use a specific key' is selected."""
@@ -303,8 +291,368 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 self.keyfile_row.set_sensitive(use_specific)
             if hasattr(self, 'key_dropdown'):
                 self.key_dropdown.set_sensitive(use_specific)
+            if hasattr(self, 'certificate_row'):
+                self.certificate_row.set_sensitive(use_specific)
+            if hasattr(self, 'cert_dropdown'):
+                self.cert_dropdown.set_sensitive(use_specific)
         except Exception:
             pass
+        
+        # Refresh SSH config editor with key selection mode change
+        self._refresh_ssh_config_editor()
+    
+    def on_raw_ssh_toggle_changed(self, switch_row, param):
+        """Handle raw SSH config toggle change"""
+        try:
+            is_enabled = switch_row.get_active()
+            # Show/hide the SSH config editor based on toggle state
+            if hasattr(self, 'ssh_config_editor_group'):
+                self.ssh_config_editor_group.set_visible(is_enabled)
+            
+            # Disable/enable all SSH options when raw config is enabled
+            # Basic connection settings
+            if hasattr(self, 'nickname_row'):
+                self.nickname_row.set_sensitive(not is_enabled)
+            if hasattr(self, 'host_row'):
+                self.host_row.set_sensitive(not is_enabled)
+            if hasattr(self, 'username_row'):
+                self.username_row.set_sensitive(not is_enabled)
+            if hasattr(self, 'port_row'):
+                self.port_row.set_sensitive(not is_enabled)
+            
+            # Authentication settings
+            if hasattr(self, 'auth_method_row'):
+                self.auth_method_row.set_sensitive(not is_enabled)
+            if hasattr(self, 'key_select_row'):
+                self.key_select_row.set_sensitive(not is_enabled)
+            if hasattr(self, 'keyfile_row'):
+                self.keyfile_row.set_sensitive(not is_enabled)
+            if hasattr(self, 'certificate_row'):
+                self.certificate_row.set_sensitive(not is_enabled)
+            if hasattr(self, 'key_passphrase_row'):
+                self.key_passphrase_row.set_sensitive(not is_enabled)
+            if hasattr(self, 'password_row'):
+                self.password_row.set_sensitive(not is_enabled)
+            
+            # Dropdown controls
+            if hasattr(self, 'key_dropdown'):
+                self.key_dropdown.set_sensitive(not is_enabled)
+            if hasattr(self, 'cert_dropdown'):
+                self.cert_dropdown.set_sensitive(not is_enabled)
+            
+            # Port forwarding settings
+            if hasattr(self, 'local_forwarding_enabled'):
+                self.local_forwarding_enabled.set_sensitive(not is_enabled)
+            if hasattr(self, 'remote_forwarding_enabled'):
+                self.remote_forwarding_enabled.set_sensitive(not is_enabled)
+            if hasattr(self, 'dynamic_forwarding_enabled'):
+                self.dynamic_forwarding_enabled.set_sensitive(not is_enabled)
+            
+            # Port forwarding detail settings
+            if hasattr(self, 'local_port_row'):
+                self.local_port_row.set_sensitive(not is_enabled)
+            if hasattr(self, 'remote_host_row'):
+                self.remote_host_row.set_sensitive(not is_enabled)
+            if hasattr(self, 'remote_port_row'):
+                self.remote_port_row.set_sensitive(not is_enabled)
+            if hasattr(self, 'remote_bind_host_row'):
+                self.remote_bind_host_row.set_sensitive(not is_enabled)
+            if hasattr(self, 'remote_bind_port_row'):
+                self.remote_bind_port_row.set_sensitive(not is_enabled)
+            if hasattr(self, 'dest_host_row'):
+                self.dest_host_row.set_sensitive(not is_enabled)
+            if hasattr(self, 'dest_port_row'):
+                self.dest_port_row.set_sensitive(not is_enabled)
+            if hasattr(self, 'dynamic_bind_row'):
+                self.dynamic_bind_row.set_sensitive(not is_enabled)
+            if hasattr(self, 'dynamic_port_row'):
+                self.dynamic_port_row.set_sensitive(not is_enabled)
+            
+            # Port forwarding settings boxes
+            if hasattr(self, 'local_settings_box'):
+                self.local_settings_box.set_sensitive(not is_enabled)
+            if hasattr(self, 'remote_settings_box'):
+                self.remote_settings_box.set_sensitive(not is_enabled)
+            if hasattr(self, 'dynamic_settings_box'):
+                self.dynamic_settings_box.set_sensitive(not is_enabled)
+            
+            # X11 forwarding
+            if hasattr(self, 'x11_row'):
+                self.x11_row.set_sensitive(not is_enabled)
+            
+            # Connection commands
+            if hasattr(self, 'local_command_row'):
+                self.local_command_row.set_sensitive(not is_enabled)
+            if hasattr(self, 'remote_command_row'):
+                self.remote_command_row.set_sensitive(not is_enabled)
+            
+            # Port forwarding rules management
+            if hasattr(self, 'rules_list'):
+                self.rules_list.set_sensitive(not is_enabled)
+            if hasattr(self, 'placeholder'):
+                self.placeholder.set_sensitive(not is_enabled)
+            if hasattr(self, 'add_rule_button'):
+                self.add_rule_button.set_sensitive(not is_enabled)
+            if hasattr(self, 'edit_ssh_config_button'):
+                self.edit_ssh_config_button.set_sensitive(is_enabled)
+                
+        except Exception as e:
+            logger.debug(f"Failed to handle raw SSH toggle change: {e}")
+    
+    def _on_edit_ssh_config_clicked(self, button):
+        """Handle edit SSH config button click - opens modal editor window"""
+        try:
+            # Close the connection dialog
+            self.close()
+            
+            # Create and show the SSH config editor window
+            editor_window = SSHConfigEditorWindow(self, self.connection)
+            # Pass reference to parent dialog for proper connection updates
+            editor_window.parent_dialog = self
+            editor_window.present()
+        except Exception as e:
+            logger.error(f"Failed to open SSH config editor: {e}")
+    
+    def _refresh_ssh_config_editor(self):
+        """Refresh the SSH config editor with current settings"""
+        # This method is no longer needed since we removed the inline editor
+        pass
+    
+    def _on_reload_ssh_config_clicked(self, button):
+        """Handle reload SSH config button click"""
+        try:
+            # Show confirmation dialog
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                modal=True,
+                message_type=Gtk.MessageType.QUESTION,
+                buttons=Gtk.ButtonsType.YES_NO,
+                text=_("Reload from .ssh/config"),
+                secondary_text=_("This will replace the current SSH config block with the configuration from your ~/.ssh/config file for this host. Continue?")
+            )
+            
+            def on_response(dialog, response):
+                if response == Gtk.ResponseType.YES:
+                    # This functionality is now handled by the SSH config editor window
+                    # Show info dialog
+                    info_dialog = Gtk.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        message_type=Gtk.MessageType.INFO,
+                        buttons=Gtk.ButtonsType.OK,
+                        text=_("Use SSH Config Editor"),
+                        secondary_text=_("Please use the 'Edit ssh-config block' button to edit SSH configuration.")
+                    )
+                    info_dialog.connect('response', lambda d, r: d.destroy())
+                    info_dialog.present()
+                dialog.destroy()
+            
+            dialog.connect('response', on_response)
+            dialog.present()
+            
+        except Exception as e:
+            logger.debug(f"Failed to handle reload SSH config: {e}")
+    
+    def _load_ssh_config_from_file(self):
+        """Load SSH config block for current host from ~/.ssh/config file"""
+        try:
+            import os
+            ssh_config_path = os.path.expanduser('~/.ssh/config')
+            
+            if not os.path.exists(ssh_config_path):
+                logger.warning(f"SSH config file not found: {ssh_config_path}")
+                return None
+            
+            # Get the current host nickname
+            host_nickname = self.connection.nickname if self.connection else None
+            if not host_nickname:
+                logger.warning("No host nickname available")
+                return None
+            
+            # Read and parse the SSH config file
+            current_host = None
+            current_block = []
+            in_target_host = False
+            
+            with open(ssh_config_path, 'r') as f:
+                for line in f:
+                    stripped_line = line.strip()
+                    
+                    # Skip empty lines and comments
+                    if not stripped_line or stripped_line.startswith('#'):
+                        if in_target_host:
+                            current_block.append(line.rstrip())
+                        continue
+                    
+                    # Check if this is a Host directive
+                    if stripped_line.lower().startswith('host '):
+                        # If we were in a target host block, we've reached the end
+                        if in_target_host:
+                            break
+                        
+                        # Extract host name(s)
+                        host_part = stripped_line[5:].strip()
+                        host_names = [h.strip() for h in host_part.split()]
+                        
+                        # Check if our target host is in this Host directive
+                        if host_nickname in host_names:
+                            current_host = host_nickname
+                            in_target_host = True
+                            current_block.append(line.rstrip())
+                        else:
+                            current_host = None
+                    elif in_target_host:
+                        # We're in the target host block, add this line
+                        current_block.append(line.rstrip())
+            
+            if current_block:
+                return '\n'.join(current_block)
+            else:
+                logger.warning(f"No SSH config block found for host: {host_nickname}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to load SSH config from file: {e}")
+            return None
+    
+    def validate_ssh_config_syntax(self, config_text):
+        """Basic SSH config syntax validation"""
+        try:
+            lines = config_text.strip().split('\n')
+            for i, line in enumerate(lines, 1):
+                line = line.strip()
+                # Skip empty lines and comments
+                if not line or line.startswith('#'):
+                    continue
+                
+                # Check for Host directive (should be at start of line)
+                if line.startswith('Host '):
+                    host_name = line[5:].strip()
+                    if not host_name:
+                        return False, f"Line {i}: Host directive requires a name"
+                
+                # Check for indented options (should start with spaces/tabs)
+                elif line.startswith(' ') or line.startswith('\t'):
+                    # Basic option format check
+                    if ' ' not in line.strip():
+                        return False, f"Line {i}: Invalid option format"
+                    
+                    option_parts = line.strip().split(' ', 1)
+                    if len(option_parts) < 2:
+                        return False, f"Line {i}: Option requires a value"
+                
+                # Check for non-indented, non-comment lines
+                elif not line.startswith('#'):
+                    return False, f"Line {i}: Expected 'Host' directive or indented option"
+            
+            return True, "SSH config syntax is valid"
+            
+        except Exception as e:
+            return False, f"Validation error: {e}"
+    
+    def _generate_ssh_config_from_settings(self):
+        """Generate SSH config block from current connection settings"""
+        try:
+            # Get current connection data
+            nickname = getattr(self, 'nickname_row', None)
+            host = getattr(self, 'host_row', None)
+            username = getattr(self, 'username_row', None)
+            port = getattr(self, 'port_row', None)
+            auth_method = getattr(self, 'auth_method_row', None)
+            key_select_mode = getattr(self, 'key_select_row', None)
+            
+            # Get values from UI or use defaults
+            nickname_val = nickname.get_text().strip() if nickname else "my-server"
+            host_val = host.get_text().strip() if host else "example.com"
+            username_val = username.get_text().strip() if username else "user"
+            port_val = port.get_text().strip() if port else "22"
+            
+            # Get authentication settings
+            auth_method_val = auth_method.get_selected() if auth_method else 0
+            key_select_mode_val = key_select_mode.get_selected() if key_select_mode else 0
+            
+            # Get keyfile and certificate if available
+            keyfile_val = ""
+            certificate_val = ""
+            if hasattr(self, 'keyfile_row') and self.keyfile_row.get_subtitle():
+                keyfile_val = self.keyfile_row.get_subtitle()
+            elif hasattr(self, '_selected_keyfile_path') and self._selected_keyfile_path:
+                keyfile_val = self._selected_keyfile_path
+            elif hasattr(self, 'connection') and self.connection:
+                keyfile_val = getattr(self.connection, 'keyfile', '')
+            
+            # Validate keyfile path - skip placeholder text
+            if keyfile_val and keyfile_val.lower() in ['select key file or leave empty for auto-detection', '']:
+                keyfile_val = ''
+            
+            if hasattr(self, 'certificate_row') and self.certificate_row.get_subtitle():
+                certificate_val = self.certificate_row.get_subtitle()
+            elif hasattr(self, '_selected_cert_path') and self._selected_cert_path:
+                certificate_val = self._selected_cert_path
+            elif hasattr(self, 'connection') and self.connection:
+                certificate_val = getattr(self.connection, 'certificate', '')
+            
+            # Validate certificate path - skip placeholder text
+            if certificate_val and certificate_val.lower() in ['select certificate file (optional)', '']:
+                certificate_val = ''
+            
+            # Build SSH config block
+            config_lines = []
+            config_lines.append(f"# SSH Config Block for {nickname_val}")
+            config_lines.append(f"Host {nickname_val}")
+            
+            # Add basic connection info
+            config_lines.append(f"    HostName {host_val}")
+            config_lines.append(f"    User {username_val}")
+            
+            # Add port if not default
+            if port_val and port_val != "22":
+                config_lines.append(f"    Port {port_val}")
+            
+            # Add authentication settings
+            if auth_method_val == 0:  # Key-based auth
+                if key_select_mode_val == 1 and keyfile_val:  # Specific key
+                    config_lines.append(f"    IdentityFile {keyfile_val}")
+                    config_lines.append("    IdentitiesOnly yes")
+                    
+                    # Add certificate if specified (validate to skip placeholder text)
+                    if certificate_val and certificate_val.lower() not in ['select certificate file (optional)', '']:
+                        config_lines.append(f"    CertificateFile {certificate_val}")
+                # For automatic key selection, don't add IdentityFile
+            else:  # Password auth
+                config_lines.append("    PreferredAuthentications password")
+                config_lines.append("    PubkeyAuthentication no")
+            
+            # Add X11 forwarding if enabled
+            if hasattr(self, 'x11_row') and self.x11_row.get_active():
+                config_lines.append("    ForwardX11 yes")
+            
+            # Add local command if specified
+            if hasattr(self, 'local_command_row') and self.local_command_row.get_text().strip():
+                local_cmd = self.local_command_row.get_text().strip()
+                config_lines.append("    PermitLocalCommand yes")
+                config_lines.append(f"    LocalCommand {local_cmd}")
+            
+            # Add remote command if specified
+            if hasattr(self, 'remote_command_row') and self.remote_command_row.get_text().strip():
+                remote_cmd = self.remote_command_row.get_text().strip()
+                # Ensure shell stays active after command
+                if 'exec $SHELL' not in remote_cmd:
+                    remote_cmd = f"{remote_cmd} ; exec $SHELL -l"
+                config_lines.append(f"    RemoteCommand {remote_cmd}")
+                config_lines.append("    RequestTTY yes")
+            
+            return '\n'.join(config_lines)
+            
+        except Exception as e:
+            logger.debug(f"Failed to generate SSH config from settings: {e}")
+            # Return a basic template if generation fails
+            return f"""# SSH Config Block for this connection
+# Generated from current settings
+Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'nickname_row') else 'my-server'}
+    HostName {getattr(self, 'host_row', None).get_text().strip() if hasattr(self, 'host_row') else 'example.com'}
+    User {getattr(self, 'username_row', None).get_text().strip() if hasattr(self, 'username_row') else 'user'}
+    Port {getattr(self, 'port_row', None).get_text().strip() if hasattr(self, 'port_row') else '22'}"""
     
     def load_connection_data(self):
         """Load connection data into the dialog fields"""
@@ -356,6 +704,17 @@ class ConnectionDialog(Adw.PreferencesDialog):
                     self._sync_key_dropdown_with_current_keyfile()
                 else:
                     logger.debug(f"Skipping invalid keyfile path: {keyfile_path}")
+            
+            # Load certificate path if present
+            if hasattr(self.connection, 'certificate') and self.connection.certificate:
+                cert_path = str(self.connection.certificate).strip()
+                if cert_path and cert_path.lower() not in ['select certificate file (optional)', '']:
+                    logger.debug(f"Setting certificate path in UI: {cert_path}")
+                    self.certificate_row.set_subtitle(cert_path)
+                    # Sync the dropdown to match the loaded certificate
+                    self._sync_cert_dropdown_with_current_cert()
+                else:
+                    logger.debug(f"Skipping invalid certificate path: {cert_path}")
             
             if hasattr(self.connection, 'password') and self.connection.password:
                 self.password_row.set_text(self.connection.password)
@@ -416,6 +775,15 @@ class ConnectionDialog(Adw.PreferencesDialog):
             
             # Set X11 forwarding
             self.x11_row.set_active(getattr(self.connection, 'x11_forwarding', False))
+            
+            # Load raw SSH config settings
+            if hasattr(self.connection, 'use_raw_sshconfig'):
+                self.raw_ssh_toggle.set_active(self.connection.use_raw_sshconfig)
+                # Trigger the toggle change handler to update UI state
+                self.on_raw_ssh_toggle_changed(self.raw_ssh_toggle, None)
+            
+            # SSH config block content is now handled by the SSH config editor window
+            # No need to load it into an inline editor anymore
             
             # Load commands if present
             try:
@@ -554,9 +922,7 @@ class ConnectionDialog(Adw.PreferencesDialog):
     
     def setup_ui(self):
         """Set up the dialog UI"""
-        # Build pages using PreferencesDialog model
-        # If responses API is unavailable, we will add a single footer later as fallback
-
+        # Build pages using PreferencesWindow model
         general_page = Adw.PreferencesPage()
         general_page.set_title(_("Connection"))
         general_page.set_icon_name("network-server-symbolic")
@@ -927,6 +1293,105 @@ class ConnectionDialog(Adw.PreferencesDialog):
         except Exception as e:
             logger.debug(f"Could not populate detected keys: {e}")
                 
+    def _populate_detected_certificates(self):
+        """Populate certificate dropdown with detected certificate files."""
+        try:
+            certificates = []
+            names = []
+            paths = []
+            
+            # Look for certificate files in ~/.ssh directory
+            ssh_dir = os.path.expanduser("~/.ssh")
+            if os.path.exists(ssh_dir) and os.path.isdir(ssh_dir):
+                for filename in os.listdir(ssh_dir):
+                    if filename.endswith('-cert.pub'):
+                        cert_path = os.path.join(ssh_dir, filename)
+                        if os.path.isfile(cert_path):
+                            certificates.append(cert_path)
+                            names.append(filename)
+                            paths.append(cert_path)
+            
+            # Add placeholder when none
+            if not names:
+                names.append(_("No certificates detected"))
+                paths.append("")
+            
+            # Add browse option
+            names.append(_("Browse…"))
+            paths.append("__BROWSE__")
+            
+            self._cert_paths = paths
+            model = Gtk.StringList()
+            for n in names:
+                model.append(n)
+            self.cert_dropdown.set_model(model)
+            
+            # Preselect certificate that matches the selected key if available
+            preselect_idx = 0
+            try:
+                current_key_path = None
+                if hasattr(self, '_selected_keyfile_path') and self._selected_keyfile_path:
+                    current_key_path = self._selected_keyfile_path
+                elif hasattr(self.keyfile_row, 'get_subtitle'):
+                    current_key_path = self.keyfile_row.get_subtitle() or None
+                if (not current_key_path) and hasattr(self, 'connection') and self.connection:
+                    current_key_path = getattr(self.connection, 'keyfile', None)
+                
+                # Try to find matching certificate
+                if current_key_path:
+                    key_basename = os.path.basename(current_key_path)
+                    # Remove common extensions to get base name
+                    for ext in ['.pub', '.key', '.pem', '.rsa', '.dsa', '.ecdsa', '.ed25519']:
+                        if key_basename.endswith(ext):
+                            key_basename = key_basename[:-len(ext)]
+                            break
+                    
+                    # Look for matching certificate
+                    expected_cert_name = f"{key_basename}-cert.pub"
+                    expected_cert_path = os.path.join(os.path.dirname(current_key_path), expected_cert_name)
+                    
+                    if expected_cert_path in paths:
+                        preselect_idx = paths.index(expected_cert_path)
+                        logger.debug(f"Auto-selected matching certificate: {expected_cert_name}")
+            except Exception:
+                preselect_idx = 0
+            
+            try:
+                self.cert_dropdown.set_selected(preselect_idx)
+            except Exception:
+                pass
+                
+        except Exception as e:
+            logger.debug(f"Could not populate detected certificates: {e}")
+    
+    def _auto_select_matching_certificate(self, key_path):
+        """Auto-select certificate that matches the selected key"""
+        try:
+            if not hasattr(self, 'cert_dropdown') or not hasattr(self, '_cert_paths'):
+                return
+                
+            # Get the base name of the key file
+            key_basename = os.path.basename(key_path)
+            # Remove common extensions to get base name
+            for ext in ['.pub', '.key', '.pem', '.rsa', '.dsa', '.ecdsa', '.ed25519']:
+                if key_basename.endswith(ext):
+                    key_basename = key_basename[:-len(ext)]
+                    break
+            
+            # Look for matching certificate
+            expected_cert_name = f"{key_basename}-cert.pub"
+            expected_cert_path = os.path.join(os.path.dirname(key_path), expected_cert_name)
+            
+            if expected_cert_path in self._cert_paths:
+                cert_idx = self._cert_paths.index(expected_cert_path)
+                self.cert_dropdown.set_selected(cert_idx)
+                self._selected_cert_path = expected_cert_path
+                if hasattr(self.certificate_row, 'set_subtitle'):
+                    self.certificate_row.set_subtitle(expected_cert_path)
+                logger.debug(f"Auto-selected matching certificate: {expected_cert_name}")
+        except Exception as e:
+            logger.debug(f"Failed to auto-select matching certificate: {e}")
+                
     def _sync_key_dropdown_with_current_keyfile(self):
         """Sync the key dropdown selection with the current keyfile path"""
         try:
@@ -1133,6 +1598,12 @@ class ConnectionDialog(Adw.PreferencesDialog):
                     
                     # Update passphrase field for the selected key
                     self._update_passphrase_for_key(path)
+                    
+                    # Auto-select matching certificate if available
+                    self._auto_select_matching_certificate(path)
+                    
+                    # Refresh SSH config editor with new key selection
+                    self._refresh_ssh_config_editor()
             except Exception:
                 pass
         try:
@@ -1146,6 +1617,49 @@ class ConnectionDialog(Adw.PreferencesDialog):
         self.keyfile_row.add_suffix(box)
         self.keyfile_row.set_activatable(False)
         auth_group.add(self.keyfile_row)
+
+        # Certificate dropdown for key-based auth with specific key
+        self.certificate_row = Adw.ActionRow(title=_("SSH Certificate"), subtitle=_("Select certificate file (optional)"))
+        # Build dropdown items from detected certificates
+        self.cert_dropdown = Gtk.DropDown()
+        self.cert_dropdown.set_hexpand(True)
+        # Populate via helper
+        self._cert_paths = []
+        self._populate_detected_certificates()
+
+        def _on_cert_selected(drop, _param):
+            try:
+                idx = drop.get_selected()
+                if idx < 0 or idx >= len(getattr(self, '_cert_paths', [])):
+                    return
+                path = self._cert_paths[idx]
+                if path == "__BROWSE__":
+                    # Revert selection to previous if any
+                    try:
+                        drop.set_selected(0)
+                    except Exception:
+                        pass
+                    self.browse_for_certificate_file()
+                elif path:
+                    self._selected_cert_path = path
+                    if hasattr(self.certificate_row, 'set_subtitle'):
+                        self.certificate_row.set_subtitle(path)
+                    
+                    # Refresh SSH config editor with new certificate selection
+                    self._refresh_ssh_config_editor()
+            except Exception:
+                pass
+        try:
+            self.cert_dropdown.connect('notify::selected', _on_cert_selected)
+        except Exception:
+                pass
+
+        # Pack dropdown and add to row
+        cert_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        cert_box.append(self.cert_dropdown)
+        self.certificate_row.add_suffix(cert_box)
+        self.certificate_row.set_activatable(False)
+        auth_group.add(self.certificate_row)
 
         # Initialize key UI sensitivity for new connections
         try:
@@ -1165,6 +1679,28 @@ class ConnectionDialog(Adw.PreferencesDialog):
         self.password_row.set_show_apply_button(False)
         self.password_row.set_visible(False)
         auth_group.add(self.password_row)
+        
+        # Raw SSH Config Toggle
+        self.raw_ssh_toggle = Adw.SwitchRow()
+        self.raw_ssh_toggle.set_title(_("Use raw ~/.ssh/config"))
+        self.raw_ssh_toggle.set_subtitle(_("When enabled, all custom options in this app are ignored, and the connection is handled entirely by your SSH config."))
+        self.raw_ssh_toggle.connect('notify::active', self.on_raw_ssh_toggle_changed)
+        auth_group.add(self.raw_ssh_toggle)
+        
+        # SSH Config Block Editor Button
+        self.ssh_config_editor_group = Adw.PreferencesGroup(title=_("SSH Config Block"))
+        self.ssh_config_editor_group.set_visible(False)
+        
+        # Add button to edit SSH config block
+        self.edit_ssh_config_button = Gtk.Button(label=_("Edit ssh-config block"))
+        self.edit_ssh_config_button.add_css_class('suggested-action')
+        self.edit_ssh_config_button.connect('clicked', self._on_edit_ssh_config_clicked)
+        
+        # Add button to the group
+        self.ssh_config_editor_group.add(self.edit_ssh_config_button)
+        
+        # Add the group to the auth group (will be shown/hidden based on toggle)
+        auth_group.add(self.ssh_config_editor_group)
         
         # Remove unused advanced label group from this page
         advanced_group = Adw.PreferencesGroup()
@@ -1408,15 +1944,15 @@ class ConnectionDialog(Adw.PreferencesDialog):
         )
         
         # Add button with icon
-        add_button = Gtk.Button(
+        self.add_rule_button = Gtk.Button(
             label=_("Add Rule"),
             halign=Gtk.Align.START,
             margin_top=6,
             margin_bottom=6
         )
-        add_button.set_icon_name("list-add-symbolic")
-        add_button.connect("clicked", self.on_add_forwarding_rule_clicked)
-        rules_group.add(add_button)
+        self.add_rule_button.set_icon_name("list-add-symbolic")
+        self.add_rule_button.connect("clicked", self.on_add_forwarding_rule_clicked)
+        rules_group.add(self.add_rule_button)
         
         # Rules list
         self.rules_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -1600,6 +2136,59 @@ class ConnectionDialog(Adw.PreferencesDialog):
         except Exception as e:
             logger.error(f"Failed to open key file chooser: {e}")
 
+    def browse_for_certificate_file(self):
+        """Open file chooser to browse for SSH certificate file."""
+        try:
+            dialog = Gtk.FileChooserDialog(
+                title=_("Select SSH Certificate File"),
+                action=Gtk.FileChooserAction.OPEN,
+            )
+            # Parent must be a Gtk.Window; PreferencesDialog is not one. Try to set if available
+            try:
+                parent_win = self.get_transient_for()
+                if isinstance(parent_win, Gtk.Window):
+                    dialog.set_transient_for(parent_win)
+            except Exception:
+                pass
+            dialog.set_modal(True)
+            dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
+            dialog.add_button(_("Open"), Gtk.ResponseType.ACCEPT)
+
+            # Default to ~/.ssh directory when available
+            try:
+                ssh_dir = os.path.expanduser('~/.ssh')
+                if os.path.isdir(ssh_dir):
+                    try:
+                        dialog.set_current_folder(Gio.File.new_for_path(ssh_dir))
+                    except Exception:
+                        try:
+                            dialog.set_current_folder(ssh_dir)
+                        except Exception:
+                            try:
+                                dialog.set_current_folder_uri(Gio.File.new_for_path(ssh_dir).get_uri())
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+
+            # Add filter for certificate files
+            cert_filter = Gtk.FileFilter()
+            cert_filter.set_name(_("SSH Certificate Files"))
+            cert_filter.add_pattern("*-cert.pub")
+            cert_filter.add_pattern("*.pub")
+            dialog.add_filter(cert_filter)
+
+            # Add filter for all files
+            all_filter = Gtk.FileFilter()
+            all_filter.set_name(_("All Files"))
+            all_filter.add_pattern("*")
+            dialog.add_filter(all_filter)
+
+            dialog.connect("response", self.on_certificate_file_selected)
+            dialog.show()
+        except Exception as e:
+            logger.error(f"Failed to open certificate file chooser: {e}")
+
     def _build_action_bar_group(self):
         """Build a bottom-aligned action bar with Cancel/Save."""
         actions_group = Adw.PreferencesGroup()
@@ -1699,6 +2288,67 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 # Sync the dropdown to select the browsed key
                 self._sync_key_dropdown_with_current_keyfile()
         dialog.destroy()
+    
+    def on_certificate_file_selected(self, dialog, response):
+        """Handle selected certificate file from file chooser"""
+        if response == Gtk.ResponseType.ACCEPT:
+            cert_file = dialog.get_file()
+            if cert_file:
+                cert_path = cert_file.get_path()
+                self.certificate_row.set_subtitle(cert_path)
+                
+                # Add the browsed certificate to the dropdown if it's not already there
+                if hasattr(self, '_cert_paths') and cert_path not in self._cert_paths:
+                    self._cert_paths.append(cert_path)
+                    # Update the dropdown model with just the filename
+                    if hasattr(self, 'cert_dropdown'):
+                        model = self.cert_dropdown.get_model()
+                        if model:
+                            filename = os.path.basename(cert_path)
+                            model.append(filename)
+                
+                # Set the selected certificate path
+                self._selected_cert_path = cert_path
+                
+                # Sync the dropdown to select the browsed certificate
+                self._sync_cert_dropdown_with_current_cert()
+        dialog.destroy()
+    
+    def _sync_cert_dropdown_with_current_cert(self):
+        """Sync the certificate dropdown selection with the current certificate path"""
+        try:
+            if not hasattr(self, 'cert_dropdown') or not hasattr(self, '_cert_paths'):
+                return
+                
+            # Get current certificate path
+            current_path = None
+            if hasattr(self, '_selected_cert_path') and self._selected_cert_path:
+                current_path = self._selected_cert_path
+            elif hasattr(self.certificate_row, 'get_subtitle'):
+                current_path = self.certificate_row.get_subtitle() or None
+            if (not current_path) and hasattr(self, 'connection') and self.connection:
+                current_path = getattr(self.connection, 'certificate', None)
+                
+            # Find matching index in dropdown
+            if current_path and current_path in self._cert_paths:
+                preselect_idx = self._cert_paths.index(current_path)
+                logger.debug(f"Syncing certificate dropdown to: {current_path} (index {preselect_idx})")
+                self.cert_dropdown.set_selected(preselect_idx)
+            else:
+                # If the certificate is not in the dropdown, add it and then select it
+                if current_path and hasattr(self, '_cert_paths') and hasattr(self, 'cert_dropdown'):
+                    self._cert_paths.append(current_path)
+                    model = self.cert_dropdown.get_model()
+                    if model:
+                        filename = os.path.basename(current_path)
+                        model.append(filename)
+                        preselect_idx = len(self._cert_paths) - 1
+                        logger.debug(f"Added external certificate to dropdown: {filename} (path: {current_path}, index {preselect_idx})")
+                        self.cert_dropdown.set_selected(preselect_idx)
+                else:
+                    logger.debug(f"Could not find certificate '{current_path}' in dropdown paths")
+        except Exception as e:
+            logger.debug(f"Failed to sync certificate dropdown: {e}")
     
     def on_delete_forwarding_rule_clicked(self, button, rule):
         """Handle delete port forwarding rule button click"""
@@ -2035,6 +2685,34 @@ class ConnectionDialog(Adw.PreferencesDialog):
             except Exception as e:
                 logger.warning(f"Failed to store/delete key passphrase: {e}")
 
+        # Get certificate path
+        certificate_value = ''
+        try:
+            if hasattr(self, 'cert_dropdown') and hasattr(self, '_cert_paths'):
+                sel = self.cert_dropdown.get_selected()
+                if 0 <= sel < len(self._cert_paths):
+                    pth = self._cert_paths[sel]
+                    if pth and pth != '__BROWSE__':
+                        certificate_value = pth
+            if (not certificate_value) and hasattr(self, '_selected_cert_path') and self._selected_cert_path:
+                certificate_value = str(self._selected_cert_path)
+            if (not certificate_value) and hasattr(self.certificate_row, 'get_subtitle'):
+                certificate_value = self.certificate_row.get_subtitle() or ''
+            if (not certificate_value) and self.is_editing and hasattr(self, 'connection') and self.connection:
+                certificate_value = str(getattr(self.connection, 'certificate', '') or '')
+        except Exception:
+            certificate_value = ''
+
+        # Get raw SSH config block content from connection object
+        raw_ssh_config_content = ''
+        try:
+            if self.raw_ssh_toggle.get_active() and self.connection:
+                # Get the raw SSH config content from the connection object
+                # This will be updated by the SSH config editor window when it saves
+                raw_ssh_config_content = getattr(self.connection, 'raw_ssh_config_block', '') or ''
+        except Exception as e:
+            logger.debug(f"Failed to get SSH config content: {e}")
+
         # Gather connection data
         connection_data = {
             'nickname': self.nickname_row.get_text().strip(),
@@ -2043,10 +2721,13 @@ class ConnectionDialog(Adw.PreferencesDialog):
             'port': int(self.port_row.get_text().strip() or '22'),
             'auth_method': self.auth_method_row.get_selected(),
             'keyfile': keyfile_value,
+            'certificate': certificate_value,
             'key_select_mode': (self.key_select_row.get_selected() if hasattr(self, 'key_select_row') else 0),
             'key_passphrase': self.key_passphrase_row.get_text(),
             'password': self.password_row.get_text(),
             'x11_forwarding': self.x11_row.get_active(),
+            'use_raw_sshconfig': self.raw_ssh_toggle.get_active(),
+            'raw_ssh_config_block': raw_ssh_config_content,
             'forwarding_rules': forwarding_rules,
             'local_command': (self.local_command_row.get_text() if hasattr(self, 'local_command_row') else ''),
             'remote_command': (self.remote_command_row.get_text() if hasattr(self, 'remote_command_row') else ''),
@@ -2119,11 +2800,7 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 pass
         return sanitized
 
-    def on_response(self, dialog, response_id):
-        if str(response_id) == 'save':
-            self.on_save_clicked()
-        else:
-            self.close()
+
     
     def on_forwarding_toggled(self, switch, param, settings_box):
         """Handle toggling of port forwarding settings visibility and state"""
@@ -2248,3 +2925,777 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 logger.debug(f"No connection manager available for key: {key_path}")
         except Exception as e:
             logger.debug(f"Failed to update passphrase for key {key_path}: {e}")
+    
+    def _refresh_connection_data_from_ssh_config(self):
+        """Refresh connection data from the updated SSH config file"""
+        try:
+            if not self.is_editing or not self.connection:
+                return
+            
+            # Reload the connection manager to get fresh data from SSH config
+            if hasattr(self, 'connection_manager') and self.connection_manager:
+                self.connection_manager.load_ssh_config()
+                
+                # Find the updated connection by nickname
+                updated_connection = self.connection_manager.get_connection_by_nickname(self.connection.nickname)
+                if updated_connection:
+                    self.connection = updated_connection
+                    self.load_connection_data(self.connection) # Reload UI with new data
+                    logger.debug(f"Refreshed connection dialog data for '{self.connection.nickname}'")
+                else:
+                    logger.warning(f"Could not find updated connection '{self.connection.nickname}' after SSH config reload")
+        except Exception as e:
+            logger.error(f"Error refreshing connection data from SSH config: {e}", exc_info=True)
+    
+    def _auto_save_connection(self):
+        """Automatically save the connection without user interaction"""
+        try:
+            if not self.is_editing or not self.connection:
+                return
+            
+            # Get the current connection data from the UI
+            connection_data = self.get_connection_data()
+            
+            # Ensure raw SSH config settings are preserved
+            if hasattr(self.connection, 'use_raw_sshconfig'):
+                connection_data['use_raw_sshconfig'] = self.connection.use_raw_sshconfig
+            if hasattr(self.connection, 'raw_ssh_config_block'):
+                connection_data['raw_ssh_config_block'] = self.connection.raw_ssh_config_block
+            
+            # Update the connection through the connection manager
+            if hasattr(self, 'connection_manager') and self.connection_manager:
+                self.connection_manager.update_connection(self.connection, connection_data)
+                logger.debug(f"Auto-saved connection '{self.connection.nickname}' after raw SSH config edit")
+                
+                # Notify the main window to refresh the connection list
+                if hasattr(self, 'parent_window') and self.parent_window:
+                    if hasattr(self.parent_window, '_rebuild_connections_list'):
+                        GLib.idle_add(self.parent_window._rebuild_connections_list)
+        except Exception as e:
+            logger.error(f"Error auto-saving connection: {e}", exc_info=True)
+
+class SSHConfigEditorWindow(Adw.Window):
+    """Modal window for editing SSH config blocks"""
+    
+    def __init__(self, parent_dialog, connection):
+        super().__init__()
+        
+        self.parent_dialog = parent_dialog
+        self.connection = connection
+        self.ssh_config_path = os.path.expanduser('~/.ssh/config')
+        
+        # Window setup
+        self.set_title(_("Edit SSH Config Block"))
+        self.set_default_size(800, 600)
+        self.set_resizable(True)
+        self.set_modal(True)
+        
+        # Set transient parent - handle both Gtk.Window and Adw.PreferencesDialog
+        try:
+            if hasattr(parent_dialog, 'parent_window'):
+                # Get the parent window from the connection dialog
+                main_window = parent_dialog.parent_window
+                if main_window and hasattr(main_window, 'set_transient_for'):
+                    self.set_transient_for(main_window)
+            elif hasattr(parent_dialog, 'get_transient_for'):
+                # Fallback: try to get transient parent
+                parent_window = parent_dialog.get_transient_for()
+                if parent_window and parent_window != parent_dialog:
+                    self.set_transient_for(parent_window)
+        except Exception as e:
+            logger.debug(f"Could not set transient parent: {e}")
+        
+        # Create the UI
+        self.setup_ui()
+        
+        # Load the SSH config content
+        self.load_ssh_config()
+    
+    def setup_ui(self):
+        """Set up the window UI"""
+        # Main container
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.set_content(main_box)
+        
+        # Header bar
+        header_bar = Adw.HeaderBar()
+        header_bar.set_title_widget(Gtk.Label(label=_("SSH Config Editor")))
+        
+        # Save button
+        save_button = Gtk.Button(label=_("Save"))
+        save_button.add_css_class('suggested-action')
+        save_button.connect('clicked', self.on_save_clicked)
+        header_bar.pack_end(save_button)
+        
+        # Cancel button
+        cancel_button = Gtk.Button(label=_("Cancel"))
+        cancel_button.connect('clicked', self.on_cancel_clicked)
+        header_bar.pack_start(cancel_button)
+        
+        main_box.append(header_bar)
+        
+        # Content area
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        content_box.set_margin_top(12)
+        content_box.set_margin_bottom(12)
+        content_box.set_margin_start(12)
+        content_box.set_margin_end(12)
+        content_box.set_hexpand(True)
+        content_box.set_vexpand(True)
+        
+        # Info label
+        info_label = Gtk.Label()
+        info_label.set_markup(_(
+            "<b>Editing SSH config for:</b> {host}\n"
+            "Changes will be saved to <tt>~/.ssh/config</tt>"
+        ).format(host=self.connection.nickname if self.connection else "Unknown"))
+        info_label.set_halign(Gtk.Align.START)
+        info_label.add_css_class('dim-label')
+        content_box.append(info_label)
+        
+        # Scrolled window for text editor
+        scrolled_window = Gtk.ScrolledWindow()
+        scrolled_window.set_vexpand(True)
+        scrolled_window.set_min_content_height(400)
+        
+        # Text view with monospace font
+        self.text_view = Gtk.TextView()
+        self.text_view.set_wrap_mode(Gtk.WrapMode.NONE)
+        self.text_view.set_monospace(True)
+        self.text_view.set_accepts_tab(True)  # Enable Tab key for text editing
+        self.text_view.set_indent(4)  # 4 spaces for indentation
+        
+        # Set up the text buffer
+        self.text_buffer = self.text_view.get_buffer()
+        
+        # Add the text view to the scrolled window
+        scrolled_window.set_child(self.text_view)
+        content_box.append(scrolled_window)
+        
+        # Status bar
+        status_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        status_bar.add_css_class('dim-label')
+        
+        # Line/column info
+        self.status_label = Gtk.Label(label=_("Ready"))
+        status_bar.append(self.status_label)
+        
+        # Reload button
+        reload_button = Gtk.Button(label=_("Reload from file"))
+        reload_button.add_css_class('flat')
+        reload_button.connect('clicked', self.on_reload_clicked)
+        status_bar.append(reload_button)
+        
+        content_box.append(status_bar)
+        main_box.append(content_box)
+        
+        # Connect text buffer signals for status updates
+        self.text_buffer.connect('changed', self.on_text_changed)
+        
+        # Add keyboard shortcuts
+        key_controller = Gtk.EventControllerKey()
+        key_controller.connect('key-pressed', self.on_key_pressed)
+        self.add_controller(key_controller)
+    
+    def load_ssh_config(self):
+        """Load SSH config content from file"""
+        try:
+            if not os.path.exists(self.ssh_config_path):
+                # Create empty config file
+                with open(self.ssh_config_path, 'w') as f:
+                    f.write("# SSH Configuration File\n")
+                logger.info(f"Created new SSH config file: {self.ssh_config_path}")
+            
+            # Load the SSH config block for this host
+            ssh_config_block = self._load_ssh_config_block_from_file()
+            
+            if ssh_config_block:
+                self.text_buffer.set_text(ssh_config_block)
+                logger.debug("Loaded SSH config block from file")
+            else:
+                # Show a template for new hosts
+                template = self._generate_ssh_config_template()
+                self.text_buffer.set_text(template)
+                logger.debug("No existing config found, showing template")
+                
+        except Exception as e:
+            logger.error(f"Failed to load SSH config: {e}")
+            self.text_buffer.set_text(f"# Error loading SSH config: {e}\n")
+    
+    def _load_ssh_config_block_from_file(self):
+        """Load SSH config block for current host from ~/.ssh/config file"""
+        try:
+            if not os.path.exists(self.ssh_config_path):
+                return None
+            
+            # Get the current host nickname
+            host_nickname = self.connection.nickname if self.connection else None
+            if not host_nickname:
+                return None
+            
+            # Read and parse the SSH config file
+            current_host = None
+            current_block = []
+            in_target_host = False
+            
+            with open(self.ssh_config_path, 'r') as f:
+                for line in f:
+                    stripped_line = line.strip()
+                    
+                    # Skip empty lines and comments
+                    if not stripped_line or stripped_line.startswith('#'):
+                        if in_target_host:
+                            current_block.append(line.rstrip())
+                        continue
+                    
+                    # Check if this is a Host directive
+                    if stripped_line.lower().startswith('host '):
+                        # If we were in a target host block, we've reached the end
+                        if in_target_host:
+                            break
+                        
+                        # Extract host name(s)
+                        host_part = stripped_line[5:].strip()
+                        host_names = [h.strip() for h in host_part.split()]
+                        
+                        # Check if our target host is in this Host directive
+                        if host_nickname in host_names:
+                            current_host = host_nickname
+                            in_target_host = True
+                            current_block.append(line.rstrip())
+                        else:
+                            current_host = None
+                    elif in_target_host:
+                        # We're in the target host block, add this line
+                        current_block.append(line.rstrip())
+            
+            if current_block:
+                return '\n'.join(current_block)
+            else:
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to load SSH config from file: {e}")
+            return None
+    
+    def _generate_ssh_config_template(self):
+        """Generate a template SSH config block for new hosts"""
+        host_nickname = self.connection.nickname if self.connection else "my-server"
+        host = self.connection.host if self.connection else "example.com"
+        username = self.connection.username if self.connection else "user"
+        port = self.connection.port if self.connection else 22
+        
+        template = f"""# SSH Config Block for {host_nickname}
+Host {host_nickname}
+    HostName {host}
+    User {username}
+    Port {port}
+    # Add your SSH configuration options here
+    # Examples:
+    # IdentityFile ~/.ssh/id_ed25519
+    # ForwardX11 yes
+    # LocalForward 8080 localhost:80
+    # RemoteForward 8080 localhost:80
+    # DynamicForward 1080
+"""
+        return template
+    
+    def on_text_changed(self, buffer):
+        """Handle text buffer changes"""
+        # Update status
+        start_iter = buffer.get_start_iter()
+        end_iter = buffer.get_end_iter()
+        text = buffer.get_text(start_iter, end_iter, True)
+        lines = text.count('\n') + 1
+        chars = len(text)
+        
+        self.status_label.set_text(_("Lines: {lines}, Characters: {chars}").format(
+            lines=lines, chars=chars))
+    
+    def on_key_pressed(self, controller, keyval, keycode, state):
+        """Handle keyboard shortcuts"""
+        # Ctrl+S to save
+        if state & Gdk.ModifierType.CONTROL_MASK and keyval == Gdk.KEY_s:
+            self.on_save_clicked(None)
+            return True
+        # Ctrl+R to reload
+        elif state & Gdk.ModifierType.CONTROL_MASK and keyval == Gdk.KEY_r:
+            self.on_reload_clicked(None)
+            return True
+        # Escape to cancel
+        elif keyval == Gdk.KEY_Escape:
+            self.on_cancel_clicked(None)
+            return True
+        return False
+    
+    def on_save_clicked(self, button):
+        """Handle save button click"""
+        try:
+            # Get the current text content
+            start_iter = self.text_buffer.get_start_iter()
+            end_iter = self.text_buffer.get_end_iter()
+            content = self.text_buffer.get_text(start_iter, end_iter, True)
+            
+            # Validate SSH config syntax
+            is_valid, error_msg = self.validate_ssh_config_syntax(content)
+            if not is_valid:
+                self.show_error(_("SSH Config Syntax Error"), error_msg)
+                return
+            
+            # Extract the new host name from the content
+            new_host_name = self._extract_host_name_from_content(content)
+            original_nickname = self.connection.nickname if self.connection else None
+            
+            # Update the connection's raw SSH config block
+            if self.connection:
+                self.connection.raw_ssh_config_block = content
+                self.connection.use_raw_sshconfig = True
+                
+                # Update the connection through the connection manager to ensure proper handling
+                if hasattr(self, 'parent_dialog') and self.parent_dialog and hasattr(self.parent_dialog, 'connection_manager'):
+                    try:
+                        # Create update data with the raw SSH config
+                        update_data = {
+                            'nickname': new_host_name if new_host_name else original_nickname,
+                            'use_raw_sshconfig': True,
+                            'raw_ssh_config_block': content
+                        }
+                        
+                        # Update the connection object with the raw SSH config data
+                        self.connection.raw_ssh_config_block = content
+                        self.connection.use_raw_sshconfig = True
+                        
+                        # Use the connection manager's update method to ensure consistency
+                        # Pass the original nickname so the manager can find and replace the existing block
+                        success = self.parent_dialog.connection_manager.update_connection(
+                            self.connection, 
+                            update_data
+                        )
+                        
+                        # Update the connection's nickname if it changed (AFTER the manager update)
+                        if success and new_host_name and new_host_name != original_nickname:
+                            self.connection.nickname = new_host_name
+                            logger.debug(f"Updated connection nickname from '{original_nickname}' to '{new_host_name}'")
+                        
+                        if success:
+                            # Update the connection dialog title to reflect the new nickname
+                            if new_host_name and new_host_name != original_nickname:
+                                if hasattr(self, 'parent_dialog') and self.parent_dialog:
+                                    try:
+                                        self.parent_dialog.set_title(f'Edit Connection - {new_host_name}')
+                                    except Exception as e:
+                                        logger.debug(f"Failed to update dialog title: {e}")
+                            
+                            logger.debug(f"Updated connection '{self.connection.nickname}' through connection manager")
+                            
+                            # Notify the main window to refresh its UI
+                            if hasattr(self, 'parent_dialog') and self.parent_dialog and hasattr(self.parent_dialog, 'parent_window'):
+                                try:
+                                    main_window = self.parent_dialog.parent_window
+                                    if hasattr(main_window, '_rebuild_connections_list'):
+                                        # Use GLib.idle_add to ensure this runs in the main thread
+                                        GLib.idle_add(main_window._rebuild_connections_list)
+                                        if new_host_name and new_host_name != original_nickname:
+                                            logger.debug(f"Notified main window to refresh connection list after nickname change to '{new_host_name}'")
+                                        else:
+                                            logger.debug(f"Notified main window to refresh connection list after SSH config update")
+                                except Exception as e:
+                                    logger.debug(f"Failed to notify main window: {e}")
+                            
+                            # Also refresh the connection dialog's data to reflect the changes
+                            if hasattr(self, 'parent_dialog') and self.parent_dialog:
+                                try:
+                                    # Parse the SSH config content and update the connection UI
+                                    self._sync_connection_ui_from_ssh_config(content)
+                                    # Enable the raw SSH toggle in the parent dialog
+                                    if hasattr(self.parent_dialog, 'raw_ssh_toggle'):
+                                        GLib.idle_add(self.parent_dialog.raw_ssh_toggle.set_active, True)
+                                    # Reload the connection data in the dialog to reflect the updated nickname
+                                    GLib.idle_add(self.parent_dialog.load_connection_data)
+                                    
+                                    # Save connection metadata to ensure use_raw_sshconfig persists
+                                    if hasattr(self, 'parent_dialog') and self.parent_dialog and hasattr(self.parent_dialog, 'parent_window'):
+                                        try:
+                                            main_window = self.parent_dialog.parent_window
+                                            if hasattr(main_window, 'config') and hasattr(main_window.config, 'set_connection_meta'):
+                                                # Save the connection metadata to ensure use_raw_sshconfig persists
+                                                main_window.config.set_connection_meta(self.connection.nickname, {
+                                                    'auth_method': getattr(self.connection, 'auth_method', 0),
+                                                    'use_raw_sshconfig': True,
+                                                    'raw_ssh_config_block': content
+                                                })
+                                                logger.debug(f"Saved connection metadata for '{self.connection.nickname}' with use_raw_sshconfig=True")
+                                        except Exception as e:
+                                            logger.debug(f"Failed to save connection metadata: {e}")
+                                    
+                                    if new_host_name and new_host_name != original_nickname:
+                                        logger.debug(f"Refreshed connection dialog data after nickname change to '{new_host_name}'")
+                                except Exception as e:
+                                    logger.debug(f"Failed to refresh connection dialog data: {e}")
+                            
+                            # Show success message
+                            self.show_info(_("SSH Config Saved"), 
+                                          _("The SSH configuration has been saved to ~/.ssh/config"))
+                            
+                            # Close the window
+                            self.close()
+                        else:
+                            self.show_error(_("Save Failed"), 
+                                           _("Failed to save SSH configuration to ~/.ssh/config"))
+                    except Exception as e:
+                        logger.error(f"Failed to update connection through manager: {e}")
+                        self.show_error(_("Save Error"), str(e))
+                else:
+                    # No connection manager available, use direct file saving as fallback
+                    success = self._save_ssh_config_to_file(content)
+                    if success:
+                        # Show success message
+                        self.show_info(_("SSH Config Saved"), 
+                                      _("The SSH configuration has been saved to ~/.ssh/config"))
+                        
+                        # Close the window
+                        self.close()
+                    else:
+                        self.show_error(_("Save Failed"), 
+                                       _("Failed to save SSH configuration to ~/.ssh/config"))
+            else:
+                # No connection available, use direct file saving as fallback
+                success = self._save_ssh_config_to_file(content)
+                if success:
+                    # Show success message
+                    self.show_info(_("SSH Config Saved"), 
+                                  _("The SSH configuration has been saved to ~/.ssh/config"))
+                    
+                    # Close the window
+                    self.close()
+                else:
+                    self.show_error(_("Save Failed"), 
+                                   _("Failed to save SSH configuration to ~/.ssh/config"))
+                
+        except Exception as e:
+            logger.error(f"Failed to save SSH config: {e}")
+            self.show_error(_("Save Error"), str(e))
+    
+    def on_cancel_clicked(self, button):
+        """Handle cancel button click"""
+        self.close()
+    
+    def on_reload_clicked(self, button):
+        """Handle reload button click"""
+        # Show confirmation dialog
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            modal=True,
+            heading=_("Reload SSH Config"),
+            body=_("This will replace the current content with the configuration from ~/.ssh/config. Continue?")
+        )
+        dialog.add_response("cancel", _("Cancel"))
+        dialog.add_response("reload", _("Reload"))
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        
+        def on_response(dialog, response):
+            if response == "reload":
+                self.load_ssh_config()
+            dialog.destroy()
+        
+        dialog.connect('response', on_response)
+        dialog.present()
+    
+    def _save_ssh_config_to_file(self, content):
+        """Save SSH config block to ~/.ssh/config file"""
+        try:
+            host_nickname = self.connection.nickname if self.connection else None
+            if not host_nickname:
+                logger.error("No host nickname available for saving")
+                return False
+            
+            # If we have a parent dialog with connection manager, use that instead
+            if hasattr(self, 'parent_dialog') and self.parent_dialog and hasattr(self.parent_dialog, 'connection_manager'):
+                # The actual saving will be handled by the connection manager in on_save_clicked
+                logger.debug(f"Using connection manager to save SSH config for '{host_nickname}'")
+                return True
+            
+            # Fallback: direct file saving (for standalone editor)
+            # Read the entire config file
+            if os.path.exists(self.ssh_config_path):
+                with open(self.ssh_config_path, 'r') as f:
+                    lines = f.readlines()
+            else:
+                lines = []
+            
+            # Extract the new host name from the content to check if it changed
+            new_host_name = self._extract_host_name_from_content(content)
+            
+            # Find and replace the existing host block, or add a new one
+            new_lines = []
+            in_target_host = False
+            host_block_replaced = False
+            
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                stripped_line = line.strip()
+                
+                # Check if this is a Host directive
+                if stripped_line.lower().startswith('host '):
+                    # If we were in the target host block, we've reached the end
+                    if in_target_host:
+                        in_target_host = False
+                        host_block_replaced = True
+                        # Add the new content here
+                        new_lines.extend(content.splitlines(True))
+                        new_lines.append('\n')  # Add extra newline for separation
+                        # Continue with this line (it's the next host)
+                        continue
+                    
+                    # Extract host name(s)
+                    host_part = stripped_line[5:].strip()
+                    host_names = [h.strip() for h in host_part.split()]
+                    
+                    # Check if this is our target host (either old name or new name)
+                    # This handles the case where the user renamed the connection
+                    if (host_nickname in host_names) or (new_host_name and new_host_name in host_names):
+                        in_target_host = True
+                        # Skip this line and all subsequent lines until next Host directive
+                        i += 1
+                        while i < len(lines):
+                            next_line = lines[i]
+                            next_stripped = next_line.strip()
+                            # If we hit another Host directive, we're done
+                            if next_stripped.lower().startswith('host '):
+                                break
+                            i += 1
+                        # Don't add the current line, we're replacing the whole block
+                        continue
+                    else:
+                        # This is a different host, keep it
+                        new_lines.append(line)
+                elif not in_target_host:
+                    # We're not in the target host block, keep this line
+                    new_lines.append(line)
+                
+                i += 1
+            
+            # If we were in the target host block at the end of the file
+            if in_target_host:
+                host_block_replaced = True
+                new_lines.extend(content.splitlines(True))
+                new_lines.append('\n')
+            
+            # If we didn't replace an existing block, add the new one at the end
+            if not host_block_replaced:
+                if new_lines and not new_lines[-1].endswith('\n'):
+                    new_lines.append('\n')
+                new_lines.extend(content.splitlines(True))
+                new_lines.append('\n')
+            
+            # Write the updated config back to file
+            with open(self.ssh_config_path, 'w') as f:
+                f.writelines(new_lines)
+            
+            logger.info(f"Saved SSH config block for host '{host_nickname}' to {self.ssh_config_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to save SSH config to file: {e}")
+            return False
+    
+    def _extract_host_name_from_content(self, content):
+        """Extract the host name from the SSH config content"""
+        try:
+            lines = content.split('\n')
+            for line in lines:
+                stripped_line = line.strip()
+                if stripped_line.lower().startswith('host '):
+                    # Extract the host name(s) after "Host"
+                    host_part = stripped_line[5:].strip()
+                    # Return the first host name (in case of multiple)
+                    host_names = [h.strip() for h in host_part.split()]
+                    if host_names:
+                        return host_names[0]
+            return None
+        except Exception as e:
+            logger.error(f"Failed to extract host name from content: {e}")
+            return None
+    
+    def _sync_connection_ui_from_ssh_config(self, ssh_config_content: str):
+        """Parse SSH config content and update the connection UI fields"""
+        try:
+            if not self.connection or not hasattr(self, 'parent_dialog') or not self.parent_dialog:
+                return
+            
+            # Parse the SSH config content
+            config_data = self._parse_ssh_config_content(ssh_config_content)
+            if not config_data:
+                return
+            
+            # Update the connection object with parsed data
+            if 'host' in config_data:
+                self.connection.host = config_data['host']
+            if 'port' in config_data:
+                self.connection.port = config_data['port']
+            if 'username' in config_data:
+                self.connection.username = config_data['username']
+            if 'keyfile' in config_data:
+                self.connection.keyfile = config_data['keyfile']
+            if 'x11_forwarding' in config_data:
+                self.connection.x11_forwarding = config_data['x11_forwarding']
+            if 'forwarding_rules' in config_data:
+                self.connection.forwarding_rules = config_data['forwarding_rules']
+            
+            logger.debug(f"Synced connection UI from SSH config for '{self.connection.nickname}'")
+            
+        except Exception as e:
+            logger.error(f"Failed to sync connection UI from SSH config: {e}")
+    
+    def _parse_ssh_config_content(self, content: str) -> Optional[Dict[str, Any]]:
+        """Parse SSH config content and extract connection settings"""
+        try:
+            lines = content.split('\n')
+            config = {}
+            current_host = None
+            
+            for line in lines:
+                stripped_line = line.strip()
+                
+                # Skip empty lines and comments
+                if not stripped_line or stripped_line.startswith('#'):
+                    continue
+                
+                # Parse Host directive
+                if stripped_line.lower().startswith('host '):
+                    current_host = stripped_line[5:].strip()
+                    config['host'] = current_host
+                    continue
+                
+                # Parse other directives
+                if ' ' in stripped_line:
+                    directive, value = stripped_line.split(' ', 1)
+                    directive = directive.lower()
+                    value = value.strip()
+                    
+                    # Remove quotes if present
+                    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                        value = value[1:-1]
+                    
+                    if directive == 'hostname':
+                        config['host'] = value
+                    elif directive == 'port':
+                        try:
+                            config['port'] = int(value)
+                        except ValueError:
+                            config['port'] = 22
+                    elif directive == 'user':
+                        config['username'] = value
+                    elif directive == 'identityfile':
+                        config['keyfile'] = os.path.expanduser(value)
+                    elif directive == 'forwardx11':
+                        config['x11_forwarding'] = value.lower() in ('yes', 'true', '1', 'on')
+                    elif directive in ['localforward', 'remoteforward', 'dynamicforward']:
+                        if 'forwarding_rules' not in config:
+                            config['forwarding_rules'] = []
+                        
+                        # Parse forwarding rules (simplified version)
+                        if directive == 'localforward':
+                            parts = value.split()
+                            if len(parts) == 2:
+                                listen_spec, dest_spec = parts
+                                if ':' in listen_spec:
+                                    bind_addr, port_str = listen_spec.rsplit(':', 1)
+                                    listen_port = int(port_str)
+                                else:
+                                    bind_addr = '127.0.0.1'
+                                    listen_port = int(listen_spec)
+                                
+                                if ':' in dest_spec:
+                                    remote_host, remote_port = dest_spec.split(':')
+                                    remote_port = int(remote_port)
+                                else:
+                                    remote_host = dest_spec
+                                    remote_port = 22
+                                
+                                config['forwarding_rules'].append({
+                                    'type': 'local',
+                                    'listen_addr': bind_addr,
+                                    'listen_port': listen_port,
+                                    'remote_host': remote_host,
+                                    'remote_port': remote_port,
+                                    'enabled': True
+                                })
+            
+            return config
+            
+        except Exception as e:
+            logger.error(f"Failed to parse SSH config content: {e}")
+            return None
+    
+    def validate_ssh_config_syntax(self, config_text):
+        """Basic SSH config syntax validation"""
+        try:
+            lines = config_text.strip().split('\n')
+            for i, line in enumerate(lines, 1):
+                line = line.strip()
+                # Skip empty lines and comments
+                if not line or line.startswith('#'):
+                    continue
+                
+                # Check for Host directive (should be at start of line)
+                if line.startswith('Host '):
+                    host_name = line[5:].strip()
+                    if not host_name:
+                        return False, f"Line {i}: Host directive requires a name"
+                
+                # Check for indented options (should start with spaces/tabs)
+                elif line.startswith(' ') or line.startswith('\t'):
+                    # Basic option format check - be more permissive
+                    stripped_line = line.strip()
+                    if not stripped_line:
+                        continue  # Allow empty indented lines
+                    
+                    # Check if it looks like an option (has at least one space)
+                    if ' ' in stripped_line:
+                        option_parts = stripped_line.split(' ', 1)
+                        if len(option_parts) < 2:
+                            return False, f"Line {i}: Option requires a value"
+                    else:
+                        # Single word on indented line - might be a valid option
+                        # Don't reject it, just continue
+                        continue
+                
+                # Allow other content (be more permissive)
+                else:
+                    # Don't reject non-indented, non-comment lines
+                    # They might be valid in some contexts
+                    continue
+            
+            return True, "SSH config syntax is valid"
+            
+        except Exception as e:
+            return False, f"Validation error: {e}"
+    
+    def show_error(self, heading, message):
+        """Show error dialog"""
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            modal=True,
+            heading=heading,
+            body=message
+        )
+        dialog.add_response("ok", _("OK"))
+        dialog.set_default_response("ok")
+        dialog.set_close_response("ok")
+        dialog.present()
+    
+    def show_info(self, heading, message):
+        """Show info dialog"""
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            modal=True,
+            heading=heading,
+            body=message
+        )
+        dialog.add_response("ok", _("OK"))
+        dialog.set_default_response("ok")
+        dialog.set_close_response("ok")
+        dialog.present()

@@ -58,6 +58,9 @@ class Connection:
         self.port = data.get('port', 22)
         # previously: self.keyfile = data.get('keyfile', '')
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
+        self.certificate = data.get('certificate', '')
+        self.use_raw_sshconfig = bool(data.get('use_raw_sshconfig', False))
+        self.raw_ssh_config_block = data.get('raw_ssh_config_block', '')
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
         # Commands
@@ -89,7 +92,37 @@ class Connection:
     async def connect(self):
         """Prepare SSH command for later use (no preflight echo)."""
         try:
-            # Build SSH command
+            # Check if raw SSH config is enabled
+            if getattr(self, 'use_raw_sshconfig', False):
+                # Use raw SSH config - just the host alias (connection nickname)
+                ssh_cmd = ['ssh']
+                
+                # Apply verbosity settings even in raw mode
+                try:
+                    v = max(0, min(3, int(verbosity)))
+                    for _ in range(v):
+                        ssh_cmd.append('-v')
+                    if v == 1:
+                        ssh_cmd.extend(['-o', 'LogLevel=VERBOSE'])
+                    elif v == 2:
+                        ssh_cmd.extend(['-o', 'LogLevel=DEBUG2'])
+                    elif v >= 3:
+                        ssh_cmd.extend(['-o', 'LogLevel=DEBUG3'])
+                    elif debug_enabled:
+                        ssh_cmd.extend(['-o', 'LogLevel=DEBUG'])
+                    if v > 0 or debug_enabled:
+                        logger.debug(f"Raw SSH config verbosity configured: -v x {v}, LogLevel set")
+                except Exception as e:
+                    logger.warning(f"Could not check SSH verbosity/debug settings in raw mode: {e}")
+                
+                # Add the host alias
+                ssh_cmd.append(self.nickname)
+                logger.debug(f"Using raw SSH config with host alias: {self.nickname}")
+                self.ssh_cmd = ssh_cmd
+                self.is_connected = True
+                return True
+            
+            # Build SSH command (existing logic)
             ssh_cmd = ['ssh']
 
             # Pull advanced SSH defaults from config when available
@@ -147,13 +180,16 @@ class Connection:
             except Exception:
                 pass
             
-            # Add key file only when key-based auth and specific key mode
+            # Add key file and certificate only when key-based auth and specific key mode
             try:
                 if int(getattr(self, 'auth_method', 0) or 0) == 0 and int(getattr(self, 'key_select_mode', 0) or 0) == 1:
                     if self.keyfile and os.path.exists(self.keyfile):
                         ssh_cmd.extend(['-i', self.keyfile])
                         if self.key_passphrase:
                             logger.warning("Passphrase-protected keys may require additional setup")
+                    # Add certificate if specified
+                    if self.certificate and os.path.exists(self.certificate):
+                        ssh_cmd.extend(['-o', f'CertificateFile={self.certificate}'])
             except Exception:
                 pass
             
@@ -666,6 +702,10 @@ class ConnectionManager(GObject.Object):
                                             if isinstance(meta, dict):
                                                 if 'auth_method' in meta:
                                                     existing.auth_method = meta['auth_method']
+                                                if 'use_raw_sshconfig' in meta:
+                                                    existing.use_raw_sshconfig = meta['use_raw_sshconfig']
+                                                if 'raw_ssh_config_block' in meta:
+                                                    existing.raw_ssh_config_block = meta['raw_ssh_config_block']
                                         except Exception:
                                             pass
                                         self.connections.append(existing)
@@ -680,6 +720,10 @@ class ConnectionManager(GObject.Object):
                                             if isinstance(meta, dict):
                                                 if 'auth_method' in meta:
                                                     conn.auth_method = meta['auth_method']
+                                                if 'use_raw_sshconfig' in meta:
+                                                    conn.use_raw_sshconfig = meta['use_raw_sshconfig']
+                                                if 'raw_ssh_config_block' in meta:
+                                                    conn.raw_ssh_config_block = meta['raw_ssh_config_block']
                                         except Exception:
                                             pass
                                         self.connections.append(conn)
@@ -714,6 +758,10 @@ class ConnectionManager(GObject.Object):
                             if isinstance(meta, dict):
                                 if 'auth_method' in meta:
                                     existing.auth_method = meta['auth_method']
+                                if 'use_raw_sshconfig' in meta:
+                                    existing.use_raw_sshconfig = meta['use_raw_sshconfig']
+                                if 'raw_ssh_config_block' in meta:
+                                    existing.raw_ssh_config_block = meta['raw_ssh_config_block']
                         except Exception:
                             pass
                         self.connections.append(existing)
@@ -728,6 +776,10 @@ class ConnectionManager(GObject.Object):
                             if isinstance(meta, dict):
                                 if 'auth_method' in meta:
                                     conn.auth_method = meta['auth_method']
+                                if 'use_raw_sshconfig' in meta:
+                                    conn.use_raw_sshconfig = meta['use_raw_sshconfig']
+                                if 'raw_ssh_config_block' in meta:
+                                    conn.raw_ssh_config_block = meta['raw_ssh_config_block']
                         except Exception:
                             pass
                         self.connections.append(conn)
@@ -1114,6 +1166,12 @@ class ConnectionManager(GObject.Object):
 
     def format_ssh_config_entry(self, data: Dict[str, Any]) -> str:
         """Format connection data as SSH config entry"""
+        # Check if raw SSH config is enabled
+        if data.get('use_raw_sshconfig', False) and data.get('raw_ssh_config_block', '').strip():
+            # Return the raw SSH config block as-is
+            return data['raw_ssh_config_block'].strip()
+        
+        # Use standard app-generated SSH config
         lines = [f"Host {data['nickname']}"]
         
         # Add basic connection info
@@ -1130,14 +1188,19 @@ class ConnectionManager(GObject.Object):
         auth_method = int(data.get('auth_method', 0) or 0)
         key_select_mode = int(data.get('key_select_mode', 0) or 0)  # 0=try all, 1=specific
         if auth_method == 0:
-            # Always write IdentityFile if a concrete key path is provided (even in mode 0)
-            if keyfile and keyfile.strip() and not keyfile.strip().lower().startswith('select key file'):
+            # Only write IdentityFile if key_select_mode == 1 (specific key)
+            if key_select_mode == 1 and keyfile and keyfile.strip() and not keyfile.strip().lower().startswith('select key file'):
                 if ' ' in keyfile and not (keyfile.startswith('"') and keyfile.endswith('"')):
                     keyfile = f'"{keyfile}"'
                 lines.append(f"    IdentityFile {keyfile}")
-            # Only enforce exclusive key usage in mode 1
-            if key_select_mode == 1:
                 lines.append("    IdentitiesOnly yes")
+                
+                # Add certificate if specified
+                certificate = data.get('certificate')
+                if certificate and certificate.strip():
+                    if ' ' in certificate and not (certificate.startswith('"') and certificate.endswith('"')):
+                        certificate = f'"{certificate}"'
+                    lines.append(f"    CertificateFile {certificate}")
         
         # Add X11 forwarding if enabled
         if data.get('x11_forwarding', False):
@@ -1214,6 +1277,9 @@ class ConnectionManager(GObject.Object):
             # Add the original nickname to candidate names for proper matching during renames
             if original_nickname:
                 candidate_names.add(original_nickname)
+            
+            logger.debug(f"Looking for host block with candidate names: {candidate_names}")
+            logger.debug(f"Original nickname: {original_nickname}, New name: {new_name}")
 
             i = 0
             while i < len(lines):
@@ -1226,7 +1292,14 @@ class ConnectionManager(GObject.Object):
                     current_names = parts[1:] if len(parts) > 1 else []
                     
                     # Check if this Host block matches our candidate names
-                    if (full_value in candidate_names) or any(name in candidate_names for name in current_names):
+                    # Split the full_value into individual host names (in case of multiple hosts on one line)
+                    host_names = [name.strip() for name in full_value.split()]
+                    
+                    logger.debug(f"Found Host line: '{lstripped.strip()}' -> full_value='{full_value}' -> host_names={host_names}")
+                    
+                    # Check if any of the host names in this block match our candidate names
+                    if any(host_name in candidate_names for host_name in host_names):
+                        logger.debug(f"MATCH FOUND! Host '{host_names}' matches candidate names {candidate_names}")
                         host_found = True
                         if not replaced_once:
                             updated_config = self.format_ssh_config_entry(new_data)
