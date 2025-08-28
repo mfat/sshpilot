@@ -59,6 +59,8 @@ class Connection:
         # previously: self.keyfile = data.get('keyfile', '')
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
         self.certificate = data.get('certificate', '')
+        self.use_raw_sshconfig = bool(data.get('use_raw_sshconfig', False))
+        self.raw_ssh_config_block = data.get('raw_ssh_config_block', '')
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
         # Commands
@@ -90,7 +92,16 @@ class Connection:
     async def connect(self):
         """Prepare SSH command for later use (no preflight echo)."""
         try:
-            # Build SSH command
+            # Check if raw SSH config is enabled
+            if getattr(self, 'use_raw_sshconfig', False):
+                # Use raw SSH config - just the host alias (connection nickname)
+                ssh_cmd = ['ssh', self.nickname]
+                logger.debug(f"Using raw SSH config with host alias: {self.nickname}")
+                self.ssh_cmd = ssh_cmd
+                self.is_connected = True
+                return True
+            
+            # Build SSH command (existing logic)
             ssh_cmd = ['ssh']
 
             # Pull advanced SSH defaults from config when available
@@ -1118,6 +1129,12 @@ class ConnectionManager(GObject.Object):
 
     def format_ssh_config_entry(self, data: Dict[str, Any]) -> str:
         """Format connection data as SSH config entry"""
+        # Check if raw SSH config is enabled
+        if data.get('use_raw_sshconfig', False) and data.get('raw_ssh_config_block', '').strip():
+            # Return the raw SSH config block as-is
+            return data['raw_ssh_config_block'].strip()
+        
+        # Use standard app-generated SSH config
         lines = [f"Host {data['nickname']}"]
         
         # Add basic connection info

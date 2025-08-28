@@ -460,7 +460,16 @@ class TerminalWidget(Gtk.Box):
     def _setup_ssh_terminal(self):
         """Set up terminal with direct SSH command (called from main thread)"""
         try:
-            # Build SSH command
+            # Check if raw SSH config is enabled
+            use_raw_sshconfig = getattr(self.connection, 'use_raw_sshconfig', False)
+            
+            if use_raw_sshconfig:
+                # Use raw SSH config - just the host alias (connection nickname)
+                ssh_cmd = ['ssh', self.connection.nickname]
+                logger.debug(f"Using raw SSH config with host alias: {self.connection.nickname}")
+                return ssh_cmd
+            
+            # Build SSH command (existing logic)
             ssh_cmd = ['ssh']
 
             # Read SSH behavior from config with sane defaults
