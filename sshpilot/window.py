@@ -6466,7 +6466,9 @@ class MainWindow(Adw.ApplicationWindow):
                 try:
                     meta_key = old_connection.nickname
                     self.config.set_connection_meta(meta_key, {
-                        'auth_method': connection_data.get('auth_method', 0)
+                        'auth_method': connection_data.get('auth_method', 0),
+                        'use_raw_sshconfig': connection_data.get('use_raw_sshconfig', False),
+                        'raw_ssh_config_block': connection_data.get('raw_ssh_config_block', '')
                     })
                 except Exception:
                     pass
@@ -6534,7 +6536,9 @@ class MainWindow(Adw.ApplicationWindow):
                     # Persist per-connection metadata then reload config
                     try:
                         self.config.set_connection_meta(connection.nickname, {
-                            'auth_method': connection_data.get('auth_method', 0)
+                            'auth_method': connection_data.get('auth_method', 0),
+                            'use_raw_sshconfig': connection_data.get('use_raw_sshconfig', False),
+                            'raw_ssh_config_block': connection_data.get('raw_ssh_config_block', '')
                         })
                         try:
                             self.connection_manager.load_ssh_config()

@@ -3011,7 +3011,7 @@ class SSHConfigEditorWindow(Adw.Window):
         self.text_view = Gtk.TextView()
         self.text_view.set_wrap_mode(Gtk.WrapMode.NONE)
         self.text_view.set_monospace(True)
-        self.text_view.set_accepts_tab(False)
+        self.text_view.set_accepts_tab(True)  # Enable Tab key for text editing
         self.text_view.set_indent(4)  # 4 spaces for indentation
         
         # Set up the text buffer

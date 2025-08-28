@@ -681,6 +681,10 @@ class ConnectionManager(GObject.Object):
                                             if isinstance(meta, dict):
                                                 if 'auth_method' in meta:
                                                     existing.auth_method = meta['auth_method']
+                                                if 'use_raw_sshconfig' in meta:
+                                                    existing.use_raw_sshconfig = meta['use_raw_sshconfig']
+                                                if 'raw_ssh_config_block' in meta:
+                                                    existing.raw_ssh_config_block = meta['raw_ssh_config_block']
                                         except Exception:
                                             pass
                                         self.connections.append(existing)
@@ -695,6 +699,10 @@ class ConnectionManager(GObject.Object):
                                             if isinstance(meta, dict):
                                                 if 'auth_method' in meta:
                                                     conn.auth_method = meta['auth_method']
+                                                if 'use_raw_sshconfig' in meta:
+                                                    conn.use_raw_sshconfig = meta['use_raw_sshconfig']
+                                                if 'raw_ssh_config_block' in meta:
+                                                    conn.raw_ssh_config_block = meta['raw_ssh_config_block']
                                         except Exception:
                                             pass
                                         self.connections.append(conn)
@@ -729,6 +737,10 @@ class ConnectionManager(GObject.Object):
                             if isinstance(meta, dict):
                                 if 'auth_method' in meta:
                                     existing.auth_method = meta['auth_method']
+                                if 'use_raw_sshconfig' in meta:
+                                    existing.use_raw_sshconfig = meta['use_raw_sshconfig']
+                                if 'raw_ssh_config_block' in meta:
+                                    existing.raw_ssh_config_block = meta['raw_ssh_config_block']
                         except Exception:
                             pass
                         self.connections.append(existing)
@@ -743,6 +755,10 @@ class ConnectionManager(GObject.Object):
                             if isinstance(meta, dict):
                                 if 'auth_method' in meta:
                                     conn.auth_method = meta['auth_method']
+                                if 'use_raw_sshconfig' in meta:
+                                    conn.use_raw_sshconfig = meta['use_raw_sshconfig']
+                                if 'raw_ssh_config_block' in meta:
+                                    conn.raw_ssh_config_block = meta['raw_ssh_config_block']
                         except Exception:
                             pass
                         self.connections.append(conn)
