@@ -465,7 +465,32 @@ class TerminalWidget(Gtk.Box):
             
             if use_raw_sshconfig:
                 # Use raw SSH config - just the host alias (connection nickname)
-                ssh_cmd = ['ssh', self.connection.nickname]
+                ssh_cmd = ['ssh']
+                
+                # Apply verbosity settings even in raw mode
+                try:
+                    ssh_cfg = self.config.get_ssh_config() if hasattr(self.config, 'get_ssh_config') else {}
+                    verbosity = int(ssh_cfg.get('verbosity', 0))
+                    debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
+                    v = max(0, min(3, verbosity))
+                    for _ in range(v):
+                        ssh_cmd.append('-v')
+                    # Map verbosity to LogLevel to ensure messages are not suppressed by defaults
+                    if v == 1:
+                        ssh_cmd.extend(['-o', 'LogLevel=VERBOSE'])
+                    elif v == 2:
+                        ssh_cmd.extend(['-o', 'LogLevel=DEBUG2'])
+                    elif v >= 3:
+                        ssh_cmd.extend(['-o', 'LogLevel=DEBUG3'])
+                    elif debug_enabled:
+                        ssh_cmd.extend(['-o', 'LogLevel=DEBUG'])
+                    if v > 0 or debug_enabled:
+                        logger.debug(f"Raw SSH config verbosity configured: -v x {v}, LogLevel set")
+                except Exception as e:
+                    logger.warning(f"Could not check SSH verbosity/debug settings in raw mode: {e}")
+                
+                # Add the host alias
+                ssh_cmd.append(self.connection.nickname)
                 logger.debug(f"Using raw SSH config with host alias: {self.connection.nickname}")
                 # Don't return here - continue to spawn the process
             else:

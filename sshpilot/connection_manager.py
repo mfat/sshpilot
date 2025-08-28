@@ -95,7 +95,28 @@ class Connection:
             # Check if raw SSH config is enabled
             if getattr(self, 'use_raw_sshconfig', False):
                 # Use raw SSH config - just the host alias (connection nickname)
-                ssh_cmd = ['ssh', self.nickname]
+                ssh_cmd = ['ssh']
+                
+                # Apply verbosity settings even in raw mode
+                try:
+                    v = max(0, min(3, int(verbosity)))
+                    for _ in range(v):
+                        ssh_cmd.append('-v')
+                    if v == 1:
+                        ssh_cmd.extend(['-o', 'LogLevel=VERBOSE'])
+                    elif v == 2:
+                        ssh_cmd.extend(['-o', 'LogLevel=DEBUG2'])
+                    elif v >= 3:
+                        ssh_cmd.extend(['-o', 'LogLevel=DEBUG3'])
+                    elif debug_enabled:
+                        ssh_cmd.extend(['-o', 'LogLevel=DEBUG'])
+                    if v > 0 or debug_enabled:
+                        logger.debug(f"Raw SSH config verbosity configured: -v x {v}, LogLevel set")
+                except Exception as e:
+                    logger.warning(f"Could not check SSH verbosity/debug settings in raw mode: {e}")
+                
+                # Add the host alias
+                ssh_cmd.append(self.nickname)
                 logger.debug(f"Using raw SSH config with host alias: {self.nickname}")
                 self.ssh_cmd = ssh_cmd
                 self.is_connected = True
