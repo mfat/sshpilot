@@ -1603,15 +1603,6 @@ class GroupRow(Gtk.ListBoxRow):
         content.set_margin_top(8)
         content.set_margin_bottom(8)
         
-        # Expand/collapse button
-        self.expand_button = Gtk.Button()
-        self.expand_button.set_icon_name('pan-end-symbolic')
-        self.expand_button.add_css_class('flat')
-        self.expand_button.add_css_class('group-expand-button')
-        self.expand_button.set_can_focus(False)
-        self.expand_button.connect('clicked', self._on_expand_clicked)
-        content.append(self.expand_button)
-        
         # Group icon
         icon = Gtk.Image.new_from_icon_name('folder-symbolic')
         icon.set_icon_size(Gtk.IconSize.NORMAL)
@@ -1635,15 +1626,27 @@ class GroupRow(Gtk.ListBoxRow):
         
         content.append(info_box)
         
+        # Expand/collapse button
+        self.expand_button = Gtk.Button()
+        self.expand_button.set_icon_name('pan-end-symbolic')
+        self.expand_button.add_css_class('flat')
+        self.expand_button.add_css_class('group-expand-button')
+        self.expand_button.set_can_focus(False)
+        self.expand_button.connect('clicked', self._on_expand_clicked)
+        content.append(self.expand_button)
+        
         self.set_child(content)
-        self.set_selectable(False)
-        self.set_can_focus(False)
+        self.set_selectable(True)
+        self.set_can_focus(True)
         
         # Update display
         self._update_display()
         
         # Setup drag source
         self._setup_drag_source()
+        
+        # Setup double-click gesture for expand/collapse
+        self._setup_double_click_gesture()
     
     def _update_display(self):
         """Update the display based on current group state"""
@@ -1667,13 +1670,7 @@ class GroupRow(Gtk.ListBoxRow):
     
     def _on_expand_clicked(self, button):
         """Handle expand/collapse button click"""
-        expanded = not self.group_info.get('expanded', True)
-        self.group_info['expanded'] = expanded
-        self.group_manager.set_group_expanded(self.group_id, expanded)
-        self._update_display()
-        
-        # Emit signal to parent to rebuild the list
-        self.emit('group-toggled', self.group_id, expanded)
+        self._toggle_expand()
     
     def _setup_drag_source(self):
         """Setup drag source for group reordering"""
@@ -1689,6 +1686,28 @@ class GroupRow(Gtk.ListBoxRow):
             'group_id': self.group_id
         }
         return Gdk.ContentProvider.new_for_value(GObject.Value(GObject.TYPE_PYOBJECT, data))
+    
+    def _setup_double_click_gesture(self):
+        """Setup double-click gesture for expand/collapse"""
+        gesture = Gtk.GestureClick()
+        gesture.set_button(1)  # Left mouse button
+        gesture.connect('pressed', self._on_double_click)
+        self.add_controller(gesture)
+    
+    def _on_double_click(self, gesture, n_press, x, y):
+        """Handle double-click to expand/collapse group"""
+        if n_press == 2:  # Double-click
+            self._toggle_expand()
+    
+    def _toggle_expand(self):
+        """Toggle the expanded state of the group"""
+        expanded = not self.group_info.get('expanded', True)
+        self.group_info['expanded'] = expanded
+        self.group_manager.set_group_expanded(self.group_id, expanded)
+        self._update_display()
+        
+        # Emit signal to parent to rebuild the list
+        self.emit('group-toggled', self.group_id, expanded)
 
 
 class ConnectionRow(Gtk.ListBoxRow):
@@ -4057,6 +4076,17 @@ class MainWindow(Adw.ApplicationWindow):
                     if not self.sidebar_toggle_button.get_active():
                         self.sidebar_toggle_button.set_active(True)
                 
+                # Ensure a row is selected before focusing
+                selected = self.connection_list.get_selected_row()
+                logger.debug(f"Focus connection list - current selection: {selected}")
+                if not selected:
+                    # Select the first row regardless of type
+                    first_row = self.connection_list.get_row_at_index(0)
+                    logger.debug(f"Focus connection list - first row: {first_row}")
+                    if first_row:
+                        self.connection_list.select_row(first_row)
+                        logger.debug(f"Focus connection list - selected first row: {first_row}")
+                
                 self.connection_list.grab_focus()
                 
                 # Pulse the selected row
@@ -4771,19 +4801,25 @@ class MainWindow(Adw.ApplicationWindow):
             self.connection_list.select_row(row)
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
         elif n_press == 2:  # Double click - connect
-            self._cycle_connection_tabs_or_open(row.connection)
+            if hasattr(row, 'connection'):
+                self._cycle_connection_tabs_or_open(row.connection)
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
 
     def on_connection_activated(self, list_box, row):
         """Handle connection activation (Enter key)"""
-        if row:
+        logger.debug(f"Connection activated - row: {row}, has connection: {hasattr(row, 'connection') if row else False}")
+        if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
+        elif row and hasattr(row, 'group_id'):
+            # Handle group row activation - toggle expand/collapse
+            logger.debug(f"Group row activated - toggling expand/collapse for group: {row.group_id}")
+            row._toggle_expand()
             
 
         
     def on_connection_activate(self, list_box, row):
         """Handle connection activation (Enter key or double-click)"""
-        if row:
+        if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
             return True  # Stop event propagation
         return False
@@ -4791,13 +4827,10 @@ class MainWindow(Adw.ApplicationWindow):
     def on_activate_connection(self, action, param):
         """Handle the activate-connection action"""
         row = self.connection_list.get_selected_row()
-        if row:
+        if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
             
-    def on_connection_activated(self, list_box, row):
-        """Handle connection activation (double-click)"""
-        if row:
-            self._cycle_connection_tabs_or_open(row.connection)
+
 
     def _focus_most_recent_tab_or_open_new(self, connection: Connection):
         """If there are open tabs for this server, focus the most recent one.
