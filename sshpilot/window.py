@@ -3068,7 +3068,8 @@ class MainWindow(Adw.ApplicationWindow):
             if selected_row and hasattr(selected_row, 'connection'):
                 connection = selected_row.connection
                 self._focus_most_recent_tab_or_open_new(connection)
-            return True  # Consume the event to prevent row-activated
+                return True  # Consume the event to prevent row-activated
+            return False  # Allow group rows to be handled by row-activated
         return False
 
     def _stop_pulse_on_interaction(self, controller, *args):
