@@ -63,6 +63,7 @@ class Connection:
         self.raw_ssh_config_block = data.get('raw_ssh_config_block', '')
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
+        self.group = data.get('group', '')
         # Commands
         self.local_command = data.get('local_command', '')
         self.remote_command = data.get('remote_command', '')
@@ -562,6 +563,7 @@ class Connection:
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
+        self.group = data.get('group', '')
         self.local_command = data.get('local_command', '')
         self.remote_command = data.get('remote_command', '')
         
@@ -706,6 +708,8 @@ class ConnectionManager(GObject.Object):
                                                     existing.use_raw_sshconfig = meta['use_raw_sshconfig']
                                                 if 'raw_ssh_config_block' in meta:
                                                     existing.raw_ssh_config_block = meta['raw_ssh_config_block']
+                                                if 'group' in meta:
+                                                    existing.group = meta['group']
                                         except Exception:
                                             pass
                                         self.connections.append(existing)
@@ -724,6 +728,8 @@ class ConnectionManager(GObject.Object):
                                                     conn.use_raw_sshconfig = meta['use_raw_sshconfig']
                                                 if 'raw_ssh_config_block' in meta:
                                                     conn.raw_ssh_config_block = meta['raw_ssh_config_block']
+                                                if 'group' in meta:
+                                                    conn.group = meta['group']
                                         except Exception:
                                             pass
                                         self.connections.append(conn)
@@ -762,6 +768,8 @@ class ConnectionManager(GObject.Object):
                                     existing.use_raw_sshconfig = meta['use_raw_sshconfig']
                                 if 'raw_ssh_config_block' in meta:
                                     existing.raw_ssh_config_block = meta['raw_ssh_config_block']
+                                if 'group' in meta:
+                                    existing.group = meta['group']
                         except Exception:
                             pass
                         self.connections.append(existing)
@@ -780,6 +788,8 @@ class ConnectionManager(GObject.Object):
                                     conn.use_raw_sshconfig = meta['use_raw_sshconfig']
                                 if 'raw_ssh_config_block' in meta:
                                     conn.raw_ssh_config_block = meta['raw_ssh_config_block']
+                                if 'group' in meta:
+                                    conn.group = meta['group']
                         except Exception:
                             pass
                         self.connections.append(conn)
