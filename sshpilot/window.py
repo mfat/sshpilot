@@ -1421,6 +1421,281 @@ class SshCopyIdWindow(Gtk.Window):
                         str(e))
 
 
+# ============================================================================
+# Advanced Grouping System
+# ============================================================================
+
+class GroupManager:
+    """Manages hierarchical groups for connections"""
+    
+    def __init__(self, config: Config):
+        self.config = config
+        self.groups = {}  # group_id -> GroupInfo
+        self.connections = {}  # connection_nickname -> group_id
+        self._load_groups()
+    
+    def _load_groups(self):
+        """Load groups from configuration"""
+        try:
+            groups_data = self.config.get_setting('connection_groups', {})
+            self.groups = groups_data.get('groups', {})
+            self.connections = groups_data.get('connections', {})
+        except Exception as e:
+            logger.error(f"Failed to load groups: {e}")
+            self.groups = {}
+            self.connections = {}
+    
+    def _save_groups(self):
+        """Save groups to configuration"""
+        try:
+            groups_data = {
+                'groups': self.groups,
+                'connections': self.connections
+            }
+            self.config.set_setting('connection_groups', groups_data)
+        except Exception as e:
+            logger.error(f"Failed to save groups: {e}")
+    
+    def create_group(self, name: str, parent_id: str = None) -> str:
+        """Create a new group and return its ID"""
+        import uuid
+        group_id = str(uuid.uuid4())
+        
+        self.groups[group_id] = {
+            'id': group_id,
+            'name': name,
+            'parent_id': parent_id,
+            'children': [],
+            'connections': [],
+            'expanded': True,
+            'order': len(self.groups)
+        }
+        
+        if parent_id and parent_id in self.groups:
+            self.groups[parent_id]['children'].append(group_id)
+        
+        self._save_groups()
+        return group_id
+    
+    def delete_group(self, group_id: str):
+        """Delete a group and move its contents to parent or root"""
+        if group_id not in self.groups:
+            return
+        
+        group = self.groups[group_id]
+        parent_id = group.get('parent_id')
+        
+        # Move connections to parent or root
+        for conn_nickname in group['connections']:
+            self.connections[conn_nickname] = parent_id
+        
+        # Move child groups to parent
+        for child_id in group['children']:
+            if child_id in self.groups:
+                self.groups[child_id]['parent_id'] = parent_id
+                if parent_id and parent_id in self.groups:
+                    self.groups[parent_id]['children'].append(child_id)
+        
+        # Remove from parent's children
+        if parent_id and parent_id in self.groups:
+            if group_id in self.groups[parent_id]['children']:
+                self.groups[parent_id]['children'].remove(group_id)
+        
+        # Delete the group
+        del self.groups[group_id]
+        self._save_groups()
+    
+    def move_connection(self, connection_nickname: str, target_group_id: str = None):
+        """Move a connection to a different group"""
+        self.connections[connection_nickname] = target_group_id
+        
+        # Remove from old group
+        for group in self.groups.values():
+            if connection_nickname in group['connections']:
+                group['connections'].remove(connection_nickname)
+        
+        # Add to new group
+        if target_group_id and target_group_id in self.groups:
+            if connection_nickname not in self.groups[target_group_id]['connections']:
+                self.groups[target_group_id]['connections'].append(connection_nickname)
+        
+        self._save_groups()
+    
+    def get_group_hierarchy(self) -> List[Dict]:
+        """Get the complete group hierarchy"""
+        def build_tree(parent_id=None):
+            result = []
+            for group_id, group in self.groups.items():
+                if group.get('parent_id') == parent_id:
+                    group_copy = group.copy()
+                    group_copy['children'] = build_tree(group_id)
+                    result.append(group_copy)
+            return sorted(result, key=lambda x: x.get('order', 0))
+        
+        return build_tree()
+    
+    def get_connection_group(self, connection_nickname: str) -> str:
+        """Get the group ID for a connection"""
+        return self.connections.get(connection_nickname)
+    
+    def set_group_expanded(self, group_id: str, expanded: bool):
+        """Set whether a group is expanded"""
+        if group_id in self.groups:
+            self.groups[group_id]['expanded'] = expanded
+            self._save_groups()
+    
+    def reorder_connection_in_group(self, connection_nickname: str, target_connection_nickname: str, position: str):
+        """Reorder a connection within the same group relative to another connection"""
+        # Get the group for both connections
+        source_group_id = self.connections.get(connection_nickname)
+        target_group_id = self.connections.get(target_connection_nickname)
+        
+        # Both connections must be in the same group
+        if source_group_id != target_group_id or not source_group_id:
+            return
+        
+        group = self.groups.get(source_group_id)
+        if not group:
+            return
+        
+        connections = group['connections']
+        
+        # Remove the source connection from its current position
+        if connection_nickname in connections:
+            connections.remove(connection_nickname)
+        
+        # Find the target connection's position
+        try:
+            target_index = connections.index(target_connection_nickname)
+        except ValueError:
+            # Target not found, append to end
+            connections.append(connection_nickname)
+            self._save_groups()
+            return
+        
+        # Insert at the appropriate position
+        if position == 'above':
+            connections.insert(target_index, connection_nickname)
+        else:  # 'below'
+            connections.insert(target_index + 1, connection_nickname)
+        
+        self._save_groups()
+
+
+class GroupRow(Gtk.ListBoxRow):
+    """Row widget for group headers"""
+    
+    __gsignals__ = {
+        'group-toggled': (GObject.SignalFlags.RUN_FIRST, None, (str, bool))
+    }
+    
+    def __init__(self, group_info: Dict, group_manager: GroupManager, connections_dict: Dict = None):
+        super().__init__()
+        self.group_info = group_info
+        self.group_manager = group_manager
+        self.group_id = group_info['id']
+        self.connections_dict = connections_dict or {}
+        
+        # Create main content box
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        content.set_margin_start(12)
+        content.set_margin_end(12)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+        
+        # Expand/collapse button
+        self.expand_button = Gtk.Button()
+        self.expand_button.set_icon_name('pan-end-symbolic')
+        self.expand_button.add_css_class('flat')
+        self.expand_button.add_css_class('group-expand-button')
+        self.expand_button.set_can_focus(False)
+        self.expand_button.connect('clicked', self._on_expand_clicked)
+        content.append(self.expand_button)
+        
+        # Group icon
+        icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+        icon.set_icon_size(Gtk.IconSize.NORMAL)
+        content.append(icon)
+        
+        # Group info
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        info_box.set_hexpand(True)
+        
+        # Group name label
+        self.name_label = Gtk.Label()
+        self.name_label.set_markup(f"<b>{group_info['name']}</b>")
+        self.name_label.set_halign(Gtk.Align.START)
+        info_box.append(self.name_label)
+        
+        # Connection count label
+        self.count_label = Gtk.Label()
+        self.count_label.add_css_class('dim-label')
+        self.count_label.set_halign(Gtk.Align.START)
+        info_box.append(self.count_label)
+        
+        content.append(info_box)
+        
+        # Drag handle
+        drag_handle = Gtk.Image.new_from_icon_name('drag-handle-symbolic')
+        drag_handle.add_css_class('dim-label')
+        content.append(drag_handle)
+        
+        self.set_child(content)
+        self.set_selectable(False)
+        self.set_can_focus(False)
+        
+        # Update display
+        self._update_display()
+        
+        # Setup drag source
+        self._setup_drag_source()
+    
+    def _update_display(self):
+        """Update the display based on current group state"""
+        # Update expand/collapse icon
+        if self.group_info.get('expanded', True):
+            self.expand_button.set_icon_name('pan-down-symbolic')
+        else:
+            self.expand_button.set_icon_name('pan-end-symbolic')
+        
+        # Update connection count - only count connections that actually exist
+        actual_connections = []
+        for conn_nickname in self.group_info.get('connections', []):
+            if conn_nickname in self.connections_dict:
+                actual_connections.append(conn_nickname)
+        
+        count = len(actual_connections)
+        if count == 1:
+            self.count_label.set_text("1 connection")
+        else:
+            self.count_label.set_text(f"{count} connections")
+    
+    def _on_expand_clicked(self, button):
+        """Handle expand/collapse button click"""
+        expanded = not self.group_info.get('expanded', True)
+        self.group_info['expanded'] = expanded
+        self.group_manager.set_group_expanded(self.group_id, expanded)
+        self._update_display()
+        
+        # Emit signal to parent to rebuild the list
+        self.emit('group-toggled', self.group_id, expanded)
+    
+    def _setup_drag_source(self):
+        """Setup drag source for group reordering"""
+        drag_source = Gtk.DragSource()
+        drag_source.set_actions(Gdk.DragAction.MOVE)
+        drag_source.connect('prepare', self._on_drag_prepare)
+        self.add_controller(drag_source)
+    
+    def _on_drag_prepare(self, source, x, y):
+        """Prepare drag data"""
+        data = {
+            'type': 'group',
+            'group_id': self.group_id
+        }
+        return Gdk.ContentProvider.new_for_value(GObject.Value(GObject.TYPE_PYOBJECT, data))
+
+
 class ConnectionRow(Gtk.ListBoxRow):
     """Row widget for connection list"""
     
@@ -1491,6 +1766,24 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.update_status()
         # Update forwarding indicators
         self._update_forwarding_indicators()
+        
+        # Setup drag source for connection reordering
+        self._setup_drag_source()
+    
+    def _setup_drag_source(self):
+        """Setup drag source for connection reordering"""
+        drag_source = Gtk.DragSource()
+        drag_source.set_actions(Gdk.DragAction.MOVE)
+        drag_source.connect('prepare', self._on_drag_prepare)
+        self.add_controller(drag_source)
+    
+    def _on_drag_prepare(self, source, x, y):
+        """Prepare drag data"""
+        data = {
+            'type': 'connection',
+            'connection_nickname': self.connection.nickname
+        }
+        return Gdk.ContentProvider.new_for_value(GObject.Value(GObject.TYPE_PYOBJECT, data))
 
     @staticmethod
     def _install_pf_css():
@@ -2455,6 +2748,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.connection_manager = ConnectionManager()
         self.config = Config()
         self.key_manager = KeyManager()
+        self.group_manager = GroupManager(self.config)
         
         # UI state
         self.active_terminals: Dict[Connection, TerminalWidget] = {}  # most recent terminal per connection
@@ -2512,6 +2806,20 @@ class MainWindow(Adw.ApplicationWindow):
         self.broadcast_command_action = Gio.SimpleAction.new('broadcast-command', None)
         self.broadcast_command_action.connect('activate', self.on_broadcast_command_action)
         self.add_action(self.broadcast_command_action)
+        
+        # Group management actions
+        self.create_group_action = Gio.SimpleAction.new('create-group', None)
+        self.create_group_action.connect('activate', self.on_create_group_action)
+        self.add_action(self.create_group_action)
+        
+        self.edit_group_action = Gio.SimpleAction.new('edit-group', None)
+        self.edit_group_action.connect('activate', self.on_edit_group_action)
+        self.add_action(self.edit_group_action)
+        logger.debug("Edit group action registered")
+        
+        self.delete_group_action = Gio.SimpleAction.new('delete-group', None)
+        self.delete_group_action.connect('activate', self.on_delete_group_action)
+        self.add_action(self.delete_group_action)
         # (Toasts disabled) Remove any toast-related actions if previously defined
         try:
             if hasattr(self, '_toast_reconnect_action'):
@@ -2578,6 +2886,41 @@ class MainWindow(Adw.ApplicationWindow):
             #   box-shadow: 0 0 8px 2px @accent_bg_color inset;
             #border: 2px solid @accent_bg_color;  /* Adds a solid border of 2px thickness */
               border-radius: 8px;
+            }
+            
+            /* Group styling */
+            .group-expand-button {
+              min-width: 16px;
+              min-height: 16px;
+              padding: 2px;
+              border-radius: 4px;
+            }
+            
+            .group-expand-button:hover {
+              background: alpha(@accent_bg_color, 0.1);
+            }
+            
+            .group-separator {
+              margin: 8px 0;
+              background: alpha(@foreground_color, 0.1);
+            }
+            
+            /* Drag and drop visual feedback */
+            row.drag-highlight {
+              background: alpha(@accent_bg_color, 0.2);
+              border: 2px dashed @accent_bg_color;
+              border-radius: 8px;
+            }
+            
+            /* Drop indicators */
+            row.drop-above {
+              border-top: 3px solid @accent_bg_color;
+              background: alpha(@accent_bg_color, 0.1);
+            }
+            
+            row.drop-below {
+              border-bottom: 3px solid @accent_bg_color;
+              background: alpha(@accent_bg_color, 0.1);
             }
             """
             provider.load_from_data(css.encode('utf-8'))
@@ -2999,16 +3342,25 @@ class MainWindow(Adw.ApplicationWindow):
                         return
                     self.connection_list.select_row(row)
                     self._context_menu_connection = getattr(row, 'connection', None)
+                    self._context_menu_group_row = row if hasattr(row, 'group_id') else None
                     menu = Gio.Menu()
                     
-                    # Add menu items
-                    menu.append(_('+ Open New Connection'), 'win.open-new-connection')
-                    menu.append(_('✏ Edit Connection'), 'win.edit-connection')
-                    menu.append(_('🗄 Manage Files'), 'win.manage-files')
-                    # Only show system terminal option when not in Flatpak
-                    if not is_running_in_flatpak():
-                        menu.append(_('💻 Open in System Terminal'), 'win.open-in-system-terminal')
-                    menu.append(_('🗑 Delete Connection'), 'win.delete-connection')
+                    # Add menu items based on row type
+                    if hasattr(row, 'group_id'):
+                        # Group row context menu
+                        logger.debug(f"Creating context menu for group row: {row.group_id}")
+                        menu.append(_('✏ Edit Group'), 'win.edit-group')
+                        menu.append(_('🗑 Delete Group'), 'win.delete-group')
+                    else:
+                        # Connection row context menu
+                        logger.debug(f"Creating context menu for connection row: {getattr(row, 'connection', None)}")
+                        menu.append(_('+ Open New Connection'), 'win.open-new-connection')
+                        menu.append(_('✏ Edit Connection'), 'win.edit-connection')
+                        menu.append(_('🗄 Manage Files'), 'win.manage-files')
+                        # Only show system terminal option when not in Flatpak
+                        if not is_running_in_flatpak():
+                            menu.append(_('💻 Open in System Terminal'), 'win.open-in-system-terminal')
+                        menu.append(_('🗑 Delete Connection'), 'win.delete-connection')
                     pop = Gtk.PopoverMenu.new_from_model(menu)
                     pop.set_parent(self.connection_list)
                     try:
@@ -3212,8 +3564,185 @@ class MainWindow(Adw.ApplicationWindow):
 
     def setup_connection_list_dnd(self):
         """Set up drag and drop for connection list reordering"""
-        # TODO: Implement drag and drop reordering
-        pass
+        # Add drop target to the connection list
+        drop_target = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
+        drop_target.connect('drop', self._on_connection_list_drop)
+        drop_target.connect('motion', self._on_connection_list_motion)
+        drop_target.connect('leave', self._on_connection_list_leave)
+        self.connection_list.add_controller(drop_target)
+        
+        # Store drop indicator state
+        self._drop_indicator_row = None
+        self._drop_indicator_position = None
+    
+    def _on_connection_list_motion(self, target, x, y):
+        """Handle motion over the connection list for visual feedback"""
+        try:
+            # Clear previous indicator
+            self._clear_drop_indicator()
+            
+            # Find the row at the current position
+            row = self.connection_list.get_row_at_y(int(y))
+            if not row:
+                return Gdk.DragAction.MOVE
+            
+            # Determine drop position (above/below the row)
+            row_y = row.get_allocation().y
+            row_height = row.get_allocation().height
+            relative_y = y - row_y
+            
+            if relative_y < row_height / 2:
+                position = 'above'
+            else:
+                position = 'below'
+            
+            # Show drop indicator
+            self._show_drop_indicator(row, position)
+            
+            return Gdk.DragAction.MOVE
+        except Exception as e:
+            logger.error(f"Error handling motion: {e}")
+            return Gdk.DragAction.MOVE
+    
+    def _on_connection_list_leave(self, target):
+        """Handle leaving the drop target area"""
+        self._clear_drop_indicator()
+        return True
+    
+    def _show_drop_indicator(self, row, position):
+        """Show visual drop indicator"""
+        try:
+            # Add CSS class to the row for visual feedback
+            if position == 'above':
+                row.add_css_class('drop-above')
+            else:
+                row.add_css_class('drop-below')
+            
+            self._drop_indicator_row = row
+            self._drop_indicator_position = position
+        except Exception as e:
+            logger.error(f"Error showing drop indicator: {e}")
+    
+    def _clear_drop_indicator(self):
+        """Clear visual drop indicator"""
+        try:
+            if self._drop_indicator_row:
+                self._drop_indicator_row.remove_css_class('drop-above')
+                self._drop_indicator_row.remove_css_class('drop-below')
+                self._drop_indicator_row = None
+                self._drop_indicator_position = None
+        except Exception as e:
+            logger.error(f"Error clearing drop indicator: {e}")
+    
+    def _on_connection_list_drop(self, target, value, x, y):
+        """Handle drops on the connection list"""
+        try:
+            # Clear drop indicator
+            self._clear_drop_indicator()
+            
+            if not isinstance(value, dict):
+                return False
+            
+            drop_type = value.get('type')
+            if drop_type == 'connection':
+                connection_nickname = value.get('connection_nickname')
+                if connection_nickname:
+                    # Get current group of the connection
+                    current_group_id = self.group_manager.get_connection_group(connection_nickname)
+                    
+                    # Find the target row and position
+                    target_row = self.connection_list.get_row_at_y(int(y))
+                    if not target_row:
+                        return False
+                    
+                    # Get drop position (above/below)
+                    row_y = target_row.get_allocation().y
+                    row_height = target_row.get_allocation().height
+                    relative_y = y - row_y
+                    position = 'above' if relative_y < row_height / 2 else 'below'
+                    
+                    # Determine if we're dropping on a group or connection
+                    if hasattr(target_row, 'group_id'):
+                        # Dropping on a group
+                        target_group_id = target_row.group_id
+                        if target_group_id != current_group_id:
+                            # Move to different group
+                            self.group_manager.move_connection(connection_nickname, target_group_id)
+                            self.rebuild_connection_list()
+                    else:
+                        # Dropping on a connection
+                        target_connection = getattr(target_row, 'connection', None)
+                        if target_connection:
+                            target_group_id = self.group_manager.get_connection_group(target_connection.nickname)
+                            if target_group_id != current_group_id:
+                                # Move to different group
+                                self.group_manager.move_connection(connection_nickname, target_group_id)
+                                self.rebuild_connection_list()
+                            else:
+                                # Reorder within the same group
+                                self.group_manager.reorder_connection_in_group(
+                                    connection_nickname, 
+                                    target_connection.nickname, 
+                                    position
+                                )
+                                self.rebuild_connection_list()
+                    
+                    return True
+            
+            elif drop_type == 'group':
+                group_id = value.get('group_id')
+                if group_id:
+                    # Handle group reordering
+                    target_row = self.connection_list.get_row_at_y(int(y))
+                    if target_row and hasattr(target_row, 'group_id'):
+                        target_group_id = target_row.group_id
+                        if target_group_id != group_id:
+                            self._move_group(group_id, target_group_id)
+                            self.rebuild_connection_list()
+                            return True
+            
+            return False
+        except Exception as e:
+            logger.error(f"Error handling drop: {e}")
+            return False
+    
+    def _get_target_group_at_position(self, x, y):
+        """Get the target group ID at the given position"""
+        try:
+            row = self.connection_list.get_row_at_y(int(y))
+            if row and hasattr(row, 'group_id'):
+                return row.group_id
+            elif row and hasattr(row, 'connection'):
+                # If dropping on a connection, get its group
+                connection = row.connection
+                return self.group_manager.get_connection_group(connection.nickname)
+            return None
+        except Exception:
+            return None
+    
+    def _move_group(self, group_id, target_parent_id):
+        """Move a group to a new parent"""
+        try:
+            if group_id not in self.group_manager.groups:
+                return
+            
+            group = self.group_manager.groups[group_id]
+            old_parent_id = group.get('parent_id')
+            
+            # Remove from old parent
+            if old_parent_id and old_parent_id in self.group_manager.groups:
+                if group_id in self.group_manager.groups[old_parent_id]['children']:
+                    self.group_manager.groups[old_parent_id]['children'].remove(group_id)
+            
+            # Add to new parent
+            group['parent_id'] = target_parent_id
+            if target_parent_id and target_parent_id in self.group_manager.groups:
+                if group_id not in self.group_manager.groups[target_parent_id]['children']:
+                    self.group_manager.groups[target_parent_id]['children'].append(group_id)
+            
+            self.group_manager._save_groups()
+        except Exception as e:
+            logger.error(f"Error moving group: {e}")
 
     def create_menu(self):
         """Create application menu"""
@@ -3221,6 +3750,7 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Add all menu items directly to the main menu
         menu.append('New Connection', 'app.new-connection')
+        menu.append('Create Group', 'win.create-group')
         menu.append('Local Terminal', 'app.local-terminal')
         menu.append('Generate SSH Key', 'app.new-key')
         menu.append('Broadcast Command', 'app.broadcast-command')
@@ -3232,19 +3762,101 @@ class MainWindow(Adw.ApplicationWindow):
         return menu
 
     def setup_connections(self):
-        """Load and display existing connections"""
-        connections = self.connection_manager.get_connections()
-        
-        for connection in connections:
-            self.add_connection_row(connection)
+        """Load and display existing connections with grouping"""
+        self.rebuild_connection_list()
         
         # Select first connection if available
+        connections = self.connection_manager.get_connections()
         if connections:
             first_row = self.connection_list.get_row_at_index(0)
             if first_row:
                 self.connection_list.select_row(first_row)
                 # Defer focus to the list to ensure keyboard navigation works immediately
                 GLib.idle_add(self._focus_connection_list_first_row)
+    
+    def rebuild_connection_list(self):
+        """Rebuild the connection list with groups"""
+        # Clear existing rows
+        child = self.connection_list.get_first_child()
+        while child:
+            next_child = child.get_next_sibling()
+            self.connection_list.remove(child)
+            child = next_child
+        self.connection_rows.clear()
+        
+        # Get all connections
+        connections = self.connection_manager.get_connections()
+        connections_dict = {conn.nickname: conn for conn in connections}
+        
+        # Get group hierarchy
+        hierarchy = self.group_manager.get_group_hierarchy()
+        
+        # Build the list with groups
+        self._build_grouped_list(hierarchy, connections_dict, 0)
+        
+        # Add ungrouped connections at the end
+        ungrouped_connections = []
+        for conn in connections:
+            if not self.group_manager.get_connection_group(conn.nickname):
+                ungrouped_connections.append(conn)
+        
+        if ungrouped_connections:
+            # Add separator if there are groups above
+            if hierarchy:
+                separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+                separator.add_css_class('group-separator')
+                self.connection_list.append(separator)
+            
+            # Add ungrouped connections
+            for conn in sorted(ungrouped_connections, key=lambda c: c.nickname.lower()):
+                self.add_connection_row(conn)
+    
+    def _build_grouped_list(self, hierarchy, connections_dict, level):
+        """Recursively build the grouped connection list"""
+        for group_info in hierarchy:
+            # Add group row
+            group_row = GroupRow(group_info, self.group_manager, connections_dict)
+            group_row.connect('group-toggled', self._on_group_toggled)
+            self.connection_list.append(group_row)
+            
+            # Add connections in this group if expanded
+            if group_info.get('expanded', True):
+                group_connections = []
+                for conn_nickname in group_info.get('connections', []):
+                    if conn_nickname in connections_dict:
+                        group_connections.append(connections_dict[conn_nickname])
+                
+                # Use the order from the group's connections list (preserves custom ordering)
+                for conn_nickname in group_info.get('connections', []):
+                    if conn_nickname in connections_dict:
+                        conn = connections_dict[conn_nickname]
+                        self.add_connection_row(conn, level + 1)
+            
+            # Recursively add child groups
+            if group_info.get('children'):
+                self._build_grouped_list(group_info['children'], connections_dict, level + 1)
+    
+    def _on_group_toggled(self, group_row, group_id, expanded):
+        """Handle group expand/collapse"""
+        self.rebuild_connection_list()
+    
+    def add_connection_row(self, connection: Connection, indent_level: int = 0):
+        """Add a connection row to the list with optional indentation"""
+        row = ConnectionRow(connection)
+        
+        # Apply indentation for grouped connections
+        if indent_level > 0:
+            content = row.get_child()
+            if hasattr(content, 'get_child'):  # Handle overlay
+                content = content.get_child()
+            content.set_margin_start(12 + (indent_level * 20))
+        
+        self.connection_list.append(row)
+        self.connection_rows[connection] = row
+        
+        # Apply current hide-hosts setting to new row
+        if hasattr(row, 'apply_hide_hosts'):
+            row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
 
     def setup_signals(self):
         """Connect to manager signals"""
@@ -3256,14 +3868,7 @@ class MainWindow(Adw.ApplicationWindow):
         # Config signals
         self.config.connect('setting-changed', self.on_setting_changed)
 
-    def add_connection_row(self, connection: Connection):
-        """Add a connection row to the list"""
-        row = ConnectionRow(connection)
-        self.connection_list.append(row)
-        self.connection_rows[connection] = row
-        # Apply current hide-hosts setting to new row
-        if hasattr(row, 'apply_hide_hosts'):
-            row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
+
 
     def show_welcome_view(self):
         """Show the welcome/help view when no connections are active"""
@@ -4157,7 +4762,10 @@ class MainWindow(Adw.ApplicationWindow):
         """Handle edit connection button click"""
         selected_row = self.connection_list.get_selected_row()
         if selected_row:
-            self.show_connection_dialog(selected_row.connection)
+            if hasattr(selected_row, 'connection'):
+                self.show_connection_dialog(selected_row.connection)
+            else:
+                logger.debug("Cannot edit group row")
 
     def on_sidebar_toggle(self, button):
         """Handle sidebar toggle button click"""
@@ -5244,6 +5852,10 @@ class MainWindow(Adw.ApplicationWindow):
         if not selected_row:
             return
         
+        if not hasattr(selected_row, 'connection'):
+            logger.debug("Cannot delete group row")
+            return
+        
         connection = selected_row.connection
         
         # If host has active connections/tabs, warn about closing them first
@@ -5502,7 +6114,7 @@ class MainWindow(Adw.ApplicationWindow):
     def on_connection_added(self, manager, connection):
         """Handle new connection added to the connection manager"""
         logger.info(f"New connection added: {connection.nickname}")
-        self.add_connection_row(connection)
+        self.rebuild_connection_list()
         
     def on_terminal_title_changed(self, terminal, title):
         """Handle terminal title change"""
@@ -5523,6 +6135,10 @@ class MainWindow(Adw.ApplicationWindow):
             row = self.connection_rows[connection]
             self.connection_list.remove(row)
             del self.connection_rows[connection]
+        
+        # Remove from group manager
+        self.group_manager.connections.pop(connection.nickname, None)
+        self.group_manager._save_groups()
 
         # Close all terminals for this connection and clean up maps
         terminals = list(self.connection_to_terminals.get(connection, []))
@@ -5558,7 +6174,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def on_connection_added(self, manager, connection):
         """Handle new connection added"""
-        self.add_connection_row(connection)
+        self.rebuild_connection_list()
 
     def on_connection_removed(self, manager, connection):
         """Handle connection removed (multi-tab aware)"""
@@ -5567,6 +6183,10 @@ class MainWindow(Adw.ApplicationWindow):
             row = self.connection_rows[connection]
             self.connection_list.remove(row)
             del self.connection_rows[connection]
+        
+        # Remove from group manager
+        self.group_manager.connections.pop(connection.nickname, None)
+        self.group_manager._save_groups()
 
         # Close all terminals for this connection and clean up maps
         terminals = list(self.connection_to_terminals.get(connection, []))
@@ -5963,21 +6583,222 @@ class MainWindow(Adw.ApplicationWindow):
                 error_dialog.present()
             except Exception:
                 pass
+    
+    def on_create_group_action(self, action, param=None):
+        """Handle create group action"""
+        try:
+            # Create dialog for group name input
+            dialog = Gtk.Dialog(
+                title=_("Create New Group"),
+                transient_for=self,
+                modal=True,
+                destroy_with_parent=True
+            )
+            
+            dialog.set_default_size(400, 150)
+            dialog.set_resizable(False)
+            
+            content_area = dialog.get_content_area()
+            content_area.set_margin_start(20)
+            content_area.set_margin_end(20)
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
+            content_area.set_spacing(12)
+            
+            # Add label
+            label = Gtk.Label(label=_("Enter a name for the new group:"))
+            label.set_wrap(True)
+            label.set_xalign(0)
+            content_area.append(label)
+            
+            # Add text entry
+            entry = Gtk.Entry()
+            entry.set_placeholder_text(_("e.g., Production Servers"))
+            entry.set_activates_default(True)
+            entry.set_hexpand(True)
+            content_area.append(entry)
+            
+            # Add buttons
+            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
+            create_button = dialog.add_button(_('Create'), Gtk.ResponseType.OK)
+            create_button.get_style_context().add_class('suggested-action')
+            
+            dialog.set_default_response(Gtk.ResponseType.OK)
+            
+            def on_response(dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    group_name = entry.get_text().strip()
+                    if group_name:
+                        self.group_manager.create_group(group_name)
+                        self.rebuild_connection_list()
+                    else:
+                        # Show error for empty name
+                        error_dialog = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Error"),
+                            body=_("Please enter a group name.")
+                        )
+                        error_dialog.add_response('ok', _('OK'))
+                        error_dialog.present()
+                dialog.destroy()
+            
+            dialog.connect('response', on_response)
+            dialog.present()
+            
+            def focus_entry():
+                entry.grab_focus()
+                return False
+            
+            GLib.idle_add(focus_entry)
             
         except Exception as e:
-            logger.error(f"Failed to show broadcast command dialog: {e}")
-            # Show error dialog
-            try:
-                error_dialog = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading=_("Error"),
-                    body=_("Failed to open broadcast command dialog: {}").format(str(e))
-                )
-                error_dialog.add_response('ok', _('OK'))
-                error_dialog.present()
-            except Exception:
-                pass
+            logger.error(f"Failed to show create group dialog: {e}")
+    
+    def on_edit_group_action(self, action, param=None):
+        """Handle edit group action"""
+        try:
+            logger.debug("Edit group action triggered")
+            # Get the group row from context menu or selected row
+            selected_row = getattr(self, '_context_menu_group_row', None)
+            if not selected_row:
+                selected_row = self.connection_list.get_selected_row()
+            logger.debug(f"Selected row: {selected_row}")
+            if not selected_row:
+                logger.debug("No selected row")
+                return
+            if not hasattr(selected_row, 'group_id'):
+                logger.debug("Selected row is not a group row")
+                return
+            
+            group_id = selected_row.group_id
+            logger.debug(f"Group ID: {group_id}")
+            group_info = self.group_manager.groups.get(group_id)
+            if not group_info:
+                logger.debug(f"Group info not found for ID: {group_id}")
+                return
+            
+            # Create dialog for group name editing
+            dialog = Gtk.Dialog(
+                title=_("Edit Group"),
+                transient_for=self,
+                modal=True,
+                destroy_with_parent=True
+            )
+            
+            dialog.set_default_size(400, 150)
+            dialog.set_resizable(False)
+            
+            content_area = dialog.get_content_area()
+            content_area.set_margin_start(20)
+            content_area.set_margin_end(20)
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
+            content_area.set_spacing(12)
+            
+            # Add label
+            label = Gtk.Label(label=_("Enter a new name for the group:"))
+            label.set_wrap(True)
+            label.set_xalign(0)
+            content_area.append(label)
+            
+            # Add text entry
+            entry = Gtk.Entry()
+            entry.set_text(group_info['name'])
+            entry.set_activates_default(True)
+            entry.set_hexpand(True)
+            content_area.append(entry)
+            
+            # Add buttons
+            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
+            save_button = dialog.add_button(_('Save'), Gtk.ResponseType.OK)
+            save_button.get_style_context().add_class('suggested-action')
+            
+            dialog.set_default_response(Gtk.ResponseType.OK)
+            
+            def on_response(dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    new_name = entry.get_text().strip()
+                    if new_name:
+                        group_info['name'] = new_name
+                        self.group_manager._save_groups()
+                        self.rebuild_connection_list()
+                    else:
+                        # Show error for empty name
+                        error_dialog = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Error"),
+                            body=_("Please enter a group name.")
+                        )
+                        error_dialog.add_response('ok', _('OK'))
+                        error_dialog.present()
+                dialog.destroy()
+            
+            dialog.connect('response', on_response)
+            dialog.present()
+            
+            def focus_entry():
+                entry.grab_focus()
+                entry.select_region(0, -1)
+                return False
+            
+            GLib.idle_add(focus_entry)
+            
+        except Exception as e:
+            logger.error(f"Failed to show edit group dialog: {e}")
+    
+    def on_delete_group_action(self, action, param=None):
+        """Handle delete group action"""
+        try:
+            # Get the group row from context menu or selected row
+            selected_row = getattr(self, '_context_menu_group_row', None)
+            if not selected_row:
+                selected_row = self.connection_list.get_selected_row()
+            if not selected_row or not hasattr(selected_row, 'group_id'):
+                return
+            
+            group_id = selected_row.group_id
+            group_info = self.group_manager.groups.get(group_id)
+            if not group_info:
+                return
+            
+            # Show confirmation dialog
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Delete Group"),
+                body=_("Are you sure you want to delete the group '{}'?\n\nThis will move all connections in this group to the parent group or make them ungrouped.").format(group_info['name'])
+            )
+            
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('delete', _('Delete'))
+            dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response('cancel')
+            
+            def on_response(dialog, response):
+                if response == 'delete':
+                    self.group_manager.delete_group(group_id)
+                    self.rebuild_connection_list()
+                dialog.destroy()
+            
+            dialog.connect('response', on_response)
+            dialog.present()
+            
+        except Exception as e:
+            logger.error(f"Failed to show delete group dialog: {e}")
+    
+    def move_connection_to_group(self, connection_nickname: str, target_group_id: str = None):
+        """Move a connection to a specific group"""
+        try:
+            self.group_manager.move_connection(connection_nickname, target_group_id)
+            self.rebuild_connection_list()
+        except Exception as e:
+            logger.error(f"Failed to move connection {connection_nickname} to group: {e}")
+    
+    def get_available_groups(self) -> List[Dict]:
+        """Get list of available groups for selection"""
+        return self.group_manager.get_group_hierarchy()
 
     def open_in_system_terminal(self, connection):
         """Open the connection in the system's default terminal"""
@@ -6645,7 +7466,7 @@ class MainWindow(Adw.ApplicationWindow):
                     row.update_display()
                 else:
                     # If the connection is not in the rows, rebuild the list
-                    self._rebuild_connections_list()
+                    self.rebuild_connection_list()
                 
                 logger.info(f"Updated connection: {old_connection.nickname}")
                 
@@ -6690,7 +7511,7 @@ class MainWindow(Adw.ApplicationWindow):
                     # Reload from SSH config and rebuild list immediately
                     try:
                         self.connection_manager.load_ssh_config()
-                        self._rebuild_connections_list()
+                        self.rebuild_connection_list()
                     except Exception:
                         pass
                     # Persist per-connection metadata then reload config
@@ -6702,7 +7523,7 @@ class MainWindow(Adw.ApplicationWindow):
                         })
                         try:
                             self.connection_manager.load_ssh_config()
-                            self._rebuild_connections_list()
+                            self.rebuild_connection_list()
                         except Exception:
                             pass
                     except Exception:
@@ -6737,17 +7558,7 @@ class MainWindow(Adw.ApplicationWindow):
     def _rebuild_connections_list(self):
         """Rebuild the sidebar connections list from manager state, avoiding duplicates."""
         try:
-            # Clear listbox children
-            child = self.connection_list.get_first_child()
-            while child is not None:
-                nxt = child.get_next_sibling()
-                self.connection_list.remove(child)
-                child = nxt
-            # Clear mapping
-            self.connection_rows.clear()
-            # Re-add from manager
-            for conn in self.connection_manager.get_connections():
-                self.add_connection_row(conn)
+            self.rebuild_connection_list()
         except Exception:
             pass
     def _prompt_reconnect(self, connection):
