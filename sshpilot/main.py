@@ -236,7 +236,7 @@ class SshPilotApplication(Adw.Application):
         """Handle new SSH key action"""
         logging.debug("New SSH key action triggered")
         if self.props.active_window:
-            self.props.active_window.show_key_dialog()
+            self.props.active_window.on_copy_key_to_server_clicked(None)
 
     def on_show_resources(self, action, param):
         """Handle show resources action"""
