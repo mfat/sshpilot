@@ -1816,16 +1816,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 use_external = self.config.get_setting('use-external-terminal', False)
                 if use_external:
                     self.external_terminal_radio.set_active(True)
-                    if hasattr(self, 'external_terminal_box'):
-                        self.external_terminal_box.set_sensitive(True)  # Enable the dropdown when external is selected
                 else:
                     self.builtin_terminal_radio.set_active(True)
-                    if hasattr(self, 'external_terminal_box'):
-                        self.external_terminal_box.set_sensitive(False)  # Disable the dropdown when built-in is selected
-                
-                # Ensure the dropdown sensitivity matches the radio button state
-                if hasattr(self, 'external_terminal_box'):
-                    self.external_terminal_box.set_sensitive(self.external_terminal_radio.get_active())
                 
                 # Connect radio button changes
                 self.builtin_terminal_radio.connect('toggled', self.on_terminal_choice_changed)
@@ -1889,6 +1881,9 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 
                 # Add to group
                 terminal_choice_group.add(self.external_terminal_box)
+                
+                # Set initial sensitivity based on radio button state
+                self.external_terminal_box.set_sensitive(self.external_terminal_radio.get_active())
                 
                 terminal_page.add(terminal_choice_group)
             
@@ -2313,8 +2308,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
         logger.info(f"Terminal choice changed to: {'external' if use_external else 'built-in'}")
         
         # Enable/disable external terminal options
-        if hasattr(self, 'external_terminal_box'):
-            self.external_terminal_box.set_sensitive(use_external)
+        self.external_terminal_box.set_sensitive(use_external)
         
         # Save preference
         self.config.set_setting('use-external-terminal', use_external)
@@ -3839,30 +3833,39 @@ class MainWindow(Adw.ApplicationWindow):
                     self.tab_view.set_selected_page(page)
                     return
         
-        # Create new terminal
-        terminal = TerminalWidget(connection, self.config, self.connection_manager)
+        # Check preferred terminal setting
+        use_external = self.config.get_setting('use-external-terminal', False)
         
-        # Connect signals
-        terminal.connect('connection-established', self.on_terminal_connected)
-        terminal.connect('connection-failed', lambda w, e: logger.error(f"Connection failed: {e}"))
-        terminal.connect('connection-lost', self.on_terminal_disconnected)
-        terminal.connect('title-changed', self.on_terminal_title_changed)
-        
-        # Add to tab view
-        page = self.tab_view.append(terminal)
-        page.set_title(connection.nickname)
-        page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
-        
-        # Store references for multi-tab tracking
-        self.connection_to_terminals.setdefault(connection, []).append(terminal)
-        self.terminal_to_connection[terminal] = connection
-        self.active_terminals[connection] = terminal
-        
-        # Switch to tab view when first connection is made
-        self.show_tab_view()
-        
-        # Activate the new tab
-        self.tab_view.set_selected_page(page)
+        if use_external and not is_running_in_flatpak():
+            # Use external terminal
+            self._open_connection_in_external_terminal(connection)
+            return
+        else:
+            # Use built-in terminal
+            # Create new terminal
+            terminal = TerminalWidget(connection, self.config, self.connection_manager)
+            
+            # Connect signals
+            terminal.connect('connection-established', self.on_terminal_connected)
+            terminal.connect('connection-failed', lambda w, e: logger.error(f"Connection failed: {e}"))
+            terminal.connect('connection-lost', self.on_terminal_disconnected)
+            terminal.connect('title-changed', self.on_terminal_title_changed)
+            
+            # Add to tab view
+            page = self.tab_view.append(terminal)
+            page.set_title(connection.nickname)
+            page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
+            
+            # Store references for multi-tab tracking
+            self.connection_to_terminals.setdefault(connection, []).append(terminal)
+            self.terminal_to_connection[terminal] = connection
+            self.active_terminals[connection] = terminal
+            
+            # Switch to tab view when first connection is made
+            self.show_tab_view()
+            
+            # Activate the new tab
+            self.tab_view.set_selected_page(page)
         
         # Force set colors after the terminal is added to the UI
         def _set_terminal_colors():
@@ -5888,6 +5891,52 @@ class MainWindow(Adw.ApplicationWindow):
             
         except Exception as e:
             logger.error(f"Failed to open system terminal: {e}")
+            self._show_terminal_error_dialog()
+
+    def _open_connection_in_external_terminal(self, connection):
+        """Open the connection in the user's preferred external terminal"""
+        try:
+            # Build the SSH command
+            port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
+            ssh_command = f"ssh{port_text} {connection.username}@{connection.host}"
+            
+            # Get user's preferred terminal
+            terminal_command = self._get_user_preferred_terminal()
+            
+            if not terminal_command:
+                # Fallback to default terminal
+                terminal_command = self._get_default_terminal_command()
+            
+            if not terminal_command:
+                # Show error dialog
+                self._show_terminal_error_dialog()
+                return
+            
+            # Launch the terminal with SSH command
+            if terminal_command in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
+                # These terminals use -- to separate options from command
+                cmd = [terminal_command, '--', 'bash', '-c', f'{ssh_command}; exec bash']
+            elif terminal_command in ['konsole', 'terminator']:
+                # These terminals use -e for command execution
+                cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
+            elif terminal_command in ['alacritty', 'kitty']:
+                # These terminals use -e for command execution
+                cmd = [terminal_command, '-e', 'bash', '-c', f'{ssh_command}; exec bash']
+            elif terminal_command == 'xterm':
+                # xterm uses -e for command execution
+                cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
+            elif terminal_command == 'xdg-terminal':
+                # xdg-terminal opens the default terminal
+                cmd = [terminal_command, ssh_command]
+            else:
+                # Generic fallback
+                cmd = [terminal_command, ssh_command]
+            
+            logger.info(f"Opening connection in external terminal: {' '.join(cmd)}")
+            subprocess.Popen(cmd, start_new_session=True)
+            
+        except Exception as e:
+            logger.error(f"Failed to open connection in external terminal: {e}")
             self._show_terminal_error_dialog()
 
     def _get_default_terminal_command(self):

@@ -75,7 +75,7 @@ class SshPilotApplication(Adw.Application):
         self.create_action('open-new-connection-tab', self.on_open_new_connection_tab, ['<primary><alt>n'])
         self.create_action('toggle-list', self.on_toggle_list, ['<primary>l'])
         self.create_action('new-key', self.on_new_key, ['<primary><shift>k'])
-        self.create_action('local-terminal', self.on_local_terminal, ['<primary>t'])
+        self.create_action('local-terminal', self.on_local_terminal, ['<primary><shift>t'])
         self.create_action('show-resources', self.on_show_resources, ['<primary>r'])
         self.create_action('preferences', self.on_preferences, ['<primary>comma'])
         self.create_action('about', self.on_about)
