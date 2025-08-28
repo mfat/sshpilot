@@ -3175,6 +3175,7 @@ class MainWindow(Adw.ApplicationWindow):
         
         # Add all menu items directly to the main menu
         menu.append('New Connection', 'app.new-connection')
+        menu.append('Local Terminal', 'app.local-terminal')
         menu.append('Generate SSH Key', 'app.new-key')
         menu.append('Preferences', 'app.preferences')
         menu.append('Help', 'app.help')
@@ -3555,6 +3556,77 @@ class MainWindow(Adw.ApplicationWindow):
             preferences_window.present()
         except Exception as e:
             logger.error(f"Failed to show preferences dialog: {e}")
+
+    def show_local_terminal(self):
+        """Show a local terminal tab"""
+        logger.info("Show local terminal tab")
+        try:
+            # Create a local terminal widget
+            from .terminal import TerminalWidget
+            
+            # Create a dummy connection object for local terminal
+            class LocalConnection:
+                def __init__(self):
+                    self.nickname = "Local Terminal"
+                    self.host = "localhost"
+                    self.username = os.getenv('USER', 'user')
+                    self.port = 22
+            
+            local_connection = LocalConnection()
+            
+            # Create terminal widget for local shell
+            logger.info("Creating TerminalWidget...")
+            terminal_widget = TerminalWidget(local_connection, self.config, self.connection_manager)
+            logger.info("TerminalWidget created successfully")
+            
+            # Set up the terminal for local shell (not SSH)
+            logger.info("Setting up local shell...")
+            terminal_widget.setup_local_shell()
+            logger.info("Local shell setup completed")
+            
+            # Add to tab view
+            logger.info("Adding terminal to tab view...")
+            self._add_terminal_tab(terminal_widget, "Local Terminal")
+            
+            # Ensure the terminal widget is properly shown
+            GLib.idle_add(terminal_widget.show)
+            GLib.idle_add(terminal_widget.vte.show)
+            
+            logger.info("Local terminal tab created successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to show local terminal: {e}")
+            # Show error dialog
+            try:
+                dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading="Error",
+                    body=f"Could not open local terminal.\n\n{e}"
+                )
+                dialog.add_response("ok", "OK")
+                dialog.present()
+            except Exception:
+                pass
+
+    def _add_terminal_tab(self, terminal_widget, title):
+        """Add a terminal widget to the tab view"""
+        try:
+            # Add to tab view
+            page = self.tab_view.append(terminal_widget)
+            page.set_title(title)
+            page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
+            
+            # Switch to tab view
+            self.show_tab_view()
+            
+            # Activate the new tab
+            self.tab_view.set_selected_page(page)
+            
+            logger.info(f"Added terminal tab: {title}")
+            
+        except Exception as e:
+            logger.error(f"Failed to add terminal tab: {e}")
 
     def show_about_dialog(self):
         """Show about dialog"""

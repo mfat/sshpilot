@@ -116,7 +116,7 @@ class SSHProcessManager:
             os.killpg(pgid, signal.SIGTERM)
             
             # Wait with timeout
-            for _ in range(50):  # 5 seconds max
+            for _ in range(10):  # 1 second max
                 try:
                     os.killpg(pgid, 0)
                     time.sleep(0.1)
@@ -128,10 +128,6 @@ class SSHProcessManager:
             return True
         except Exception:
             return False
-        finally:
-            with self.lock:
-                if pid in self.processes:
-                    del self.processes[pid]
     
     def register_terminal(self, terminal):
         """Register a terminal for tracking"""
@@ -146,9 +142,9 @@ class SSHProcessManager:
             logger.warning("Cleanup timeout - forcing exit")
             os._exit(1)
         
-        # Set 10-second timeout for entire cleanup
+        # Set 5-second timeout for entire cleanup
         signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(10)
+        signal.alarm(5)
         
         try:
             logger.info("Cleaning up all SSH processes...")
@@ -162,20 +158,22 @@ class SSHProcessManager:
                 processes_to_clean = dict(self.processes)
                 self.processes.clear()
             
-            # Clean up without holding the lock
+            # Clean up processes without holding the lock
             for pid, info in processes_to_clean.items():
+                logger.debug(f"Cleaning up process {pid} (command: {info.get('command', 'unknown')})")
                 self._terminate_process_by_pid(pid)
-                
-                # Clean up any remaining terminals (only if they're still connected)
-                for terminal in list(self.terminals):
-                    try:
-                        if hasattr(terminal, 'disconnect') and hasattr(terminal, 'is_connected') and terminal.is_connected:
-                            terminal.disconnect()
-                    except Exception as e:
-                        logger.error(f"Error cleaning up terminal {id(terminal)}: {e}")
-                
-                # Clear terminal references
-                self.terminals.clear()
+            
+            # Clean up terminals separately
+            for terminal in list(self.terminals):
+                try:
+                    if hasattr(terminal, 'disconnect') and hasattr(terminal, 'is_connected') and terminal.is_connected:
+                        logger.debug(f"Disconnecting terminal {id(terminal)}")
+                        terminal.disconnect()
+                except Exception as e:
+                    logger.error(f"Error cleaning up terminal {id(terminal)}: {e}")
+            
+            # Clear terminal references
+            self.terminals.clear()
                 
             logger.info("SSH process cleanup completed")
         finally:
@@ -898,10 +896,12 @@ class TerminalWidget(Gtk.Box):
             
             # Store process info for cleanup
             with process_manager.lock:
+                # Determine command type based on connection type
+                command_type = 'bash' if hasattr(self.connection, 'host') and self.connection.host == 'localhost' else 'ssh'
                 process_manager.processes[pid] = {
                     'terminal': weakref.ref(self),
                     'start_time': datetime.now(),
-                    'command': 'ssh',
+                    'command': command_type,
                     'pgid': self.process_pgid
                 }
             
@@ -912,13 +912,15 @@ class TerminalWidget(Gtk.Box):
             # Spawn succeeded; mark as connected and hide overlay
             self.is_connected = True
             
-            # Update connection status in the connection manager
-            if hasattr(self, 'connection') and self.connection:
+            # Update connection status in the connection manager (only for SSH connections)
+            if hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'host') and self.connection.host != 'localhost':
                 if hasattr(self, 'connection_manager') and self.connection_manager:
                     self.connection_manager.update_connection_status(self.connection, True)
                     logger.debug(f"Terminal {self.session_id} updated connection status to connected")
                 else:
                     logger.warning(f"Terminal {self.session_id} has no connection manager")
+            elif hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'host') and self.connection.host == 'localhost':
+                logger.debug(f"Local terminal {self.session_id} spawned successfully")
             else:
                 logger.warning(f"Terminal {self.session_id} has no connection object to update")
             
@@ -946,13 +948,15 @@ class TerminalWidget(Gtk.Box):
             logger.warning("Flatpak: Spawn completion callback didn't fire, forcing connection state")
             self.is_connected = True
             
-            # Update connection status in the connection manager
-            if hasattr(self, 'connection') and self.connection:
+            # Update connection status in the connection manager (only for SSH connections)
+            if hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'host') and self.connection.host != 'localhost':
                 if hasattr(self, 'connection_manager') and self.connection_manager:
                     self.connection_manager.update_connection_status(self.connection, True)
                     logger.debug(f"Terminal {self.session_id} updated connection status to connected (fallback)")
                 else:
                     logger.warning(f"Terminal {self.session_id} has no connection manager (fallback)")
+            elif hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'host') and self.connection.host == 'localhost':
+                logger.debug(f"Local terminal {self.session_id} spawned successfully (fallback)")
             else:
                 logger.warning(f"Terminal {self.session_id} has no connection object to update (fallback)")
             
@@ -1177,6 +1181,57 @@ class TerminalWidget(Gtk.Box):
         # Install terminal shortcuts and custom context menu
         self._install_shortcuts()
         self._setup_context_menu()
+
+    def setup_local_shell(self):
+        """Set up the terminal for local shell (not SSH)"""
+        logger.info("Setting up local shell terminal")
+        try:
+            # Hide connecting overlay immediately for local shell
+            self._set_connecting_overlay_visible(False)
+            
+            # Set up the terminal for local shell
+            self.setup_terminal()
+            
+            # Start a simple local shell - just like GNOME Terminal
+            env = os.environ.copy()
+            
+            # Ensure we have a proper environment
+            if 'SHELL' not in env:
+                env['SHELL'] = '/bin/bash'
+            if 'TERM' not in env:
+                env['TERM'] = 'xterm-256color'
+            
+            # Set initial title for local terminal
+            self.emit('title-changed', 'Local Terminal')
+            
+            # Convert environment dict to list for VTE compatibility
+            env_list = []
+            for key, value in env.items():
+                env_list.append(f"{key}={value}")
+            
+            # Start bash shell
+            self.vte.spawn_async(
+                Vte.PtyFlags.DEFAULT,
+                os.path.expanduser('~') or '/',
+                ['bash'],
+                env_list,
+                GLib.SpawnFlags.DEFAULT,
+                None,
+                None,
+                -1,
+                None,
+                self._on_spawn_complete,
+                ()
+            )
+            
+            # Add fallback timer to hide spinner if spawn completion doesn't fire
+            GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
+            
+            logger.info("Local shell terminal setup initiated")
+            
+        except Exception as e:
+            logger.error(f"Failed to setup local shell: {e}")
+            self.emit('connection-failed', str(e))
 
     def _setup_context_menu(self):
         """Set up a robust per-terminal context menu and actions."""
@@ -1434,6 +1489,15 @@ class TerminalWidget(Gtk.Box):
         
         # Disconnect the terminal
         self.disconnect()
+        
+        # Remove from process manager terminals set (only if not already quitting)
+        if not getattr(self, '_is_quitting', False):
+            try:
+                if self in process_manager.terminals:
+                    process_manager.terminals.remove(self)
+                    logger.debug(f"Removed terminal {self.session_id} from process manager terminals set")
+            except Exception as e:
+                logger.debug(f"Error removing terminal from process manager: {e}")
 
     def _terminate_process_tree(self, pid):
         """Terminate a process and all its children"""
@@ -1600,12 +1664,17 @@ class TerminalWidget(Gtk.Box):
                 finally:
                     self._sshpass_tmpdir = None
             
-            # Clean up from process manager
-            with process_manager.lock:
-                for proc_pid in list(process_manager.processes.keys()):
-                    proc_info = process_manager.processes[proc_pid]
-                    if proc_info.get('terminal')() is self:
-                        del process_manager.processes[proc_pid]
+            # Clean up from process manager (only if not quitting)
+            if not getattr(self, '_is_quitting', False):
+                try:
+                    with process_manager.lock:
+                        for proc_pid in list(process_manager.processes.keys()):
+                            proc_info = process_manager.processes[proc_pid]
+                            if proc_info.get('terminal')() is self:
+                                logger.debug(f"Removing process {proc_pid} from process manager for terminal {self.session_id}")
+                                del process_manager.processes[proc_pid]
+                except Exception as e:
+                    logger.debug(f"Error cleaning up from process manager: {e}")
             
             # Do not hard-reset here; keep current theme/colors
             
