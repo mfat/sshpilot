@@ -1054,16 +1054,26 @@ class SshCopyIdWindow(Adw.Window):
             gen_box.append(self.row_key_name)
 
             # Key type
-            self.type_row = Adw.ComboRow()
-            self.type_row.set_title("Key type")
+            key_type_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            key_type_label = Gtk.Label(label="Key type:", xalign=0)
+            self.type_dropdown = Gtk.DropDown()
             self._types_model = Gtk.StringList.new(["ed25519", "rsa"])
-            self.type_row.set_model(self._types_model)
-            self.type_row.set_selected(0)
-            gen_box.append(self.type_row)
+            self.type_dropdown.set_model(self._types_model)
+            self.type_dropdown.set_selected(0)
+            key_type_box.append(key_type_label)
+            key_type_box.append(self.type_dropdown)
+            gen_box.append(key_type_box)
 
             # Passphrase toggle + entries
             self.row_pass_toggle = Adw.SwitchRow()
             self.row_pass_toggle.set_title("Encrypt with passphrase")
+            self.row_pass_toggle.set_activatable(True)  # Make the entire row clickable
+            
+            # Add a click controller to handle clicks on the entire row
+            click_controller = Gtk.GestureClick()
+            click_controller.connect("pressed", self._on_pass_toggle_clicked)
+            self.row_pass_toggle.add_controller(click_controller)
+            
             gen_box.append(self.row_pass_toggle)
 
             pass_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -1123,6 +1133,9 @@ class SshCopyIdWindow(Adw.Window):
             # Radio change behavior
             self.radio_existing.connect("toggled", self._on_mode_toggled)
             self.radio_generate.connect("toggled", self._on_mode_toggled)
+            
+            # Key type change behavior
+            self.type_dropdown.connect("notify::selected", self._on_key_type_changed)
 
             logger.info("SshCopyIdWindow: UI elements packed successfully")
         except Exception as e:
@@ -1138,6 +1151,19 @@ class SshCopyIdWindow(Adw.Window):
         # Reveal generator only when "Generate new key" is selected
         logger.info(f"SshCopyIdWindow: Mode toggled, generate active: {self.radio_generate.get_active()}")
         self.generate_revealer.set_reveal_child(self.radio_generate.get_active())
+    
+    def _on_key_type_changed(self, *_):
+        # Update key name placeholder when key type changes
+        type_selection = self.type_dropdown.get_selected()
+        if type_selection == 1:  # RSA
+            self.row_key_name.set_text("id_rsa")
+        else:  # ed25519
+            self.row_key_name.set_text("id_ed25519")
+    
+    def _on_pass_toggle_clicked(self, gesture, n_press, x, y):
+        # Toggle the passphrase switch when the row is clicked
+        current_state = self.row_pass_toggle.get_active()
+        self.row_pass_toggle.set_active(not current_state)
 
     def _reload_existing_keys(self):
         logger.info("SshCopyIdWindow: Reloading existing keys")
@@ -1280,7 +1306,7 @@ class SshCopyIdWindow(Adw.Window):
                 raise ValueError("Key file name must not contain '/' or start with '.'")
 
             # Key type
-            type_selection = self.type_row.get_selected()
+            type_selection = self.type_dropdown.get_selected()
             kt = "ed25519" if type_selection == 0 else "rsa"
             logger.info(f"SshCopyIdWindow: Key type: {kt}")
             logger.debug(f"SshCopyIdWindow: Type selection index: {type_selection}, resolved to: {kt}")
