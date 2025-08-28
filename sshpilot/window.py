@@ -4001,6 +4001,12 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_group_toggled(self, group_row, group_id, expanded):
         """Handle group expand/collapse"""
         self.rebuild_connection_list()
+
+        # Reselect the toggled group so focus doesn't jump to another row
+        for row in self.connection_list:
+            if hasattr(row, "group_id") and row.group_id == group_id:
+                self.connection_list.select_row(row)
+                break
     
     def add_connection_row(self, connection: Connection, indent_level: int = 0):
         """Add a connection row to the list with optional indentation"""
