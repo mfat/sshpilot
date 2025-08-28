@@ -612,8 +612,8 @@ class ConnectionDialog(Adw.PreferencesWindow):
                     config_lines.append(f"    IdentityFile {keyfile_val}")
                     config_lines.append("    IdentitiesOnly yes")
                     
-                    # Add certificate if specified
-                    if certificate_val:
+                    # Add certificate if specified (validate to skip placeholder text)
+                    if certificate_val and certificate_val.lower() not in ['select certificate file (optional)', '']:
                         config_lines.append(f"    CertificateFile {certificate_val}")
                 # For automatic key selection, don't add IdentityFile
             else:  # Password auth
@@ -3251,6 +3251,8 @@ Host {host_nickname}
                             # Also refresh the connection dialog's data to reflect the changes
                             if hasattr(self, 'parent_dialog') and self.parent_dialog:
                                 try:
+                                    # Parse the SSH config content and update the connection UI
+                                    self._sync_connection_ui_from_ssh_config(content)
                                     # Reload the connection data in the dialog to reflect the updated nickname
                                     GLib.idle_add(self.parent_dialog.load_connection_data)
                                     if new_host_name and new_host_name != original_nickname:
@@ -3411,6 +3413,117 @@ Host {host_nickname}
             return None
         except Exception as e:
             logger.error(f"Failed to extract host name from content: {e}")
+            return None
+    
+    def _sync_connection_ui_from_ssh_config(self, ssh_config_content: str):
+        """Parse SSH config content and update the connection UI fields"""
+        try:
+            if not self.connection or not hasattr(self, 'parent_dialog') or not self.parent_dialog:
+                return
+            
+            # Parse the SSH config content
+            config_data = self._parse_ssh_config_content(ssh_config_content)
+            if not config_data:
+                return
+            
+            # Update the connection object with parsed data
+            if 'host' in config_data:
+                self.connection.host = config_data['host']
+            if 'port' in config_data:
+                self.connection.port = config_data['port']
+            if 'username' in config_data:
+                self.connection.username = config_data['username']
+            if 'keyfile' in config_data:
+                self.connection.keyfile = config_data['keyfile']
+            if 'x11_forwarding' in config_data:
+                self.connection.x11_forwarding = config_data['x11_forwarding']
+            if 'forwarding_rules' in config_data:
+                self.connection.forwarding_rules = config_data['forwarding_rules']
+            
+            logger.debug(f"Synced connection UI from SSH config for '{self.connection.nickname}'")
+            
+        except Exception as e:
+            logger.error(f"Failed to sync connection UI from SSH config: {e}")
+    
+    def _parse_ssh_config_content(self, content: str) -> Optional[Dict[str, Any]]:
+        """Parse SSH config content and extract connection settings"""
+        try:
+            lines = content.split('\n')
+            config = {}
+            current_host = None
+            
+            for line in lines:
+                stripped_line = line.strip()
+                
+                # Skip empty lines and comments
+                if not stripped_line or stripped_line.startswith('#'):
+                    continue
+                
+                # Parse Host directive
+                if stripped_line.lower().startswith('host '):
+                    current_host = stripped_line[5:].strip()
+                    config['host'] = current_host
+                    continue
+                
+                # Parse other directives
+                if ' ' in stripped_line:
+                    directive, value = stripped_line.split(' ', 1)
+                    directive = directive.lower()
+                    value = value.strip()
+                    
+                    # Remove quotes if present
+                    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                        value = value[1:-1]
+                    
+                    if directive == 'hostname':
+                        config['host'] = value
+                    elif directive == 'port':
+                        try:
+                            config['port'] = int(value)
+                        except ValueError:
+                            config['port'] = 22
+                    elif directive == 'user':
+                        config['username'] = value
+                    elif directive == 'identityfile':
+                        config['keyfile'] = os.path.expanduser(value)
+                    elif directive == 'forwardx11':
+                        config['x11_forwarding'] = value.lower() in ('yes', 'true', '1', 'on')
+                    elif directive in ['localforward', 'remoteforward', 'dynamicforward']:
+                        if 'forwarding_rules' not in config:
+                            config['forwarding_rules'] = []
+                        
+                        # Parse forwarding rules (simplified version)
+                        if directive == 'localforward':
+                            parts = value.split()
+                            if len(parts) == 2:
+                                listen_spec, dest_spec = parts
+                                if ':' in listen_spec:
+                                    bind_addr, port_str = listen_spec.rsplit(':', 1)
+                                    listen_port = int(port_str)
+                                else:
+                                    bind_addr = '127.0.0.1'
+                                    listen_port = int(listen_spec)
+                                
+                                if ':' in dest_spec:
+                                    remote_host, remote_port = dest_spec.split(':')
+                                    remote_port = int(remote_port)
+                                else:
+                                    remote_host = dest_spec
+                                    remote_port = 22
+                                
+                                config['forwarding_rules'].append({
+                                    'type': 'local',
+                                    'listen_addr': bind_addr,
+                                    'listen_port': listen_port,
+                                    'remote_host': remote_host,
+                                    'remote_port': remote_port,
+                                    'enabled': True
+                                })
+            
+            return config
+            
+        except Exception as e:
+            logger.error(f"Failed to parse SSH config content: {e}")
             return None
     
     def validate_ssh_config_syntax(self, config_text):
