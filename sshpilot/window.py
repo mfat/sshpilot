@@ -6643,7 +6643,7 @@ class MainWindow(Adw.ApplicationWindow):
                                              _('Are you sure you want to delete "{}"?').format(connection.nickname))
                 dialog.add_response('cancel', _('Cancel'))
                 dialog.add_response('delete', _('Delete'))
-                dialog.add_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
+                dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
                 dialog.set_default_response('cancel')
                 dialog.set_close_response('cancel')
 
