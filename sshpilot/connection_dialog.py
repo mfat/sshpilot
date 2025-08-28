@@ -303,6 +303,10 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 self.keyfile_row.set_sensitive(use_specific)
             if hasattr(self, 'key_dropdown'):
                 self.key_dropdown.set_sensitive(use_specific)
+            if hasattr(self, 'certificate_row'):
+                self.certificate_row.set_sensitive(use_specific)
+            if hasattr(self, 'cert_dropdown'):
+                self.cert_dropdown.set_sensitive(use_specific)
         except Exception:
             pass
     
@@ -356,6 +360,17 @@ class ConnectionDialog(Adw.PreferencesDialog):
                     self._sync_key_dropdown_with_current_keyfile()
                 else:
                     logger.debug(f"Skipping invalid keyfile path: {keyfile_path}")
+            
+            # Load certificate path if present
+            if hasattr(self.connection, 'certificate') and self.connection.certificate:
+                cert_path = str(self.connection.certificate).strip()
+                if cert_path and cert_path.lower() not in ['select certificate file (optional)', '']:
+                    logger.debug(f"Setting certificate path in UI: {cert_path}")
+                    self.certificate_row.set_subtitle(cert_path)
+                    # Sync the dropdown to match the loaded certificate
+                    self._sync_cert_dropdown_with_current_cert()
+                else:
+                    logger.debug(f"Skipping invalid certificate path: {cert_path}")
             
             if hasattr(self.connection, 'password') and self.connection.password:
                 self.password_row.set_text(self.connection.password)
@@ -927,6 +942,105 @@ class ConnectionDialog(Adw.PreferencesDialog):
         except Exception as e:
             logger.debug(f"Could not populate detected keys: {e}")
                 
+    def _populate_detected_certificates(self):
+        """Populate certificate dropdown with detected certificate files."""
+        try:
+            certificates = []
+            names = []
+            paths = []
+            
+            # Look for certificate files in ~/.ssh directory
+            ssh_dir = os.path.expanduser("~/.ssh")
+            if os.path.exists(ssh_dir) and os.path.isdir(ssh_dir):
+                for filename in os.listdir(ssh_dir):
+                    if filename.endswith('-cert.pub'):
+                        cert_path = os.path.join(ssh_dir, filename)
+                        if os.path.isfile(cert_path):
+                            certificates.append(cert_path)
+                            names.append(filename)
+                            paths.append(cert_path)
+            
+            # Add placeholder when none
+            if not names:
+                names.append(_("No certificates detected"))
+                paths.append("")
+            
+            # Add browse option
+            names.append(_("Browse…"))
+            paths.append("__BROWSE__")
+            
+            self._cert_paths = paths
+            model = Gtk.StringList()
+            for n in names:
+                model.append(n)
+            self.cert_dropdown.set_model(model)
+            
+            # Preselect certificate that matches the selected key if available
+            preselect_idx = 0
+            try:
+                current_key_path = None
+                if hasattr(self, '_selected_keyfile_path') and self._selected_keyfile_path:
+                    current_key_path = self._selected_keyfile_path
+                elif hasattr(self.keyfile_row, 'get_subtitle'):
+                    current_key_path = self.keyfile_row.get_subtitle() or None
+                if (not current_key_path) and hasattr(self, 'connection') and self.connection:
+                    current_key_path = getattr(self.connection, 'keyfile', None)
+                
+                # Try to find matching certificate
+                if current_key_path:
+                    key_basename = os.path.basename(current_key_path)
+                    # Remove common extensions to get base name
+                    for ext in ['.pub', '.key', '.pem', '.rsa', '.dsa', '.ecdsa', '.ed25519']:
+                        if key_basename.endswith(ext):
+                            key_basename = key_basename[:-len(ext)]
+                            break
+                    
+                    # Look for matching certificate
+                    expected_cert_name = f"{key_basename}-cert.pub"
+                    expected_cert_path = os.path.join(os.path.dirname(current_key_path), expected_cert_name)
+                    
+                    if expected_cert_path in paths:
+                        preselect_idx = paths.index(expected_cert_path)
+                        logger.debug(f"Auto-selected matching certificate: {expected_cert_name}")
+            except Exception:
+                preselect_idx = 0
+            
+            try:
+                self.cert_dropdown.set_selected(preselect_idx)
+            except Exception:
+                pass
+                
+        except Exception as e:
+            logger.debug(f"Could not populate detected certificates: {e}")
+    
+    def _auto_select_matching_certificate(self, key_path):
+        """Auto-select certificate that matches the selected key"""
+        try:
+            if not hasattr(self, 'cert_dropdown') or not hasattr(self, '_cert_paths'):
+                return
+                
+            # Get the base name of the key file
+            key_basename = os.path.basename(key_path)
+            # Remove common extensions to get base name
+            for ext in ['.pub', '.key', '.pem', '.rsa', '.dsa', '.ecdsa', '.ed25519']:
+                if key_basename.endswith(ext):
+                    key_basename = key_basename[:-len(ext)]
+                    break
+            
+            # Look for matching certificate
+            expected_cert_name = f"{key_basename}-cert.pub"
+            expected_cert_path = os.path.join(os.path.dirname(key_path), expected_cert_name)
+            
+            if expected_cert_path in self._cert_paths:
+                cert_idx = self._cert_paths.index(expected_cert_path)
+                self.cert_dropdown.set_selected(cert_idx)
+                self._selected_cert_path = expected_cert_path
+                if hasattr(self.certificate_row, 'set_subtitle'):
+                    self.certificate_row.set_subtitle(expected_cert_path)
+                logger.debug(f"Auto-selected matching certificate: {expected_cert_name}")
+        except Exception as e:
+            logger.debug(f"Failed to auto-select matching certificate: {e}")
+                
     def _sync_key_dropdown_with_current_keyfile(self):
         """Sync the key dropdown selection with the current keyfile path"""
         try:
@@ -1133,6 +1247,9 @@ class ConnectionDialog(Adw.PreferencesDialog):
                     
                     # Update passphrase field for the selected key
                     self._update_passphrase_for_key(path)
+                    
+                    # Auto-select matching certificate if available
+                    self._auto_select_matching_certificate(path)
             except Exception:
                 pass
         try:
@@ -1146,6 +1263,46 @@ class ConnectionDialog(Adw.PreferencesDialog):
         self.keyfile_row.add_suffix(box)
         self.keyfile_row.set_activatable(False)
         auth_group.add(self.keyfile_row)
+
+        # Certificate dropdown for key-based auth with specific key
+        self.certificate_row = Adw.ActionRow(title=_("SSH Certificate"), subtitle=_("Select certificate file (optional)"))
+        # Build dropdown items from detected certificates
+        self.cert_dropdown = Gtk.DropDown()
+        self.cert_dropdown.set_hexpand(True)
+        # Populate via helper
+        self._cert_paths = []
+        self._populate_detected_certificates()
+
+        def _on_cert_selected(drop, _param):
+            try:
+                idx = drop.get_selected()
+                if idx < 0 or idx >= len(getattr(self, '_cert_paths', [])):
+                    return
+                path = self._cert_paths[idx]
+                if path == "__BROWSE__":
+                    # Revert selection to previous if any
+                    try:
+                        drop.set_selected(0)
+                    except Exception:
+                        pass
+                    self.browse_for_certificate_file()
+                elif path:
+                    self._selected_cert_path = path
+                    if hasattr(self.certificate_row, 'set_subtitle'):
+                        self.certificate_row.set_subtitle(path)
+            except Exception:
+                pass
+        try:
+            self.cert_dropdown.connect('notify::selected', _on_cert_selected)
+        except Exception:
+            pass
+
+        # Pack dropdown and add to row
+        cert_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        cert_box.append(self.cert_dropdown)
+        self.certificate_row.add_suffix(cert_box)
+        self.certificate_row.set_activatable(False)
+        auth_group.add(self.certificate_row)
 
         # Initialize key UI sensitivity for new connections
         try:
@@ -1600,6 +1757,59 @@ class ConnectionDialog(Adw.PreferencesDialog):
         except Exception as e:
             logger.error(f"Failed to open key file chooser: {e}")
 
+    def browse_for_certificate_file(self):
+        """Open file chooser to browse for SSH certificate file."""
+        try:
+            dialog = Gtk.FileChooserDialog(
+                title=_("Select SSH Certificate File"),
+                action=Gtk.FileChooserAction.OPEN,
+            )
+            # Parent must be a Gtk.Window; PreferencesDialog is not one. Try to set if available
+            try:
+                parent_win = self.get_transient_for()
+                if isinstance(parent_win, Gtk.Window):
+                    dialog.set_transient_for(parent_win)
+            except Exception:
+                pass
+            dialog.set_modal(True)
+            dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
+            dialog.add_button(_("Open"), Gtk.ResponseType.ACCEPT)
+
+            # Default to ~/.ssh directory when available
+            try:
+                ssh_dir = os.path.expanduser('~/.ssh')
+                if os.path.isdir(ssh_dir):
+                    try:
+                        dialog.set_current_folder(Gio.File.new_for_path(ssh_dir))
+                    except Exception:
+                        try:
+                            dialog.set_current_folder(ssh_dir)
+                        except Exception:
+                            try:
+                                dialog.set_current_folder_uri(Gio.File.new_for_path(ssh_dir).get_uri())
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+
+            # Add filter for certificate files
+            cert_filter = Gtk.FileFilter()
+            cert_filter.set_name(_("SSH Certificate Files"))
+            cert_filter.add_pattern("*-cert.pub")
+            cert_filter.add_pattern("*.pub")
+            dialog.add_filter(cert_filter)
+
+            # Add filter for all files
+            all_filter = Gtk.FileFilter()
+            all_filter.set_name(_("All Files"))
+            all_filter.add_pattern("*")
+            dialog.add_filter(all_filter)
+
+            dialog.connect("response", self.on_certificate_file_selected)
+            dialog.show()
+        except Exception as e:
+            logger.error(f"Failed to open certificate file chooser: {e}")
+
     def _build_action_bar_group(self):
         """Build a bottom-aligned action bar with Cancel/Save."""
         actions_group = Adw.PreferencesGroup()
@@ -1699,6 +1909,67 @@ class ConnectionDialog(Adw.PreferencesDialog):
                 # Sync the dropdown to select the browsed key
                 self._sync_key_dropdown_with_current_keyfile()
         dialog.destroy()
+    
+    def on_certificate_file_selected(self, dialog, response):
+        """Handle selected certificate file from file chooser"""
+        if response == Gtk.ResponseType.ACCEPT:
+            cert_file = dialog.get_file()
+            if cert_file:
+                cert_path = cert_file.get_path()
+                self.certificate_row.set_subtitle(cert_path)
+                
+                # Add the browsed certificate to the dropdown if it's not already there
+                if hasattr(self, '_cert_paths') and cert_path not in self._cert_paths:
+                    self._cert_paths.append(cert_path)
+                    # Update the dropdown model with just the filename
+                    if hasattr(self, 'cert_dropdown'):
+                        model = self.cert_dropdown.get_model()
+                        if model:
+                            filename = os.path.basename(cert_path)
+                            model.append(filename)
+                
+                # Set the selected certificate path
+                self._selected_cert_path = cert_path
+                
+                # Sync the dropdown to select the browsed certificate
+                self._sync_cert_dropdown_with_current_cert()
+        dialog.destroy()
+    
+    def _sync_cert_dropdown_with_current_cert(self):
+        """Sync the certificate dropdown selection with the current certificate path"""
+        try:
+            if not hasattr(self, 'cert_dropdown') or not hasattr(self, '_cert_paths'):
+                return
+                
+            # Get current certificate path
+            current_path = None
+            if hasattr(self, '_selected_cert_path') and self._selected_cert_path:
+                current_path = self._selected_cert_path
+            elif hasattr(self.certificate_row, 'get_subtitle'):
+                current_path = self.certificate_row.get_subtitle() or None
+            if (not current_path) and hasattr(self, 'connection') and self.connection:
+                current_path = getattr(self.connection, 'certificate', None)
+                
+            # Find matching index in dropdown
+            if current_path and current_path in self._cert_paths:
+                preselect_idx = self._cert_paths.index(current_path)
+                logger.debug(f"Syncing certificate dropdown to: {current_path} (index {preselect_idx})")
+                self.cert_dropdown.set_selected(preselect_idx)
+            else:
+                # If the certificate is not in the dropdown, add it and then select it
+                if current_path and hasattr(self, '_cert_paths') and hasattr(self, 'cert_dropdown'):
+                    self._cert_paths.append(current_path)
+                    model = self.cert_dropdown.get_model()
+                    if model:
+                        filename = os.path.basename(current_path)
+                        model.append(filename)
+                        preselect_idx = len(self._cert_paths) - 1
+                        logger.debug(f"Added external certificate to dropdown: {filename} (path: {current_path}, index {preselect_idx})")
+                        self.cert_dropdown.set_selected(preselect_idx)
+                else:
+                    logger.debug(f"Could not find certificate '{current_path}' in dropdown paths")
+        except Exception as e:
+            logger.debug(f"Failed to sync certificate dropdown: {e}")
     
     def on_delete_forwarding_rule_clicked(self, button, rule):
         """Handle delete port forwarding rule button click"""
@@ -2035,6 +2306,24 @@ class ConnectionDialog(Adw.PreferencesDialog):
             except Exception as e:
                 logger.warning(f"Failed to store/delete key passphrase: {e}")
 
+        # Get certificate path
+        certificate_value = ''
+        try:
+            if hasattr(self, 'cert_dropdown') and hasattr(self, '_cert_paths'):
+                sel = self.cert_dropdown.get_selected()
+                if 0 <= sel < len(self._cert_paths):
+                    pth = self._cert_paths[sel]
+                    if pth and pth != '__BROWSE__':
+                        certificate_value = pth
+            if (not certificate_value) and hasattr(self, '_selected_cert_path') and self._selected_cert_path:
+                certificate_value = str(self._selected_cert_path)
+            if (not certificate_value) and hasattr(self.certificate_row, 'get_subtitle'):
+                certificate_value = self.certificate_row.get_subtitle() or ''
+            if (not certificate_value) and self.is_editing and hasattr(self, 'connection') and self.connection:
+                certificate_value = str(getattr(self.connection, 'certificate', '') or '')
+        except Exception:
+            certificate_value = ''
+
         # Gather connection data
         connection_data = {
             'nickname': self.nickname_row.get_text().strip(),
@@ -2043,6 +2332,7 @@ class ConnectionDialog(Adw.PreferencesDialog):
             'port': int(self.port_row.get_text().strip() or '22'),
             'auth_method': self.auth_method_row.get_selected(),
             'keyfile': keyfile_value,
+            'certificate': certificate_value,
             'key_select_mode': (self.key_select_row.get_selected() if hasattr(self, 'key_select_row') else 0),
             'key_passphrase': self.key_passphrase_row.get_text(),
             'password': self.password_row.get_text(),

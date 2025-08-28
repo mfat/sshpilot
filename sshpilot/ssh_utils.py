@@ -122,6 +122,11 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
             if not for_ssh_copy_id:
                 options.extend(['-i', connection.keyfile])
             options.extend(['-o', 'IdentitiesOnly=yes'])
+            
+            # Add certificate if specified
+            if hasattr(connection, 'certificate') and connection.certificate and \
+               os.path.isfile(connection.certificate):
+                options.extend(['-o', f'CertificateFile={connection.certificate}'])
     else:
         # Force password authentication when user chose password auth (same as terminal.py)
         # But don't disable pubkey auth for ssh-copy-id since we're installing a key

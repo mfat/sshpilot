@@ -6373,6 +6373,7 @@ class MainWindow(Adw.ApplicationWindow):
                     'port': int(getattr(old_connection, 'port', 22) or 22),
                     'auth_method': int(getattr(old_connection, 'auth_method', 0) or 0),
                     'keyfile': _norm_str(getattr(old_connection, 'keyfile', '')),
+                    'certificate': _norm_str(getattr(old_connection, 'certificate', '')),
                     'key_select_mode': int(getattr(old_connection, 'key_select_mode', 0) or 0),
                     'password': _norm_str(getattr(old_connection, 'password', '')),
                     'key_passphrase': _norm_str(getattr(old_connection, 'key_passphrase', '')),
@@ -6388,6 +6389,7 @@ class MainWindow(Adw.ApplicationWindow):
                     'port': int(connection_data.get('port') or 22),
                     'auth_method': int(connection_data.get('auth_method') or 0),
                     'keyfile': _norm_str(connection_data.get('keyfile')),
+                    'certificate': _norm_str(connection_data.get('certificate')),
                     'key_select_mode': int(connection_data.get('key_select_mode') or 0),
                     'password': _norm_str(connection_data.get('password')),
                     'key_passphrase': _norm_str(connection_data.get('key_passphrase')),
@@ -6433,6 +6435,7 @@ class MainWindow(Adw.ApplicationWindow):
                 old_connection.username = connection_data['username']
                 old_connection.port = connection_data['port']
                 old_connection.keyfile = connection_data['keyfile']
+                old_connection.certificate = connection_data.get('certificate', '')
                 old_connection.password = connection_data['password']
                 old_connection.key_passphrase = connection_data['key_passphrase']
                 old_connection.auth_method = connection_data['auth_method']
@@ -6497,6 +6500,11 @@ class MainWindow(Adw.ApplicationWindow):
                     connection.key_select_mode = int(connection_data.get('key_select_mode', 0) or 0)
                 except Exception:
                     connection.key_select_mode = 0
+                # Ensure certificate is applied immediately
+                try:
+                    connection.certificate = connection_data.get('certificate', '')
+                except Exception:
+                    connection.certificate = ''
                 # Add the new connection to the manager's connections list
                 self.connection_manager.connections.append(connection)
                 

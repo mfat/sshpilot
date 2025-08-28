@@ -586,6 +586,12 @@ class TerminalWidget(Gtk.Box):
                     ssh_cmd.extend(['-i', self.connection.keyfile])
                     logger.debug(f"Using SSH key: {self.connection.keyfile}")
                     ssh_cmd.extend(['-o', 'IdentitiesOnly=yes'])
+                    
+                    # Add certificate if specified
+                    if hasattr(self.connection, 'certificate') and self.connection.certificate and \
+                       os.path.isfile(self.connection.certificate):
+                        ssh_cmd.extend(['-o', f'CertificateFile={self.connection.certificate}'])
+                        logger.debug(f"Using SSH certificate: {self.connection.certificate}")
                 else:
                     logger.debug("Using default SSH key selection (key_select_mode=0 or no valid key specified)")
             else:

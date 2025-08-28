@@ -58,6 +58,7 @@ class Connection:
         self.port = data.get('port', 22)
         # previously: self.keyfile = data.get('keyfile', '')
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
+        self.certificate = data.get('certificate', '')
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
         # Commands
@@ -147,13 +148,16 @@ class Connection:
             except Exception:
                 pass
             
-            # Add key file only when key-based auth and specific key mode
+            # Add key file and certificate only when key-based auth and specific key mode
             try:
                 if int(getattr(self, 'auth_method', 0) or 0) == 0 and int(getattr(self, 'key_select_mode', 0) or 0) == 1:
                     if self.keyfile and os.path.exists(self.keyfile):
                         ssh_cmd.extend(['-i', self.keyfile])
                         if self.key_passphrase:
                             logger.warning("Passphrase-protected keys may require additional setup")
+                    # Add certificate if specified
+                    if self.certificate and os.path.exists(self.certificate):
+                        ssh_cmd.extend(['-o', f'CertificateFile={self.certificate}'])
             except Exception:
                 pass
             
@@ -1136,6 +1140,13 @@ class ConnectionManager(GObject.Object):
                     keyfile = f'"{keyfile}"'
                 lines.append(f"    IdentityFile {keyfile}")
                 lines.append("    IdentitiesOnly yes")
+                
+                # Add certificate if specified
+                certificate = data.get('certificate')
+                if certificate and certificate.strip():
+                    if ' ' in certificate and not (certificate.startswith('"') and certificate.endswith('"')):
+                        certificate = f'"{certificate}"'
+                    lines.append(f"    CertificateFile {certificate}")
         
         # Add X11 forwarding if enabled
         if data.get('x11_forwarding', False):
