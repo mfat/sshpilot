@@ -578,12 +578,20 @@ class ConnectionDialog(Adw.PreferencesWindow):
             elif hasattr(self, 'connection') and self.connection:
                 keyfile_val = getattr(self.connection, 'keyfile', '')
             
+            # Validate keyfile path - skip placeholder text
+            if keyfile_val and keyfile_val.lower() in ['select key file or leave empty for auto-detection', '']:
+                keyfile_val = ''
+            
             if hasattr(self, 'certificate_row') and self.certificate_row.get_subtitle():
                 certificate_val = self.certificate_row.get_subtitle()
             elif hasattr(self, '_selected_cert_path') and self._selected_cert_path:
                 certificate_val = self._selected_cert_path
             elif hasattr(self, 'connection') and self.connection:
                 certificate_val = getattr(self.connection, 'certificate', '')
+            
+            # Validate certificate path - skip placeholder text
+            if certificate_val and certificate_val.lower() in ['select certificate file (optional)', '']:
+                certificate_val = ''
             
             # Build SSH config block
             config_lines = []
