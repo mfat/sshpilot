@@ -1798,6 +1798,100 @@ class PreferencesWindow(Adw.PreferencesWindow):
             appearance_group.add(self.color_scheme_row)
             terminal_page.add(appearance_group)
             
+            # Preferred Terminal group (only show when not in Flatpak)
+            if not is_running_in_flatpak():
+                terminal_choice_group = Adw.PreferencesGroup()
+                terminal_choice_group.set_title("Preferred Terminal")
+                
+                # Radio buttons for terminal choice
+                self.builtin_terminal_radio = Gtk.CheckButton(label="Use built-in terminal")
+                self.builtin_terminal_radio.set_can_focus(True)
+                self.external_terminal_radio = Gtk.CheckButton(label="Use other terminal")
+                self.external_terminal_radio.set_can_focus(True)
+                
+                # Make them behave like radio buttons
+                self.external_terminal_radio.set_group(self.builtin_terminal_radio)
+                
+                # Set current preference
+                use_external = self.config.get_setting('use-external-terminal', False)
+                if use_external:
+                    self.external_terminal_radio.set_active(True)
+                    if hasattr(self, 'external_terminal_box'):
+                        self.external_terminal_box.set_sensitive(True)  # Enable the dropdown when external is selected
+                else:
+                    self.builtin_terminal_radio.set_active(True)
+                    if hasattr(self, 'external_terminal_box'):
+                        self.external_terminal_box.set_sensitive(False)  # Disable the dropdown when built-in is selected
+                
+                # Ensure the dropdown sensitivity matches the radio button state
+                if hasattr(self, 'external_terminal_box'):
+                    self.external_terminal_box.set_sensitive(self.external_terminal_radio.get_active())
+                
+                # Connect radio button changes
+                self.builtin_terminal_radio.connect('toggled', self.on_terminal_choice_changed)
+                self.external_terminal_radio.connect('toggled', self.on_terminal_choice_changed)
+                
+                # Add radio buttons to group
+                terminal_choice_group.add(self.builtin_terminal_radio)
+                terminal_choice_group.add(self.external_terminal_radio)
+                
+                # External terminal dropdown and custom path
+                self.external_terminal_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+                self.external_terminal_box.set_margin_start(24)
+                self.external_terminal_box.set_margin_top(6)
+                self.external_terminal_box.set_margin_bottom(6)
+                
+                # Terminal dropdown
+                self.terminal_dropdown = Gtk.DropDown()
+                self.terminal_dropdown.set_can_focus(True)
+                
+                # Populate dropdown with available terminals
+                self._populate_terminal_dropdown()
+                
+                # Set current selection
+                current_terminal = self.config.get_setting('external-terminal', 'gnome-terminal')
+                self._set_terminal_dropdown_selection(current_terminal)
+                
+                # Show/hide custom path entry based on current selection
+                if hasattr(self, 'custom_terminal_box'):
+                    if current_terminal == 'custom':
+                        self.custom_terminal_box.set_visible(True)
+                    else:
+                        self.custom_terminal_box.set_visible(False)
+                
+                # Connect dropdown changes
+                self.terminal_dropdown.connect('notify::selected', self.on_terminal_dropdown_changed)
+                
+                # Custom path entry (initially hidden)
+                self.custom_terminal_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                self.custom_terminal_entry = Gtk.Entry()
+                self.custom_terminal_entry.set_placeholder_text("/usr/bin/gnome-terminal")
+                self.custom_terminal_entry.set_can_focus(True)
+                
+                # Set current custom path if any
+                custom_path = self.config.get_setting('custom-terminal-path', '')
+                if custom_path:
+                    self.custom_terminal_entry.set_text(custom_path)
+                
+                # Connect custom path changes
+                self.custom_terminal_entry.connect('changed', self.on_custom_terminal_path_changed)
+                
+                self.custom_terminal_box.append(self.custom_terminal_entry)
+                
+                # Initially hide custom path entry
+                self.custom_terminal_box.set_visible(False)
+                
+                # Add dropdown and custom path to box
+                self.external_terminal_box.append(self.terminal_dropdown)
+                self.external_terminal_box.append(self.custom_terminal_box)
+                
+                # Initial sensitivity will be set by radio button state
+                
+                # Add to group
+                terminal_choice_group.add(self.external_terminal_box)
+                
+                terminal_page.add(terminal_choice_group)
+            
             # Create Interface preferences page
             interface_page = Adw.PreferencesPage()
             interface_page.set_title("Interface")
@@ -2175,6 +2269,131 @@ class PreferencesWindow(Adw.PreferencesWindow):
         confirm = switch.get_active()
         logger.info(f"Confirm before disconnect setting changed to: {confirm}")
         self.config.set_setting('confirm-disconnect', confirm)
+    
+    def on_terminal_choice_changed(self, radio_button, *args):
+        """Handle terminal choice radio button change"""
+        use_external = self.external_terminal_radio.get_active()
+        logger.info(f"Terminal choice changed to: {'external' if use_external else 'built-in'}")
+        
+        # Enable/disable external terminal options
+        if hasattr(self, 'external_terminal_box'):
+            self.external_terminal_box.set_sensitive(use_external)
+        
+        # Save preference
+        self.config.set_setting('use-external-terminal', use_external)
+    
+    def on_terminal_dropdown_changed(self, dropdown, *args):
+        """Handle terminal dropdown selection change"""
+        selected = dropdown.get_selected()
+        if selected is None or selected < 0:
+            return
+        
+        # Get the selected terminal from the model
+        model = dropdown.get_model()
+        if model and selected < model.get_n_items():
+            terminal_name = model.get_string(selected)
+            logger.info(f"Terminal dropdown selection changed to: {terminal_name}")
+            
+            # Show/hide custom path entry based on selection
+            if hasattr(self, 'custom_terminal_box'):
+                if terminal_name == "Custom":
+                    self.custom_terminal_box.set_visible(True)
+                else:
+                    self.custom_terminal_box.set_visible(False)
+            
+            # Save the selected terminal
+            if terminal_name != "Custom":
+                self.config.set_setting('external-terminal', terminal_name)
+    
+    def on_custom_terminal_path_changed(self, entry, *args):
+        """Handle custom terminal path entry change"""
+        custom_path = entry.get_text().strip()
+        logger.info(f"Custom terminal path changed to: {custom_path}")
+        
+        # Validate the path
+        if custom_path and self._is_valid_unix_path(custom_path):
+            self.config.set_setting('custom-terminal-path', custom_path)
+            self.config.set_setting('external-terminal', 'custom')
+        else:
+            # Clear invalid path
+            self.config.set_setting('custom-terminal-path', '')
+    
+    def _populate_terminal_dropdown(self):
+        """Populate the terminal dropdown with available terminals"""
+        try:
+            # Create string list for dropdown
+            terminals_list = Gtk.StringList()
+            
+            # Add common terminals
+            common_terminals = [
+                'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty', 
+                'kitty', 'terminator', 'tilix', 'xterm'
+            ]
+            
+            # Check which terminals are available
+            available_terminals = []
+            for terminal in common_terminals:
+                try:
+                    result = subprocess.run(['which', terminal], capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0:
+                        available_terminals.append(terminal)
+                except Exception:
+                    continue
+            
+            # Add available terminals to dropdown
+            for terminal in available_terminals:
+                terminals_list.append(terminal)
+            
+            # Add "Custom" option
+            terminals_list.append("Custom")
+            
+            # Set the model
+            self.terminal_dropdown.set_model(terminals_list)
+            
+            logger.info(f"Populated terminal dropdown with {len(available_terminals)} available terminals")
+            
+        except Exception as e:
+            logger.error(f"Failed to populate terminal dropdown: {e}")
+    
+    def _set_terminal_dropdown_selection(self, terminal_name):
+        """Set the dropdown selection to the specified terminal"""
+        try:
+            model = self.terminal_dropdown.get_model()
+            if not model:
+                return
+            
+            # Find the terminal in the model
+            for i in range(model.get_n_items()):
+                if model.get_string(i) == terminal_name:
+                    self.terminal_dropdown.set_selected(i)
+                    return
+            
+            # If not found, default to first available terminal
+            if model.get_n_items() > 0:
+                self.terminal_dropdown.set_selected(0)
+                
+        except Exception as e:
+            logger.error(f"Failed to set terminal dropdown selection: {e}")
+    
+    def _is_valid_unix_path(self, path):
+        """Validate if the path is a valid Unix path"""
+        if not path:
+            return False
+        
+        # Check if it starts with / (absolute path)
+        if not path.startswith('/'):
+            return False
+        
+        # Check if it contains only valid characters
+        import re
+        if not re.match(r'^[a-zA-Z0-9/._-]+$', path):
+            return False
+        
+        # Check if the file exists and is executable
+        try:
+            return os.path.isfile(path) and os.access(path, os.X_OK)
+        except Exception:
+            return False
     
     def apply_color_scheme_to_terminals(self, scheme_key):
         """Apply color scheme to all active terminal widgets"""
@@ -5485,8 +5704,15 @@ class MainWindow(Adw.ApplicationWindow):
             port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
             ssh_command = f"ssh{port_text} {connection.username}@{connection.host}"
             
-            # Get the default terminal
-            terminal_command = self._get_default_terminal_command()
+            # Check if user prefers external terminal
+            use_external = self.config.get_setting('use-external-terminal', False)
+            
+            if use_external:
+                # Use user's preferred external terminal
+                terminal_command = self._get_user_preferred_terminal()
+            else:
+                # Use built-in terminal (fallback to system default)
+                terminal_command = self._get_default_terminal_command()
             
             if not terminal_command:
                 # Fallback to common terminals
@@ -5584,6 +5810,37 @@ class MainWindow(Adw.ApplicationWindow):
             
         except Exception as e:
             logger.error(f"Failed to get default terminal: {e}")
+            return None
+    
+    def _get_user_preferred_terminal(self):
+        """Get the user's preferred terminal from settings"""
+        try:
+            # Get the user's preferred terminal
+            preferred_terminal = self.config.get_setting('external-terminal', 'gnome-terminal')
+            
+            if preferred_terminal == 'custom':
+                # Use custom path
+                custom_path = self.config.get_setting('custom-terminal-path', '')
+                if custom_path and self._is_valid_unix_path(custom_path):
+                    return custom_path
+                else:
+                    logger.warning("Custom terminal path is invalid or not set, falling back to built-in terminal")
+                    return None
+            
+            # Check if the preferred terminal is available
+            try:
+                result = subprocess.run(['which', preferred_terminal], capture_output=True, text=True, timeout=2)
+                if result.returncode == 0:
+                    return preferred_terminal
+                else:
+                    logger.warning(f"Preferred terminal '{preferred_terminal}' not found, falling back to built-in terminal")
+                    return None
+            except Exception as e:
+                logger.error(f"Failed to check preferred terminal '{preferred_terminal}': {e}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to get user preferred terminal: {e}")
             return None
 
     def _show_terminal_error_dialog(self):
