@@ -2946,10 +2946,7 @@ class MainWindow(Adw.ApplicationWindow):
               background: alpha(@accent_bg_color, 0.1);
             }
             
-            .group-separator {
-              margin: 8px 0;
-              background: alpha(@foreground_color, 0.1);
-            }
+
             
             /* Drag and drop visual feedback */
             row.drag-highlight {
@@ -3960,11 +3957,8 @@ class MainWindow(Adw.ApplicationWindow):
                 ungrouped_connections.append(conn)
         
         if ungrouped_connections:
-            # Add separator if there are groups above
-            if hierarchy:
-                separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-                separator.add_css_class('group-separator')
-                self.connection_list.append(separator)
+            # No separator - just add ungrouped connections directly
+            pass
             
             # Add ungrouped connections
             for conn in sorted(ungrouped_connections, key=lambda c: c.nickname.lower()):
