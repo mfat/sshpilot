@@ -561,7 +561,15 @@ class TerminalWidget(Gtk.Box):
             
             # Add key file/options only for key-based auth
             if not password_auth_selected:
-                if hasattr(self.connection, 'keyfile') and self.connection.keyfile and \
+                # Get key selection mode
+                key_select_mode = 0
+                try:
+                    key_select_mode = int(getattr(self.connection, 'key_select_mode', 0) or 0)
+                except Exception:
+                    pass
+                
+                # Only add specific key if key_select_mode == 1 (specific key)
+                if key_select_mode == 1 and hasattr(self.connection, 'keyfile') and self.connection.keyfile and \
                    os.path.isfile(self.connection.keyfile) and \
                    not self.connection.keyfile.startswith('Select key file'):
                     
@@ -579,17 +587,12 @@ class TerminalWidget(Gtk.Box):
                     
                     ssh_cmd.extend(['-i', self.connection.keyfile])
                     logger.debug(f"Using SSH key: {self.connection.keyfile}")
-                    # Enforce using only the specified key when key_select_mode == 1
-                    try:
-                        if int(getattr(self.connection, 'key_select_mode', 0) or 0) == 1:
-                            ssh_cmd.extend(['-o', 'IdentitiesOnly=yes'])
-                    except Exception:
-                        pass
+                    ssh_cmd.extend(['-o', 'IdentitiesOnly=yes'])
                 else:
-                    logger.debug("No valid SSH key specified, using default")
+                    logger.debug("Using default SSH key selection (key_select_mode=0 or no valid key specified)")
             else:
-                # Prefer password/interactive methods when user chose password auth
-                ssh_cmd.extend(['-o', 'PreferredAuthentications=password,keyboard-interactive'])
+                # Force password authentication when user chose password auth
+                ssh_cmd.extend(['-o', 'PreferredAuthentications=password'])
                 ssh_cmd.extend(['-o', 'PubkeyAuthentication=no'])
             
             # Add X11 forwarding if enabled

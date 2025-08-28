@@ -1130,13 +1130,11 @@ class ConnectionManager(GObject.Object):
         auth_method = int(data.get('auth_method', 0) or 0)
         key_select_mode = int(data.get('key_select_mode', 0) or 0)  # 0=try all, 1=specific
         if auth_method == 0:
-            # Always write IdentityFile if a concrete key path is provided (even in mode 0)
-            if keyfile and keyfile.strip() and not keyfile.strip().lower().startswith('select key file'):
+            # Only write IdentityFile if key_select_mode == 1 (specific key)
+            if key_select_mode == 1 and keyfile and keyfile.strip() and not keyfile.strip().lower().startswith('select key file'):
                 if ' ' in keyfile and not (keyfile.startswith('"') and keyfile.endswith('"')):
                     keyfile = f'"{keyfile}"'
                 lines.append(f"    IdentityFile {keyfile}")
-            # Only enforce exclusive key usage in mode 1
-            if key_select_mode == 1:
                 lines.append("    IdentitiesOnly yes")
         
         # Add X11 forwarding if enabled

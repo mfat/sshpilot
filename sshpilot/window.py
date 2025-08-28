@@ -1103,6 +1103,23 @@ class SshCopyIdWindow(Adw.Window):
 
             content.append(group)
 
+            # ---------- Force key transfer toggle ----------
+            logger.info("SshCopyIdWindow: Creating force key transfer toggle")
+            try:
+                force_group = Adw.PreferencesGroup(title="")
+                
+                self.force_toggle = Adw.SwitchRow()
+                self.force_toggle.set_title("Force key transfer")
+                self.force_toggle.set_subtitle("Overwrite existing keys on the server")
+                self.force_toggle.set_active(True)  # Default to enabled
+                force_group.add(self.force_toggle)
+                
+                content.append(force_group)
+                logger.info("SshCopyIdWindow: Force key transfer toggle created successfully")
+            except Exception as e:
+                logger.error(f"SshCopyIdWindow: Failed to create force toggle: {e}")
+                raise
+
             # Radio change behavior
             self.radio_existing.connect("toggled", self._on_mode_toggled)
             self.radio_generate.connect("toggled", self._on_mode_toggled)
@@ -1235,7 +1252,9 @@ class SshCopyIdWindow(Adw.Window):
             
             # Launch your existing terminal ssh-copy-id flow
             logger.debug("SshCopyIdWindow: Calling _show_ssh_copy_id_terminal_using_main_widget()")
-            self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, ssh_key)
+            force_enabled = self.force_toggle.get_active()
+            logger.debug(f"SshCopyIdWindow: Force option enabled: {force_enabled}")
+            self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, ssh_key, force_enabled)
             logger.debug("SshCopyIdWindow: Terminal window launched, closing dialog")
             self.close()
         except Exception as e:
@@ -1323,7 +1342,9 @@ class SshCopyIdWindow(Adw.Window):
             
             # Run your terminal ssh-copy-id flow
             logger.debug("SshCopyIdWindow: Calling _show_ssh_copy_id_terminal_using_main_widget()")
-            self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, new_key)
+            force_enabled = self.force_toggle.get_active()
+            logger.debug(f"SshCopyIdWindow: Force option enabled: {force_enabled}")
+            self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, new_key, force_enabled)
             logger.debug("SshCopyIdWindow: Terminal window launched, closing dialog")
             self.close()
 
@@ -3139,35 +3160,66 @@ class MainWindow(Adw.ApplicationWindow):
                     if pass_switch.get_active():
                         p1 = pass1.get_text() or ""
                         p2 = pass2.get_text() or ""
+                        logger.debug(f"SshCopyIdWindow: Passphrase lengths - p1: {len(p1)}, p2: {len(p2)}")
                         if p1 != p2:
-                            raise ValueError(_("Passphrases do not match"))
+                            logger.debug("SshCopyIdWindow: Passphrases do not match")
+                            raise ValueError("Passphrases do not match")
                         passphrase = p1
+                        logger.info("SshCopyIdWindow: Passphrase enabled")
+                        logger.debug("SshCopyIdWindow: Passphrase validation successful")
 
-                    key = self.key_manager.generate_key(
+                    logger.info(f"SshCopyIdWindow: Calling key_manager.generate_key with name='{key_name}', type='{kt}'")
+                    logger.debug(f"SshCopyIdWindow: Key generation parameters - name='{key_name}', type='{kt}', "
+                               f"size={3072 if kt == 'rsa' else 0}, passphrase={'<set>' if passphrase else 'None'}")
+                    
+                    new_key = self._km.generate_key(
                         key_name=key_name,
                         key_type=kt,
                         key_size=3072 if kt == "rsa" else 0,
                         comment=None,
                         passphrase=passphrase,
                     )
-                    if not key:
-                        raise RuntimeError(_("Key generation failed. See logs for details."))
+                    
+                    if not new_key:
+                        logger.debug("SshCopyIdWindow: Key generation returned None")
+                        raise RuntimeError("Key generation failed. See logs for details.")
 
-                    self._info_dialog(_("Key Created"),
-                                     _("Private: {priv}\nPublic: {pub}").format(
-                                         priv=key.private_path, pub=key.public_path))
-
-                    try:
-                        dlg.force_close()
-                    except Exception:
-                        pass
-
-                    if callable(on_success):
-                        on_success(key)
+                    logger.info(f"SshCopyIdWindow: Key generated successfully: {new_key.private_path}")
+                    logger.debug(f"SshCopyIdWindow: Generated key details - private_path='{new_key.private_path}', "
+                               f"public_path='{new_key.public_path}'")
+                    
+                    # Ensure the key files are properly written and accessible
+                    import time
+                    logger.debug("SshCopyIdWindow: Waiting 0.5s for files to be written")
+                    time.sleep(0.5)  # Small delay to ensure files are written
+                    
+                    # Verify the key files exist and are accessible
+                    private_exists = os.path.exists(new_key.private_path)
+                    public_exists = os.path.exists(new_key.public_path)
+                    logger.debug(f"SshCopyIdWindow: File existence check - private: {private_exists}, public: {public_exists}")
+                    
+                    if not private_exists:
+                        logger.debug(f"SshCopyIdWindow: Private key file missing: {new_key.private_path}")
+                        raise RuntimeError(f"Private key file not found: {new_key.private_path}")
+                    if not public_exists:
+                        logger.debug(f"SshCopyIdWindow: Public key file missing: {new_key.public_path}")
+                        raise RuntimeError(f"Public key file not found: {new_key.public_path}")
+                    
+                    logger.info(f"SshCopyIdWindow: Key files verified, starting ssh-copy-id")
+                    logger.debug("SshCopyIdWindow: All key files verified successfully")
+                    
+                    # Run your terminal ssh-copy-id flow
+                    logger.debug("SshCopyIdWindow: Calling _show_ssh_copy_id_terminal_using_main_widget()")
+                    self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, new_key)
+                    logger.debug("SshCopyIdWindow: Terminal window launched, closing dialog")
+                    self.close()
 
                 except Exception as e:
-                    self._error_dialog(_("Key Generation Error"),
-                                      _("Could not create the SSH key."), str(e))
+                    logger.error(f"SshCopyIdWindow: Generate and copy failed: {e}")
+                    logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {str(e)}")
+                    self._error("Generate & Copy failed",
+                                "Could not generate a new key and copy it to the server.",
+                                str(e))
 
             btn_primary.connect("clicked", do_generate)
             dlg.present()
@@ -3811,7 +3863,7 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as e:
             logger.error(f"System terminal button click failed: {e}")
 
-    def _show_ssh_copy_id_terminal_using_main_widget(self, connection, ssh_key):
+    def _show_ssh_copy_id_terminal_using_main_widget(self, connection, ssh_key, force=False):
         """Show a window with header bar and embedded terminal running ssh-copy-id.
 
         Requirements:
@@ -3928,7 +3980,7 @@ class MainWindow(Adw.ApplicationWindow):
 
             # Build ssh-copy-id command with options derived from connection settings
             logger.debug("Main window: Building ssh-copy-id command arguments")
-            argv = self._build_ssh_copy_id_argv(connection, ssh_key)
+            argv = self._build_ssh_copy_id_argv(connection, ssh_key, force)
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
             logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
             logger.info("Full command line: %s", cmdline)
@@ -4118,7 +4170,36 @@ class MainWindow(Adw.ApplicationWindow):
                             exit_code = status
 
                     logger.info(f"ssh-copy-id exited with status: {status}, normalized exit_code: {exit_code}")
+                    
+                    # Simple verification: just check exit code like default ssh-copy-id
                     ok = (exit_code == 0)
+                    
+                    # Get error details from output if failed
+                    error_details = None
+                    if not ok:
+                        try:
+                            content = term_widget.vte.get_text_range(0, 0, -1, -1, None)
+                            if content:
+                                # Look for common error patterns in the output
+                                content_lower = content.lower()
+                                if 'permission denied' in content_lower:
+                                    error_details = 'Permission denied - check user credentials and server permissions'
+                                elif 'connection refused' in content_lower:
+                                    error_details = 'Connection refused - check server address and SSH service'
+                                elif 'authentication failed' in content_lower:
+                                    error_details = 'Authentication failed - check username and password/key'
+                                elif 'no such file or directory' in content_lower:
+                                    error_details = 'File not found - check if SSH directory exists on server'
+                                elif 'operation not permitted' in content_lower:
+                                    error_details = 'Operation not permitted - check server permissions'
+                                else:
+                                    # Extract the last few lines of output for context
+                                    lines = content.strip().split('\n')
+                                    if lines:
+                                        error_details = f"Error details: {lines[-1]}"
+                        except Exception as e:
+                            logger.debug(f"Main window: Error extracting error details: {e}")
+                    
                     if ok:
                         logger.info("ssh-copy-id completed successfully")
                         logger.debug("Main window: ssh-copy-id succeeded, showing success message")
@@ -4127,6 +4208,8 @@ class MainWindow(Adw.ApplicationWindow):
                         logger.error(f"ssh-copy-id failed with exit code: {exit_code}")
                         logger.debug(f"Main window: ssh-copy-id failed with exit code {exit_code}")
                         _feed_colored_line(_('Failed to install the public key.'), 'red')
+                        if error_details:
+                            _feed_colored_line(error_details, 'red')
 
                     def _present_result_dialog():
                         logger.debug(f"Main window: Presenting result dialog - success: {ok}")
@@ -4170,12 +4253,15 @@ class MainWindow(Adw.ApplicationWindow):
                               _("Failed to create ssh-copy-id terminal window."), 
                               f"Error: {str(e)}\n\nThis could be due to:\n• Missing VTE terminal widget\n• Display/GTK issues\n• System resource limitations")
 
-    def _build_ssh_copy_id_argv(self, connection, ssh_key):
+
+
+    def _build_ssh_copy_id_argv(self, connection, ssh_key, force=False):
         """Construct argv for ssh-copy-id honoring saved UI auth preferences."""
         logger.info(f"Building ssh-copy-id argv for key: {getattr(ssh_key, 'public_path', 'unknown')}")
         logger.debug(f"Main window: Building ssh-copy-id command arguments")
         logger.debug(f"Main window: Connection object: {type(connection)}")
         logger.debug(f"Main window: SSH key object: {type(ssh_key)}")
+        logger.debug(f"Main window: Force option: {force}")
         logger.info(f"Key object attributes: private_path={getattr(ssh_key, 'private_path', 'unknown')}, public_path={getattr(ssh_key, 'public_path', 'unknown')}")
         
         # Verify the public key file exists
@@ -4186,7 +4272,14 @@ class MainWindow(Adw.ApplicationWindow):
             raise RuntimeError(f"Public key file not found: {ssh_key.public_path}")
         
         logger.debug(f"Main window: Public key file verified: {ssh_key.public_path}")
-        argv = ['ssh-copy-id', '-i', ssh_key.public_path]
+        argv = ['ssh-copy-id']
+        
+        # Add force option if enabled
+        if force:
+            argv.append('-f')
+            logger.debug("Main window: Added force option (-f) to ssh-copy-id")
+        
+        argv.extend(['-i', ssh_key.public_path])
         logger.debug(f"Main window: Base command: {argv}")
         try:
             port = getattr(connection, 'port', 22)
@@ -4269,8 +4362,8 @@ class MainWindow(Adw.ApplicationWindow):
         else:
             # Only force password when user selected password auth
             if prefer_password:
-                argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password,keyboard-interactive']
-                logger.debug("Main window: Added password authentication options - PubkeyAuthentication=no, PreferredAuthentications=password,keyboard-interactive")
+                argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password']
+                logger.debug("Main window: Added password authentication options - PubkeyAuthentication=no, PreferredAuthentications=password")
         
         # Target
         target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
@@ -4622,7 +4715,7 @@ class MainWindow(Adw.ApplicationWindow):
                 logger.debug(f"Failed to get saved passphrase for SCP: {e}")
                 
         elif prefer_password:
-            argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password,keyboard-interactive']
+            argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password']
             
             # Try to get saved password
             try:

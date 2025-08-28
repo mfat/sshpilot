@@ -107,22 +107,25 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
     # Add key file/options only for key-based auth (same as terminal.py)
     # Note: ssh-copy-id already specifies the key with -i, so we don't add it again
     if not password_auth_selected:
-        if hasattr(connection, 'keyfile') and connection.keyfile and \
+        # Get key selection mode
+        key_select_mode = 0
+        try:
+            key_select_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
+        except Exception:
+            pass
+        
+        # Only add specific key if key_select_mode == 1 (specific key)
+        if key_select_mode == 1 and hasattr(connection, 'keyfile') and connection.keyfile and \
            os.path.isfile(connection.keyfile) and \
            not connection.keyfile.startswith('Select key file'):
             
             if not for_ssh_copy_id:
                 options.extend(['-i', connection.keyfile])
-            # Enforce using only the specified key when key_select_mode == 1
-            try:
-                if int(getattr(connection, 'key_select_mode', 0) or 0) == 1:
-                    options.extend(['-o', 'IdentitiesOnly=yes'])
-            except Exception:
-                pass
+            options.extend(['-o', 'IdentitiesOnly=yes'])
     else:
-        # Prefer password/interactive methods when user chose password auth (same as terminal.py)
+        # Force password authentication when user chose password auth (same as terminal.py)
         # But don't disable pubkey auth for ssh-copy-id since we're installing a key
-        options.extend(['-o', 'PreferredAuthentications=password,keyboard-interactive'])
+        options.extend(['-o', 'PreferredAuthentications=password'])
         if not for_ssh_copy_id:
             options.extend(['-o', 'PubkeyAuthentication=no'])
     
