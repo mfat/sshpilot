@@ -1009,7 +1009,9 @@ class SshCopyIdWindow(Adw.Window):
 
             # Radio option 1: Use existing key (using CheckButton with group for radio behavior)
             self.radio_existing = Gtk.CheckButton(label="Copy existing key")
+            self.radio_existing.set_can_focus(True)  # Make it focusable for tab navigation
             self.radio_generate = Gtk.CheckButton(label="Generate new key")
+            self.radio_generate.set_can_focus(True)  # Make it focusable for tab navigation
 
             # Make them behave like radio buttons (GTK4)
             self.radio_generate.set_group(self.radio_existing)
@@ -1026,6 +1028,7 @@ class SshCopyIdWindow(Adw.Window):
             existing_box.set_margin_start(12)
             existing_box.set_margin_bottom(6)
             self.dropdown_existing = Gtk.DropDown()
+            self.dropdown_existing.set_can_focus(True)  # Make it focusable for tab navigation
             existing_box.append(Gtk.Label(label="Select key:", xalign=0))
             existing_box.append(self.dropdown_existing)
 
@@ -1046,11 +1049,13 @@ class SshCopyIdWindow(Adw.Window):
             gen_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
             gen_box.set_margin_start(12)
             gen_box.set_margin_top(6)
+            gen_box.set_can_focus(True)  # Make the box focusable for tab navigation
 
             # Key name
             self.row_key_name = Adw.EntryRow()
             self.row_key_name.set_title("Key file name")
             self.row_key_name.set_text("id_ed25519")
+            self.row_key_name.set_can_focus(True)  # Make it focusable for tab navigation
             gen_box.append(self.row_key_name)
 
             # Key type
@@ -1060,34 +1065,10 @@ class SshCopyIdWindow(Adw.Window):
             self._types_model = Gtk.StringList.new(["ed25519", "rsa"])
             self.type_dropdown.set_model(self._types_model)
             self.type_dropdown.set_selected(0)
+            self.type_dropdown.set_can_focus(True)  # Make it focusable for tab navigation
             key_type_box.append(key_type_label)
             key_type_box.append(self.type_dropdown)
             gen_box.append(key_type_box)
-
-            # Passphrase toggle + entries
-            self.row_pass_toggle = Adw.SwitchRow()
-            self.row_pass_toggle.set_title("Encrypt with passphrase")
-            self.row_pass_toggle.set_activatable(True)  # Make the entire row clickable
-            
-            # Add a click controller to handle clicks on the entire row
-            click_controller = Gtk.GestureClick()
-            click_controller.connect("pressed", self._on_pass_toggle_clicked)
-            self.row_pass_toggle.add_controller(click_controller)
-            
-            gen_box.append(self.row_pass_toggle)
-
-            pass_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            self.pass1 = Gtk.PasswordEntry()
-            self.pass1.set_property("placeholder-text", "Passphrase")
-            self.pass2 = Gtk.PasswordEntry()
-            self.pass2.set_property("placeholder-text", "Confirm passphrase")
-            pass_box.append(self.pass1); pass_box.append(self.pass2)
-            pass_box.set_visible(False)
-            gen_box.append(pass_box)
-
-            def _on_pass_toggle(*_):
-                pass_box.set_visible(self.row_pass_toggle.get_active())
-            self.row_pass_toggle.connect("notify::active", _on_pass_toggle)
 
             self.generate_revealer.set_child(gen_box)
             logger.info("SshCopyIdWindow: Key generation form created successfully")
@@ -1113,6 +1094,43 @@ class SshCopyIdWindow(Adw.Window):
 
             content.append(group)
 
+            # ---------- Passphrase toggle ----------
+            logger.info("SshCopyIdWindow: Creating passphrase toggle")
+            try:
+                passphrase_group = Adw.PreferencesGroup(title="")
+                
+                self.row_pass_toggle = Adw.SwitchRow()
+                self.row_pass_toggle.set_title("Encrypt with passphrase")
+                self.row_pass_toggle.set_activatable(True)  # Make the entire row clickable
+                
+                passphrase_group.add(self.row_pass_toggle)
+                
+                # Passphrase entries (outside revealer)
+                self.pass1 = Gtk.PasswordEntry()
+                self.pass1.set_property("placeholder-text", "Passphrase")
+                self.pass1.set_can_focus(True)  # Make it focusable for tab navigation
+                self.pass2 = Gtk.PasswordEntry()
+                self.pass2.set_property("placeholder-text", "Confirm passphrase")
+                self.pass2.set_can_focus(True)  # Make it focusable for tab navigation
+                
+                # Create a box for passphrase entries
+                self.pass_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+                self.pass_box.set_margin_start(12)
+                self.pass_box.set_margin_end(12)
+                self.pass_box.set_margin_top(6)
+                self.pass_box.set_margin_bottom(6)
+                self.pass_box.append(self.pass1)
+                self.pass_box.append(self.pass2)
+                self.pass_box.set_visible(False)
+                
+                passphrase_group.add(self.pass_box)
+                
+                content.append(passphrase_group)
+                logger.info("SshCopyIdWindow: Passphrase toggle created successfully")
+            except Exception as e:
+                logger.error(f"SshCopyIdWindow: Failed to create passphrase toggle: {e}")
+                raise
+
             # ---------- Force key transfer toggle ----------
             logger.info("SshCopyIdWindow: Creating force key transfer toggle")
             try:
@@ -1134,8 +1152,15 @@ class SshCopyIdWindow(Adw.Window):
             self.radio_existing.connect("toggled", self._on_mode_toggled)
             self.radio_generate.connect("toggled", self._on_mode_toggled)
             
+            # Set initial state (since "Copy existing key" is selected by default)
+            self.row_pass_toggle.set_sensitive(False)
+            self.pass_box.set_sensitive(False)
+            
             # Key type change behavior
             self.type_dropdown.connect("notify::selected", self._on_key_type_changed)
+            
+            # Passphrase toggle behavior
+            self.row_pass_toggle.connect("notify::active", self._on_pass_toggle)
 
             logger.info("SshCopyIdWindow: UI elements packed successfully")
         except Exception as e:
@@ -1149,8 +1174,18 @@ class SshCopyIdWindow(Adw.Window):
 
     def _on_mode_toggled(self, *_):
         # Reveal generator only when "Generate new key" is selected
-        logger.info(f"SshCopyIdWindow: Mode toggled, generate active: {self.radio_generate.get_active()}")
-        self.generate_revealer.set_reveal_child(self.radio_generate.get_active())
+        generate_active = self.radio_generate.get_active()
+        logger.info(f"SshCopyIdWindow: Mode toggled, generate active: {generate_active}")
+        self.generate_revealer.set_reveal_child(generate_active)
+        
+        # Enable/disable passphrase section based on mode
+        self.row_pass_toggle.set_sensitive(generate_active)
+        self.pass_box.set_sensitive(generate_active)
+        
+        # If switching to "Copy existing key", turn off passphrase and hide fields
+        if not generate_active:
+            self.row_pass_toggle.set_active(False)
+            self.pass_box.set_visible(False)
     
     def _on_key_type_changed(self, *_):
         # Update key name placeholder when key type changes
@@ -1160,10 +1195,11 @@ class SshCopyIdWindow(Adw.Window):
         else:  # ed25519
             self.row_key_name.set_text("id_ed25519")
     
-    def _on_pass_toggle_clicked(self, gesture, n_press, x, y):
-        # Toggle the passphrase switch when the row is clicked
-        current_state = self.row_pass_toggle.get_active()
-        self.row_pass_toggle.set_active(not current_state)
+
+    
+    def _on_pass_toggle(self, *_):
+        # Show/hide passphrase entries when toggle changes
+        self.pass_box.set_visible(self.row_pass_toggle.get_active())
 
     def _reload_existing_keys(self):
         logger.info("SshCopyIdWindow: Reloading existing keys")
