@@ -560,6 +560,7 @@ class Connection:
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
+        self.certificate = data.get('certificate', '')
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
         self.local_command = data.get('local_command', '')
