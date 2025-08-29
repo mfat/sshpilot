@@ -1953,12 +1953,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Add rule button
         self.add_rule_button = Gtk.Button(label=_("Add Rule"))
         self.add_rule_button.set_icon_name("list-add-symbolic")
+        self.add_rule_button.set_tooltip_text(_("Add a new port forwarding rule"))
         self.add_rule_button.connect("clicked", self.on_add_forwarding_rule_clicked)
         button_box.append(self.add_rule_button)
         
         # Port info button
         self.port_info_button = Gtk.Button(label=_("View Port Info"))
         self.port_info_button.set_icon_name("network-transmit-receive-symbolic")
+        self.port_info_button.set_tooltip_text(_("View information about currently used ports and potential conflicts"))
         self.port_info_button.connect("clicked", self.on_view_port_info_clicked)
         self.port_info_button.add_css_class("flat")
         button_box.append(self.port_info_button)
