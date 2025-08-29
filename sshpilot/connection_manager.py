@@ -814,8 +814,8 @@ class ConnectionManager(GObject.Object):
                 'port': int(_unwrap(config.get('port', 22))),
                 'username': _unwrap(config.get('user', getpass.getuser())),
                 # previously: 'private_key': config.get('identityfile'),
-                'keyfile': os.path.expanduser(_unwrap(config.get('identityfile'))) if config.get('identityfile') else None,
-                'certificate': os.path.expanduser(_unwrap(config.get('certificatefile'))) if config.get('certificatefile') else None,
+                'keyfile': os.path.expanduser(_unwrap(config.get('identityfile'))) if config.get('identityfile') else '',
+                'certificate': os.path.expanduser(_unwrap(config.get('certificatefile'))) if config.get('certificatefile') else '',
                 'forwarding_rules': []
             }
             
