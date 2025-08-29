@@ -2,7 +2,7 @@
 
 This module contains helpers that were previously methods on ``MainWindow``
 for disconnecting terminals, presenting progress dialogs and showing
-reconnection feedback.  Extracting them here keeps ``main_window.py`` a little
+reconnection feedback.  Extracting them here keeps ``window.py`` a little
 leaner and makes the quit logic reusable.
 """
 
