@@ -41,8 +41,8 @@ class GroupRow(Gtk.ListBoxRow):
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         content.set_margin_start(12)
         content.set_margin_end(12)
-        content.set_margin_top(10)
-        content.set_margin_bottom(10)
+        content.set_margin_top(17)
+        content.set_margin_bottom(17)
 
         icon = Gtk.Image.new_from_icon_name("folder-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
