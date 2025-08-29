@@ -2373,6 +2373,27 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.color_scheme_row.connect('notify::selected', self.on_color_scheme_changed)
             
             appearance_group.add(self.color_scheme_row)
+            
+            # Color scheme preview
+            preview_group = Adw.PreferencesGroup()
+            preview_group.set_title("Preview")
+            
+            # Create preview terminal widget
+            self.color_preview_terminal = Gtk.DrawingArea()
+            self.color_preview_terminal.set_draw_func(self.draw_color_preview)
+            self.color_preview_terminal.set_size_request(400, 120)
+            self.color_preview_terminal.add_css_class("terminal-preview")
+            
+            # Add some margin around the preview
+            preview_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            preview_box.set_margin_top(6)
+            preview_box.set_margin_bottom(6)
+            preview_box.set_margin_start(12)
+            preview_box.set_margin_end(12)
+            preview_box.append(self.color_preview_terminal)
+            
+            preview_group.add(preview_box)
+            appearance_group.add(preview_group)
             terminal_page.add(appearance_group)
             
             # Preferred Terminal group (only show when not in Flatpak)
@@ -2851,6 +2872,185 @@ class PreferencesWindow(Adw.PreferencesWindow):
         
         # Apply to all active terminals
         self.apply_color_scheme_to_terminals(config_key)
+        
+        # Refresh the color preview
+        if hasattr(self, 'color_preview_terminal'):
+            self.color_preview_terminal.queue_draw()
+    
+    def draw_color_preview(self, drawing_area, cr, width, height):
+        """Draw a preview of the selected color scheme"""
+        # Get current color scheme
+        current_scheme_key = self.config.get_setting('terminal.theme', 'default')
+        
+        # Get color scheme colors
+        colors = self.get_color_scheme_colors(current_scheme_key)
+        
+        # Draw background
+        bg_color = colors.get('background', '#000000')
+        r, g, b, a = self.hex_to_rgba(bg_color)
+        cr.set_source_rgba(r, g, b, a)
+        cr.paint()
+        
+        # Draw terminal-like content
+        cr.set_font_size(10)
+        
+        # Draw prompt line
+        prompt_color = colors.get('foreground', '#ffffff')
+        r, g, b, a = self.hex_to_rgba(prompt_color)
+        cr.set_source_rgba(r, g, b, a)
+        cr.move_to(10, 25)
+        cr.show_text("user@host:~$ ")
+        
+        # Draw command
+        command_color = colors.get('foreground', '#ffffff')
+        r, g, b, a = self.hex_to_rgba(command_color)
+        cr.set_source_rgba(r, g, b, a)
+        cr.move_to(120, 25)
+        cr.show_text("ls -la")
+        
+        # Draw output lines
+        output_color = colors.get('foreground', '#ffffff')
+        r, g, b, a = self.hex_to_rgba(output_color)
+        cr.set_source_rgba(r, g, b, a)
+        
+        # Directory line
+        cr.move_to(10, 45)
+        cr.show_text("drwxr-xr-x  2 user user 4096 Jan 15 10:30 .")
+        
+        # File line with different color
+        file_color = colors.get('blue', '#0088ff')
+        r, g, b, a = self.hex_to_rgba(file_color)
+        cr.set_source_rgba(r, g, b, a)
+        cr.move_to(10, 65)
+        cr.show_text("-rw-r--r--  1 user user  1234 Jan 15 10:25 file.txt")
+        
+        # Executable file
+        exec_color = colors.get('green', '#00ff00')
+        r, g, b, a = self.hex_to_rgba(exec_color)
+        cr.set_source_rgba(r, g, b, a)
+        cr.move_to(10, 85)
+        cr.show_text("-rwxr-xr-x  1 user user 5678 Jan 15 10:20 script.sh")
+        
+        # Prompt line 2
+        prompt_color = colors.get('foreground', '#ffffff')
+        r, g, b, a = self.hex_to_rgba(prompt_color)
+        cr.set_source_rgba(r, g, b, a)
+        cr.move_to(10, 105)
+        cr.show_text("user@host:~$ ")
+        
+    def get_color_scheme_colors(self, scheme_key):
+        """Get colors for a specific color scheme"""
+        schemes = {
+            'default': {
+                'background': '#000000',
+                'foreground': '#ffffff',
+                'blue': '#0088ff',
+                'green': '#00ff00',
+                'red': '#ff0000',
+                'yellow': '#ffff00',
+                'magenta': '#ff00ff',
+                'cyan': '#00ffff'
+            },
+            'solarized_dark': {
+                'background': '#002b36',
+                'foreground': '#839496',
+                'blue': '#268bd2',
+                'green': '#859900',
+                'red': '#dc322f',
+                'yellow': '#b58900',
+                'magenta': '#d33682',
+                'cyan': '#2aa198'
+            },
+            'solarized_light': {
+                'background': '#fdf6e3',
+                'foreground': '#657b83',
+                'blue': '#268bd2',
+                'green': '#859900',
+                'red': '#dc322f',
+                'yellow': '#b58900',
+                'magenta': '#d33682',
+                'cyan': '#2aa198'
+            },
+            'monokai': {
+                'background': '#272822',
+                'foreground': '#f8f8f2',
+                'blue': '#66d9ef',
+                'green': '#a6e22e',
+                'red': '#f92672',
+                'yellow': '#e6db74',
+                'magenta': '#fd5ff0',
+                'cyan': '#a1efe4'
+            },
+            'dracula': {
+                'background': '#282a36',
+                'foreground': '#f8f8f2',
+                'blue': '#6272a4',
+                'green': '#50fa7b',
+                'red': '#ff5555',
+                'yellow': '#f1fa8c',
+                'magenta': '#bd93f9',
+                'cyan': '#8be9fd'
+            },
+            'nord': {
+                'background': '#2e3440',
+                'foreground': '#eceff4',
+                'blue': '#5e81ac',
+                'green': '#a3be8c',
+                'red': '#bf616a',
+                'yellow': '#ebcb8b',
+                'magenta': '#b48ead',
+                'cyan': '#88c0d0'
+            },
+            'gruvbox_dark': {
+                'background': '#282828',
+                'foreground': '#ebdbb2',
+                'blue': '#83a598',
+                'green': '#b8bb26',
+                'red': '#fb4934',
+                'yellow': '#fabd2f',
+                'magenta': '#d3869b',
+                'cyan': '#8ec07c'
+            },
+            'one_dark': {
+                'background': '#282c34',
+                'foreground': '#abb2bf',
+                'blue': '#61afef',
+                'green': '#98c379',
+                'red': '#e06c75',
+                'yellow': '#e5c07b',
+                'magenta': '#c678dd',
+                'cyan': '#56b6c2'
+            },
+            'tomorrow_night': {
+                'background': '#1d1f21',
+                'foreground': '#c5c8c6',
+                'blue': '#81a2be',
+                'green': '#b5bd68',
+                'red': '#cc6666',
+                'yellow': '#f0c674',
+                'magenta': '#b294bb',
+                'cyan': '#8abeb7'
+            },
+            'material_dark': {
+                'background': '#263238',
+                'foreground': '#eeffff',
+                'blue': '#82aaff',
+                'green': '#c3e88d',
+                'red': '#f07178',
+                'yellow': '#ffcb6b',
+                'magenta': '#c792ea',
+                'cyan': '#89ddff'
+            }
+        }
+        return schemes.get(scheme_key, schemes['default'])
+    
+    def hex_to_rgba(self, hex_color):
+        """Convert hex color to RGBA values (0-1 range)"""
+        hex_color = hex_color.lstrip('#')
+        r = int(hex_color[0:2], 16) / 255.0
+        g = int(hex_color[2:4], 16) / 255.0
+        b = int(hex_color[4:6], 16) / 255.0
+        return (r, g, b, 1.0)
         
     def on_confirm_disconnect_changed(self, switch, *args):
         """Handle confirm disconnect setting change"""
