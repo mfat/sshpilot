@@ -612,60 +612,165 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self.connection_list.select_row(row)
                     self._context_menu_connection = getattr(row, 'connection', None)
                     self._context_menu_group_row = row if hasattr(row, 'group_id') else None
-                    menu = Gio.Menu()
+                    # Create popover menu
+                    pop = Gtk.PopoverMenu()
+                    
+                    # Create menu box
+                    menu_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+                    menu_box.set_margin_start(6)
+                    menu_box.set_margin_end(6)
+                    menu_box.set_margin_top(6)
+                    menu_box.set_margin_bottom(6)
+                    pop.set_child(menu_box)
+                    
+                    # Add CSS for menu styling
+                    css_provider = Gtk.CssProvider()
+                    css_data = """
+                    .menu-button {
+                        border: none;
+                        background: transparent;
+                        padding: 8px 12px;
+                        border-radius: 4px;
+                        margin: 1px 0;
+                        font-weight: normal;
+                    }
+                    .menu-button:hover {
+                        background: rgba(0, 0, 0, 0.1);
+                    }
+                    .menu-button:active {
+                        background: rgba(0, 0, 0, 0.2);
+                    }
+                    .menu-button label {
+                        font-weight: normal;
+                    }
+                    """
+                    css_provider.load_from_data(css_data.encode())
+                    Gtk.StyleContext.add_provider_for_display(
+                        Gdk.Display.get_default(),
+                        css_provider,
+                        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                    )
                     
                     # Add menu items based on row type
                     if hasattr(row, 'group_id'):
                         # Group row context menu
                         logger.debug(f"Creating context menu for group row: {row.group_id}")
 
-                        item = Gio.MenuItem.new(_('Edit Group'), 'win.edit-group')
-                        item.set_attribute_value('icon', GLib.Variant.new_string('document-edit-symbolic'))
-                        menu.append_item(item)
+                        # Edit Group button
+                        edit_btn = Gtk.Button()
+                        edit_btn.set_action_name('win.edit-group')
+                        edit_btn.get_style_context().add_class('menu-button')
+                        edit_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                        edit_icon = Gtk.Image.new_from_icon_name('document-edit-symbolic')
+                        edit_label = Gtk.Label(label=_('Edit Group'))
+                        edit_box.append(edit_icon)
+                        edit_box.append(edit_label)
+                        edit_btn.set_child(edit_box)
+                        menu_box.append(edit_btn)
 
-                        item = Gio.MenuItem.new(_('Delete Group'), 'win.delete-group')
-                        item.set_attribute_value('icon', GLib.Variant.new_string('user-trash-symbolic'))
-                        menu.append_item(item)
+                        # Delete Group button
+                        delete_btn = Gtk.Button()
+                        delete_btn.set_action_name('win.delete-group')
+                        delete_btn.get_style_context().add_class('menu-button')
+                        delete_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                        delete_icon = Gtk.Image.new_from_icon_name('user-trash-symbolic')
+                        delete_label = Gtk.Label(label=_('Delete Group'))
+                        delete_box.append(delete_icon)
+                        delete_box.append(delete_label)
+                        delete_btn.set_child(delete_box)
+                        menu_box.append(delete_btn)
                     else:
                         # Connection row context menu
                         logger.debug(f"Creating context menu for connection row: {getattr(row, 'connection', None)}")
 
-                        item = Gio.MenuItem.new(_('Open New Connection'), 'win.open-new-connection')
-                        item.set_attribute_value('icon', GLib.Variant.new_string('list-add-symbolic'))
-                        menu.append_item(item)
+                        # Open New Connection button
+                        new_btn = Gtk.Button()
+                        new_btn.set_action_name('win.open-new-connection')
+                        new_btn.get_style_context().add_class('menu-button')
+                        new_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                        new_icon = Gtk.Image.new_from_icon_name('list-add-symbolic')
+                        new_label = Gtk.Label(label=_('Open New Connection'))
+                        new_box.append(new_icon)
+                        new_box.append(new_label)
+                        new_btn.set_child(new_box)
+                        menu_box.append(new_btn)
 
-                        item = Gio.MenuItem.new(_('Edit Connection'), 'win.edit-connection')
-                        item.set_attribute_value('icon', GLib.Variant.new_string('document-edit-symbolic'))
-                        menu.append_item(item)
+                        # Edit Connection button
+                        edit_btn = Gtk.Button()
+                        edit_btn.set_action_name('win.edit-connection')
+                        edit_btn.get_style_context().add_class('menu-button')
+                        edit_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                        edit_icon = Gtk.Image.new_from_icon_name('document-edit-symbolic')
+                        edit_label = Gtk.Label(label=_('Edit Connection'))
+                        edit_box.append(edit_icon)
+                        edit_box.append(edit_label)
+                        edit_btn.set_child(edit_box)
+                        menu_box.append(edit_btn)
 
-                        item = Gio.MenuItem.new(_('Manage Files'), 'win.manage-files')
-                        item.set_attribute_value('icon', GLib.Variant.new_string('folder-symbolic'))
-                        menu.append_item(item)
+                        # Manage Files button
+                        files_btn = Gtk.Button()
+                        files_btn.set_action_name('win.manage-files')
+                        files_btn.get_style_context().add_class('menu-button')
+                        files_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                        files_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+                        files_label = Gtk.Label(label=_('Manage Files'))
+                        files_box.append(files_icon)
+                        files_box.append(files_label)
+                        files_btn.set_child(files_box)
+                        menu_box.append(files_btn)
 
                         # Only show system terminal option when not in Flatpak
                         if not is_running_in_flatpak():
-                            item = Gio.MenuItem.new(_('Open in System Terminal'), 'win.open-in-system-terminal')
-                            item.set_attribute_value('icon', GLib.Variant.new_string('utilities-terminal-symbolic'))
-                            menu.append_item(item)
+                            terminal_btn = Gtk.Button()
+                            terminal_btn.set_action_name('win.open-in-system-terminal')
+                            terminal_btn.get_style_context().add_class('menu-button')
+                            terminal_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                            terminal_icon = Gtk.Image.new_from_icon_name('utilities-terminal-symbolic')
+                            terminal_label = Gtk.Label(label=_('Open in System Terminal'))
+                            terminal_box.append(terminal_icon)
+                            terminal_box.append(terminal_label)
+                            terminal_btn.set_child(terminal_box)
+                            menu_box.append(terminal_btn)
 
-                        item = Gio.MenuItem.new(_('Delete Connection'), 'win.delete-connection')
-                        item.set_attribute_value('icon', GLib.Variant.new_string('user-trash-symbolic'))
-                        menu.append_item(item)
+                        # Delete Connection button
+                        delete_btn = Gtk.Button()
+                        delete_btn.set_action_name('win.delete-connection')
+                        delete_btn.get_style_context().add_class('menu-button')
+                        delete_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                        delete_icon = Gtk.Image.new_from_icon_name('user-trash-symbolic')
+                        delete_label = Gtk.Label(label=_('Delete Connection'))
+                        delete_box.append(delete_icon)
+                        delete_box.append(delete_label)
+                        delete_btn.set_child(delete_box)
+                        menu_box.append(delete_btn)
 
                         # Add grouping options
                         current_group_id = self.group_manager.get_connection_group(row.connection.nickname)
                         if current_group_id:
-                            item = Gio.MenuItem.new(_('Move to Ungrouped'), 'win.move-to-ungrouped')
-                            item.set_attribute_value('icon', GLib.Variant.new_string('folder-symbolic'))
-                            menu.append_item(item)
+                            move_btn = Gtk.Button()
+                            move_btn.set_action_name('win.move-to-ungrouped')
+                            move_btn.get_style_context().add_class('menu-button')
+                            move_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                            move_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+                            move_label = Gtk.Label(label=_('Move to Ungrouped'))
+                            move_box.append(move_icon)
+                            move_box.append(move_label)
+                            move_btn.set_child(move_box)
+                            menu_box.append(move_btn)
                         else:
                             # Show available groups to move to
                             available_groups = self.get_available_groups()
                             if available_groups:
-                                item = Gio.MenuItem.new(_('Move to Group'), 'win.move-to-group')
-                                item.set_attribute_value('icon', GLib.Variant.new_string('folder-symbolic'))
-                                menu.append_item(item)
-                    pop = Gtk.PopoverMenu.new_from_model(menu)
+                                move_btn = Gtk.Button()
+                                move_btn.set_action_name('win.move-to-group')
+                                move_btn.get_style_context().add_class('menu-button')
+                                move_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                                move_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+                                move_label = Gtk.Label(label=_('Move to Group'))
+                                move_box.append(move_icon)
+                                move_box.append(move_label)
+                                move_btn.set_child(move_box)
+                                menu_box.append(move_btn)
                     pop.set_parent(self.connection_list)
                     try:
                         rect = Gdk.Rectangle()
@@ -674,11 +779,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         rect.width = 1
                         rect.height = 1
                         pop.set_pointing_to(rect)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Failed to set popover pointing: {e}")
                     pop.popup()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"Failed to create context menu: {e}")
             context_click.connect('pressed', _on_list_pressed)
             self.connection_list.add_controller(context_click)
         except Exception:
