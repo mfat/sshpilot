@@ -18,6 +18,7 @@ import weakref
 import subprocess
 from datetime import datetime
 from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
+from .port_utils import get_port_checker
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
@@ -665,8 +666,12 @@ class TerminalWidget(Gtk.Box):
                     # Pass exactly as user provided, letting ssh parse quoting
                     ssh_cmd.extend(['-o', f'LocalCommand={local_cmd}'])
 
-                # Add port forwarding rules
+                # Add port forwarding rules with conflict checking
                 if hasattr(self.connection, 'forwarding_rules'):
+                    port_conflicts = []
+                    port_checker = get_port_checker()
+                    
+                    # Check for port conflicts before adding rules
                     for rule in self.connection.forwarding_rules:
                         if not rule.get('enabled', True):
                             continue
@@ -675,6 +680,21 @@ class TerminalWidget(Gtk.Box):
                         listen_addr = rule.get('listen_addr', '127.0.0.1')
                         listen_port = rule.get('listen_port')
                         
+                        # Check for local port conflicts (for local and dynamic forwarding)
+                        if rule_type in ['local', 'dynamic'] and listen_port:
+                            try:
+                                conflicts = port_checker.get_port_conflicts([listen_port], listen_addr)
+                                if conflicts:
+                                    port, port_info = conflicts[0]
+                                    conflict_msg = f"Port {port} is already in use"
+                                    if port_info.process_name:
+                                        conflict_msg += f" by {port_info.process_name} (PID: {port_info.pid})"
+                                    port_conflicts.append(conflict_msg)
+                                    continue  # Skip this rule
+                            except Exception as e:
+                                logger.debug(f"Could not check port conflict for {listen_port}: {e}")
+                        
+                        # Add the forwarding rule if no conflicts
                         if rule_type == 'dynamic' and listen_port:
                             try:
                                 ssh_cmd.extend(['-D', f"{listen_addr}:{listen_port}"])
@@ -701,6 +721,12 @@ class TerminalWidget(Gtk.Box):
                                     logger.debug(f"Added remote port forwarding: {listen_addr}:{listen_port} -> {local_host}:{local_port}")
                             except Exception as e:
                                 logger.error(f"Failed to set up remote forwarding: {e}")
+                    
+                    # Show port conflict warnings if any
+                    if port_conflicts:
+                        conflict_message = "Port forwarding conflicts detected:\n" + "\n".join([f"• {msg}" for msg in port_conflicts])
+                        logger.warning(conflict_message)
+                        GLib.idle_add(self._show_forwarding_error_dialog, conflict_message)
                 
                 # Add NumberOfPasswordPrompts option before hostname and command
                 ssh_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])

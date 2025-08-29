@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Callable, Any
 
 import gi
 from gi.repository import Gtk, Adw, Gio, GLib, GObject
+from .port_utils import get_port_checker, PortInfo
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,11 @@ class PortForwardingRuleRow(Gtk.ListBoxRow):
         # Details label
         self.details_label = Gtk.Label()
         self.details_label.set_halign(Gtk.Align.START)
-        self.details_label.set_ellipsize(Pango.EllipsizeMode.END)
+        try:
+            from gi.repository import Pango
+            self.details_label.set_ellipsize(Pango.EllipsizeMode.END)
+        except ImportError:
+            pass  # Fallback gracefully if Pango not available
         
         # Add labels to the text box
         text_box.append(self.type_label)
@@ -197,22 +202,34 @@ class PortForwardingRules(Gtk.Box):
         self.rules_list.set_header_func(self.on_list_header_func)
         scrolled.set_child(self.rules_list)
         
-        # Add button
-        self.add_rule_button = Gtk.Button()
-        self.add_rule_button.set_halign(Gtk.Align.CENTER)
-        self.add_rule_button.set_margin_top(6)
-        self.add_rule_button.set_margin_bottom(6)
+        # Button box for actions
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        button_box.set_halign(Gtk.Align.CENTER)
+        button_box.set_margin_top(6)
+        button_box.set_margin_bottom(6)
         
-        # Add button content
-        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        button_box.append(Gtk.Image(icon_name='list-add-symbolic'))
-        button_box.append(Gtk.Label(label='Add Port Forwarding Rule'))
-        self.add_rule_button.set_child(button_box)
+        # Add rule button
+        self.add_rule_button = Gtk.Button()
+        add_button_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        add_button_content.append(Gtk.Image(icon_name='list-add-symbolic'))
+        add_button_content.append(Gtk.Label(label='Add Port Forwarding Rule'))
+        self.add_rule_button.set_child(add_button_content)
         self.add_rule_button.connect('clicked', self.on_add_rule_clicked)
+        button_box.append(self.add_rule_button)
+        
+        # Port info button
+        self.port_info_button = Gtk.Button()
+        port_info_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        port_info_content.append(Gtk.Image(icon_name='network-transmit-receive-symbolic'))
+        port_info_content.append(Gtk.Label(label='View Port Information'))
+        self.port_info_button.set_child(port_info_content)
+        self.port_info_button.connect('clicked', self.on_port_info_clicked)
+        self.port_info_button.add_css_class('flat')
+        button_box.append(self.port_info_button)
         
         # Pack widgets
         self.append(scrolled)
-        self.append(self.add_rule_button)
+        self.append(button_box)
         
         # Connect signals
         self.connect('destroy', self.on_destroy)
@@ -332,6 +349,11 @@ class PortForwardingRules(Gtk.Box):
         """Handle add rule button click"""
         dialog = PortForwardingRuleDialog(transient_for=self.get_root())
         dialog.connect('response', self.on_rule_dialog_response, None)
+        dialog.present()
+    
+    def on_port_info_clicked(self, button: Gtk.Button):
+        """Handle port info button click"""
+        dialog = PortInfoDialog(transient_for=self.get_root())
         dialog.present()
     
     def on_edit_rule_clicked(self, button: Gtk.Button, rule: Dict[str, Any]):
@@ -465,6 +487,7 @@ class PortForwardingRuleDialog(Adw.Window):
             bool: True if all inputs are valid, False otherwise
         """
         errors = []
+        warnings = []
         
         # Get UI elements
         type_row = self.get_template_child(PortForwardingRuleDialog, 'type_row')
@@ -490,12 +513,37 @@ class PortForwardingRuleDialog(Adw.Window):
             errors.append("Listen address cannot be empty")
         
         # Validate listen port
+        listen_port = None
         try:
             listen_port = int(listen_port_str)
             if listen_port < 1 or listen_port > 65535:
                 errors.append("Listen port must be between 1 and 65535")
+            elif listen_port < 1024:
+                warnings.append(f"Port {listen_port} requires root privileges")
         except (ValueError, TypeError):
             errors.append("Listen port must be a valid number")
+        
+        # Check for port conflicts (only if port is valid)
+        if listen_port and listen_addr and not errors:
+            try:
+                port_checker = get_port_checker()
+                conflicts = port_checker.get_port_conflicts([listen_port], listen_addr)
+                
+                if conflicts:
+                    port, port_info = conflicts[0]
+                    if port_info.process_name:
+                        errors.append(f"Port {port} is already in use by {port_info.process_name} (PID: {port_info.pid})")
+                    else:
+                        errors.append(f"Port {port} is already in use")
+                    
+                    # Suggest alternative port
+                    alt_port = port_checker.find_available_port(listen_port, listen_addr)
+                    if alt_port:
+                        warnings.append(f"Suggested alternative: port {alt_port}")
+                        
+            except Exception as e:
+                logger.debug(f"Error checking port conflicts: {e}")
+                warnings.append("Could not verify port availability")
         
         # For local and remote forwarding, validate remote host and port
         if rule_type_idx in [0, 1]:  # Local or Remote forwarding
@@ -514,14 +562,23 @@ class PortForwardingRuleDialog(Adw.Window):
         # Update error message
         error_label = self.get_template_child(PortForwardingRuleDialog, 'error_label')
         if error_label:
+            messages = []
+            
             if errors:
-                error_label.set_visible(True)
-                error_label.set_label("\n".join([f"• {error}" for error in errors]))
+                messages.extend([f"❌ {error}" for error in errors])
                 error_label.add_css_class('error')
+            else:
+                error_label.remove_css_class('error')
+                
+            if warnings:
+                messages.extend([f"⚠️ {warning}" for warning in warnings])
+                
+            if messages:
+                error_label.set_visible(True)
+                error_label.set_label("\n".join(messages))
             else:
                 error_label.set_visible(False)
                 error_label.set_label("")
-                error_label.remove_css_class('error')
         
         # Update save button state
         save_button = self.get_template_child(PortForwardingRuleDialog, 'save_button')
@@ -644,3 +701,119 @@ class PortForwardingRuleDialog(Adw.Window):
             })
         
         return rule
+
+class PortInfoDialog(Adw.Window):
+    """Dialog for displaying port information and conflicts"""
+    __gtype_name__ = 'PortInfoDialog'
+    
+    def __init__(self, transient_for: Optional[Gtk.Window] = None, **kwargs):
+        super().__init__(
+            transient_for=transient_for,
+            title="Port Information",
+            default_width=600,
+            default_height=400,
+            **kwargs
+        )
+        self.setup_ui()
+    
+    def setup_ui(self):
+        """Set up the dialog UI"""
+        # Header bar
+        header = Adw.HeaderBar()
+        
+        # Close button
+        close_button = Gtk.Button(label="Close")
+        close_button.add_css_class("flat")
+        close_button.connect("clicked", lambda *_: self.close())
+        header.pack_end(close_button)
+        
+        # Refresh button
+        refresh_button = Gtk.Button()
+        refresh_button.set_icon_name("view-refresh-symbolic")
+        refresh_button.set_tooltip_text("Refresh port information")
+        refresh_button.connect("clicked", self.on_refresh_clicked)
+        header.pack_start(refresh_button)
+        
+        # Main content
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        main_box.append(header)
+        
+        # Scrolled window for port list
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_vexpand(True)
+        
+        # Port list
+        self.port_list = Gtk.ListBox()
+        self.port_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.port_list.add_css_class("boxed-list")
+        scrolled.set_child(self.port_list)
+        
+        main_box.append(scrolled)
+        self.set_content(main_box)
+        
+        # Load initial data
+        self.refresh_port_info()
+    
+    def on_refresh_clicked(self, button):
+        """Handle refresh button click"""
+        self.refresh_port_info()
+    
+    def refresh_port_info(self):
+        """Refresh the port information display"""
+        # Clear existing items
+        while row := self.port_list.get_first_child():
+            self.port_list.remove(row)
+        
+        try:
+            port_checker = get_port_checker()
+            ports = port_checker.get_listening_ports(refresh=True)
+            
+            if not ports:
+                # Show empty state
+                empty_row = Adw.ActionRow()
+                empty_row.set_title("No listening ports found")
+                empty_row.set_subtitle("All ports appear to be available")
+                self.port_list.append(empty_row)
+                return
+            
+            # Sort ports by port number
+            ports.sort(key=lambda p: p.port)
+            
+            for port_info in ports:
+                row = Adw.ActionRow()
+                
+                # Title: Port and protocol
+                title = f"Port {port_info.port}/{port_info.protocol.upper()}"
+                if port_info.address != "0.0.0.0":
+                    title += f" ({port_info.address})"
+                row.set_title(title)
+                
+                # Subtitle: Process information
+                if port_info.process_name and port_info.pid:
+                    subtitle = f"{port_info.process_name} (PID: {port_info.pid})"
+                elif port_info.process_name:
+                    subtitle = port_info.process_name
+                elif port_info.pid:
+                    subtitle = f"PID: {port_info.pid}"
+                else:
+                    subtitle = "Unknown process"
+                
+                row.set_subtitle(subtitle)
+                
+                # Add icon based on port type
+                if port_info.port < 1024:
+                    icon = Gtk.Image.new_from_icon_name("security-high-symbolic")
+                    icon.set_tooltip_text("System port (requires root)")
+                else:
+                    icon = Gtk.Image.new_from_icon_name("network-transmit-receive-symbolic")
+                
+                row.add_prefix(icon)
+                self.port_list.append(row)
+                
+        except Exception as e:
+            logger.error(f"Error refreshing port info: {e}")
+            error_row = Adw.ActionRow()
+            error_row.set_title("Error loading port information")
+            error_row.set_subtitle(str(e))
+            self.port_list.append(error_row)
