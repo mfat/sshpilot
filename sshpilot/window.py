@@ -37,9 +37,11 @@ from .connection_dialog import ConnectionDialog
 from .askpass_utils import ensure_askpass_script
 from .preferences import PreferencesWindow, is_running_in_flatpak
 from .sshcopyid_window import SshCopyIdWindow
+
 from .sftp_utils import open_remote_in_file_manager
 
 logger = logging.getLogger(__name__)
+
 
 
 # ============================================================================
