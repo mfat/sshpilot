@@ -678,14 +678,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             terminal_row.connect('activated', lambda *_: (self.on_open_in_system_terminal_action(None, None), pop.popdown()))
                             listbox.append(terminal_row)
 
-                        # Delete Connection row
-                        delete_row = Adw.ActionRow(title=_('Delete Connection'))
-                        delete_icon = Gtk.Image.new_from_icon_name('user-trash-symbolic')
-                        delete_row.add_prefix(delete_icon)
-                        delete_row.set_activatable(True)
-                        delete_row.connect('activated', lambda *_: (self.on_delete_connection_action(None, None), pop.popdown()))
-                        listbox.append(delete_row)
-
                         # Add grouping options
                         current_group_id = self.group_manager.get_connection_group(row.connection.nickname)
                         
@@ -707,6 +699,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             ungroup_row.set_activatable(True)
                             ungroup_row.connect('activated', lambda *_: (self.on_move_to_ungrouped_action(None, None), pop.popdown()))
                             listbox.append(ungroup_row)
+
+                        # Delete Connection row (moved to bottom)
+                        delete_row = Adw.ActionRow(title=_('Delete'))
+                        delete_icon = Gtk.Image.new_from_icon_name('user-trash-symbolic')
+                        delete_row.add_prefix(delete_icon)
+                        delete_row.set_activatable(True)
+                        delete_row.connect('activated', lambda *_: (self.on_delete_connection_action(None, None), pop.popdown()))
+                        listbox.append(delete_row)
                     pop.set_parent(self.connection_list)
                     try:
                         rect = Gdk.Rectangle()
