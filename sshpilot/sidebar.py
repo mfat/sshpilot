@@ -41,8 +41,8 @@ class GroupRow(Gtk.ListBoxRow):
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         content.set_margin_start(12)
         content.set_margin_end(12)
-        content.set_margin_top(8)
-        content.set_margin_bottom(8)
+        content.set_margin_top(10)
+        content.set_margin_bottom(10)
 
         icon = Gtk.Image.new_from_icon_name("folder-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
@@ -89,6 +89,8 @@ class GroupRow(Gtk.ListBoxRow):
         count = len(actual_connections)
         group_name = self.group_info['name']
         self.name_label.set_markup(f"<b>{group_name} ({count})</b>")
+        
+
 
     def _on_expand_clicked(self, button):
         self._toggle_expand()
