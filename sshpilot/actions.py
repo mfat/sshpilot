@@ -491,6 +491,7 @@ class WindowActions:
 
             # Get available groups
             available_groups = self.get_available_groups()
+            logger.debug(f"Available groups for move dialog: {len(available_groups)} groups")
             if not available_groups:
                 return
 

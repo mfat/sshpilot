@@ -122,6 +122,18 @@ class GroupManager:
 
         return build_tree()
 
+    def get_all_groups(self) -> List[Dict]:
+        """Get all groups as a flat list for selection dialogs"""
+        result = []
+        for group_id, group in self.groups.items():
+            group_copy = group.copy()
+            # Remove children list to avoid confusion in flat view
+            if 'children' in group_copy:
+                del group_copy['children']
+            result.append(group_copy)
+        logger.debug(f"get_all_groups: Found {len(result)} groups: {[g['name'] for g in result]}")
+        return sorted(result, key=lambda x: x.get('order', 0))
+
     def get_connection_group(self, connection_nickname: str) -> str:
         """Get the group ID for a connection"""
         return self.connections.get(connection_nickname)

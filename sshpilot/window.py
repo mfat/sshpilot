@@ -3604,6 +3604,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             # Get available groups
             available_groups = self.get_available_groups()
+            logger.debug(f"Available groups for move dialog: {len(available_groups)} groups")
             if not available_groups:
                 return
             
@@ -3692,7 +3693,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     def get_available_groups(self) -> List[Dict]:
         """Get list of available groups for selection"""
-        return self.group_manager.get_group_hierarchy()
+        return self.group_manager.get_all_groups()
 
     def open_in_system_terminal(self, connection):
         """Open the connection in the system's default terminal"""
