@@ -773,33 +773,36 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             self._toolbar_row_height = 36
         
+        # Connection toolbar buttons
+        self.connection_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        
         # Edit button
         self.edit_button = Gtk.Button.new_from_icon_name('document-edit-symbolic')
         self.edit_button.set_tooltip_text('Edit Connection')
         self.edit_button.set_sensitive(False)
         self.edit_button.connect('clicked', self.on_edit_connection_clicked)
-        toolbar.append(self.edit_button)
+        self.connection_toolbar.append(self.edit_button)
 
         # Copy key to server button (ssh-copy-id)
         self.copy_key_button = Gtk.Button.new_from_icon_name('dialog-password-symbolic')
         self.copy_key_button.set_tooltip_text('Copy public key to server for passwordless login')
         self.copy_key_button.set_sensitive(False)
         self.copy_key_button.connect('clicked', self.on_copy_key_to_server_clicked)
-        toolbar.append(self.copy_key_button)
+        self.connection_toolbar.append(self.copy_key_button)
 
         # Upload (scp) button
         self.upload_button = Gtk.Button.new_from_icon_name('document-send-symbolic')
         self.upload_button.set_tooltip_text('Upload file(s) to server (scp)')
         self.upload_button.set_sensitive(False)
         self.upload_button.connect('clicked', self.on_upload_file_clicked)
-        toolbar.append(self.upload_button)
+        self.connection_toolbar.append(self.upload_button)
 
         # Manage files button
         self.manage_files_button = Gtk.Button.new_from_icon_name('folder-symbolic')
         self.manage_files_button.set_tooltip_text('Open file manager for remote server')
         self.manage_files_button.set_sensitive(False)
         self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
-        toolbar.append(self.manage_files_button)
+        self.connection_toolbar.append(self.manage_files_button)
         
         # System terminal button (only when not in Flatpak)
         if not is_running_in_flatpak():
@@ -807,14 +810,35 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.system_terminal_button.set_tooltip_text('Open connection in system terminal')
             self.system_terminal_button.set_sensitive(False)
             self.system_terminal_button.connect('clicked', self.on_system_terminal_button_clicked)
-            toolbar.append(self.system_terminal_button)
+            self.connection_toolbar.append(self.system_terminal_button)
         
         # Delete button
         self.delete_button = Gtk.Button.new_from_icon_name('user-trash-symbolic')
         self.delete_button.set_tooltip_text('Delete Connection')
         self.delete_button.set_sensitive(False)
         self.delete_button.connect('clicked', self.on_delete_connection_clicked)
-        toolbar.append(self.delete_button)
+        self.connection_toolbar.append(self.delete_button)
+        
+        # Group toolbar buttons
+        self.group_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        
+        # Rename group button
+        self.rename_group_button = Gtk.Button.new_from_icon_name('document-edit-symbolic')
+        self.rename_group_button.set_tooltip_text('Rename Group')
+        self.rename_group_button.set_sensitive(False)
+        self.rename_group_button.connect('clicked', self.on_rename_group_clicked)
+        self.group_toolbar.append(self.rename_group_button)
+        
+        # Delete group button
+        self.delete_group_button = Gtk.Button.new_from_icon_name('user-trash-symbolic')
+        self.delete_group_button.set_tooltip_text('Delete Group')
+        self.delete_group_button.set_sensitive(False)
+        self.delete_group_button.connect('clicked', self.on_delete_group_clicked)
+        self.group_toolbar.append(self.delete_group_button)
+        
+        # Add both toolbars to main toolbar
+        toolbar.append(self.connection_toolbar)
+        toolbar.append(self.group_toolbar)
         
         # Spacer
         spacer = Gtk.Box()
@@ -1658,16 +1682,35 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_connection_selected(self, list_box, row):
         """Handle connection list selection change"""
         has_selection = row is not None
-        self.edit_button.set_sensitive(has_selection)
-        if hasattr(self, 'copy_key_button'):
-            self.copy_key_button.set_sensitive(has_selection)
-        if hasattr(self, 'upload_button'):
-            self.upload_button.set_sensitive(has_selection)
-        if hasattr(self, 'manage_files_button'):
-            self.manage_files_button.set_sensitive(has_selection)
-        if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
-            self.system_terminal_button.set_sensitive(has_selection)
-        self.delete_button.set_sensitive(has_selection)
+        
+        if has_selection:
+            # Check if selected item is a group or connection
+            is_group = hasattr(row, 'group_id')
+            
+            if is_group:
+                # Show group toolbar, hide connection toolbar
+                self.connection_toolbar.set_visible(False)
+                self.group_toolbar.set_visible(True)
+                self.rename_group_button.set_sensitive(True)
+                self.delete_group_button.set_sensitive(True)
+            else:
+                # Show connection toolbar, hide group toolbar
+                self.connection_toolbar.set_visible(True)
+                self.group_toolbar.set_visible(False)
+                self.edit_button.set_sensitive(True)
+                if hasattr(self, 'copy_key_button'):
+                    self.copy_key_button.set_sensitive(True)
+                if hasattr(self, 'upload_button'):
+                    self.upload_button.set_sensitive(True)
+                if hasattr(self, 'manage_files_button'):
+                    self.manage_files_button.set_sensitive(True)
+                if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
+                    self.system_terminal_button.set_sensitive(True)
+                self.delete_button.set_sensitive(True)
+        else:
+            # No selection - hide both toolbars
+            self.connection_toolbar.set_visible(False)
+            self.group_toolbar.set_visible(False)
 
     def on_add_connection_clicked(self, button):
         """Handle add connection button click"""
@@ -2774,6 +2817,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         dialog.connect('response', self.on_delete_connection_response, connection)
         dialog.present()
+
+    def on_rename_group_clicked(self, button):
+        """Handle rename group button click"""
+        selected_row = self.connection_list.get_selected_row()
+        if selected_row and hasattr(selected_row, 'group_id'):
+            self.on_edit_group_action(None, None)
+
+    def on_delete_group_clicked(self, button):
+        """Handle delete group button click"""
+        selected_row = self.connection_list.get_selected_row()
+        if selected_row and hasattr(selected_row, 'group_id'):
+            self.on_delete_group_action(None, None)
 
     def on_delete_connection_response(self, dialog, response, connection):
         """Handle delete connection dialog response"""
