@@ -32,7 +32,7 @@ from .connection_manager import ConnectionManager, Connection
 from .terminal import TerminalWidget
 from .config import Config
 from .key_manager import KeyManager, SSHKey
-from .port_forwarding_ui import PortForwardingRules
+# Port forwarding UI is now integrated into connection_dialog.py
 from .connection_dialog import ConnectionDialog
 from .askpass_utils import ensure_askpass_script
 
