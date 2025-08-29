@@ -84,6 +84,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Terminal manager handles terminal-related operations
         self.terminal_manager = TerminalManager(self)
         
+        # Bulk operations manager for group operations
+        from .bulk_operations import BulkOperationsManager
+        from .bulk_progress_dialog import BulkProgressManager
+        self.bulk_operations_manager = BulkOperationsManager(self.connection_manager, self.terminal_manager)
+        self.bulk_progress_manager = BulkProgressManager(self, self.bulk_operations_manager)
+        
         # Add action for activating connections
         self.activate_action = Gio.SimpleAction.new('activate-connection', None)
         self.activate_action.connect('activate', self.on_activate_connection)
@@ -626,6 +632,44 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         # Group row context menu
                         logger.debug(f"Creating context menu for group row: {row.group_id}")
 
+                        # Get connections in this group
+                        group_connections = self._get_group_connections(row.group_id)
+                        has_connections = len(group_connections) > 0
+
+                        # Connect All row
+                        if has_connections:
+                            connect_all_row = Adw.ActionRow(title=_('Connect All'))
+                            connect_all_icon = Gtk.Image.new_from_icon_name('network-wired-symbolic')
+                            connect_all_row.add_prefix(connect_all_icon)
+                            connect_all_row.set_activatable(True)
+                            connect_all_row.connect('activated', lambda *_: (self.on_connect_all_group_action(None, None), pop.popdown()))
+                            listbox.append(connect_all_row)
+
+                        # Disconnect All row
+                        if has_connections:
+                            disconnect_all_row = Adw.ActionRow(title=_('Disconnect All'))
+                            disconnect_all_icon = Gtk.Image.new_from_icon_name('network-offline-symbolic')
+                            disconnect_all_row.add_prefix(disconnect_all_icon)
+                            disconnect_all_row.set_activatable(True)
+                            disconnect_all_row.connect('activated', lambda *_: (self.on_disconnect_all_group_action(None, None), pop.popdown()))
+                            listbox.append(disconnect_all_row)
+
+                        # Kill All row
+                        if has_connections:
+                            kill_all_row = Adw.ActionRow(title=_('Kill All Connections'))
+                            kill_all_icon = Gtk.Image.new_from_icon_name('process-stop-symbolic')
+                            kill_all_row.add_prefix(kill_all_icon)
+                            kill_all_row.set_activatable(True)
+                            kill_all_row.connect('activated', lambda *_: (self.on_kill_all_group_action(None, None), pop.popdown()))
+                            listbox.append(kill_all_row)
+
+                        # Add separator if we have bulk actions
+                        if has_connections:
+                            separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+                            separator.set_margin_top(6)
+                            separator.set_margin_bottom(6)
+                            listbox.append(separator)
+
                         # Edit Group row
                         edit_row = Adw.ActionRow(title=_('Edit Group'))
                         edit_icon = Gtk.Image.new_from_icon_name('document-edit-symbolic')
@@ -1033,6 +1077,29 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.connection_list.select_row(row)
                 break
     
+    def _get_group_connections(self, group_id: str) -> List:
+        """Get all connections in a group (including nested groups)"""
+        connections = []
+        
+        def collect_connections(gid):
+            if gid not in self.group_manager.groups:
+                return
+            
+            group = self.group_manager.groups[gid]
+            
+            # Add direct connections in this group
+            for conn_nickname in group.get('connections', []):
+                conn = self.connection_manager.find_connection_by_nickname(conn_nickname)
+                if conn:
+                    connections.append(conn)
+            
+            # Recursively collect from child groups
+            for child_id in group.get('children', []):
+                collect_connections(child_id)
+        
+        collect_connections(group_id)
+        return connections
+
     def add_connection_row(self, connection: Connection, indent_level: int = 0):
         """Add a connection row to the list with optional indentation"""
         row = ConnectionRow(connection)
@@ -3821,6 +3888,112 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def get_available_groups(self) -> List[Dict]:
         """Get list of available groups for selection"""
         return self.group_manager.get_all_groups()
+
+    def on_connect_all_group_action(self, action, param=None):
+        """Handle connect all group action"""
+        try:
+            # Get the group row from context menu or selected row
+            selected_row = getattr(self, '_context_menu_group_row', None)
+            if not selected_row:
+                selected_row = self.connection_list.get_selected_row()
+            
+            if not selected_row or not hasattr(selected_row, 'group_id'):
+                logger.warning("No group selected for connect all action")
+                return
+            
+            group_id = selected_row.group_id
+            connections = self._get_group_connections(group_id)
+            
+            if not connections:
+                logger.info(f"No connections found in group {group_id}")
+                return
+            
+            logger.info(f"Starting connect all for group {group_id} with {len(connections)} connections")
+            
+            # Start the bulk operation
+            import asyncio
+            asyncio.create_task(self.bulk_operations_manager.connect_all(connections))
+            
+        except Exception as e:
+            logger.error(f"Failed to connect all in group: {e}")
+    
+    def on_disconnect_all_group_action(self, action, param=None):
+        """Handle disconnect all group action"""
+        try:
+            # Get the group row from context menu or selected row
+            selected_row = getattr(self, '_context_menu_group_row', None)
+            if not selected_row:
+                selected_row = self.connection_list.get_selected_row()
+            
+            if not selected_row or not hasattr(selected_row, 'group_id'):
+                logger.warning("No group selected for disconnect all action")
+                return
+            
+            group_id = selected_row.group_id
+            connections = self._get_group_connections(group_id)
+            
+            # Filter to only connected connections
+            connected_connections = [conn for conn in connections if conn.is_connected]
+            
+            if not connected_connections:
+                logger.info(f"No connected connections found in group {group_id}")
+                return
+            
+            logger.info(f"Starting disconnect all for group {group_id} with {len(connected_connections)} connections")
+            
+            # Start the bulk operation
+            import asyncio
+            asyncio.create_task(self.bulk_operations_manager.disconnect_all(connected_connections))
+            
+        except Exception as e:
+            logger.error(f"Failed to disconnect all in group: {e}")
+    
+    def on_kill_all_group_action(self, action, param=None):
+        """Handle kill all group action"""
+        try:
+            # Get the group row from context menu or selected row
+            selected_row = getattr(self, '_context_menu_group_row', None)
+            if not selected_row:
+                selected_row = self.connection_list.get_selected_row()
+            
+            if not selected_row or not hasattr(selected_row, 'group_id'):
+                logger.warning("No group selected for kill all action")
+                return
+            
+            group_id = selected_row.group_id
+            connections = self._get_group_connections(group_id)
+            
+            if not connections:
+                logger.info(f"No connections found in group {group_id}")
+                return
+            
+            # Show confirmation dialog for kill all
+            group_name = self.group_manager.groups.get(group_id, {}).get('name', 'Unknown Group')
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Kill All Connections in Group"),
+                body=_("Are you sure you want to forcefully kill all connections in group '{}'?\n\nThis will immediately terminate all active connections and cannot be undone.").format(group_name)
+            )
+            dialog.add_response('cancel', _("Cancel"))
+            dialog.add_response('kill', _("Kill All"))
+            dialog.set_response_appearance('kill', Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response('cancel')
+            dialog.set_close_response('cancel')
+            
+            def on_response(dialog, response_id):
+                dialog.close()
+                if response_id == 'kill':
+                    logger.info(f"Starting kill all for group {group_id} with {len(connections)} connections")
+                    # Start the bulk operation
+                    import asyncio
+                    asyncio.create_task(self.bulk_operations_manager.kill_all(connections))
+            
+            dialog.connect('response', on_response)
+            dialog.present()
+            
+        except Exception as e:
+            logger.error(f"Failed to kill all in group: {e}")
 
     def open_in_system_terminal(self, connection):
         """Open the connection in the system's default terminal"""
