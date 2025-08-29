@@ -141,11 +141,11 @@ class PortChecker:
         return ports
     
     def _get_ports_via_netstat(self) -> List[PortInfo]:
-        """Fallback method using netstat command"""
+        """Fallback method using netstat command or /proc/net/tcp parsing"""
         ports = []
         
         try:
-            # Try netstat command
+            # Try netstat command first
             result = subprocess.run(['netstat', '-tlnp'], 
                                   capture_output=True, text=True, timeout=10)
             
@@ -176,8 +176,167 @@ class PortChecker:
             
         except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError) as e:
             logger.debug(f"netstat fallback failed: {e}")
+            
+            # If netstat failed, try parsing /proc/net/tcp directly
+            try:
+                ports = self._get_ports_via_proc()
+            except Exception as proc_e:
+                logger.debug(f"/proc/net/tcp parsing failed: {proc_e}")
         
         return ports
+    
+    def _get_ports_via_proc(self) -> List[PortInfo]:
+        """Parse /proc/net/tcp and /proc/net/tcp6 for listening ports"""
+        ports = []
+        
+        # Parse TCP v4 and v6
+        for proc_file, is_ipv6 in [('/proc/net/tcp', False), ('/proc/net/tcp6', True)]:
+            try:
+                with open(proc_file, 'r') as f:
+                    lines = f.readlines()[1:]  # Skip header
+                    
+                    for line in lines:
+                        parts = line.strip().split()
+                        if len(parts) < 10:
+                            continue
+                            
+                        # Parse local address and port
+                        local_addr_port = parts[1]
+                        if ':' not in local_addr_port:
+                            continue
+                            
+                        addr_hex, port_hex = local_addr_port.split(':')
+                        
+                        # Convert port from hex
+                        port = int(port_hex, 16)
+                        
+                        # Convert address from hex
+                        if is_ipv6:
+                            # IPv6 address parsing (simplified)
+                            if addr_hex == '00000000000000000000000000000000':
+                                address = '::'
+                            else:
+                                address = 'IPv6'  # Simplified for now
+                        else:
+                            # IPv4 address parsing
+                            if len(addr_hex) == 8:
+                                # Convert little-endian hex to IP
+                                addr_int = int(addr_hex, 16)
+                                address = f"{addr_int & 0xFF}.{(addr_int >> 8) & 0xFF}.{(addr_int >> 16) & 0xFF}.{(addr_int >> 24) & 0xFF}"
+                            else:
+                                address = "0.0.0.0"
+                        
+                        # Check connection state (0A = LISTEN in hex)
+                        state = parts[3]
+                        if state != '0A':
+                            continue
+                        
+                        # Try to get inode for process lookup
+                        inode = None
+                        try:
+                            inode = int(parts[9])
+                        except (ValueError, IndexError):
+                            pass
+                        
+                        # Create port info
+                        port_info = PortInfo(
+                            port=port,
+                            protocol='tcp',
+                            address=address
+                        )
+                        
+                        # Try to find process by inode
+                        if inode:
+                            pid, process_name = self._find_process_by_inode(inode)
+                            if pid:
+                                port_info.pid = pid
+                                port_info.process_name = process_name
+                        
+                        ports.append(port_info)
+                        
+            except (OSError, IOError) as e:
+                logger.debug(f"Could not read {proc_file}: {e}")
+                continue
+        
+        return ports
+    
+    def _find_process_by_inode(self, inode: int) -> Tuple[Optional[int], Optional[str]]:
+        """Find process PID and name by socket inode"""
+        try:
+            import os
+            import glob
+            
+            # Search through /proc/*/fd/* for the socket inode
+            for pid_dir in glob.glob('/proc/[0-9]*'):
+                try:
+                    pid = int(os.path.basename(pid_dir))
+                    fd_dir = os.path.join(pid_dir, 'fd')
+                    
+                    if not os.path.exists(fd_dir):
+                        continue
+                        
+                    try:
+                        for fd_link in os.listdir(fd_dir):
+                            try:
+                                fd_path = os.path.join(fd_dir, fd_link)
+                                if os.path.islink(fd_path):
+                                    target = os.readlink(fd_path)
+                                    if target == f'socket:[{inode}]':
+                                        # Found the process, get its name
+                                        process_name = self._get_process_name(pid)
+                                        return pid, process_name
+                            except (OSError, ValueError, PermissionError):
+                                continue
+                    except (OSError, PermissionError):
+                        # Can't read fd directory, try alternative approach
+                        continue
+                            
+                except (ValueError, OSError):
+                    continue
+                    
+        except Exception as e:
+            logger.debug(f"Error finding process by inode {inode}: {e}")
+            
+        return None, None
+    
+    def _get_process_name(self, pid: int) -> Optional[str]:
+        """Get process name for a given PID using multiple methods"""
+        try:
+            # Try /proc/pid/comm first (most reliable)
+            try:
+                with open(f'/proc/{pid}/comm', 'r') as f:
+                    return f.read().strip()
+            except (OSError, IOError):
+                pass
+            
+            # Try /proc/pid/cmdline as fallback
+            try:
+                with open(f'/proc/{pid}/cmdline', 'r') as f:
+                    cmdline = f.read().strip()
+                    if cmdline:
+                        # Get just the command name, not full path or arguments
+                        cmd = cmdline.split('\x00')[0]  # cmdline is null-separated
+                        if cmd:
+                            return os.path.basename(cmd)
+            except (OSError, IOError):
+                pass
+            
+            # Try /proc/pid/stat as last resort
+            try:
+                with open(f'/proc/{pid}/stat', 'r') as f:
+                    stat_line = f.read().strip()
+                    # Process name is the second field in parentheses
+                    start = stat_line.find('(')
+                    end = stat_line.rfind(')')
+                    if start != -1 and end != -1 and end > start:
+                        return stat_line[start+1:end]
+            except (OSError, IOError):
+                pass
+                
+        except Exception as e:
+            logger.debug(f"Error getting process name for PID {pid}: {e}")
+            
+        return None
     
     def find_available_port(self, preferred_port: int, address: str = '127.0.0.1', 
                           port_range: Tuple[int, int] = (1024, 65535)) -> Optional[int]:
