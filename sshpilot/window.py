@@ -3133,6 +3133,555 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Start cleanup process
             shutdown.cleanup_and_quit(self)
 
+
+    def on_open_new_connection_action(self, action, param=None):
+        """Open a new tab for the selected connection via context menu."""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                # Fallback to selected row if any
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+            self.terminal_manager.connect_to_host(connection, force_new=True)
+        except Exception as e:
+            logger.error(f"Failed to open new connection tab: {e}")
+
+    def on_open_new_connection_tab_action(self, action, param=None):
+        """Open a new tab for the selected connection via global shortcut (Ctrl+Alt+N)."""
+        try:
+            # Get the currently selected connection
+            row = self.connection_list.get_selected_row()
+            if row and hasattr(row, 'connection'):
+                connection = row.connection
+                self.terminal_manager.connect_to_host(connection, force_new=True)
+            else:
+                # If no connection is selected, show a message or fall back to new connection dialog
+                logger.debug("No connection selected for Ctrl+Alt+N, opening new connection dialog")
+                self.show_connection_dialog()
+        except Exception as e:
+            logger.error(f"Failed to open new connection tab with Ctrl+Alt+N: {e}")
+
+    def on_manage_files_action(self, action, param=None):
+        """Handle manage files action from context menu"""
+        if hasattr(self, '_context_menu_connection') and self._context_menu_connection:
+            connection = self._context_menu_connection
+            try:
+                # Define error callback for async operation
+                def error_callback(error_msg):
+                    logger.error(f"Failed to open file manager for {connection.nickname}: {error_msg}")
+                    # Show error dialog to user
+                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
+                
+                success, error_msg = open_remote_in_file_manager(
+                    user=connection.username,
+                    host=connection.host,
+                    port=connection.port if connection.port != 22 else None,
+                    error_callback=error_callback,
+                    parent_window=self
+                )
+                if success:
+                    logger.info(f"Started file manager process for {connection.nickname}")
+                else:
+                    logger.error(f"Failed to start file manager process for {connection.nickname}: {error_msg}")
+                    # Show error dialog to user
+                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to start file manager process")
+            except Exception as e:
+                logger.error(f"Error opening file manager: {e}")
+                # Show error dialog to user
+                self._show_manage_files_error(connection.nickname, str(e))
+
+    def on_edit_connection_action(self, action, param=None):
+        """Handle edit connection action from context menu"""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                # Fallback to selected row if any
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+            self.show_connection_dialog(connection)
+        except Exception as e:
+            logger.error(f"Failed to edit connection: {e}")
+
+    def on_delete_connection_action(self, action, param=None):
+        """Handle delete connection action from context menu"""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                # Fallback to selected row if any
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+            
+            # Use the same logic as the button click handler
+            # If host has active connections/tabs, warn about closing them first
+            has_active_terms = bool(self.connection_to_terminals.get(connection, []))
+            if getattr(connection, 'is_connected', False) or has_active_terms:
+                dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_('Remove host?'),
+                    body=_('Close connections and remove host?')
+                )
+                dialog.add_response('cancel', _('Cancel'))
+                dialog.add_response('close_remove', _('Close and Remove'))
+                dialog.set_response_appearance('close_remove', Adw.ResponseAppearance.DESTRUCTIVE)
+                dialog.set_default_response('close')
+                dialog.set_close_response('cancel')
+            else:
+                # Simple delete confirmation when not connected
+                dialog = Adw.MessageDialog.new(self, _('Delete Connection?'),
+                                             _('Are you sure you want to delete "{}"?').format(connection.nickname))
+                dialog.add_response('cancel', _('Cancel'))
+                dialog.add_response('delete', _('Delete'))
+                dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
+                dialog.set_default_response('cancel')
+                dialog.set_close_response('cancel')
+
+            dialog.connect('response', self.on_delete_connection_response, connection)
+            dialog.present()
+        except Exception as e:
+            logger.error(f"Failed to delete connection: {e}")
+
+    def on_open_in_system_terminal_action(self, action, param=None):
+        """Handle open in system terminal action from context menu"""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                # Fallback to selected row if any
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+            
+            self.open_in_system_terminal(connection)
+        except Exception as e:
+            logger.error(f"Failed to open in system terminal: {e}")
+
+    def on_broadcast_command_action(self, action, param=None):
+        """Handle broadcast command action - shows dialog to input command"""
+        try:
+            # Create a custom dialog window instead of using Adw.MessageDialog
+            dialog = Gtk.Dialog(
+                title=_("Broadcast Command"),
+                transient_for=self,
+                modal=True,
+                destroy_with_parent=True
+            )
+            
+            # Set dialog properties
+            dialog.set_default_size(400, 150)
+            dialog.set_resizable(False)
+            
+            # Get the content area
+            content_area = dialog.get_content_area()
+            content_area.set_margin_start(20)
+            content_area.set_margin_end(20)
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
+            content_area.set_spacing(12)
+            
+            # Add label
+            label = Gtk.Label(label=_("Enter a command to send to all open SSH terminals:"))
+            label.set_wrap(True)
+            label.set_xalign(0)
+            content_area.append(label)
+            
+            # Add text entry
+            entry = Gtk.Entry()
+            entry.set_placeholder_text(_("e.g., ls -la"))
+            entry.set_activates_default(True)
+            entry.set_hexpand(True)
+            content_area.append(entry)
+            
+            # Add buttons
+            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
+            send_button = dialog.add_button(_('Send'), Gtk.ResponseType.OK)
+            send_button.get_style_context().add_class('suggested-action')
+            
+            # Set default button
+            dialog.set_default_response(Gtk.ResponseType.OK)
+            
+            # Connect to response signal
+            def on_response(dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    command = entry.get_text().strip()
+                    if command:
+                        sent_count, failed_count = self.terminal_manager.broadcast_command(command)
+                        
+                        # Show result dialog
+                        result_dialog = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Command Sent"),
+                            body=_("Command sent to {} SSH terminals. {} failed.").format(sent_count, failed_count)
+                        )
+                        result_dialog.add_response('ok', _('OK'))
+                        result_dialog.present()
+                    else:
+                        # Show error for empty command
+                        error_dialog = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Error"),
+                            body=_("Please enter a command to send.")
+                        )
+                        error_dialog.add_response('ok', _('OK'))
+                        error_dialog.present()
+                dialog.destroy()
+            
+            dialog.connect('response', on_response)
+            
+            # Show the dialog
+            dialog.present()
+            
+            # Focus the entry after the dialog is shown
+            def focus_entry():
+                entry.grab_focus()
+                return False
+            
+            GLib.idle_add(focus_entry)
+            
+        except Exception as e:
+            logger.error(f"Failed to show broadcast command dialog: {e}")
+            # Show error dialog
+            try:
+                error_dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("Error"),
+                    body=_("Failed to open broadcast command dialog: {}").format(str(e))
+                )
+                error_dialog.add_response('ok', _('OK'))
+                error_dialog.present()
+            except Exception:
+                pass
+    
+    def on_create_group_action(self, action, param=None):
+        """Handle create group action"""
+        try:
+            # Create dialog for group name input
+            dialog = Gtk.Dialog(
+                title=_("Create New Group"),
+                transient_for=self,
+                modal=True,
+                destroy_with_parent=True
+            )
+            
+            dialog.set_default_size(400, 150)
+            dialog.set_resizable(False)
+            
+            content_area = dialog.get_content_area()
+            content_area.set_margin_start(20)
+            content_area.set_margin_end(20)
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
+            content_area.set_spacing(12)
+            
+            # Add label
+            label = Gtk.Label(label=_("Enter a name for the new group:"))
+            label.set_wrap(True)
+            label.set_xalign(0)
+            content_area.append(label)
+            
+            # Add text entry
+            entry = Gtk.Entry()
+            entry.set_placeholder_text(_("e.g., Production Servers"))
+            entry.set_activates_default(True)
+            entry.set_hexpand(True)
+            content_area.append(entry)
+            
+            # Add buttons
+            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
+            create_button = dialog.add_button(_('Create'), Gtk.ResponseType.OK)
+            create_button.get_style_context().add_class('suggested-action')
+            
+            dialog.set_default_response(Gtk.ResponseType.OK)
+            
+            def on_response(dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    group_name = entry.get_text().strip()
+                    if group_name:
+                        self.group_manager.create_group(group_name)
+                        self.rebuild_connection_list()
+                    else:
+                        # Show error for empty name
+                        error_dialog = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Error"),
+                            body=_("Please enter a group name.")
+                        )
+                        error_dialog.add_response('ok', _('OK'))
+                        error_dialog.present()
+                dialog.destroy()
+            
+            dialog.connect('response', on_response)
+            dialog.present()
+            
+            def focus_entry():
+                entry.grab_focus()
+                return False
+            
+            GLib.idle_add(focus_entry)
+            
+        except Exception as e:
+            logger.error(f"Failed to show create group dialog: {e}")
+    
+    def on_edit_group_action(self, action, param=None):
+        """Handle edit group action"""
+        try:
+            logger.debug("Edit group action triggered")
+            # Get the group row from context menu or selected row
+            selected_row = getattr(self, '_context_menu_group_row', None)
+            if not selected_row:
+                selected_row = self.connection_list.get_selected_row()
+            logger.debug(f"Selected row: {selected_row}")
+            if not selected_row:
+                logger.debug("No selected row")
+                return
+            if not hasattr(selected_row, 'group_id'):
+                logger.debug("Selected row is not a group row")
+                return
+            
+            group_id = selected_row.group_id
+            logger.debug(f"Group ID: {group_id}")
+            group_info = self.group_manager.groups.get(group_id)
+            if not group_info:
+                logger.debug(f"Group info not found for ID: {group_id}")
+                return
+            
+            # Create dialog for group name editing
+            dialog = Gtk.Dialog(
+                title=_("Edit Group"),
+                transient_for=self,
+                modal=True,
+                destroy_with_parent=True
+            )
+            
+            dialog.set_default_size(400, 150)
+            dialog.set_resizable(False)
+            
+            content_area = dialog.get_content_area()
+            content_area.set_margin_start(20)
+            content_area.set_margin_end(20)
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
+            content_area.set_spacing(12)
+            
+            # Add label
+            label = Gtk.Label(label=_("Enter a new name for the group:"))
+            label.set_wrap(True)
+            label.set_xalign(0)
+            content_area.append(label)
+            
+            # Add text entry
+            entry = Gtk.Entry()
+            entry.set_text(group_info['name'])
+            entry.set_activates_default(True)
+            entry.set_hexpand(True)
+            content_area.append(entry)
+            
+            # Add buttons
+            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
+            save_button = dialog.add_button(_('Save'), Gtk.ResponseType.OK)
+            save_button.get_style_context().add_class('suggested-action')
+            
+            dialog.set_default_response(Gtk.ResponseType.OK)
+            
+            def on_response(dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    new_name = entry.get_text().strip()
+                    if new_name:
+                        group_info['name'] = new_name
+                        self.group_manager._save_groups()
+                        self.rebuild_connection_list()
+                    else:
+                        # Show error for empty name
+                        error_dialog = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Error"),
+                            body=_("Please enter a group name.")
+                        )
+                        error_dialog.add_response('ok', _('OK'))
+                        error_dialog.present()
+                dialog.destroy()
+            
+            dialog.connect('response', on_response)
+            dialog.present()
+            
+            def focus_entry():
+                entry.grab_focus()
+                entry.select_region(0, -1)
+                return False
+            
+            GLib.idle_add(focus_entry)
+            
+        except Exception as e:
+            logger.error(f"Failed to show edit group dialog: {e}")
+    
+    def on_delete_group_action(self, action, param=None):
+        """Handle delete group action"""
+        try:
+            # Get the group row from context menu or selected row
+            selected_row = getattr(self, '_context_menu_group_row', None)
+            if not selected_row:
+                selected_row = self.connection_list.get_selected_row()
+            if not selected_row or not hasattr(selected_row, 'group_id'):
+                return
+            
+            group_id = selected_row.group_id
+            group_info = self.group_manager.groups.get(group_id)
+            if not group_info:
+                return
+            
+            # Show confirmation dialog
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Delete Group"),
+                body=_("Are you sure you want to delete the group '{}'?\n\nThis will move all connections in this group to the parent group or make them ungrouped.").format(group_info['name'])
+            )
+            
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('delete', _('Delete'))
+            dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response('cancel')
+            
+            def on_response(dialog, response):
+                if response == 'delete':
+                    self.group_manager.delete_group(group_id)
+                    self.rebuild_connection_list()
+                dialog.destroy()
+            
+            dialog.connect('response', on_response)
+            dialog.present()
+            
+        except Exception as e:
+            logger.error(f"Failed to show delete group dialog: {e}")
+    
+    def on_move_to_ungrouped_action(self, action, param=None):
+        """Handle move to ungrouped action"""
+        try:
+            # Get the connection from context menu or selected row
+            selected_row = getattr(self, '_context_menu_connection', None)
+            if not selected_row:
+                selected_row = self.connection_list.get_selected_row()
+                if selected_row and hasattr(selected_row, 'connection'):
+                    selected_row = selected_row.connection
+            
+            if not selected_row:
+                return
+            
+            connection_nickname = selected_row.nickname if hasattr(selected_row, 'nickname') else selected_row
+            
+            # Move to ungrouped (None group)
+            self.group_manager.move_connection(connection_nickname, None)
+            self.rebuild_connection_list()
+            
+        except Exception as e:
+            logger.error(f"Failed to move connection to ungrouped: {e}")
+    
+    def on_move_to_group_action(self, action, param=None):
+        """Handle move to group action"""
+        try:
+            # Get the connection from context menu or selected row
+            selected_row = getattr(self, '_context_menu_connection', None)
+            if not selected_row:
+                selected_row = self.connection_list.get_selected_row()
+                if selected_row and hasattr(selected_row, 'connection'):
+                    selected_row = selected_row.connection
+            
+            if not selected_row:
+                return
+            
+            connection_nickname = selected_row.nickname if hasattr(selected_row, 'nickname') else selected_row
+            
+            # Get available groups
+            available_groups = self.get_available_groups()
+            if not available_groups:
+                return
+            
+            # Show group selection dialog
+            dialog = Gtk.Dialog(
+                title=_("Move to Group"),
+                transient_for=self,
+                modal=True,
+                destroy_with_parent=True
+            )
+            
+            dialog.set_default_size(400, 300)
+            dialog.set_resizable(False)
+            
+            content_area = dialog.get_content_area()
+            content_area.set_margin_start(20)
+            content_area.set_margin_end(20)
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
+            content_area.set_spacing(12)
+            
+            # Add label
+            label = Gtk.Label(label=_("Select a group to move the connection to:"))
+            label.set_wrap(True)
+            label.set_xalign(0)
+            content_area.append(label)
+            
+            # Add list box for groups
+            listbox = Gtk.ListBox()
+            listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            listbox.set_vexpand(True)
+            
+            # Add groups to list
+            selected_group_id = None
+            for group in available_groups:
+                row = Gtk.ListBoxRow()
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+                
+                # Add group icon
+                icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+                icon.set_pixel_size(16)
+                box.append(icon)
+                
+                # Add group name
+                label = Gtk.Label(label=group['name'])
+                label.set_xalign(0)
+                label.set_hexpand(True)
+                box.append(label)
+                
+                row.set_child(box)
+                row.group_id = group['id']
+                listbox.append(row)
+            
+            content_area.append(listbox)
+            
+            # Add buttons
+            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
+            move_button = dialog.add_button(_('Move'), Gtk.ResponseType.OK)
+            move_button.get_style_context().add_class('suggested-action')
+            
+            dialog.set_default_response(Gtk.ResponseType.OK)
+            
+            def on_response(dialog, response):
+                if response == Gtk.ResponseType.OK:
+                    selected_row = listbox.get_selected_row()
+                    if selected_row:
+                        target_group_id = selected_row.group_id
+                        self.group_manager.move_connection(connection_nickname, target_group_id)
+                        self.rebuild_connection_list()
+                dialog.destroy()
+            
+            dialog.connect('response', on_response)
+            dialog.present()
+            
+        except Exception as e:
+            logger.error(f"Failed to show move to group dialog: {e}")
+    
+
     def move_connection_to_group(self, connection_nickname: str, target_group_id: str = None):
         """Move a connection to a specific group"""
         try:
