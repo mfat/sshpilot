@@ -30,6 +30,7 @@ from gettext import gettext as _
 
 from .connection_manager import ConnectionManager, Connection
 from .terminal import TerminalWidget
+from .terminal_manager import TerminalManager
 from .config import Config
 from .key_manager import KeyManager, SSHKey
 # Port forwarding UI is now integrated into connection_dialog.py
@@ -77,6 +78,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.setup_ui()
         self.setup_connections()
         self.setup_signals()
+
+        # Terminal manager handles terminal-related operations
+        self.terminal_manager = TerminalManager(self)
         
         # Add action for activating connections
         self.activate_action = Gio.SimpleAction.new('activate-connection', None)
@@ -172,7 +176,7 @@ class MainWindow(Adw.ApplicationWindow):
             startup_behavior = self.config.get_setting('app-startup-behavior', 'terminal')
             if startup_behavior == 'terminal':
                 # Show local terminal on startup
-                GLib.idle_add(self.show_local_terminal)
+                GLib.idle_add(self.terminal_manager.show_local_terminal)
             # If startup_behavior == 'welcome', the welcome view is already shown by default
         except Exception as e:
             logger.error(f"Error handling startup behavior: {e}")
@@ -733,7 +737,7 @@ class MainWindow(Adw.ApplicationWindow):
                     selected_row = self.connection_list.get_selected_row()
                     if selected_row and hasattr(selected_row, 'connection'):
                         connection = selected_row.connection
-                        self.connect_to_host(connection, force_new=True)
+                        self.terminal_manager.connect_to_host(connection, force_new=True)
                 except Exception as e:
                     logger.error(f"Failed to open new connection with Ctrl+Enter: {e}")
                 return True
@@ -1387,116 +1391,6 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as e:
             logger.error(f"Failed to show preferences dialog: {e}")
 
-    def show_local_terminal(self):
-        """Show a local terminal tab"""
-        logger.info("Show local terminal tab")
-        try:
-            # Create a local terminal widget
-            from .terminal import TerminalWidget
-            
-            # Create a dummy connection object for local terminal
-            class LocalConnection:
-                def __init__(self):
-                    self.nickname = "Local Terminal"
-                    self.host = "localhost"
-                    self.username = os.getenv('USER', 'user')
-                    self.port = 22
-            
-            local_connection = LocalConnection()
-            
-            # Create terminal widget for local shell
-            logger.info("Creating TerminalWidget...")
-            terminal_widget = TerminalWidget(local_connection, self.config, self.connection_manager)
-            logger.info("TerminalWidget created successfully")
-            
-            # Set up the terminal for local shell (not SSH)
-            logger.info("Setting up local shell...")
-            terminal_widget.setup_local_shell()
-            logger.info("Local shell setup completed")
-            
-            # Add to tab view
-            logger.info("Adding terminal to tab view...")
-            self._add_terminal_tab(terminal_widget, "Local Terminal")
-            
-            # Ensure the terminal widget is properly shown
-            GLib.idle_add(terminal_widget.show)
-            GLib.idle_add(terminal_widget.vte.show)
-            
-            logger.info("Local terminal tab created successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to show local terminal: {e}")
-            # Show error dialog
-            try:
-                dialog = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading="Error",
-                    body=f"Could not open local terminal.\n\n{e}"
-                )
-                dialog.add_response("ok", "OK")
-                dialog.present()
-            except Exception:
-                pass
-
-    def _add_terminal_tab(self, terminal_widget, title):
-        """Add a terminal widget to the tab view"""
-        try:
-            # Add to tab view
-            page = self.tab_view.append(terminal_widget)
-            page.set_title(title)
-            page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
-            
-            # Switch to tab view
-            self.show_tab_view()
-            
-            # Activate the new tab
-            self.tab_view.set_selected_page(page)
-            
-            logger.info(f"Added terminal tab: {title}")
-            
-        except Exception as e:
-            logger.error(f"Failed to add terminal tab: {e}")
-
-    def broadcast_command(self, command: str):
-        """Send a command to all open SSH terminal tabs (excluding local terminal tabs)"""
-        cmd = (command + "\n").encode("utf-8")
-        sent_count = 0
-        failed_count = 0
-        
-        # Get all open terminals from the tab view
-        for i in range(self.tab_view.get_n_pages()):
-            page = self.tab_view.get_nth_page(i)
-            if page is None:
-                continue
-                
-            # Get the terminal widget from the page
-            terminal_widget = page.get_child()
-            if terminal_widget is None or not hasattr(terminal_widget, 'vte'):
-                continue
-                
-            # Check if this is a local terminal by looking at the connection
-            if hasattr(terminal_widget, 'connection'):
-                # Skip local terminals
-                if (hasattr(terminal_widget.connection, 'nickname') and 
-                    terminal_widget.connection.nickname == "Local Terminal"):
-                    continue
-                    
-                # Skip terminals that don't have a connection (shouldn't happen for SSH terminals)
-                if not hasattr(terminal_widget.connection, 'host'):
-                    continue
-                    
-                # This is an SSH terminal, send the command
-                try:
-                    terminal_widget.vte.feed_child(cmd)
-                    sent_count += 1
-                    logger.debug(f"Sent command to SSH terminal: {terminal_widget.connection.nickname}")
-                except Exception as e:
-                    failed_count += 1
-                    logger.error(f"Failed to send command to terminal {terminal_widget.connection.nickname}: {e}")
-        
-        logger.info(f"Broadcast command completed: {sent_count} terminals received command, {failed_count} failed")
-        return sent_count, failed_count
 
     def show_about_dialog(self):
         """Show about dialog"""
@@ -1636,164 +1530,6 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception:
             pass
 
-    def connect_to_host(self, connection: Connection, force_new: bool = False):
-        """Connect to SSH host and create terminal tab.
-        If force_new is False and a tab exists for this server, select the most recent tab.
-        If force_new is True, always open a new tab.
-        """
-        if not force_new:
-            # If a tab exists for this connection, activate the most recent one
-            if connection in self.active_terminals:
-                terminal = self.active_terminals[connection]
-                page = self.tab_view.get_page(terminal)
-                if page is not None:
-                    self.tab_view.set_selected_page(page)
-                    return
-                else:
-                    # Terminal exists but not in tab view, remove from active terminals
-                    logger.warning(f"Terminal for {connection.nickname} not found in tab view, removing from active terminals")
-                    del self.active_terminals[connection]
-            # Fallback: look up any existing terminals for this connection
-            existing_terms = self.connection_to_terminals.get(connection) or []
-            for t in reversed(existing_terms):  # most recent last
-                page = self.tab_view.get_page(t)
-                if page is not None:
-                    self.active_terminals[connection] = t
-                    self.tab_view.set_selected_page(page)
-                    return
-        
-        # Check preferred terminal setting
-        use_external = self.config.get_setting('use-external-terminal', False)
-        
-        if use_external and not is_running_in_flatpak():
-            # Use external terminal
-            self._open_connection_in_external_terminal(connection)
-            return
-        else:
-            # Use built-in terminal
-            # Create new terminal
-            terminal = TerminalWidget(connection, self.config, self.connection_manager)
-            
-            # Connect signals
-            terminal.connect('connection-established', self.on_terminal_connected)
-            terminal.connect('connection-failed', lambda w, e: logger.error(f"Connection failed: {e}"))
-            terminal.connect('connection-lost', self.on_terminal_disconnected)
-            terminal.connect('title-changed', self.on_terminal_title_changed)
-            
-            # Add to tab view
-            page = self.tab_view.append(terminal)
-            page.set_title(connection.nickname)
-            page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
-            
-            # Store references for multi-tab tracking
-            self.connection_to_terminals.setdefault(connection, []).append(terminal)
-            self.terminal_to_connection[terminal] = connection
-            self.active_terminals[connection] = terminal
-            
-            # Switch to tab view when first connection is made
-            self.show_tab_view()
-            
-            # Activate the new tab
-            self.tab_view.set_selected_page(page)
-        
-        # Force set colors after the terminal is added to the UI
-        def _set_terminal_colors():
-            try:
-                # Set colors using RGBA
-                fg = Gdk.RGBA()
-                fg.parse('rgb(0,0,0)')  # Black
-                
-                bg = Gdk.RGBA()
-                bg.parse('rgb(255,255,255)')  # White
-                
-                # Set colors using both methods for maximum compatibility
-                terminal.vte.set_color_foreground(fg)
-                terminal.vte.set_color_background(bg)
-                terminal.vte.set_colors(fg, bg, None)
-                
-                # Force a redraw
-                terminal.vte.queue_draw()
-                
-                # Connect to the SSH server after setting colors
-                if not terminal._connect_ssh():
-                    logger.error("Failed to establish SSH connection")
-                    self.tab_view.close_page(page)
-                    # Cleanup on failure
-                    try:
-                        if connection in self.active_terminals and self.active_terminals[connection] is terminal:
-                            del self.active_terminals[connection]
-                        if terminal in self.terminal_to_connection:
-                            del self.terminal_to_connection[terminal]
-                        if connection in self.connection_to_terminals and terminal in self.connection_to_terminals[connection]:
-                            self.connection_to_terminals[connection].remove(terminal)
-                            if not self.connection_to_terminals[connection]:
-                                del self.connection_to_terminals[connection]
-                    except Exception:
-                        pass
-                        
-            except Exception as e:
-                logger.error(f"Error setting terminal colors: {e}")
-                # Still try to connect even if color setting fails
-                if not terminal._connect_ssh():
-                    logger.error("Failed to establish SSH connection")
-                    self.tab_view.close_page(page)
-                    # Cleanup on failure
-                    try:
-                        if connection in self.active_terminals and self.active_terminals[connection] is terminal:
-                            del self.active_terminals[connection]
-                        if terminal in self.terminal_to_connection:
-                            del self.terminal_to_connection[terminal]
-                        if connection in self.connection_to_terminals and terminal in self.connection_to_terminals[connection]:
-                            self.connection_to_terminals[connection].remove(terminal)
-                            if not self.connection_to_terminals[connection]:
-                                del self.connection_to_terminals[connection]
-                    except Exception:
-                        pass
-        
-        # Schedule the color setting to run after the terminal is fully initialized
-        GLib.idle_add(_set_terminal_colors)
-
-    def _on_disconnect_confirmed(self, dialog, response_id, connection):
-        """Handle response from disconnect confirmation dialog"""
-        dialog.destroy()
-        if response_id == 'disconnect' and connection in self.active_terminals:
-            terminal = self.active_terminals[connection]
-            terminal.disconnect()
-            # If part of a delete flow, remove the connection now
-            if getattr(self, '_pending_delete_connection', None) is connection:
-                try:
-                    self.connection_manager.remove_connection(connection)
-                finally:
-                    self._pending_delete_connection = None
-    
-    def disconnect_from_host(self, connection: Connection):
-        """Disconnect from SSH host"""
-        if connection not in self.active_terminals:
-            return
-            
-        # Check if confirmation is required
-        confirm_disconnect = self.config.get_setting('confirm-disconnect', True)
-        
-        if confirm_disconnect:
-            # Show confirmation dialog
-            dialog = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_("Disconnect from {}").format(connection.nickname or connection.host),
-                body=_("Are you sure you want to disconnect from this host?")
-            )
-            dialog.add_response('cancel', _("Cancel"))
-            dialog.add_response('disconnect', _("Disconnect"))
-            dialog.set_response_appearance('disconnect', Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response('close')
-            dialog.set_close_response('cancel')
-            
-            dialog.connect('response', self._on_disconnect_confirmed, connection)
-            dialog.present()
-        else:
-            # Disconnect immediately without confirmation
-            terminal = self.active_terminals[connection]
-            terminal.disconnect()
 
     # Signal handlers
     def on_connection_click(self, gesture, n_press, x, y):
@@ -1875,7 +1611,7 @@ class MainWindow(Adw.ApplicationWindow):
                     return
 
             # No existing tabs for this connection -> open a new one
-            self.connect_to_host(connection, force_new=False)
+            self.terminal_manager.connect_to_host(connection, force_new=False)
         except Exception as e:
             logger.error(f"Failed to focus most recent tab or open new for {getattr(connection, 'nickname', '')}: {e}")
 
@@ -1917,7 +1653,7 @@ class MainWindow(Adw.ApplicationWindow):
                     return
 
             # No existing tabs for this connection -> open a new one
-            self.connect_to_host(connection, force_new=False)
+            self.terminal_manager.connect_to_host(connection, force_new=False)
         except Exception as e:
             logger.error(f"Failed to cycle or open for {getattr(connection, 'nickname', '')}: {e}")
 
@@ -3252,60 +2988,12 @@ class MainWindow(Adw.ApplicationWindow):
         if tab_view.get_n_pages() == 0:
             self.show_welcome_view()
 
-    def on_terminal_connected(self, terminal):
-        """Handle terminal connection established"""
-        # Update the connection's is_connected status
-        terminal.connection.is_connected = True
-        
-        # Update connection row status
-        if terminal.connection in self.connection_rows:
-            row = self.connection_rows[terminal.connection]
-            row.update_status()
-            row.queue_draw()  # Force redraw
-        
-        # Hide reconnecting feedback if visible and reset controlled flag
-        GLib.idle_add(self._hide_reconnecting_message)
-        self._is_controlled_reconnect = False
-
-        # Log connection event
-        if not getattr(self, '_is_controlled_reconnect', False):
-            logger.info(f"Terminal connected: {terminal.connection.nickname} ({terminal.connection.username}@{terminal.connection.host})")
-        else:
-            logger.debug(f"Terminal reconnected after settings update: {terminal.connection.nickname}")
-
-    def on_terminal_disconnected(self, terminal):
-        """Handle terminal connection lost"""
-        # Update the connection's is_connected status
-        terminal.connection.is_connected = False
-        
-        # Update connection row status
-        if terminal.connection in self.connection_rows:
-            row = self.connection_rows[terminal.connection]
-            row.update_status()
-            row.queue_draw()  # Force redraw
-            
-        logger.info(f"Terminal disconnected: {terminal.connection.nickname} ({terminal.connection.username}@{terminal.connection.host})")
-        
-        # Do not reset controlled reconnect flag here; it is managed by the
-        # reconnection flow (_on_reconnect_response/_reset_controlled_reconnect)
-
-        # Toasts are disabled per user preference; no notification here.
-        pass
             
     def on_connection_added(self, manager, connection):
         """Handle new connection added to the connection manager"""
         logger.info(f"New connection added: {connection.nickname}")
         self.rebuild_connection_list()
         
-    def on_terminal_title_changed(self, terminal, title):
-        """Handle terminal title change"""
-        # Update the tab title with the new terminal title
-        page = self.tab_view.get_page(terminal)
-        if page:
-            if title and title != terminal.connection.nickname:
-                page.set_title(f"{terminal.connection.nickname} - {title}")
-            else:
-                page.set_title(terminal.connection.nickname)
                 
     def on_connection_removed(self, manager, connection):
         """Handle connection removed from the connection manager"""
@@ -3548,7 +3236,7 @@ class MainWindow(Adw.ApplicationWindow):
                 connection = getattr(row, 'connection', None) if row else None
             if connection is None:
                 return
-            self.connect_to_host(connection, force_new=True)
+            self.terminal_manager.connect_to_host(connection, force_new=True)
         except Exception as e:
             logger.error(f"Failed to open new connection tab: {e}")
 
@@ -3559,7 +3247,7 @@ class MainWindow(Adw.ApplicationWindow):
             row = self.connection_list.get_selected_row()
             if row and hasattr(row, 'connection'):
                 connection = row.connection
-                self.connect_to_host(connection, force_new=True)
+                self.terminal_manager.connect_to_host(connection, force_new=True)
             else:
                 # If no connection is selected, show a message or fall back to new connection dialog
                 logger.debug("No connection selected for Ctrl+Alt+N, opening new connection dialog")
@@ -3715,7 +3403,7 @@ class MainWindow(Adw.ApplicationWindow):
                 if response == Gtk.ResponseType.OK:
                     command = entry.get_text().strip()
                     if command:
-                        sent_count, failed_count = self.broadcast_command(command)
+                        sent_count, failed_count = self.terminal_manager.broadcast_command(command)
                         
                         # Show result dialog
                         result_dialog = Adw.MessageDialog(
