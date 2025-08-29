@@ -44,6 +44,7 @@ from .sidebar import GroupRow, ConnectionRow, build_sidebar
 from .sftp_utils import open_remote_in_file_manager
 from .welcome_page import WelcomePage
 from .actions import WindowActions, register_window_actions
+from . import shutdown
 
 logger = logging.getLogger(__name__)
 
@@ -3007,7 +3008,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # If this was a controlled reconnect and we are now connected, hide feedback
         if is_connected and getattr(self, '_is_controlled_reconnect', False):
-            GLib.idle_add(self._hide_reconnecting_message)
+            GLib.idle_add(shutdown.hide_reconnecting_message, self)
             self._is_controlled_reconnect = False
 
         # Use the same reliable status to control terminal banners
@@ -3130,7 +3131,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         if response == 'quit':
             # Start cleanup process
-            self._cleanup_and_quit()
+            shutdown.cleanup_and_quit(self)
 
     def move_connection_to_group(self, connection_nickname: str, target_group_id: str = None):
         """Move a connection to a specific group"""
@@ -3414,203 +3415,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
         except Exception as e:
             logger.error(f"Failed to show manage files error dialog: {e}")
-
-    def _cleanup_and_quit(self):
-        """Clean up all connections and quit - SIMPLIFIED VERSION"""
-        if self._is_quitting:
-            logger.debug("Already quitting, ignoring duplicate request")
-            return
-                
-        logger.info("Starting cleanup before quit...")
-        self._is_quitting = True
-        
-        # Get list of all terminals to disconnect
-        connections_to_disconnect = []
-        for conn, terms in self.connection_to_terminals.items():
-            for term in terms:
-                connections_to_disconnect.append((conn, term))
-        
-        if not connections_to_disconnect:
-            # No connections to clean up, quit immediately
-            self._do_quit()
-            return
-        
-        # Show progress dialog and perform cleanup on idle so the dialog is visible immediately
-        total = len(connections_to_disconnect)
-        self._show_cleanup_progress(total)
-        # Schedule cleanup to run after the dialog has a chance to render
-        GLib.idle_add(self._perform_cleanup_and_quit, connections_to_disconnect, priority=GLib.PRIORITY_DEFAULT_IDLE)
-        # Force-quit watchdog (last resort)
-        try:
-            GLib.timeout_add_seconds(5, self._do_quit)
-        except Exception:
-            pass
-
-    def _perform_cleanup_and_quit(self, connections_to_disconnect):
-        """Disconnect terminals with UI progress, then quit. Runs on idle."""
-        try:
-            total = len(connections_to_disconnect)
-            for index, (connection, terminal) in enumerate(connections_to_disconnect, start=1):
-                try:
-                    logger.debug(f"Disconnecting {connection.nickname} ({index}/{total})")
-                    # Always try to cancel any pending SSH spawn quickly first
-                    if hasattr(terminal, 'process_pid') and terminal.process_pid:
-                        try:
-                            import os, signal
-                            os.kill(terminal.process_pid, signal.SIGTERM)
-                        except Exception:
-                            pass
-                    # Skip normal disconnect if terminal not connected to avoid hangs
-                    if hasattr(terminal, 'is_connected') and not terminal.is_connected:
-                        logger.debug("Terminal not connected; skipped disconnect")
-                    else:
-                        self._disconnect_terminal_safely(terminal)
-                finally:
-                    # Update progress even if a disconnect fails
-                    self._update_cleanup_progress(index, total)
-                    # Yield to main loop to keep UI responsive
-                    GLib.MainContext.default().iteration(False)
-        except Exception as e:
-            logger.error(f"Cleanup during quit encountered an error: {e}")
-        finally:
-            # Final sweep of any lingering processes (but skip terminal cleanup since we already did that)
-            try:
-                from .terminal import SSHProcessManager
-                # Only clean up processes, not terminals
-                process_manager = SSHProcessManager()
-                with process_manager.lock:
-                    # Make a copy of PIDs to avoid modifying the dict during iteration
-                    pids = list(process_manager.processes.keys())
-                    for pid in pids:
-                        process_manager._terminate_process_by_pid(pid)
-                    # Clear all tracked processes
-                    process_manager.processes.clear()
-                    # Clear terminal references
-                    process_manager.terminals.clear()
-            except Exception as e:
-                logger.debug(f"Final SSH cleanup failed: {e}")
-            # Clear active terminals and hide progress
-            self.active_terminals.clear()
-            self._hide_cleanup_progress()
-            # Quit on next idle to flush UI updates
-            GLib.idle_add(self._do_quit)
-        return False  # Do not repeat
-
-    def _show_cleanup_progress(self, total_connections):
-        """Show cleanup progress dialog"""
-        self._progress_dialog = Gtk.Window()
-        self._progress_dialog.set_title("Closing Connections")
-        self._progress_dialog.set_transient_for(self)
-        self._progress_dialog.set_modal(True)
-        self._progress_dialog.set_default_size(350, 120)
-        self._progress_dialog.set_resizable(False)
-        
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        box.set_margin_top(20)
-        box.set_margin_bottom(20)
-        box.set_margin_start(20)
-        box.set_margin_end(20)
-        
-        # Progress bar
-        self._progress_bar = Gtk.ProgressBar()
-        self._progress_bar.set_fraction(0)
-        box.append(self._progress_bar)
-        
-        # Status label
-        self._progress_label = Gtk.Label()
-        self._progress_label.set_text(f"Closing {total_connections} connection(s)...")
-        box.append(self._progress_label)
-        
-        self._progress_dialog.set_child(box)
-        self._progress_dialog.present()
-
-    def _update_cleanup_progress(self, completed, total):
-        """Update cleanup progress"""
-        if hasattr(self, '_progress_bar') and self._progress_bar:
-            fraction = completed / total if total > 0 else 1.0
-            self._progress_bar.set_fraction(fraction)
-            
-        if hasattr(self, '_progress_label') and self._progress_label:
-            self._progress_label.set_text(f"Closed {completed} of {total} connection(s)...")
-
-    def _hide_cleanup_progress(self):
-        """Hide cleanup progress dialog"""
-        if hasattr(self, '_progress_dialog') and self._progress_dialog:
-            try:
-                self._progress_dialog.close()
-                self._progress_dialog = None
-                self._progress_bar = None
-                self._progress_label = None
-            except Exception as e:
-                logger.debug(f"Error closing progress dialog: {e}")
-
-    def _show_reconnecting_message(self, connection):
-        """Show a small modal indicating reconnection is in progress"""
-        try:
-            # Avoid duplicate dialogs
-            if hasattr(self, '_reconnect_dialog') and self._reconnect_dialog:
-                return
-
-            self._reconnect_dialog = Gtk.Window()
-            self._reconnect_dialog.set_title(_("Reconnecting"))
-            self._reconnect_dialog.set_transient_for(self)
-            self._reconnect_dialog.set_modal(True)
-            self._reconnect_dialog.set_default_size(320, 100)
-            self._reconnect_dialog.set_resizable(False)
-
-            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            box.set_margin_top(16)
-            box.set_margin_bottom(16)
-            box.set_margin_start(16)
-            box.set_margin_end(16)
-
-            spinner = Gtk.Spinner()
-            spinner.set_hexpand(False)
-            spinner.set_vexpand(False)
-            spinner.start()
-            box.append(spinner)
-
-            label = Gtk.Label()
-            label.set_text(_("Reconnecting to {}...").format(getattr(connection, "nickname", "")))
-            label.set_halign(Gtk.Align.START)
-            label.set_hexpand(True)
-            box.append(label)
-
-            self._reconnect_spinner = spinner
-            self._reconnect_label = label
-            self._reconnect_dialog.set_child(box)
-            self._reconnect_dialog.present()
-        except Exception as e:
-            logger.debug(f"Failed to show reconnecting message: {e}")
-
-    def _hide_reconnecting_message(self):
-        """Hide the reconnection progress dialog if shown"""
-        try:
-            if hasattr(self, '_reconnect_dialog') and self._reconnect_dialog:
-                self._reconnect_dialog.close()
-            self._reconnect_dialog = None
-            self._reconnect_spinner = None
-            self._reconnect_label = None
-        except Exception as e:
-            logger.debug(f"Failed to hide reconnecting message: {e}")
-
-    def _disconnect_terminal_safely(self, terminal):
-        """Safely disconnect a terminal"""
-        try:
-            # Try multiple disconnect methods in order of preference
-            if hasattr(terminal, 'disconnect'):
-                terminal.disconnect()
-            elif hasattr(terminal, 'close_connection'):
-                terminal.close_connection()
-            elif hasattr(terminal, 'close'):
-                terminal.close()
-                
-            # Force any remaining processes to close
-            if hasattr(terminal, 'force_close'):
-                terminal.force_close()
-                
-        except Exception as e:
-            logger.error(f"Error disconnecting terminal: {e}")
 
     def _do_quit(self):
         """Actually quit the application - FINAL STEP"""
@@ -3940,7 +3744,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._is_controlled_reconnect = True
 
         # Show reconnecting feedback
-        self._show_reconnecting_message(connection)
+        shutdown.show_reconnecting_message(self, connection)
         
         try:
             # Disconnect first (defer to avoid blocking)
@@ -4020,7 +3824,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def _show_reconnect_error(self, connection, error_message=None):
         """Show an error message when reconnection fails"""
         # Ensure reconnecting feedback is hidden
-        self._hide_reconnecting_message()
+        shutdown.hide_reconnecting_message(self)
         # Remove from active terminals if reconnection fails
         if connection in self.active_terminals:
             del self.active_terminals[connection]
