@@ -866,6 +866,33 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Group toolbar buttons
         self.group_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         
+        # Connect all button
+        self.connect_all_button = Gtk.Button.new_from_icon_name('network-wired-symbolic')
+        self.connect_all_button.set_tooltip_text('Connect All')
+        self.connect_all_button.set_sensitive(False)
+        self.connect_all_button.connect('clicked', lambda btn: self.on_connect_all_group_action(None, None))
+        self.group_toolbar.append(self.connect_all_button)
+        
+        # Disconnect all button
+        self.disconnect_all_button = Gtk.Button.new_from_icon_name('network-offline-symbolic')
+        self.disconnect_all_button.set_tooltip_text('Disconnect All')
+        self.disconnect_all_button.set_sensitive(False)
+        self.disconnect_all_button.connect('clicked', lambda btn: self.on_disconnect_all_group_action(None, None))
+        self.group_toolbar.append(self.disconnect_all_button)
+        
+        # Kill all button
+        self.kill_all_button = Gtk.Button.new_from_icon_name('process-stop-symbolic')
+        self.kill_all_button.set_tooltip_text('Kill All Connections')
+        self.kill_all_button.set_sensitive(False)
+        self.kill_all_button.connect('clicked', lambda btn: self.on_kill_all_group_action(None, None))
+        self.group_toolbar.append(self.kill_all_button)
+        
+        # Add separator
+        separator = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        separator.set_margin_start(6)
+        separator.set_margin_end(6)
+        self.group_toolbar.append(separator)
+        
         # Rename group button
         self.rename_group_button = Gtk.Button.new_from_icon_name('document-edit-symbolic')
         self.rename_group_button.set_tooltip_text('Rename Group')
@@ -1758,6 +1785,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 # Show group toolbar, hide connection toolbar
                 self.connection_toolbar.set_visible(False)
                 self.group_toolbar.set_visible(True)
+                
+                # Enable group action buttons
+                self.connect_all_button.set_sensitive(True)
+                self.disconnect_all_button.set_sensitive(True)
+                self.kill_all_button.set_sensitive(True)
                 self.rename_group_button.set_sensitive(True)
                 self.delete_group_button.set_sensitive(True)
             else:
@@ -1775,9 +1807,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self.system_terminal_button.set_sensitive(True)
                 self.delete_button.set_sensitive(True)
         else:
-            # No selection - hide both toolbars
+            # No selection - hide both toolbars and disable all buttons
             self.connection_toolbar.set_visible(False)
             self.group_toolbar.set_visible(False)
+            
+            # Disable group buttons
+            self.connect_all_button.set_sensitive(False)
+            self.disconnect_all_button.set_sensitive(False)
+            self.kill_all_button.set_sensitive(False)
+            self.rename_group_button.set_sensitive(False)
+            self.delete_group_button.set_sensitive(False)
 
     def on_add_connection_clicked(self, button):
         """Handle add connection button click"""
@@ -3889,6 +3928,32 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Get list of available groups for selection"""
         return self.group_manager.get_all_groups()
 
+    def _run_bulk_operation_async(self, operation_func, connections):
+        """Run a bulk operation in a proper async context"""
+        import asyncio
+        import threading
+        
+        def run_in_thread():
+            try:
+                # Create a new event loop for this thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                # Run the async operation
+                loop.run_until_complete(operation_func(connections))
+                
+            except Exception as e:
+                logger.error(f"Bulk operation failed: {e}", exc_info=True)
+            finally:
+                try:
+                    loop.close()
+                except Exception:
+                    pass
+        
+        # Start the operation in a separate thread
+        thread = threading.Thread(target=run_in_thread, daemon=True)
+        thread.start()
+
     def on_connect_all_group_action(self, action, param=None):
         """Handle connect all group action"""
         try:
@@ -3910,9 +3975,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             logger.info(f"Starting connect all for group {group_id} with {len(connections)} connections")
             
-            # Start the bulk operation
-            import asyncio
-            asyncio.create_task(self.bulk_operations_manager.connect_all(connections))
+            # Start the bulk operation in a proper async context
+            self._run_bulk_operation_async(self.bulk_operations_manager.connect_all, connections)
             
         except Exception as e:
             logger.error(f"Failed to connect all in group: {e}")
@@ -3941,9 +4005,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             logger.info(f"Starting disconnect all for group {group_id} with {len(connected_connections)} connections")
             
-            # Start the bulk operation
-            import asyncio
-            asyncio.create_task(self.bulk_operations_manager.disconnect_all(connected_connections))
+            # Start the bulk operation in a proper async context
+            self._run_bulk_operation_async(self.bulk_operations_manager.disconnect_all, connected_connections)
             
         except Exception as e:
             logger.error(f"Failed to disconnect all in group: {e}")
@@ -3985,9 +4048,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 dialog.close()
                 if response_id == 'kill':
                     logger.info(f"Starting kill all for group {group_id} with {len(connections)} connections")
-                    # Start the bulk operation
-                    import asyncio
-                    asyncio.create_task(self.bulk_operations_manager.kill_all(connections))
+                    # Start the bulk operation in a proper async context
+                    self._run_bulk_operation_async(self.bulk_operations_manager.kill_all, connections)
             
             dialog.connect('response', on_response)
             dialog.present()
