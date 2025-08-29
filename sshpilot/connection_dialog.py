@@ -2391,19 +2391,18 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self._show_port_info_dialog()
 
     def _open_rule_editor(self, existing_rule=None):
-        """Open a small Gtk.Dialog to add/edit a forwarding rule (compatible across lib versions)."""
-        # Create dialog
+        """Open an Adw.Window to add/edit a forwarding rule."""
+        # Create Adw.Window
         parent_win = self.get_transient_for() if hasattr(self, 'get_transient_for') else None
-        dialog = Gtk.Dialog(title=_("Port Forwarding Rule Editor"), transient_for=parent_win, modal=True)
-        dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
-        dialog.add_button(_("Save"), Gtk.ResponseType.OK)
-        
-        # Set default size to make dialog wider
+        dialog = Adw.Window()
+        dialog.set_title(_("Port Forwarding Rule Editor"))
         dialog.set_default_size(500, -1)  # 500px width, auto height
+        dialog.set_modal(True)
+        if parent_win:
+            dialog.set_transient_for(parent_win)
 
-        content = dialog.get_content_area()
+        # Create content box
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
-        content.append(box)
 
         # Type selector
         type_model = Gtk.StringList()
@@ -2446,6 +2445,27 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         group.add(remote_host_row)
         group.add(remote_port_row)
         box.append(group)
+        
+        # Create header bar with buttons
+        header_bar = Adw.HeaderBar()
+        header_bar.set_show_end_title_buttons(True)
+        
+        # Add buttons to header bar
+        cancel_button = Gtk.Button(label=_("Cancel"))
+        cancel_button.add_css_class("flat")
+        header_bar.pack_start(cancel_button)
+        
+        save_button = Gtk.Button(label=_("Save"))
+        save_button.add_css_class("suggested-action")
+        header_bar.pack_end(save_button)
+        
+        # Create main container
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        main_box.append(header_bar)
+        main_box.append(box)
+        
+        # Set content for Adw.Window
+        dialog.set_content(main_box)
 
         # Populate when editing
         if existing_rule:
@@ -2551,20 +2571,19 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         type_row.connect('notify::selected', _sync_visibility)
         _sync_visibility()
 
-        # Run dialog
-        resp = dialog.run() if hasattr(dialog, 'run') else None
-        # GTK4 dialogs don't block run; use response signal fallback
-        if resp is None:
-            def _on_resp(dlg, response_id):
-                if response_id == Gtk.ResponseType.OK:
-                    self._save_rule_from_editor(existing_rule, type_row, listen_addr_row, listen_port_row, remote_host_row, remote_port_row)
-                dlg.destroy()
-            dialog.connect('response', _on_resp)
-            dialog.show()
-        else:
-            if resp == Gtk.ResponseType.OK:
-                self._save_rule_from_editor(existing_rule, type_row, listen_addr_row, listen_port_row, remote_host_row, remote_port_row)
+        # Handle button clicks
+        def _on_cancel_clicked(button):
             dialog.destroy()
+        
+        def _on_save_clicked(button):
+            self._save_rule_from_editor(existing_rule, type_row, listen_addr_row, listen_port_row, remote_host_row, remote_port_row)
+            dialog.destroy()
+        
+        cancel_button.connect('clicked', _on_cancel_clicked)
+        save_button.connect('clicked', _on_save_clicked)
+        
+        # Show the window
+        dialog.present()
 
     def _save_rule_from_editor(self, existing_rule, type_row, listen_addr_row, listen_port_row, remote_host_row, remote_port_row):
         idx = type_row.get_selected()
@@ -2638,18 +2657,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.load_port_forwarding_rules()
     
     def _show_port_info_dialog(self):
-        """Show a dialog with current port information"""
-        # Create dialog
+        """Show a window with current port information"""
+        # Create Adw.Window
         parent_win = self.get_transient_for() if hasattr(self, 'get_transient_for') else None
-        dialog = Gtk.Dialog(
-            title=_("Port Information"),
-            transient_for=parent_win,
-            modal=True
-        )
-        dialog.add_button(_("Close"), Gtk.ResponseType.CLOSE)
+        dialog = Adw.Window()
+        dialog.set_title(_("Port Information"))
         dialog.set_default_size(600, 400)
+        dialog.set_modal(True)
+        if parent_win:
+            dialog.set_transient_for(parent_win)
         
-        content = dialog.get_content_area()
         box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL, 
             spacing=12,
@@ -2658,7 +2675,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             margin_start=12,
             margin_end=12
         )
-        content.append(box)
         
         # Header with refresh button
         header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -2750,18 +2766,33 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Connect refresh button
         refresh_button.connect("clicked", lambda *_: refresh_port_info())
         
+        # Create header bar with close button
+        header_bar = Adw.HeaderBar()
+        header_bar.set_show_end_title_buttons(True)
+        
+        close_button = Gtk.Button(label=_("Close"))
+        close_button.add_css_class("flat")
+        header_bar.pack_end(close_button)
+        
+        # Create main container
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        main_box.append(header_bar)
+        main_box.append(box)
+        
+        # Set content for Adw.Window
+        dialog.set_content(main_box)
+        
         # Load initial data
         refresh_port_info()
         
-        # Show dialog
-        if hasattr(dialog, 'run'):
-            dialog.run()
+        # Handle close button
+        def _on_close_clicked(button):
             dialog.destroy()
-        else:
-            def _on_resp(dlg, response_id):
-                dlg.destroy()
-            dialog.connect('response', _on_resp)
-            dialog.show()
+        
+        close_button.connect('clicked', _on_close_clicked)
+        
+        # Show the window
+        dialog.present()
 
     def _autosave_forwarding_changes(self):
         """Disabled autosave to avoid log floods; saving occurs on dialog Save."""
