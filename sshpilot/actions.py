@@ -628,9 +628,12 @@ def register_window_actions(window):
     window.add_action(window.move_to_group_action)
 
     # Sidebar toggle action and accelerators
-    sidebar_action = Gio.SimpleAction.new('toggle_sidebar', None)
-    sidebar_action.connect('activate', window.on_toggle_sidebar_action)
-    window.add_action(sidebar_action)
-    app = window.get_application()
-    if app:
-        app.set_accels_for_action('win.toggle_sidebar', ['F9', '<Control>b'])
+    try:
+        sidebar_action = Gio.SimpleAction.new('toggle_sidebar', None)
+        sidebar_action.connect('activate', window.on_toggle_sidebar_action)
+        window.add_action(sidebar_action)
+        app = window.get_application()
+        if app:
+            app.set_accels_for_action('win.toggle_sidebar', ['F9', '<Control>b'])
+    except Exception as e:
+        logger.error(f"Failed to register sidebar toggle action: {e}")
