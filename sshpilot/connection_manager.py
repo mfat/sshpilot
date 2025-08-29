@@ -560,6 +560,7 @@ class Connection:
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
+        self.certificate = data.get('certificate', '')
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
         self.local_command = data.get('local_command', '')
@@ -814,6 +815,7 @@ class ConnectionManager(GObject.Object):
                 'username': _unwrap(config.get('user', getpass.getuser())),
                 # previously: 'private_key': config.get('identityfile'),
                 'keyfile': os.path.expanduser(_unwrap(config.get('identityfile'))) if config.get('identityfile') else None,
+                'certificate': os.path.expanduser(_unwrap(config.get('certificatefile'))) if config.get('certificatefile') else None,
                 'forwarding_rules': []
             }
             
