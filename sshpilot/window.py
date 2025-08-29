@@ -618,28 +618,53 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     if hasattr(row, 'group_id'):
                         # Group row context menu
                         logger.debug(f"Creating context menu for group row: {row.group_id}")
-                        menu.append(_('✏ Edit Group'), 'win.edit-group')
-                        menu.append(_('🗑 Delete Group'), 'win.delete-group')
+
+                        item = Gio.MenuItem.new(_('Edit Group'), 'win.edit-group')
+                        item.set_attribute_value('icon', GLib.Variant.new_string('document-edit-symbolic'))
+                        menu.append_item(item)
+
+                        item = Gio.MenuItem.new(_('Delete Group'), 'win.delete-group')
+                        item.set_attribute_value('icon', GLib.Variant.new_string('user-trash-symbolic'))
+                        menu.append_item(item)
                     else:
                         # Connection row context menu
                         logger.debug(f"Creating context menu for connection row: {getattr(row, 'connection', None)}")
-                        menu.append(_('+ Open New Connection'), 'win.open-new-connection')
-                        menu.append(_('✏ Edit Connection'), 'win.edit-connection')
-                        menu.append(_('🗄 Manage Files'), 'win.manage-files')
+
+                        item = Gio.MenuItem.new(_('Open New Connection'), 'win.open-new-connection')
+                        item.set_attribute_value('icon', GLib.Variant.new_string('list-add-symbolic'))
+                        menu.append_item(item)
+
+                        item = Gio.MenuItem.new(_('Edit Connection'), 'win.edit-connection')
+                        item.set_attribute_value('icon', GLib.Variant.new_string('document-edit-symbolic'))
+                        menu.append_item(item)
+
+                        item = Gio.MenuItem.new(_('Manage Files'), 'win.manage-files')
+                        item.set_attribute_value('icon', GLib.Variant.new_string('folder-symbolic'))
+                        menu.append_item(item)
+
                         # Only show system terminal option when not in Flatpak
                         if not is_running_in_flatpak():
-                            menu.append(_('💻 Open in System Terminal'), 'win.open-in-system-terminal')
-                        menu.append(_('🗑 Delete Connection'), 'win.delete-connection')
-                        
+                            item = Gio.MenuItem.new(_('Open in System Terminal'), 'win.open-in-system-terminal')
+                            item.set_attribute_value('icon', GLib.Variant.new_string('utilities-terminal-symbolic'))
+                            menu.append_item(item)
+
+                        item = Gio.MenuItem.new(_('Delete Connection'), 'win.delete-connection')
+                        item.set_attribute_value('icon', GLib.Variant.new_string('user-trash-symbolic'))
+                        menu.append_item(item)
+
                         # Add grouping options
                         current_group_id = self.group_manager.get_connection_group(row.connection.nickname)
                         if current_group_id:
-                            menu.append(_('📁 Move to Ungrouped'), 'win.move-to-ungrouped')
+                            item = Gio.MenuItem.new(_('Move to Ungrouped'), 'win.move-to-ungrouped')
+                            item.set_attribute_value('icon', GLib.Variant.new_string('folder-symbolic'))
+                            menu.append_item(item)
                         else:
                             # Show available groups to move to
                             available_groups = self.get_available_groups()
                             if available_groups:
-                                menu.append(_('📁 Move to Group'), 'win.move-to-group')
+                                item = Gio.MenuItem.new(_('Move to Group'), 'win.move-to-group')
+                                item.set_attribute_value('icon', GLib.Variant.new_string('folder-symbolic'))
+                                menu.append_item(item)
                     pop = Gtk.PopoverMenu.new_from_model(menu)
                     pop.set_parent(self.connection_list)
                     try:
