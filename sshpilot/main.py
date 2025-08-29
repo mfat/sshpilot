@@ -245,7 +245,7 @@ class SshPilotApplication(Adw.Application):
         """Handle local terminal action"""
         logging.debug("Local terminal action triggered")
         if self.props.active_window:
-            self.props.active_window.show_local_terminal()
+            self.props.active_window.terminal_manager.show_local_terminal()
 
     def on_show_resources(self, action, param):
         """Handle show resources action"""
