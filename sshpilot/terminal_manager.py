@@ -217,8 +217,10 @@ class TerminalManager:
             row = self.window.connection_rows[terminal.connection]
             row.update_status()
             row.queue_draw()
+
         if hasattr(self.window, "_hide_reconnecting_message"):
             GLib.idle_add(self.window._hide_reconnecting_message)
+
         self.window._is_controlled_reconnect = False
         if not getattr(self.window, '_is_controlled_reconnect', False):
             logger.info(
