@@ -47,7 +47,7 @@ def run_ssh_with_password(host: str, user: str, password: str, *,
     if extra_ssh_opts:
         ssh_opts += extra_ssh_opts
 
-    # Resolve sshpass and ssh binaries like in window.py/terminal.py
+    # Resolve sshpass and ssh binaries like in main_window.py/terminal.py
     sshpass = ("/app/bin/sshpass" if os.path.exists("/app/bin/sshpass") and os.access("/app/bin/sshpass", os.X_OK) else None) or shutil.which("sshpass")
     sshbin = shutil.which("ssh") or "/usr/bin/ssh"
     
