@@ -613,164 +613,98 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self._context_menu_connection = getattr(row, 'connection', None)
                     self._context_menu_group_row = row if hasattr(row, 'group_id') else None
                     # Create popover menu
-                    pop = Gtk.PopoverMenu()
+                    pop = Gtk.Popover.new()
+                    pop.set_has_arrow(True)
                     
-                    # Create menu box
-                    menu_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-                    menu_box.set_margin_start(6)
-                    menu_box.set_margin_end(6)
-                    menu_box.set_margin_top(6)
-                    menu_box.set_margin_bottom(6)
-                    pop.set_child(menu_box)
-                    
-                    # Add CSS for menu styling
-                    css_provider = Gtk.CssProvider()
-                    css_data = """
-                    .menu-button {
-                        border: none;
-                        background: transparent;
-                        padding: 8px 12px;
-                        border-radius: 4px;
-                        margin: 1px 0;
-                        font-weight: normal;
-                    }
-                    .menu-button:hover {
-                        background: rgba(0, 0, 0, 0.1);
-                    }
-                    .menu-button:active {
-                        background: rgba(0, 0, 0, 0.2);
-                    }
-                    .menu-button label {
-                        font-weight: normal;
-                    }
-                    """
-                    css_provider.load_from_data(css_data.encode())
-                    Gtk.StyleContext.add_provider_for_display(
-                        Gdk.Display.get_default(),
-                        css_provider,
-                        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-                    )
+                    # Create listbox for menu items
+                    listbox = Gtk.ListBox(margin_top=2, margin_bottom=2, margin_start=2, margin_end=2)
+                    listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+                    pop.set_child(listbox)
                     
                     # Add menu items based on row type
                     if hasattr(row, 'group_id'):
                         # Group row context menu
                         logger.debug(f"Creating context menu for group row: {row.group_id}")
 
-                        # Edit Group button
-                        edit_btn = Gtk.Button()
-                        edit_btn.set_action_name('win.edit-group')
-                        edit_btn.get_style_context().add_class('menu-button')
-                        edit_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                        # Edit Group row
+                        edit_row = Adw.ActionRow(title=_('Edit Group'))
                         edit_icon = Gtk.Image.new_from_icon_name('document-edit-symbolic')
-                        edit_label = Gtk.Label(label=_('Edit Group'))
-                        edit_box.append(edit_icon)
-                        edit_box.append(edit_label)
-                        edit_btn.set_child(edit_box)
-                        menu_box.append(edit_btn)
+                        edit_row.add_prefix(edit_icon)
+                        edit_row.set_activatable(True)
+                        edit_row.connect('activated', lambda *_: (self.on_edit_group_action(None, None), pop.popdown()))
+                        listbox.append(edit_row)
 
-                        # Delete Group button
-                        delete_btn = Gtk.Button()
-                        delete_btn.set_action_name('win.delete-group')
-                        delete_btn.get_style_context().add_class('menu-button')
-                        delete_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                        # Delete Group row
+                        delete_row = Adw.ActionRow(title=_('Delete Group'))
                         delete_icon = Gtk.Image.new_from_icon_name('user-trash-symbolic')
-                        delete_label = Gtk.Label(label=_('Delete Group'))
-                        delete_box.append(delete_icon)
-                        delete_box.append(delete_label)
-                        delete_btn.set_child(delete_box)
-                        menu_box.append(delete_btn)
+                        delete_row.add_prefix(delete_icon)
+                        delete_row.set_activatable(True)
+                        delete_row.connect('activated', lambda *_: (self.on_delete_group_action(None, None), pop.popdown()))
+                        listbox.append(delete_row)
                     else:
                         # Connection row context menu
                         logger.debug(f"Creating context menu for connection row: {getattr(row, 'connection', None)}")
 
-                        # Open New Connection button
-                        new_btn = Gtk.Button()
-                        new_btn.set_action_name('win.open-new-connection')
-                        new_btn.get_style_context().add_class('menu-button')
-                        new_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                        # Open New Connection row
+                        new_row = Adw.ActionRow(title=_('Open New Connection'))
                         new_icon = Gtk.Image.new_from_icon_name('list-add-symbolic')
-                        new_label = Gtk.Label(label=_('Open New Connection'))
-                        new_box.append(new_icon)
-                        new_box.append(new_label)
-                        new_btn.set_child(new_box)
-                        menu_box.append(new_btn)
+                        new_row.add_prefix(new_icon)
+                        new_row.set_activatable(True)
+                        new_row.connect('activated', lambda *_: (self.on_open_new_connection_action(None, None), pop.popdown()))
+                        listbox.append(new_row)
 
-                        # Edit Connection button
-                        edit_btn = Gtk.Button()
-                        edit_btn.set_action_name('win.edit-connection')
-                        edit_btn.get_style_context().add_class('menu-button')
-                        edit_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                        # Edit Connection row
+                        edit_row = Adw.ActionRow(title=_('Edit Connection'))
                         edit_icon = Gtk.Image.new_from_icon_name('document-edit-symbolic')
-                        edit_label = Gtk.Label(label=_('Edit Connection'))
-                        edit_box.append(edit_icon)
-                        edit_box.append(edit_label)
-                        edit_btn.set_child(edit_box)
-                        menu_box.append(edit_btn)
+                        edit_row.add_prefix(edit_icon)
+                        edit_row.set_activatable(True)
+                        edit_row.connect('activated', lambda *_: (self.on_edit_connection_action(None, None), pop.popdown()))
+                        listbox.append(edit_row)
 
-                        # Manage Files button
-                        files_btn = Gtk.Button()
-                        files_btn.set_action_name('win.manage-files')
-                        files_btn.get_style_context().add_class('menu-button')
-                        files_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                        # Manage Files row
+                        files_row = Adw.ActionRow(title=_('Manage Files'))
                         files_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
-                        files_label = Gtk.Label(label=_('Manage Files'))
-                        files_box.append(files_icon)
-                        files_box.append(files_label)
-                        files_btn.set_child(files_box)
-                        menu_box.append(files_btn)
+                        files_row.add_prefix(files_icon)
+                        files_row.set_activatable(True)
+                        files_row.connect('activated', lambda *_: (self.on_manage_files_action(None, None), pop.popdown()))
+                        listbox.append(files_row)
 
                         # Only show system terminal option when not in Flatpak
                         if not is_running_in_flatpak():
-                            terminal_btn = Gtk.Button()
-                            terminal_btn.set_action_name('win.open-in-system-terminal')
-                            terminal_btn.get_style_context().add_class('menu-button')
-                            terminal_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                            terminal_row = Adw.ActionRow(title=_('Open in System Terminal'))
                             terminal_icon = Gtk.Image.new_from_icon_name('utilities-terminal-symbolic')
-                            terminal_label = Gtk.Label(label=_('Open in System Terminal'))
-                            terminal_box.append(terminal_icon)
-                            terminal_box.append(terminal_label)
-                            terminal_btn.set_child(terminal_box)
-                            menu_box.append(terminal_btn)
+                            terminal_row.add_prefix(terminal_icon)
+                            terminal_row.set_activatable(True)
+                            terminal_row.connect('activated', lambda *_: (self.on_open_in_system_terminal_action(None, None), pop.popdown()))
+                            listbox.append(terminal_row)
 
-                        # Delete Connection button
-                        delete_btn = Gtk.Button()
-                        delete_btn.set_action_name('win.delete-connection')
-                        delete_btn.get_style_context().add_class('menu-button')
-                        delete_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                        # Delete Connection row
+                        delete_row = Adw.ActionRow(title=_('Delete Connection'))
                         delete_icon = Gtk.Image.new_from_icon_name('user-trash-symbolic')
-                        delete_label = Gtk.Label(label=_('Delete Connection'))
-                        delete_box.append(delete_icon)
-                        delete_box.append(delete_label)
-                        delete_btn.set_child(delete_box)
-                        menu_box.append(delete_btn)
+                        delete_row.add_prefix(delete_icon)
+                        delete_row.set_activatable(True)
+                        delete_row.connect('activated', lambda *_: (self.on_delete_connection_action(None, None), pop.popdown()))
+                        listbox.append(delete_row)
 
                         # Add grouping options
                         current_group_id = self.group_manager.get_connection_group(row.connection.nickname)
                         if current_group_id:
-                            move_btn = Gtk.Button()
-                            move_btn.set_action_name('win.move-to-ungrouped')
-                            move_btn.get_style_context().add_class('menu-button')
-                            move_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                            move_row = Adw.ActionRow(title=_('Move to Ungrouped'))
                             move_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
-                            move_label = Gtk.Label(label=_('Move to Ungrouped'))
-                            move_box.append(move_icon)
-                            move_box.append(move_label)
-                            move_btn.set_child(move_box)
-                            menu_box.append(move_btn)
+                            move_row.add_prefix(move_icon)
+                            move_row.set_activatable(True)
+                            move_row.connect('activated', lambda *_: (self.on_move_to_ungrouped_action(None, None), pop.popdown()))
+                            listbox.append(move_row)
                         else:
                             # Show available groups to move to
                             available_groups = self.get_available_groups()
                             if available_groups:
-                                move_btn = Gtk.Button()
-                                move_btn.set_action_name('win.move-to-group')
-                                move_btn.get_style_context().add_class('menu-button')
-                                move_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                                move_row = Adw.ActionRow(title=_('Move to Group'))
                                 move_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
-                                move_label = Gtk.Label(label=_('Move to Group'))
-                                move_box.append(move_icon)
-                                move_box.append(move_label)
-                                move_btn.set_child(move_box)
-                                menu_box.append(move_btn)
+                                move_row.add_prefix(move_icon)
+                                move_row.set_activatable(True)
+                                move_row.connect('activated', lambda *_: (self.on_move_to_group_action(None, None), pop.popdown()))
+                                listbox.append(move_row)
                     pop.set_parent(self.connection_list)
                     try:
                         rect = Gdk.Rectangle()
