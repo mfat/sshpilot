@@ -18,13 +18,8 @@
 ## Features
 
 - Tabbed interface
-- Intuitive, minimal UI with keyboard navigation and shortcuts
-- File management in standard file managers using SFTP
-- Organize servers in groups
-- Option to use the built-in terminal or your favorite one
-- Broadcast commands to all open tabs
-- Support for running raw .ssh/config (override all settings in the app/use all advanced ssh-config settings not implemented in the app)
 - Full support for Local, Remote and Dynamic port forwarding 
+- Intuitive, minimal UI with keyboard navigation and shortcuts
 - SCP support for quicly uploading a file to remote server
 - Keypair generation and copying to remote servers (ssh-copy-id)
 - Support for running remote and local commands upon login

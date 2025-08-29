@@ -12,9 +12,6 @@ paramiko>=3.4
 cryptography>=42.0
 secretstorage>=3.3 ; platform_system=="Linux"
 
-# System utilities
-psutil>=5.9.0
-
 
 
 

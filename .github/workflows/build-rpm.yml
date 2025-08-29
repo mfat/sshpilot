@@ -2,8 +2,8 @@ name: Build RPM Package
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
 
   workflow_dispatch:
 
