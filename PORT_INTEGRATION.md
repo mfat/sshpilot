@@ -42,12 +42,12 @@ The integration adds comprehensive port conflict detection and resolution capabi
 - check_port_conflicts(ports): Check for conflicts with a list of ports
 ```
 
-#### 2. Enhanced Port Forwarding UI
-- **PortForwardingRuleDialog**: Enhanced validation with port conflict checking
-- **PortInfoDialog**: New dialog for viewing system port information
-- **Real-time validation**: Immediate feedback on port conflicts
+#### 2. Enhanced Connection Dialog (`connection_dialog.py`)
+- **Port conflict validation**: Real-time checking when adding/editing forwarding rules
+- **Port Information Dialog**: "View Port Info" button shows system-wide port usage
+- **Integrated UI**: Port checking built directly into the existing forwarding rule editor
 
-#### 3. Terminal Integration
+#### 3. Terminal Integration (`terminal.py`)
 - **Pre-flight port checking**: Validate ports before SSH connection
 - **Conflict warnings**: Display user-friendly error dialogs
 - **Selective rule application**: Skip conflicting port forwarding rules
