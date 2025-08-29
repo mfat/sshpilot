@@ -3910,9 +3910,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             logger.info(f"Starting connect all for group {group_id} with {len(connections)} connections")
             
-            # Start the bulk operation
-            import asyncio
-            asyncio.create_task(self.bulk_operations_manager.connect_all(connections))
+            # Start the bulk operation using GLib to handle async properly
+            self._run_async_bulk_operation(self.bulk_operations_manager.connect_all(connections))
             
         except Exception as e:
             logger.error(f"Failed to connect all in group: {e}")
@@ -3941,9 +3940,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             logger.info(f"Starting disconnect all for group {group_id} with {len(connected_connections)} connections")
             
-            # Start the bulk operation
-            import asyncio
-            asyncio.create_task(self.bulk_operations_manager.disconnect_all(connected_connections))
+            # Start the bulk operation using GLib to handle async properly
+            self._run_async_bulk_operation(self.bulk_operations_manager.disconnect_all(connected_connections))
             
         except Exception as e:
             logger.error(f"Failed to disconnect all in group: {e}")
@@ -3985,9 +3983,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 dialog.close()
                 if response_id == 'kill':
                     logger.info(f"Starting kill all for group {group_id} with {len(connections)} connections")
-                    # Start the bulk operation
-                    import asyncio
-                    asyncio.create_task(self.bulk_operations_manager.kill_all(connections))
+                    # Start the bulk operation using GLib to handle async properly
+                    self._run_async_bulk_operation(self.bulk_operations_manager.kill_all(connections))
             
             dialog.connect('response', on_response)
             dialog.present()
@@ -4696,3 +4693,30 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Clean up the dialog when closed
         error_dialog.connect("response", lambda d, r: d.destroy())
+    
+    def _run_async_bulk_operation(self, coro):
+        """Run an async bulk operation in a way compatible with GTK's GLib main loop"""
+        import asyncio
+        import threading
+        
+        def run_in_thread():
+            """Run the async operation in a separate thread with its own event loop"""
+            try:
+                # Create a new event loop for this thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                # Run the coroutine
+                loop.run_until_complete(coro)
+            except Exception as e:
+                logger.error(f"Error in async bulk operation: {e}", exc_info=True)
+            finally:
+                # Clean up the event loop
+                try:
+                    loop.close()
+                except Exception:
+                    pass
+        
+        # Start the operation in a background thread
+        thread = threading.Thread(target=run_in_thread, daemon=True)
+        thread.start()
