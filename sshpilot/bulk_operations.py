@@ -1,6 +1,6 @@
 """
 Bulk Operations Manager for sshPilot
-Handles connect all/kill all operations for groups with async processing and progress tracking
+Handles connect all/disconnect all operations for groups with async processing and progress tracking
 """
 
 import asyncio
@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 class OperationType(Enum):
     CONNECT = "connect"
     DISCONNECT = "disconnect"
-    KILL = "kill"
 
 
 @dataclass
@@ -81,10 +80,10 @@ class BulkOperationsManager(GObject.Object):
         self.cancel_event = None
         
         # Configuration
-        self.max_concurrent = 5  # Maximum concurrent connections
-        self.connection_timeout = 30.0  # Timeout per connection in seconds
-        self.retry_attempts = 1  # Number of retry attempts
-        self.retry_delay = 2.0  # Delay between retries in seconds
+        self.max_concurrent = 10  # Maximum concurrent connections (increased for faster processing)
+        self.connection_timeout = 15.0  # Timeout per connection in seconds (reduced for faster failure detection)
+        self.retry_attempts = 0  # No retries for faster processing
+        self.retry_delay = 1.0  # Delay between retries in seconds
     
     def set_concurrency_limit(self, limit: int):
         """Set the maximum number of concurrent operations"""
@@ -116,15 +115,7 @@ class BulkOperationsManager(GObject.Object):
             progress_callback
         )
     
-    async def kill_all(self, connections: List[Connection],
-                      progress_callback: Optional[Callable] = None) -> BulkOperationStatus:
-        """Force kill all connections in the list"""
-        return await self._execute_bulk_operation(
-            OperationType.KILL,
-            connections,
-            self._kill_single,
-            progress_callback
-        )
+
     
     def cancel_current_operation(self):
         """Cancel the current bulk operation"""
@@ -323,58 +314,3 @@ class BulkOperationsManager(GObject.Object):
         # Wait a bit for disconnection to complete
         await asyncio.sleep(0.2)
     
-    async def _kill_single(self, connection: Connection):
-        """Force kill a single connection"""
-        def kill_on_main_thread():
-            try:
-                window = self.terminal_manager.window
-                
-                # Force close all terminals for this connection
-                if connection in window.connection_to_terminals:
-                    terminals = window.connection_to_terminals[connection].copy()
-                    for terminal in terminals:
-                        try:
-                            # Force kill the terminal process
-                            if hasattr(terminal, 'vte') and terminal.vte:
-                                # Send SIGKILL to the process group
-                                import signal
-                                try:
-                                    pid = terminal.vte.get_pty().get_fd()
-                                    if pid > 0:
-                                        import os
-                                        os.killpg(os.getpgid(pid), signal.SIGKILL)
-                                except Exception:
-                                    pass
-                            
-                            # Close the tab
-                            page = window.tab_view.get_page(terminal)
-                            if page:
-                                window.tab_view.close_page(page)
-                        except Exception as e:
-                            logger.debug(f"Error killing terminal for {connection.nickname}: {e}")
-                
-                # Update connection status
-                connection.is_connected = False
-                return True
-                
-            except Exception as e:
-                logger.error(f"Failed to kill {connection.nickname}: {e}")
-                raise
-        
-        future = asyncio.Future()
-        
-        def _execute():
-            try:
-                result = kill_on_main_thread()
-                if not future.done():
-                    future.set_result(result)
-            except Exception as e:
-                if not future.done():
-                    future.set_exception(e)
-            return False
-        
-        GLib.idle_add(_execute)
-        await future
-        
-        # Wait a bit for cleanup
-        await asyncio.sleep(0.1)

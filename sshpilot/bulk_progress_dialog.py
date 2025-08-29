@@ -29,14 +29,13 @@ class BulkProgressDialog(Adw.Window):
         # Window setup
         self.set_transient_for(parent_window)
         self.set_modal(True)
-        self.set_resizable(True)
-        self.set_default_size(500, 400)
+        self.set_resizable(False)
+        self.set_default_size(400, 300)
         
         # Set title based on operation type
         operation_name = {
             OperationType.CONNECT: _("Connecting to Group"),
-            OperationType.DISCONNECT: _("Disconnecting from Group"), 
-            OperationType.KILL: _("Killing Group Connections")
+            OperationType.DISCONNECT: _("Disconnecting from Group")
         }.get(operation_status.operation_type, _("Bulk Operation"))
         
         self.set_title(operation_name)
@@ -142,8 +141,7 @@ class BulkProgressDialog(Adw.Window):
         
         descriptions = {
             OperationType.CONNECT: _("Connecting to {count} connections...").format(count=count),
-            OperationType.DISCONNECT: _("Disconnecting from {count} connections...").format(count=count),
-            OperationType.KILL: _("Force killing {count} connections...").format(count=count)
+            OperationType.DISCONNECT: _("Disconnecting from {count} connections...").format(count=count)
         }
         
         return descriptions.get(self.operation_status.operation_type, 
@@ -299,6 +297,17 @@ class BulkProgressDialog(Adw.Window):
         """Called when the operation is completed"""
         self.is_completed = True
         self._update_display()
+        
+        # Auto-close after 3 seconds if all operations were successful
+        if (self.operation_status.failed_count == 0 and 
+            not self.operation_status.is_cancelled):
+            GLib.timeout_add_seconds(3, self._auto_close)
+    
+    def _auto_close(self):
+        """Auto-close the dialog"""
+        if self.is_completed and not self.is_destroyed():
+            self.close()
+        return False  # Don't repeat
 
 
 class BulkProgressManager:

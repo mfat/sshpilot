@@ -654,14 +654,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             disconnect_all_row.connect('activated', lambda *_: (self.on_disconnect_all_group_action(None, None), pop.popdown()))
                             listbox.append(disconnect_all_row)
 
-                        # Kill All row
-                        if has_connections:
-                            kill_all_row = Adw.ActionRow(title=_('Kill All Connections'))
-                            kill_all_icon = Gtk.Image.new_from_icon_name('process-stop-symbolic')
-                            kill_all_row.add_prefix(kill_all_icon)
-                            kill_all_row.set_activatable(True)
-                            kill_all_row.connect('activated', lambda *_: (self.on_kill_all_group_action(None, None), pop.popdown()))
-                            listbox.append(kill_all_row)
+
 
                         # Add separator if we have bulk actions
                         if has_connections:
@@ -865,6 +858,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Group toolbar buttons
         self.group_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        
+        # Connect All button
+        self.connect_all_button = Gtk.Button.new_from_icon_name('network-wired-symbolic')
+        self.connect_all_button.set_tooltip_text('Connect to all servers in group')
+        self.connect_all_button.set_sensitive(False)
+        self.connect_all_button.connect('clicked', self.on_connect_all_button_clicked)
+        self.group_toolbar.append(self.connect_all_button)
+        
+        # Disconnect All button
+        self.disconnect_all_button = Gtk.Button.new_from_icon_name('network-offline-symbolic')
+        self.disconnect_all_button.set_tooltip_text('Disconnect from all servers in group')
+        self.disconnect_all_button.set_sensitive(False)
+        self.disconnect_all_button.connect('clicked', self.on_disconnect_all_button_clicked)
+        self.group_toolbar.append(self.disconnect_all_button)
         
         # Rename group button
         self.rename_group_button = Gtk.Button.new_from_icon_name('document-edit-symbolic')
@@ -1080,6 +1087,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def _get_group_connections(self, group_id: str) -> List:
         """Get all connections in a group (including nested groups)"""
         connections = []
+        seen_nicknames = set()  # Prevent duplicates
         
         def collect_connections(gid):
             if gid not in self.group_manager.groups:
@@ -1089,15 +1097,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             # Add direct connections in this group
             for conn_nickname in group.get('connections', []):
+                if conn_nickname in seen_nicknames:
+                    continue  # Skip duplicates
                 conn = self.connection_manager.find_connection_by_nickname(conn_nickname)
                 if conn:
                     connections.append(conn)
+                    seen_nicknames.add(conn_nickname)
             
             # Recursively collect from child groups
             for child_id in group.get('children', []):
                 collect_connections(child_id)
         
         collect_connections(group_id)
+        logger.debug(f"Found {len(connections)} unique connections in group {group_id}")
         return connections
 
     def add_connection_row(self, connection: Connection, indent_level: int = 0):
@@ -1758,6 +1770,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 # Show group toolbar, hide connection toolbar
                 self.connection_toolbar.set_visible(False)
                 self.group_toolbar.set_visible(True)
+                self.connect_all_button.set_sensitive(True)
+                self.disconnect_all_button.set_sensitive(True)
                 self.rename_group_button.set_sensitive(True)
                 self.delete_group_button.set_sensitive(True)
             else:
@@ -3946,51 +3960,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to disconnect all in group: {e}")
     
-    def on_kill_all_group_action(self, action, param=None):
-        """Handle kill all group action"""
-        try:
-            # Get the group row from context menu or selected row
-            selected_row = getattr(self, '_context_menu_group_row', None)
-            if not selected_row:
-                selected_row = self.connection_list.get_selected_row()
-            
-            if not selected_row or not hasattr(selected_row, 'group_id'):
-                logger.warning("No group selected for kill all action")
-                return
-            
-            group_id = selected_row.group_id
-            connections = self._get_group_connections(group_id)
-            
-            if not connections:
-                logger.info(f"No connections found in group {group_id}")
-                return
-            
-            # Show confirmation dialog for kill all
-            group_name = self.group_manager.groups.get(group_id, {}).get('name', 'Unknown Group')
-            dialog = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_("Kill All Connections in Group"),
-                body=_("Are you sure you want to forcefully kill all connections in group '{}'?\n\nThis will immediately terminate all active connections and cannot be undone.").format(group_name)
-            )
-            dialog.add_response('cancel', _("Cancel"))
-            dialog.add_response('kill', _("Kill All"))
-            dialog.set_response_appearance('kill', Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response('cancel')
-            dialog.set_close_response('cancel')
-            
-            def on_response(dialog, response_id):
-                dialog.close()
-                if response_id == 'kill':
-                    logger.info(f"Starting kill all for group {group_id} with {len(connections)} connections")
-                    # Start the bulk operation using GLib to handle async properly
-                    self._run_async_bulk_operation(self.bulk_operations_manager.kill_all(connections))
-            
-            dialog.connect('response', on_response)
-            dialog.present()
-            
-        except Exception as e:
-            logger.error(f"Failed to kill all in group: {e}")
+
+
+    def on_connect_all_button_clicked(self, button):
+        """Handle connect all button click from toolbar"""
+        selected_row = self.connection_list.get_selected_row()
+        if selected_row and hasattr(selected_row, 'group_id'):
+            self.on_connect_all_group_action(None, None)
+    
+    def on_disconnect_all_button_clicked(self, button):
+        """Handle disconnect all button click from toolbar"""
+        selected_row = self.connection_list.get_selected_row()
+        if selected_row and hasattr(selected_row, 'group_id'):
+            self.on_disconnect_all_group_action(None, None)
 
     def open_in_system_terminal(self, connection):
         """Open the connection in the system's default terminal"""
