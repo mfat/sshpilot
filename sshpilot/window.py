@@ -688,23 +688,25 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
                         # Add grouping options
                         current_group_id = self.group_manager.get_connection_group(row.connection.nickname)
-                        if current_group_id:
-                            move_row = Adw.ActionRow(title=_('Move to Ungrouped'))
+                        
+                        # Always show "Move to Group" option
+                        available_groups = self.get_available_groups()
+                        if available_groups:
+                            move_row = Adw.ActionRow(title=_('Move to Group'))
                             move_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
                             move_row.add_prefix(move_icon)
                             move_row.set_activatable(True)
-                            move_row.connect('activated', lambda *_: (self.on_move_to_ungrouped_action(None, None), pop.popdown()))
+                            move_row.connect('activated', lambda *_: (self.on_move_to_group_action(None, None), pop.popdown()))
                             listbox.append(move_row)
-                        else:
-                            # Show available groups to move to
-                            available_groups = self.get_available_groups()
-                            if available_groups:
-                                move_row = Adw.ActionRow(title=_('Move to Group'))
-                                move_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
-                                move_row.add_prefix(move_icon)
-                                move_row.set_activatable(True)
-                                move_row.connect('activated', lambda *_: (self.on_move_to_group_action(None, None), pop.popdown()))
-                                listbox.append(move_row)
+                        
+                        # Show "Ungroup" option if connection is currently in a group
+                        if current_group_id:
+                            ungroup_row = Adw.ActionRow(title=_('Ungroup'))
+                            ungroup_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+                            ungroup_row.add_prefix(ungroup_icon)
+                            ungroup_row.set_activatable(True)
+                            ungroup_row.connect('activated', lambda *_: (self.on_move_to_ungrouped_action(None, None), pop.popdown()))
+                            listbox.append(ungroup_row)
                     pop.set_parent(self.connection_list)
                     try:
                         rect = Gdk.Rectangle()
