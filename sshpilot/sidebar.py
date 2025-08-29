@@ -52,14 +52,8 @@ class GroupRow(Gtk.ListBoxRow):
         info_box.set_hexpand(True)
 
         self.name_label = Gtk.Label()
-        self.name_label.set_markup(f"<b>{group_info['name']}</b>")
         self.name_label.set_halign(Gtk.Align.START)
         info_box.append(self.name_label)
-
-        self.count_label = Gtk.Label()
-        self.count_label.add_css_class("dim-label")
-        self.count_label.set_halign(Gtk.Align.START)
-        info_box.append(self.count_label)
 
         content.append(info_box)
 
@@ -93,7 +87,8 @@ class GroupRow(Gtk.ListBoxRow):
             if c in self.connections_dict
         ]
         count = len(actual_connections)
-        self.count_label.set_text("1" if count == 1 else f"{count}")
+        group_name = self.group_info['name']
+        self.name_label.set_markup(f"<b>{group_name} ({count})</b>")
 
     def _on_expand_clicked(self, button):
         self._toggle_expand()
