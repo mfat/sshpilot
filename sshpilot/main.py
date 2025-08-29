@@ -40,7 +40,7 @@ def load_resources():
 if not load_resources():
     sys.exit(1)
 
-from .main_window import MainWindow
+from .window import MainWindow
 
 class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
@@ -124,7 +124,7 @@ class SshPilotApplication(Adw.Application):
         """Handle application activation"""
         # Create a new window if one doesn't exist
         if not self.window or not self.window.get_visible():
-            from .main_window import MainWindow
+            from .window import MainWindow
             self.window = MainWindow(application=app)
             self.window.present()
         
