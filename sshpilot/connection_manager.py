@@ -58,7 +58,7 @@ class Connection:
         self.port = data.get('port', 22)
         # previously: self.keyfile = data.get('keyfile', '')
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
-        self.certificate = data.get('certificate', '')
+        self.certificate = data.get('certificate') or ''
         self.use_raw_sshconfig = bool(data.get('use_raw_sshconfig', False))
         self.raw_ssh_config_block = data.get('raw_ssh_config_block', '')
         self.password = data.get('password', '')
@@ -560,6 +560,7 @@ class Connection:
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
+        self.certificate = data.get('certificate') or ''
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
         self.local_command = data.get('local_command', '')
@@ -813,7 +814,8 @@ class ConnectionManager(GObject.Object):
                 'port': int(_unwrap(config.get('port', 22))),
                 'username': _unwrap(config.get('user', getpass.getuser())),
                 # previously: 'private_key': config.get('identityfile'),
-                'keyfile': os.path.expanduser(_unwrap(config.get('identityfile'))) if config.get('identityfile') else None,
+                'keyfile': os.path.expanduser(_unwrap(config.get('identityfile'))) if config.get('identityfile') else '',
+                'certificate': os.path.expanduser(_unwrap(config.get('certificatefile'))) if config.get('certificatefile') else '',
                 'forwarding_rules': []
             }
             
