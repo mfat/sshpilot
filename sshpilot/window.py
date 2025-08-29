@@ -38,6 +38,7 @@ from .askpass_utils import ensure_askpass_script
 from .preferences import PreferencesWindow, is_running_in_flatpak
 from .sshcopyid_window import SshCopyIdWindow
 
+
 logger = logging.getLogger(__name__)
 
 def open_remote_in_file_manager(user: str, host: str, port: Optional[int] = None,
