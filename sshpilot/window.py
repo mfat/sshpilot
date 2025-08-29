@@ -3217,6 +3217,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def show_quit_confirmation_dialog(self):
         """Show confirmation dialog when quitting with active connections"""
+        # Bring the main window to the foreground first
+        try:
+            self.present()
+        except Exception as e:
+            logger.debug(f"Failed to bring window to foreground: {e}")
+        
         # Only count terminals that are actually connected across all tabs
         connected_items = []
         for conn, terms in self.connection_to_terminals.items():
