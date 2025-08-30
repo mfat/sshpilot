@@ -1091,7 +1091,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             # Add common terminals
             common_terminals = [
                 'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty', 
-                'kitty', 'terminator', 'tilix', 'xterm'
+                'kitty', 'terminator', 'tilix', 'xterm', 'guake'
             ]
             
             # Check which terminals are available

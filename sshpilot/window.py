@@ -4168,7 +4168,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
                 # These terminals use -- to separate options from command
                 cmd = [terminal_command, '--', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_basename in ['konsole', 'terminator']:
+            elif terminal_basename in ['konsole', 'terminator', 'guake']:
                 # These terminals use -e for command execution
                 cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
             elif terminal_basename in ['alacritty', 'kitty']:
@@ -4218,7 +4218,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
                 # These terminals use -- to separate options from command
                 cmd = [terminal_command, '--', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_basename in ['konsole', 'terminator']:
+            elif terminal_basename in ['konsole', 'terminator', 'guake']:
                 # These terminals use -e for command execution
                 cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
             elif terminal_basename in ['alacritty', 'kitty']:
@@ -4265,7 +4265,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Check for common terminals in PATH
             common_terminals = [
                 'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty', 
-                'kitty', 'terminator', 'tilix'
+                'kitty', 'terminator', 'tilix', 'guake'
             ]
             
             for term in common_terminals:
