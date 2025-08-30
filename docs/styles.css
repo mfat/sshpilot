@@ -332,8 +332,9 @@ body {
 
 /* Slideshow View */
 .slideshow-container {
-    max-width: 800px;
+    max-width: 1200px;
     margin: 0 auto;
+    padding: 0 var(--spacing-lg);
 }
 
 .slideshow-wrapper {
@@ -341,8 +342,9 @@ body {
     background: var(--background);
     border-radius: var(--radius-lg);
     overflow: hidden;
-    box-shadow: 0 8px 16px var(--shadow);
-    aspect-ratio: 16/10;
+    box-shadow: 0 16px 32px var(--shadow);
+    aspect-ratio: 16/9;
+    min-height: 500px;
 }
 
 .slideshow-slide {
@@ -364,41 +366,45 @@ body {
     bottom: 0;
     left: 0;
     right: 0;
-    background: rgba(0, 0, 0, 0.8);
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.9));
     color: white;
-    padding: var(--spacing-md);
+    padding: var(--spacing-xl);
     text-align: center;
-    font-size: var(--font-size-small);
+    font-size: var(--font-size-large);
+    font-weight: 500;
+    backdrop-filter: blur(5px);
 }
 
 .slideshow-btn {
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
-    background: rgba(0, 0, 0, 0.7);
+    background: rgba(0, 0, 0, 0.8);
     color: white;
     border: none;
     border-radius: 50%;
-    width: 48px;
-    height: 48px;
-    font-size: 24px;
+    width: 64px;
+    height: 64px;
+    font-size: 32px;
     cursor: pointer;
     transition: var(--transition);
     display: flex;
     align-items: center;
     justify-content: center;
+    backdrop-filter: blur(10px);
 }
 
 .slideshow-btn:hover {
     background: rgba(0, 0, 0, 0.9);
+    transform: translateY(-50%) scale(1.1);
 }
 
 .slideshow-prev {
-    left: var(--spacing-md);
+    left: var(--spacing-lg);
 }
 
 .slideshow-next {
-    right: var(--spacing-md);
+    right: var(--spacing-lg);
 }
 
 .slideshow-indicators {
@@ -447,6 +453,38 @@ body {
 .slideshow-counter {
     color: var(--text-secondary);
     font-size: var(--font-size-small);
+}
+
+/* Responsive design for slideshow */
+@media (max-width: 768px) {
+    .slideshow-container {
+        max-width: 100%;
+        padding: 0 var(--spacing-md);
+    }
+    
+    .slideshow-wrapper {
+        aspect-ratio: 4/3;
+        min-height: 300px;
+    }
+    
+    .slideshow-btn {
+        width: 48px;
+        height: 48px;
+        font-size: 24px;
+    }
+    
+    .slideshow-prev {
+        left: var(--spacing-sm);
+    }
+    
+    .slideshow-next {
+        right: var(--spacing-sm);
+    }
+    
+    .slideshow-caption {
+        padding: var(--spacing-lg);
+        font-size: var(--font-size-base);
+    }
 }
 
 /* Download section */
