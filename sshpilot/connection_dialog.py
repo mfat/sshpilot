@@ -275,8 +275,9 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.append(header)
         
         # Add button (positioned at the top)
-        self.add_button = Gtk.Button(label="Add")
-        self.add_button.add_css_class("suggested-action")
+        self.add_button = Gtk.Button(label=_("Add SSH Option"))
+        self.add_button.set_icon_name("list-add-symbolic")
+        self.add_button.set_tooltip_text(_("Add a new SSH configuration option"))
         self.add_button.connect("clicked", self.on_add_option)
         self.add_button.set_halign(Gtk.Align.START)
         self.add_button.set_margin_bottom(12)
