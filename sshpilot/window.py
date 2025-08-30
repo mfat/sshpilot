@@ -937,7 +937,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         menu.append('New Connection', 'app.new-connection')
         menu.append('Create Group', 'win.create-group')
         menu.append('Local Terminal', 'app.local-terminal')
-        menu.append('Generate SSH Key', 'app.new-key')
+        menu.append('Copy Key to Server', 'app.new-key')
         menu.append('Broadcast Command', 'app.broadcast-command')
         menu.append('Preferences', 'app.preferences')
         menu.append('Help', 'app.help')
@@ -1376,6 +1376,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         selected_row = self.connection_list.get_selected_row()
         if not selected_row or not getattr(selected_row, "connection", None):
             logger.warning("Main window: No connection selected for ssh-copy-id")
+            # Show message dialog
+            try:
+                error_dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("No Server Selected"),
+                    body=_("Select a server first!")
+                )
+                error_dialog.add_response('ok', _('OK'))
+                error_dialog.present()
+            except Exception as e:
+                logger.error(f"Failed to show error dialog: {e}")
             return
         connection = selected_row.connection
         logger.info(f"Main window: Selected connection: {getattr(connection, 'nickname', 'unknown')}")
@@ -3390,6 +3402,37 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_broadcast_command_action(self, action, param=None):
         """Handle broadcast command action - shows dialog to input command"""
         try:
+            # Check if there are any SSH terminals open
+            ssh_terminals_count = 0
+            for i in range(self.tab_view.get_n_pages()):
+                page = self.tab_view.get_nth_page(i)
+                if page is None:
+                    continue
+                terminal_widget = page.get_child()
+                if terminal_widget is None or not hasattr(terminal_widget, 'vte'):
+                    continue
+                if hasattr(terminal_widget, 'connection'):
+                    if (hasattr(terminal_widget.connection, 'nickname') and
+                            terminal_widget.connection.nickname == "Local Terminal"):
+                        continue
+                    if hasattr(terminal_widget.connection, 'host'):
+                        ssh_terminals_count += 1
+            
+            if ssh_terminals_count == 0:
+                # Show message dialog
+                try:
+                    error_dialog = Adw.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        heading=_("No SSH Terminals Open"),
+                        body=_("Connect to your server first!")
+                    )
+                    error_dialog.add_response('ok', _('OK'))
+                    error_dialog.present()
+                except Exception as e:
+                    logger.error(f"Failed to show error dialog: {e}")
+                return
+            
             # Create a custom dialog window instead of using Adw.MessageDialog
             dialog = Gtk.Dialog(
                 title=_("Broadcast Command"),

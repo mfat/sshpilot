@@ -383,7 +383,8 @@ class SSHConfigAdvancedTab(Gtk.Box):
         
         # SSH option dropdown (only supported options)
         key_dropdown = Gtk.DropDown()
-        key_dropdown.set_hexpand(True)
+        key_dropdown.set_hexpand(False)  # Don't expand horizontally
+        key_dropdown.set_size_request(200, -1)  # Fixed width of 200px
         
         # Create string list for dropdown
         string_list = Gtk.StringList()
@@ -435,8 +436,10 @@ class SSHConfigAdvancedTab(Gtk.Box):
         # Append the new row to the content box
         self.content_box.append(entry_row)
         
-        # Focus on the new value entry
-        entry_row.value_entry.grab_focus()
+        # Only focus on the new value entry if this was triggered by user clicking the add button
+        # (not when loading existing data)
+        if button is not None:
+            entry_row.value_entry.grab_focus()
         
     def on_remove_option(self, button, row_grid):
         """Remove a SSH option entry"""
@@ -545,6 +548,10 @@ class SSHConfigAdvancedTab(Gtk.Box):
             self._set_dropdown_to_option(row_grid.key_dropdown, key)
             row_grid.value_entry.set_text(value)
             logger.debug(f"Set dropdown to {key} and value to {value}")
+        
+        # Set focus on the add button after loading entries
+        if hasattr(self, 'add_button'):
+            self.add_button.grab_focus()
             
     def generate_ssh_config(self, hostname="your-host-name"):
         """Generate SSH config block"""
