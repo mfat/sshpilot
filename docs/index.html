@@ -7,6 +7,7 @@
     <meta name="description" content="sshPilot is a user-friendly, modern and lightweight SSH connection manager for Linux, with an integrated terminal. Free alternative to Putty and Termius.">
     <link rel="stylesheet" href="styles.css">
     <link rel="icon" type="image/svg+xml" href="io.github.mfat.sshpilot.svg">
+    <script src="screenshots.js" defer></script>
     <meta property="og:title" content="sshPilot - Modern SSH Connection Manager">
     <meta property="og:description" content="User-friendly SSH connection manager with integrated terminal for Linux">
     <meta property="og:type" content="website">
@@ -98,30 +99,34 @@
         <section id="screenshots" class="screenshots">
             <div class="container">
                 <h2 class="section-title">Screenshots</h2>
-                <div class="screenshots-grid">
-                    <div class="screenshot-item">
-                        <img src="screenshots/main-window.png" alt="Main Window" class="screenshot-img">
-                        <p class="screenshot-caption">Main interface with connection list and terminal tabs</p>
+                
+                <!-- View Toggle Buttons -->
+                <div class="view-toggle">
+                    <button class="view-btn active" data-view="grid">Grid View</button>
+                    <button class="view-btn" data-view="slideshow">Slideshow</button>
+                </div>
+
+                <!-- Grid View -->
+                <div class="screenshots-grid" id="grid-view">
+                    <!-- Screenshots will be loaded dynamically -->
+                </div>
+
+                <!-- Slideshow View -->
+                <div class="slideshow-container" id="slideshow-view" style="display: none;">
+                    <div class="slideshow-wrapper">
+                        <div class="slideshow-slide">
+                            <img src="" alt="" class="slideshow-img">
+                            <div class="slideshow-caption"></div>
+                        </div>
+                        <button class="slideshow-btn slideshow-prev" aria-label="Previous">‹</button>
+                        <button class="slideshow-btn slideshow-next" aria-label="Next">›</button>
                     </div>
-                    <div class="screenshot-item">
-                        <img src="screenshots/ssh-settings.png" alt="SSH Settings" class="screenshot-img">
-                        <p class="screenshot-caption">Advanced SSH configuration options</p>
+                    <div class="slideshow-indicators">
+                        <!-- Indicators will be generated dynamically -->
                     </div>
-                    <div class="screenshot-item">
-                        <img src="screenshots/port-forwarding.png" alt="Port Forwarding" class="screenshot-img">
-                        <p class="screenshot-caption">Port forwarding configuration</p>
-                    </div>
-                    <div class="screenshot-item">
-                        <img src="screenshots/ssh-copy-id.png" alt="SSH Copy ID" class="screenshot-img">
-                        <p class="screenshot-caption">Key management and ssh-copy-id</p>
-                    </div>
-                    <div class="screenshot-item">
-                        <img src="screenshots/htop.png" alt="Terminal" class="screenshot-img">
-                        <p class="screenshot-caption">Integrated terminal with full color support</p>
-                    </div>
-                    <div class="screenshot-item">
-                        <img src="screenshots/commands.png" alt="Commands" class="screenshot-img">
-                        <p class="screenshot-caption">Command execution and management</p>
+                    <div class="slideshow-controls">
+                        <button class="slideshow-play-pause" aria-label="Play/Pause">⏸</button>
+                        <span class="slideshow-counter">1 / 6</span>
                     </div>
                 </div>
             </div>
