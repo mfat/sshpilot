@@ -8,7 +8,7 @@ from .connection_manager import ConnectionManager, Connection
 
 logger = logging.getLogger(__name__)
 
-class SshCopyIdWindow(Gtk.Window):
+class SshCopyIdWindow(Adw.Window):
     """
     Full Adwaita-styled window for installing a public key on a server.
     - Shows selected server nickname
@@ -33,7 +33,6 @@ class SshCopyIdWindow(Gtk.Window):
             super().__init__()
             self.set_transient_for(parent)
             self.set_modal(True)
-            self.set_title("Install Public Key on Server")
             self.set_resizable(False)
             self.set_default_size(500, 400)
             logger.debug("SshCopyIdWindow: Base window initialized")
@@ -54,7 +53,7 @@ class SshCopyIdWindow(Gtk.Window):
         logger.info("SshCopyIdWindow: Creating outer layout")
         try:
             tv = Adw.ToolbarView()
-            self.set_child(tv)
+            self.set_content(tv)
             
             # ---------- Header Bar ----------
             logger.info("SshCopyIdWindow: Creating header bar")
