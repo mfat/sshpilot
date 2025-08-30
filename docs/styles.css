@@ -332,7 +332,7 @@ body {
 
 /* Slideshow View */
 .slideshow-container {
-    max-width: 1200px;
+    max-width: 1400px;
     margin: 0 auto;
     padding: 0 var(--spacing-lg);
 }
@@ -342,9 +342,9 @@ body {
     background: var(--background);
     border-radius: var(--radius-lg);
     overflow: hidden;
-    box-shadow: 0 16px 32px var(--shadow);
+    box-shadow: 0 20px 40px var(--shadow);
     aspect-ratio: 16/9;
-    min-height: 500px;
+    min-height: 600px;
 }
 
 .slideshow-slide {
@@ -368,10 +368,10 @@ body {
     right: 0;
     background: linear-gradient(transparent, rgba(0, 0, 0, 0.9));
     color: white;
-    padding: var(--spacing-xl);
+    padding: var(--spacing-2xl);
     text-align: center;
-    font-size: var(--font-size-large);
-    font-weight: 500;
+    font-size: var(--font-size-xl);
+    font-weight: 600;
     backdrop-filter: blur(5px);
 }
 
@@ -383,9 +383,9 @@ body {
     color: white;
     border: none;
     border-radius: 50%;
-    width: 64px;
-    height: 64px;
-    font-size: 32px;
+    width: 80px;
+    height: 80px;
+    font-size: 40px;
     cursor: pointer;
     transition: var(--transition);
     display: flex;
@@ -464,13 +464,13 @@ body {
     
     .slideshow-wrapper {
         aspect-ratio: 4/3;
-        min-height: 300px;
+        min-height: 350px;
     }
     
     .slideshow-btn {
-        width: 48px;
-        height: 48px;
-        font-size: 24px;
+        width: 56px;
+        height: 56px;
+        font-size: 28px;
     }
     
     .slideshow-prev {
@@ -483,7 +483,7 @@ body {
     
     .slideshow-caption {
         padding: var(--spacing-lg);
-        font-size: var(--font-size-base);
+        font-size: var(--font-size-large);
     }
 }
 
