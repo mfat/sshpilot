@@ -4160,20 +4160,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self._show_terminal_error_dialog()
                 return
             
+            # Get the basename for terminal type detection
+            import os
+            terminal_basename = os.path.basename(terminal_command)
+            
             # Launch the terminal with SSH command
-            if terminal_command in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
+            if terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
                 # These terminals use -- to separate options from command
                 cmd = [terminal_command, '--', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_command in ['konsole', 'terminator']:
+            elif terminal_basename in ['konsole', 'terminator']:
                 # These terminals use -e for command execution
                 cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
-            elif terminal_command in ['alacritty', 'kitty']:
+            elif terminal_basename in ['alacritty', 'kitty']:
                 # These terminals use -e for command execution
                 cmd = [terminal_command, '-e', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_command == 'xterm':
+            elif terminal_basename == 'xterm':
                 # xterm uses -e for command execution
                 cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
-            elif terminal_command == 'xdg-terminal':
+            elif terminal_basename == 'xdg-terminal':
                 # xdg-terminal opens the default terminal
                 cmd = [terminal_command, ssh_command]
             else:
@@ -4206,20 +4210,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self._show_terminal_error_dialog()
                 return
             
+            # Get the basename for terminal type detection
+            import os
+            terminal_basename = os.path.basename(terminal_command)
+            
             # Launch the terminal with SSH command
-            if terminal_command in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
+            if terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
                 # These terminals use -- to separate options from command
                 cmd = [terminal_command, '--', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_command in ['konsole', 'terminator']:
+            elif terminal_basename in ['konsole', 'terminator']:
                 # These terminals use -e for command execution
                 cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
-            elif terminal_command in ['alacritty', 'kitty']:
+            elif terminal_basename in ['alacritty', 'kitty']:
                 # These terminals use -e for command execution
                 cmd = [terminal_command, '-e', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_command == 'xterm':
+            elif terminal_basename == 'xterm':
                 # xterm uses -e for command execution
                 cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
-            elif terminal_command == 'xdg-terminal':
+            elif terminal_basename == 'xdg-terminal':
                 # xdg-terminal opens the default terminal
                 cmd = [terminal_command, ssh_command]
             else:
@@ -4283,10 +4291,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if preferred_terminal == 'custom':
                 # Use custom path
                 custom_path = self.config.get_setting('custom-terminal-path', '')
-                if custom_path and self._is_valid_unix_path(custom_path):
+                if custom_path:
                     return custom_path
                 else:
-                    logger.warning("Custom terminal path is invalid or not set, falling back to built-in terminal")
+                    logger.warning("Custom terminal path is not set, falling back to built-in terminal")
                     return None
             
             # Check if the preferred terminal is available
@@ -4305,25 +4313,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.error(f"Failed to get user preferred terminal: {e}")
             return None
 
-    def _is_valid_unix_path(self, path):
-        """Validate if the path is a valid Unix path"""
-        if not path:
-            return False
-        
-        # Check if it starts with / (absolute path)
-        if not path.startswith('/'):
-            return False
-        
-        # Check if it contains only valid characters
-        import re
-        if not re.match(r'^[a-zA-Z0-9/._-]+$', path):
-            return False
-        
-        # Check if the file exists and is executable
-        try:
-            return os.path.isfile(path) and os.access(path, os.X_OK)
-        except Exception:
-            return False
+
 
     def _show_terminal_error_dialog(self):
         """Show error dialog when no terminal is found"""
