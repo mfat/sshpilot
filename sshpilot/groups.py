@@ -43,8 +43,19 @@ class GroupManager:
         except Exception as e:
             logger.error(f"Failed to save groups: {e}")
 
+    def group_name_exists(self, name: str) -> bool:
+        """Check if a group name already exists"""
+        for group in self.groups.values():
+            if group['name'].lower() == name.lower():
+                return True
+        return False
+
     def create_group(self, name: str, parent_id: str = None) -> str:
         """Create a new group and return its ID"""
+        # Check for duplicate names (case-insensitive)
+        if self.group_name_exists(name):
+            raise ValueError(f"Group name '{name}' already exists")
+        
         import uuid
         group_id = str(uuid.uuid4())
 
