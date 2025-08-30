@@ -332,9 +332,17 @@ body {
 
 /* Slideshow View */
 .slideshow-container {
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: 0 var(--spacing-lg);
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.95);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
 }
 
 .slideshow-wrapper {
@@ -343,8 +351,10 @@ body {
     border-radius: var(--radius-lg);
     overflow: hidden;
     box-shadow: 0 20px 40px var(--shadow);
-    aspect-ratio: 16/9;
-    min-height: 600px;
+    width: 90vw;
+    height: 80vh;
+    max-width: 1600px;
+    max-height: 900px;
 }
 
 .slideshow-slide {
@@ -407,6 +417,31 @@ body {
     right: var(--spacing-lg);
 }
 
+.slideshow-close {
+    position: absolute;
+    top: var(--spacing-lg);
+    right: var(--spacing-lg);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 60px;
+    height: 60px;
+    font-size: 24px;
+    cursor: pointer;
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(10px);
+    z-index: 1001;
+}
+
+.slideshow-close:hover {
+    background: rgba(255, 0, 0, 0.8);
+    transform: scale(1.1);
+}
+
 .slideshow-indicators {
     display: flex;
     justify-content: center;
@@ -457,14 +492,9 @@ body {
 
 /* Responsive design for slideshow */
 @media (max-width: 768px) {
-    .slideshow-container {
-        max-width: 100%;
-        padding: 0 var(--spacing-md);
-    }
-    
     .slideshow-wrapper {
-        aspect-ratio: 4/3;
-        min-height: 350px;
+        width: 95vw;
+        height: 85vh;
     }
     
     .slideshow-btn {
@@ -479,6 +509,14 @@ body {
     
     .slideshow-next {
         right: var(--spacing-sm);
+    }
+    
+    .slideshow-close {
+        width: 50px;
+        height: 50px;
+        font-size: 20px;
+        top: var(--spacing-md);
+        right: var(--spacing-md);
     }
     
     .slideshow-caption {

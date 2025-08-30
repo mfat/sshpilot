@@ -143,11 +143,14 @@ class ScreenshotManager {
     
     switchToSlideshow() {
         document.getElementById('grid-view').style.display = 'none';
-        document.getElementById('slideshow-view').style.display = 'block';
+        document.getElementById('slideshow-view').style.display = 'flex';
         
         // Update button states
         document.querySelector('[data-view="grid"]').classList.remove('active');
         document.querySelector('[data-view="slideshow"]').classList.add('active');
+        
+        // Prevent body scroll when slideshow is open
+        document.body.style.overflow = 'hidden';
     }
     
     switchToGrid() {
@@ -157,6 +160,9 @@ class ScreenshotManager {
         // Update button states
         document.querySelector('[data-view="slideshow"]').classList.remove('active');
         document.querySelector('[data-view="grid"]').classList.add('active');
+        
+        // Restore body scroll
+        document.body.style.overflow = 'auto';
     }
     
     setupEventListeners() {
@@ -176,6 +182,7 @@ class ScreenshotManager {
         document.querySelector('.slideshow-prev').addEventListener('click', () => this.prevSlide());
         document.querySelector('.slideshow-next').addEventListener('click', () => this.nextSlide());
         document.querySelector('.slideshow-play-pause').addEventListener('click', () => this.toggleAutoPlay());
+        document.querySelector('.slideshow-close').addEventListener('click', () => this.switchToGrid());
         
         // Keyboard navigation
         document.addEventListener('keydown', (e) => {
@@ -187,6 +194,8 @@ class ScreenshotManager {
                 } else if (e.key === ' ') {
                     e.preventDefault();
                     this.toggleAutoPlay();
+                } else if (e.key === 'Escape') {
+                    this.switchToGrid();
                 }
             }
         });
