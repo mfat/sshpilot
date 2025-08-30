@@ -3283,9 +3283,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Force a redraw of the row
             row.queue_draw()
 
-        # If this was a controlled reconnect and we are now connected, hide feedback
+        # If this was a controlled reconnect and we are now connected, reset the flag
         if is_connected and getattr(self, '_is_controlled_reconnect', False):
-            GLib.idle_add(shutdown.hide_reconnecting_message, self)
             self._is_controlled_reconnect = False
 
         # Use the same reliable status to control terminal banners
@@ -4717,8 +4716,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Set controlled reconnect flag
         self._is_controlled_reconnect = True
 
-        # Show reconnecting feedback
-        shutdown.show_reconnecting_message(self, connection)
+
         
         try:
             # Disconnect first (defer to avoid blocking)
@@ -4797,8 +4795,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
     def _show_reconnect_error(self, connection, error_message=None):
         """Show an error message when reconnection fails"""
-        # Ensure reconnecting feedback is hidden
-        shutdown.hide_reconnecting_message(self)
         # Remove from active terminals if reconnection fails
         if connection in self.active_terminals:
             del self.active_terminals[connection]
