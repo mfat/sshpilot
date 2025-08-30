@@ -728,6 +728,26 @@ class TerminalWidget(Gtk.Box):
                         logger.warning(conflict_message)
                         GLib.idle_add(self._show_forwarding_error_dialog, conflict_message)
                 
+                # Add extra SSH config options from advanced tab
+                extra_ssh_config = getattr(self.connection, 'extra_ssh_config', '').strip()
+                if extra_ssh_config:
+                    logger.debug(f"Adding extra SSH config options: {extra_ssh_config}")
+                    # Parse and add each extra SSH config option
+                    for line in extra_ssh_config.split('\n'):
+                        line = line.strip()
+                        if line and not line.startswith('#'):  # Skip empty lines and comments
+                            # Split on first space to separate option and value
+                            parts = line.split(' ', 1)
+                            if len(parts) == 2:
+                                option, value = parts
+                                ssh_cmd.extend(['-o', f"{option}={value}"])
+                                logger.debug(f"Added SSH option: {option}={value}")
+                            elif len(parts) == 1:
+                                # Option without value (e.g., "Compression yes" becomes "Compression=yes")
+                                option = parts[0]
+                                ssh_cmd.extend(['-o', f"{option}=yes"])
+                                logger.debug(f"Added SSH option: {option}=yes")
+                
                 # Add NumberOfPasswordPrompts option before hostname and command
                 ssh_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
                 

@@ -4292,6 +4292,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     'forwarding_rules': _norm_rules(getattr(old_connection, 'forwarding_rules', [])),
                     'local_command': _norm_str(getattr(old_connection, 'local_command', '') or (getattr(old_connection, 'data', {}).get('local_command') if hasattr(old_connection, 'data') else '')),
                     'remote_command': _norm_str(getattr(old_connection, 'remote_command', '') or (getattr(old_connection, 'data', {}).get('remote_command') if hasattr(old_connection, 'data') else '')),
+                    'extra_ssh_config': _norm_str(getattr(old_connection, 'extra_ssh_config', '') or (getattr(old_connection, 'data', {}).get('extra_ssh_config') if hasattr(old_connection, 'data') else '')),
                 }
                 incoming = {
                     'nickname': _norm_str(connection_data.get('nickname')),
@@ -4310,6 +4311,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     'forwarding_rules': _norm_rules(connection_data.get('forwarding_rules')),
                     'local_command': _norm_str(connection_data.get('local_command')),
                     'remote_command': _norm_str(connection_data.get('remote_command')),
+                    'extra_ssh_config': _norm_str(connection_data.get('extra_ssh_config')),
                 }
                 # Determine if anything meaningful changed by comparing canonical SSH config blocks
                 try:
@@ -4365,6 +4367,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 try:
                     old_connection.local_command = connection_data.get('local_command', '')
                     old_connection.remote_command = connection_data.get('remote_command', '')
+                    old_connection.extra_ssh_config = connection_data.get('extra_ssh_config', '')
                 except Exception:
                     pass
                 
@@ -4426,9 +4429,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 try:
                     connection.use_raw_sshconfig = connection_data.get('use_raw_sshconfig', False)
                     connection.raw_ssh_config_block = connection_data.get('raw_ssh_config_block', '')
+                    connection.extra_ssh_config = connection_data.get('extra_ssh_config', '')
                 except Exception:
                     connection.use_raw_sshconfig = False
                     connection.raw_ssh_config_block = ''
+                    connection.extra_ssh_config = ''
                 # Add the new connection to the manager's connections list
                 self.connection_manager.connections.append(connection)
                 

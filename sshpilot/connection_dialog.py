@@ -12,7 +12,7 @@ import socket
 import subprocess
 from typing import Optional, Dict, Any
 
-from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk
+from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
 from .port_utils import get_port_checker
 
 # Initialize gettext
@@ -203,6 +203,444 @@ class SSHConnectionValidator:
             logger.error(f"Error verifying passphrase for key {key_path}: {e}")
             return False
 
+class SSHConfigEntry(GObject.Object):
+    """Data model for SSH config entries"""
+    
+    def __init__(self, key="", value=""):
+        super().__init__()
+        self.key = key
+        self.value = value
+
+class SSHConfigAdvancedTab(Gtk.Box):
+    """Advanced SSH Configuration Tab for GTK 4"""
+    
+    def __init__(self, connection_manager):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.set_margin_top(12)
+        self.set_margin_bottom(12)
+        self.set_margin_start(12)
+        self.set_margin_end(12)
+        
+        self.connection_manager = connection_manager
+        
+        # SSH config options list
+        self.ssh_options = [
+            'AddKeysToAgent', 'AddressFamily', 'BatchMode', 'BindAddress', 'BindInterface',
+            'CanonicalDomains', 'CanonicalizeFallbackLocal', 'CanonicalizeHostname',
+            'CanonicalizeMaxDots', 'CanonicalizePermittedCNAMEs', 'CASignatureAlgorithms',
+            'CertificateFile', 'CheckHostIP', 'Ciphers', 'ClearAllForwardings', 'Compression',
+            'ConnectionAttempts', 'ConnectTimeout', 'ControlMaster', 'ControlPath',
+            'ControlPersist', 'DynamicForward', 'EnableSSHKeysign', 'EscapeChar',
+            'ExitOnForwardFailure', 'FingerprintHash', 'ForwardAgent', 'ForwardX11',
+            'ForwardX11Timeout', 'ForwardX11Trusted', 'GatewayPorts', 'GlobalKnownHostsFile',
+            'GSSAPIAuthentication', 'GSSAPIClientIdentity', 'GSSAPIDelegateCredentials',
+            'GSSAPIKeyExchange', 'GSSAPIRenewalForcesRekey', 'GSSAPIServerIdentity',
+            'GSSAPITrustDns', 'HashKnownHosts', 'Host', 'HostbasedAcceptedAlgorithms',
+            'HostbasedAuthentication', 'HostKeyAlgorithms', 'HostKeyAlias', 'HostName',
+            'IdentitiesOnly', 'IdentityAgent', 'IdentityFile', 'IgnoreUnknown', 'Include',
+            'IPQoS', 'KbdInteractiveAuthentication', 'KbdInteractiveDevices', 'KexAlgorithms',
+            'KnownHostsCommand', 'LocalCommand', 'LocalForward', 'LogLevel', 'MACs', 'Match',
+            'NoHostAuthenticationForLocalhost', 'NumberOfPasswordPrompts', 'PasswordAuthentication',
+            'PermitLocalCommand', 'PermitRemoteOpen', 'PKCS11Provider', 'Port',
+            'PreferredAuthentications', 'ProxyCommand', 'ProxyJump', 'ProxyUseFdpass',
+            'PubkeyAcceptedAlgorithms', 'PubkeyAuthentication', 'RekeyLimit', 'RemoteCommand',
+            'RemoteForward', 'RequestTTY', 'RequiredRSASize', 'RevokedHostKeys', 'SecurityKeyProvider',
+            'SendEnv', 'ServerAliveCountMax', 'ServerAliveInterval', 'SessionType', 'SetEnv',
+            'StdinNull', 'StreamLocalBindMask', 'StreamLocalBindUnlink', 'StrictHostKeyChecking',
+            'SyslogFacility', 'TCPKeepAlive', 'Tunnel', 'TunnelDevice', 'UpdateHostKeys',
+            'User', 'UserKnownHostsFile', 'UsePrivilegedPort', 'VerifyHostKeyDNS',
+            'VisualHostKey', 'XAuthLocation'
+        ]
+        
+        # Store config entries
+        self.config_entries = []
+        
+        self.setup_ui()
+        
+    def setup_ui(self):
+        """Setup the user interface"""
+        
+        # Header
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        title = Gtk.Label(label="Advanced SSH Configuration")
+        title.set_markup("<b>Advanced SSH Configuration</b>")
+        title.set_halign(Gtk.Align.START)
+        
+        subtitle = Gtk.Label(label="Add custom SSH configuration options")
+        subtitle.add_css_class("dim-label")
+        subtitle.set_halign(Gtk.Align.START)
+        
+        header.append(title)
+        header.append(subtitle)
+        self.append(header)
+        
+        # Add button (positioned at the top)
+        self.add_button = Gtk.Button(label="Add")
+        self.add_button.add_css_class("suggested-action")
+        self.add_button.connect("clicked", self.on_add_option)
+        self.add_button.set_halign(Gtk.Align.START)
+        self.add_button.set_margin_bottom(12)
+        self.append(self.add_button)
+        
+        # Scrolled window for config entries
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_min_content_height(200)
+        scrolled.set_vexpand(True)
+        
+        # Main content box
+        self.content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        scrolled.set_child(self.content_box)
+        
+        # Grid header
+        header_grid = Gtk.Grid()
+        header_grid.set_column_spacing(12)
+        header_grid.set_margin_bottom(6)
+        
+        key_header = Gtk.Label(label="SSH Option")
+        key_header.set_markup("<b>Keyword</b>")
+        key_header.set_halign(Gtk.Align.START)
+        key_header.set_hexpand(True)
+        
+        value_header = Gtk.Label(label="Value")
+        value_header.set_markup("<b>Value</b>")
+        value_header.set_halign(Gtk.Align.START)
+        value_header.set_hexpand(True)
+        
+        header_grid.attach(key_header, 0, 0, 1, 1)
+        header_grid.attach(value_header, 1, 0, 1, 1)
+        
+        self.content_box.append(header_grid)
+        
+        # Empty state label
+        self.empty_label = Gtk.Label(label="No custom SSH options configured.\nClick 'Add' button to get started.")
+        self.empty_label.add_css_class("dim-label")
+        self.empty_label.set_justify(Gtk.Justification.CENTER)
+        self.empty_label.set_margin_top(24)
+        self.empty_label.set_margin_bottom(24)
+        self.content_box.append(self.empty_label)
+        
+        self.append(scrolled)
+        
+        # Config preview section
+        self.setup_config_preview()
+        
+    def setup_config_preview(self):
+        """Setup the SSH config preview section"""
+        self.preview_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.preview_box.set_margin_top(12)
+        
+        preview_title = Gtk.Label(label="Generated SSH Config")
+        preview_title.set_markup("<b>Generated SSH Config</b>")
+        preview_title.set_halign(Gtk.Align.START)
+        
+        # Text view for config preview
+        self.config_text_view = Gtk.TextView()
+        self.config_text_view.set_editable(False)
+        self.config_text_view.set_monospace(True)
+        self.config_text_view.add_css_class("monospace")
+        self.config_text_view.add_css_class("small-font")
+        
+        # Apply CSS for smaller font
+        css_provider = Gtk.CssProvider()
+        css_provider.load_from_data(b"""
+        .small-font {
+            font-size: 11px;
+        }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(),
+            css_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        
+        preview_scrolled = Gtk.ScrolledWindow()
+        preview_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        preview_scrolled.set_min_content_height(150)
+        preview_scrolled.set_child(self.config_text_view)
+        
+        preview_desc = Gtk.Label(label="Advanced ssh options will override these settings.")
+        preview_desc.add_css_class("dim-label")
+        preview_desc.set_halign(Gtk.Align.START)
+        preview_desc.set_wrap(True)
+        
+        self.preview_box.append(preview_title)
+        self.preview_box.append(preview_scrolled)
+        self.preview_box.append(preview_desc)
+        
+        # Always show preview
+        self.append(self.preview_box)
+        
+
+        
+
+        
+    def create_config_entry_row(self):
+        """Create a new config entry row"""
+        row_grid = Gtk.Grid()
+        row_grid.set_column_spacing(12)
+        row_grid.set_margin_bottom(6)
+        
+        # SSH option dropdown (only supported options)
+        key_dropdown = Gtk.DropDown()
+        key_dropdown.set_hexpand(True)
+        
+        # Create string list for dropdown
+        string_list = Gtk.StringList()
+        string_list.append("Select SSH option...")
+        for option in self.ssh_options:
+            string_list.append(option)
+        
+        key_dropdown.set_model(string_list)
+        key_dropdown.set_selected(0)  # Default to "Select SSH option..."
+        
+        # Enable keyboard navigation for jumping to options by typing
+        key_dropdown.set_enable_search(True)
+        
+        # Value entry
+        value_entry = Gtk.Entry()
+        value_entry.set_placeholder_text("Enter value...")
+        value_entry.set_hexpand(True)
+        
+        # Remove button
+        remove_button = Gtk.Button()
+        remove_button.set_icon_name("user-trash-symbolic")
+        remove_button.add_css_class("flat")
+        remove_button.add_css_class("error")
+        
+        # Connect signals
+        key_dropdown.connect("notify::selected", self.on_entry_changed)
+        value_entry.connect("changed", self.on_entry_changed)
+        remove_button.connect("clicked", self.on_remove_option, row_grid)
+        
+        # Store entries in the grid for easy access
+        row_grid.key_dropdown = key_dropdown
+        row_grid.value_entry = value_entry
+        
+        row_grid.attach(key_dropdown, 0, 0, 1, 1)
+        row_grid.attach(value_entry, 1, 0, 1, 1)
+        row_grid.attach(remove_button, 2, 0, 1, 1)
+        
+        return row_grid
+        
+    def on_add_option(self, button):
+        """Add a new SSH option entry"""
+        entry_row = self.create_config_entry_row()
+        self.config_entries.append(entry_row)
+        
+        # Hide empty label if it's the first entry
+        if len(self.config_entries) == 1:
+            self.empty_label.set_visible(False)
+            
+        # Append the new row to the content box
+        self.content_box.append(entry_row)
+        
+        # Focus on the new value entry
+        entry_row.value_entry.grab_focus()
+        
+    def on_remove_option(self, button, row_grid):
+        """Remove a SSH option entry"""
+        self.config_entries.remove(row_grid)
+        
+        # Check if the widget is still a child of the content box before removing
+        if row_grid.get_parent() == self.content_box:
+            self.content_box.remove(row_grid)
+        
+        # Show empty label if no entries left
+        if len(self.config_entries) == 0:
+            self.empty_label.set_visible(True)
+        else:
+            self.update_config_preview()
+            
+    def on_entry_changed(self, widget, pspec=None):
+        """Handle entry text changes"""
+        self.update_config_preview()
+        # Update the parent connection object if we're editing
+        self._update_parent_connection()
+        
+    def update_config_preview(self):
+        """Update the SSH config preview"""
+        # Get the complete SSH config from the connection manager
+        if hasattr(self, 'connection_manager') and self.connection_manager:
+            try:
+                # Get current connection data from the parent dialog
+                parent_dialog = self.get_ancestor(Adw.PreferencesWindow)
+                if parent_dialog and hasattr(parent_dialog, 'connection'):
+                    connection = parent_dialog.connection
+                    if connection:
+                        # Generate the complete SSH config
+                        extra_config = self.get_extra_ssh_config()
+                        logger.debug(f"Advanced tab extra_ssh_config: {extra_config}")
+                        
+                        config_data = {
+                            'nickname': getattr(connection, 'nickname', 'your-host-name'),
+                            'host': getattr(connection, 'host', ''),
+                            'username': getattr(connection, 'username', ''),
+                            'port': getattr(connection, 'port', 22),
+                            'auth_method': getattr(connection, 'auth_method', 0),
+                            'key_select_mode': getattr(connection, 'key_select_mode', 0),
+                            'keyfile': getattr(connection, 'keyfile', ''),
+                            'certificate': getattr(connection, 'certificate', ''),
+                            'x11_forwarding': getattr(connection, 'x11_forwarding', False),
+                            'local_command': getattr(connection, 'local_command', ''),
+                            'remote_command': getattr(connection, 'remote_command', ''),
+                            'forwarding_rules': getattr(connection, 'forwarding_rules', []),
+                            'extra_ssh_config': extra_config
+                        }
+                        
+                        logger.debug(f"Config data for preview: {config_data}")
+                        
+                        # Generate the complete SSH config block
+                        config_text = self.connection_manager.format_ssh_config_entry(config_data)
+                        
+                        logger.debug(f"Generated config text: {config_text}")
+                        
+                        buffer = self.config_text_view.get_buffer()
+                        buffer.set_text(config_text)
+                        return
+            except Exception as e:
+                logger.error(f"Error updating SSH config preview: {e}")
+        
+        # Fallback: show only the extra config parameters
+        config_lines = []
+        
+        for row_grid in self.config_entries:
+            key = self._get_dropdown_selected_text(row_grid.key_dropdown)
+            value = row_grid.value_entry.get_text().strip()
+            
+            if key and value and key != "Select SSH option...":
+                config_lines.append(f"    {key} {value}")
+                
+        config_text = "Host your-host-name\n" + "\n".join(config_lines)
+        
+        buffer = self.config_text_view.get_buffer()
+        buffer.set_text(config_text)
+            
+    def get_config_entries(self):
+        """Get all valid config entries"""
+        entries = []
+        for row_grid in self.config_entries:
+            key = self._get_dropdown_selected_text(row_grid.key_dropdown)
+            value = row_grid.value_entry.get_text().strip()
+            
+            if key and value and key != "Select SSH option...":
+                entries.append((key, value))
+                
+        return entries
+        
+    def set_config_entries(self, entries):
+        """Set config entries from saved data"""
+        logger.debug(f"Setting config entries: {entries}")
+        
+        # Clear existing entries
+        for row_grid in self.config_entries.copy():
+            self.on_remove_option(None, row_grid)
+            
+        # Add new entries
+        for key, value in entries:
+            logger.debug(f"Adding entry: {key} = {value}")
+            self.on_add_option(None)
+            row_grid = self.config_entries[-1]
+            # Set dropdown to the correct SSH option
+            self._set_dropdown_to_option(row_grid.key_dropdown, key)
+            row_grid.value_entry.set_text(value)
+            logger.debug(f"Set dropdown to {key} and value to {value}")
+            
+    def generate_ssh_config(self, hostname="your-host-name"):
+        """Generate SSH config block"""
+        entries = self.get_config_entries()
+        if not entries:
+            return ""
+            
+        config_lines = [f"Host {hostname}"]
+        for key, value in entries:
+            config_lines.append(f"    {key} {value}")
+            
+        return "\n".join(config_lines)
+
+    def _get_dropdown_selected_text(self, dropdown):
+        """Get the selected text from a dropdown"""
+        try:
+            selected = dropdown.get_selected()
+            if selected > 0:  # Skip the first item which is "Select SSH option..."
+                model = dropdown.get_model()
+                if model and selected < model.get_n_items():
+                    return model.get_string(selected)
+        except Exception as e:
+            logger.debug(f"Error getting dropdown selected text: {e}")
+        return ""
+
+    def _set_dropdown_to_option(self, dropdown, option_name):
+        """Set dropdown to a specific SSH option"""
+        try:
+            model = dropdown.get_model()
+            if model:
+                logger.debug(f"Looking for option '{option_name}' in dropdown model")
+                for i in range(1, model.get_n_items()):  # Start from 1 to skip "Select SSH option..."
+                    model_string = model.get_string(i)
+                    logger.debug(f"Model item {i}: '{model_string}'")
+                    # Case-insensitive comparison for SSH options
+                    if model_string.lower() == option_name.lower():
+                        logger.debug(f"Found option '{option_name}' at index {i} (matched '{model_string}')")
+                        dropdown.set_selected(i)
+                        return
+                logger.debug(f"Option '{option_name}' not found in dropdown model")
+        except Exception as e:
+            logger.debug(f"Error setting dropdown to option {option_name}: {e}")
+
+
+
+    def get_extra_ssh_config(self):
+        """Get extra SSH config as a string for saving"""
+        entries = self.get_config_entries()
+        if not entries:
+            return ""
+            
+        config_lines = []
+        for key, value in entries:
+            config_lines.append(f"{key} {value}")
+            
+        return "\n".join(config_lines)
+
+    def _update_parent_connection(self):
+        """Update the parent connection object with current advanced tab data"""
+        try:
+            parent_dialog = self.get_ancestor(Adw.PreferencesWindow)
+            if parent_dialog and hasattr(parent_dialog, 'connection') and parent_dialog.connection:
+                extra_config = self.get_extra_ssh_config()
+                parent_dialog.connection.extra_ssh_config = extra_config
+                # Also update the data dictionary
+                if hasattr(parent_dialog.connection, 'data'):
+                    parent_dialog.connection.data['extra_ssh_config'] = extra_config
+                logger.debug(f"Updated parent connection with extra SSH config: {extra_config}")
+        except Exception as e:
+            logger.error(f"Error updating parent connection: {e}")
+
+    def set_extra_ssh_config(self, config_string):
+        """Set extra SSH config from a string"""
+        logger.debug(f"set_extra_ssh_config called with: '{config_string}'")
+        
+        if not config_string.strip():
+            logger.debug("Config string is empty, returning")
+            return
+            
+        entries = []
+        for line in config_string.split('\n'):
+            line = line.strip()
+            if line and not line.startswith('#'):
+                parts = line.split(' ', 1)
+                if len(parts) == 2:
+                    entries.append((parts[0].strip(), parts[1].strip()))
+                elif len(parts) == 1:
+                    entries.append((parts[0].strip(), "yes"))
+        
+        logger.debug(f"Parsed entries: {entries}")
+        self.set_config_entries(entries)
+        # Update preview after loading data
+        self.update_config_preview()
+        # Update the parent connection object if we're editing
+        self._update_parent_connection()
+
 class ConnectionDialog(Adw.PreferencesWindow):
     """Dialog for adding/editing SSH connections using PreferencesWindow layout"""
     
@@ -302,103 +740,7 @@ class ConnectionDialog(Adw.PreferencesWindow):
         # Refresh SSH config editor with key selection mode change
         self._refresh_ssh_config_editor()
     
-    def on_raw_ssh_toggle_changed(self, switch_row, param):
-        """Handle raw SSH config toggle change"""
-        try:
-            is_enabled = switch_row.get_active()
-            # Show/hide the SSH config editor based on toggle state
-            if hasattr(self, 'ssh_config_editor_group'):
-                self.ssh_config_editor_group.set_visible(is_enabled)
-            
-            # Disable/enable all SSH options when raw config is enabled
-            # Basic connection settings
-            if hasattr(self, 'nickname_row'):
-                self.nickname_row.set_sensitive(not is_enabled)
-            if hasattr(self, 'host_row'):
-                self.host_row.set_sensitive(not is_enabled)
-            if hasattr(self, 'username_row'):
-                self.username_row.set_sensitive(not is_enabled)
-            if hasattr(self, 'port_row'):
-                self.port_row.set_sensitive(not is_enabled)
-            
-            # Authentication settings
-            if hasattr(self, 'auth_method_row'):
-                self.auth_method_row.set_sensitive(not is_enabled)
-            if hasattr(self, 'key_select_row'):
-                self.key_select_row.set_sensitive(not is_enabled)
-            if hasattr(self, 'keyfile_row'):
-                self.keyfile_row.set_sensitive(not is_enabled)
-            if hasattr(self, 'certificate_row'):
-                self.certificate_row.set_sensitive(not is_enabled)
-            if hasattr(self, 'key_passphrase_row'):
-                self.key_passphrase_row.set_sensitive(not is_enabled)
-            if hasattr(self, 'password_row'):
-                self.password_row.set_sensitive(not is_enabled)
-            
-            # Dropdown controls
-            if hasattr(self, 'key_dropdown'):
-                self.key_dropdown.set_sensitive(not is_enabled)
-            if hasattr(self, 'cert_dropdown'):
-                self.cert_dropdown.set_sensitive(not is_enabled)
-            
-            # Port forwarding settings
-            if hasattr(self, 'local_forwarding_enabled'):
-                self.local_forwarding_enabled.set_sensitive(not is_enabled)
-            if hasattr(self, 'remote_forwarding_enabled'):
-                self.remote_forwarding_enabled.set_sensitive(not is_enabled)
-            if hasattr(self, 'dynamic_forwarding_enabled'):
-                self.dynamic_forwarding_enabled.set_sensitive(not is_enabled)
-            
-            # Port forwarding detail settings
-            if hasattr(self, 'local_port_row'):
-                self.local_port_row.set_sensitive(not is_enabled)
-            if hasattr(self, 'remote_host_row'):
-                self.remote_host_row.set_sensitive(not is_enabled)
-            if hasattr(self, 'remote_port_row'):
-                self.remote_port_row.set_sensitive(not is_enabled)
-            if hasattr(self, 'remote_bind_host_row'):
-                self.remote_bind_host_row.set_sensitive(not is_enabled)
-            if hasattr(self, 'remote_bind_port_row'):
-                self.remote_bind_port_row.set_sensitive(not is_enabled)
-            if hasattr(self, 'dest_host_row'):
-                self.dest_host_row.set_sensitive(not is_enabled)
-            if hasattr(self, 'dest_port_row'):
-                self.dest_port_row.set_sensitive(not is_enabled)
-            if hasattr(self, 'dynamic_bind_row'):
-                self.dynamic_bind_row.set_sensitive(not is_enabled)
-            if hasattr(self, 'dynamic_port_row'):
-                self.dynamic_port_row.set_sensitive(not is_enabled)
-            
-            # Port forwarding settings boxes
-            if hasattr(self, 'local_settings_box'):
-                self.local_settings_box.set_sensitive(not is_enabled)
-            if hasattr(self, 'remote_settings_box'):
-                self.remote_settings_box.set_sensitive(not is_enabled)
-            if hasattr(self, 'dynamic_settings_box'):
-                self.dynamic_settings_box.set_sensitive(not is_enabled)
-            
-            # X11 forwarding
-            if hasattr(self, 'x11_row'):
-                self.x11_row.set_sensitive(not is_enabled)
-            
-            # Connection commands
-            if hasattr(self, 'local_command_row'):
-                self.local_command_row.set_sensitive(not is_enabled)
-            if hasattr(self, 'remote_command_row'):
-                self.remote_command_row.set_sensitive(not is_enabled)
-            
-            # Port forwarding rules management
-            if hasattr(self, 'rules_list'):
-                self.rules_list.set_sensitive(not is_enabled)
-            if hasattr(self, 'placeholder'):
-                self.placeholder.set_sensitive(not is_enabled)
-            if hasattr(self, 'add_rule_button'):
-                self.add_rule_button.set_sensitive(not is_enabled)
-            if hasattr(self, 'edit_ssh_config_button'):
-                self.edit_ssh_config_button.set_sensitive(is_enabled)
-                
-        except Exception as e:
-            logger.debug(f"Failed to handle raw SSH toggle change: {e}")
+
     
     def _on_edit_ssh_config_clicked(self, button):
         """Handle edit SSH config button click - opens modal editor window"""
@@ -777,14 +1119,23 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # Set X11 forwarding
             self.x11_row.set_active(getattr(self.connection, 'x11_forwarding', False))
             
-            # Load raw SSH config settings
-            if hasattr(self.connection, 'use_raw_sshconfig'):
-                self.raw_ssh_toggle.set_active(self.connection.use_raw_sshconfig)
-                # Trigger the toggle change handler to update UI state
-                self.on_raw_ssh_toggle_changed(self.raw_ssh_toggle, None)
+
             
-            # SSH config block content is now handled by the SSH config editor window
+                        # SSH config block content is now handled by the SSH config editor window
             # No need to load it into an inline editor anymore
+            
+            # Load extra SSH config into advanced tab
+            try:
+                extra_config = getattr(self.connection, 'extra_ssh_config', '') or ''
+                logger.debug(f"Loading extra SSH config from connection: {extra_config}")
+                if hasattr(self, 'advanced_tab'):
+                    if extra_config:
+                        self.advanced_tab.set_extra_ssh_config(extra_config)
+                        logger.debug(f"Set extra SSH config in advanced tab: {extra_config}")
+                    # Update the preview to show existing connection data
+                    self.advanced_tab.update_config_preview()
+            except Exception as e:
+                logger.error(f"Error loading extra SSH config: {e}")
             
             # Load commands if present
             try:
@@ -938,12 +1289,26 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             forwarding_page.add(group)
         self.add(forwarding_page)
 
+        # Advanced page
+        advanced_page = Adw.PreferencesPage()
+        advanced_page.set_title(_("Advanced"))
+        advanced_page.set_icon_name("applications-system-symbolic")
+        
+        # Create the advanced tab and wrap it in a preferences group
+        self.advanced_tab = SSHConfigAdvancedTab(self.connection_manager)
+        advanced_group = Adw.PreferencesGroup()
+        advanced_group.add(self.advanced_tab)
+        advanced_page.add(advanced_group)
+        self.add(advanced_page)
+
         # Add a persistent action bar at the bottom of each page
         try:
             action_group_general = self._build_action_bar_group()
             general_page.add(action_group_general)
             action_group_forward = self._build_action_bar_group()
             forwarding_page.add(action_group_forward)
+            action_group_advanced = self._build_action_bar_group()
+            advanced_page.add(action_group_advanced)
         except Exception as e:
             logger.debug(f"Failed to add action bars: {e}")
         # Install inline validators for key fields
@@ -1681,12 +2046,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.password_row.set_visible(False)
         auth_group.add(self.password_row)
         
-        # Raw SSH Config Toggle
-        self.raw_ssh_toggle = Adw.SwitchRow()
-        self.raw_ssh_toggle.set_title(_("Use raw ~/.ssh/config"))
-        self.raw_ssh_toggle.set_subtitle(_("When enabled, all custom options in this app are ignored, and the connection is handled entirely by your SSH config."))
-        self.raw_ssh_toggle.connect('notify::active', self.on_raw_ssh_toggle_changed)
-        auth_group.add(self.raw_ssh_toggle)
+
         
         # SSH Config Block Editor Button
         self.ssh_config_editor_group = Adw.PreferencesGroup(title=_("SSH Config Block"))
@@ -2899,21 +3259,30 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if (not certificate_value) and hasattr(self, '_selected_cert_path') and self._selected_cert_path:
                 certificate_value = str(self._selected_cert_path)
             if (not certificate_value) and hasattr(self.certificate_row, 'get_subtitle'):
-                certificate_value = self.certificate_row.get_subtitle() or ''
+                subtitle_value = self.certificate_row.get_subtitle() or ''
+                # Filter out placeholder text
+                if subtitle_value and not subtitle_value.lower().startswith('select certificate'):
+                    certificate_value = subtitle_value
             if (not certificate_value) and self.is_editing and hasattr(self, 'connection') and self.connection:
-                certificate_value = str(getattr(self.connection, 'certificate', '') or '')
+                conn_cert_value = str(getattr(self.connection, 'certificate', '') or '')
+                # Filter out placeholder text
+                if conn_cert_value and not conn_cert_value.lower().startswith('select certificate'):
+                    certificate_value = conn_cert_value
         except Exception:
             certificate_value = ''
 
         # Get raw SSH config block content from connection object
-        raw_ssh_config_content = ''
-        try:
-            if self.raw_ssh_toggle.get_active() and self.connection:
-                # Get the raw SSH config content from the connection object
-                # This will be updated by the SSH config editor window when it saves
-                raw_ssh_config_content = getattr(self.connection, 'raw_ssh_config_block', '') or ''
-        except Exception as e:
-            logger.debug(f"Failed to get SSH config content: {e}")
+
+
+        # Get extra SSH config from advanced tab
+        extra_ssh_config = ''
+        if hasattr(self, 'advanced_tab'):
+            try:
+                extra_ssh_config = self.advanced_tab.get_extra_ssh_config()
+                logger.debug(f"Retrieved extra SSH config from advanced tab: {extra_ssh_config}")
+            except Exception as e:
+                logger.error(f"Error getting extra SSH config from advanced tab: {e}")
+                extra_ssh_config = ''
 
         # Gather connection data
         connection_data = {
@@ -2928,11 +3297,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'key_passphrase': self.key_passphrase_row.get_text(),
             'password': self.password_row.get_text(),
             'x11_forwarding': self.x11_row.get_active(),
-            'use_raw_sshconfig': self.raw_ssh_toggle.get_active(),
-            'raw_ssh_config_block': raw_ssh_config_content,
+
             'forwarding_rules': forwarding_rules,
             'local_command': (self.local_command_row.get_text() if hasattr(self, 'local_command_row') else ''),
             'remote_command': (self.remote_command_row.get_text() if hasattr(self, 'remote_command_row') else ''),
+            'extra_ssh_config': extra_ssh_config,
             'password_changed': bool(password_changed),
         }
         
@@ -3509,9 +3878,7 @@ Host {host_nickname}
                                 try:
                                     # Parse the SSH config content and update the connection UI
                                     self._sync_connection_ui_from_ssh_config(content)
-                                    # Enable the raw SSH toggle in the parent dialog
-                                    if hasattr(self.parent_dialog, 'raw_ssh_toggle'):
-                                        GLib.idle_add(self.parent_dialog.raw_ssh_toggle.set_active, True)
+
                                     # Reload the connection data in the dialog to reflect the updated nickname
                                     GLib.idle_add(self.parent_dialog.load_connection_data)
                                     
@@ -3520,13 +3887,11 @@ Host {host_nickname}
                                         try:
                                             main_window = self.parent_dialog.parent_window
                                             if hasattr(main_window, 'config') and hasattr(main_window.config, 'set_connection_meta'):
-                                                # Save the connection metadata to ensure use_raw_sshconfig persists
+                                                # Save the connection metadata
                                                 main_window.config.set_connection_meta(self.connection.nickname, {
-                                                    'auth_method': getattr(self.connection, 'auth_method', 0),
-                                                    'use_raw_sshconfig': True,
-                                                    'raw_ssh_config_block': content
+                                                    'auth_method': getattr(self.connection, 'auth_method', 0)
                                                 })
-                                                logger.debug(f"Saved connection metadata for '{self.connection.nickname}' with use_raw_sshconfig=True")
+                                                logger.debug(f"Saved connection metadata for '{self.connection.nickname}'")
                                         except Exception as e:
                                             logger.debug(f"Failed to save connection metadata: {e}")
                                     

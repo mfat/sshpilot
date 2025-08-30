@@ -66,6 +66,8 @@ class Connection:
         # Commands
         self.local_command = data.get('local_command', '')
         self.remote_command = data.get('remote_command', '')
+        # Extra SSH config parameters
+        self.extra_ssh_config = data.get('extra_ssh_config', '')
         # Authentication method: 0 = key-based, 1 = password
         try:
             self.auth_method = int(data.get('auth_method', 0))
@@ -567,6 +569,8 @@ class Connection:
         self.key_passphrase = data.get('key_passphrase', '')
         self.local_command = data.get('local_command', '')
         self.remote_command = data.get('remote_command', '')
+        # Extra SSH config parameters
+        self.extra_ssh_config = data.get('extra_ssh_config', '')
         
         # Authentication method: 0 = key-based, 1 = password
         # Preserve existing auth_method if not present in new data
@@ -935,6 +939,29 @@ class ConnectionManager(GObject.Object):
                     parsed['key_select_mode'] = 0
             except Exception:
                 parsed['key_select_mode'] = 0
+            
+            # Parse extra SSH config options (custom options not handled by standard fields)
+            extra_config_lines = []
+            # Only include options that are explicitly handled by the main UI fields
+            standard_options = {
+                'host', 'hostname', 'port', 'user', 'identityfile', 'certificatefile',
+                'forwardx11', 'localforward', 'remoteforward', 'dynamicforward',
+                'proxycommand', 'localcommand', 'remotecommand', 'requesttty',
+                'identitiesonly', 'permitlocalcommand'
+            }
+            
+            for key, value in config.items():
+                if key.lower() not in standard_options:
+                    # This is a custom SSH option (including Ciphers, Compression, etc.)
+                    if isinstance(value, list):
+                        # Handle multiple values for the same option
+                        for val in value:
+                            extra_config_lines.append(f"{key} {val}")
+                    else:
+                        extra_config_lines.append(f"{key} {value}")
+            
+            if extra_config_lines:
+                parsed['extra_ssh_config'] = '\n'.join(extra_config_lines)
                 
             return parsed
             
@@ -1200,9 +1227,9 @@ class ConnectionManager(GObject.Object):
                 lines.append(f"    IdentityFile {keyfile}")
                 lines.append("    IdentitiesOnly yes")
                 
-                # Add certificate if specified
+                # Add certificate if specified (exclude placeholder text)
                 certificate = data.get('certificate')
-                if certificate and certificate.strip():
+                if certificate and certificate.strip() and not certificate.strip().lower().startswith('select certificate'):
                     if ' ' in certificate and not (certificate.startswith('"') and certificate.endswith('"')):
                         certificate = f'"{certificate}"'
                     lines.append(f"    CertificateFile {certificate}")
@@ -1243,6 +1270,18 @@ class ConnectionManager(GObject.Object):
                 lines.append(f"    RemoteForward {listen_spec} {dest_spec}")
             elif rule.get('type') == 'dynamic':
                 lines.append(f"    DynamicForward {listen_spec}")
+        
+        # Add extra SSH config parameters if provided
+        extra_config = data.get('extra_ssh_config', '').strip()
+        if extra_config:
+            # Split by lines and add each line as a separate config option
+            for line in extra_config.split('\n'):
+                line = line.strip()
+                if line and not line.startswith('#'):  # Skip empty lines and comments
+                    # Ensure proper indentation
+                    if not line.startswith('    '):
+                        line = f"    {line}"
+                    lines.append(line)
         
         return '\n'.join(lines)
 

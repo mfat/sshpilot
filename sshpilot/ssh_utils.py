@@ -140,6 +140,26 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
         if not for_ssh_copy_id:
             options.extend(['-o', 'PubkeyAuthentication=no'])
     
+    # Add extra SSH config options from advanced tab (same as terminal.py)
+    extra_ssh_config = getattr(connection, 'extra_ssh_config', '').strip()
+    if extra_ssh_config:
+        logger.debug(f"Adding extra SSH config options: {extra_ssh_config}")
+        # Parse and add each extra SSH config option
+        for line in extra_ssh_config.split('\n'):
+            line = line.strip()
+            if line and not line.startswith('#'):  # Skip empty lines and comments
+                # Split on first space to separate option and value
+                parts = line.split(' ', 1)
+                if len(parts) == 2:
+                    option, value = parts
+                    options.extend(['-o', f"{option}={value}"])
+                    logger.debug(f"Added SSH option: {option}={value}")
+                elif len(parts) == 1:
+                    # Option without value (e.g., "Compression yes" becomes "Compression=yes")
+                    option = parts[0]
+                    options.extend(['-o', f"{option}=yes"])
+                    logger.debug(f"Added SSH option: {option}=yes")
+    
     # Add X11 forwarding if enabled (same as terminal.py) - not supported by ssh-copy-id
     if hasattr(connection, 'x11_forwarding') and connection.x11_forwarding and not for_ssh_copy_id:
         options.append('-X')
