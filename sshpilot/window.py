@@ -45,6 +45,7 @@ from .sftp_utils import open_remote_in_file_manager
 from .welcome_page import WelcomePage
 from .actions import WindowActions, register_window_actions
 from . import shutdown
+from .search_utils import connection_matches
 
 logger = logging.getLogger(__name__)
 
@@ -562,9 +563,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
         header.append(hide_button)
-        
+
         sidebar_box.append(header)
-        
+
+        # Search entry for filtering connections
+        self.search_entry = Gtk.SearchEntry()
+        self.search_entry.set_placeholder_text(_('Search connections'))
+        self.search_entry.connect('search-changed', self.on_search_changed)
+        self.search_entry.connect('stop-search', self.on_search_stopped)
+        search_key = Gtk.EventControllerKey()
+        search_key.connect('key-pressed', self._on_search_entry_key_pressed)
+        self.search_entry.add_controller(search_key)
+        sidebar_box.append(self.search_entry)
+
         # Connection list
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -971,28 +982,39 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Get all connections
         connections = self.connection_manager.get_connections()
+        search_text = ''
+        if hasattr(self, 'search_entry') and self.search_entry:
+            search_text = self.search_entry.get_text().strip().lower()
+
+        if search_text:
+            matches = [c for c in connections if connection_matches(c, search_text)]
+            for conn in sorted(matches, key=lambda c: c.nickname.lower()):
+                self.add_connection_row(conn)
+            self._ungrouped_area_row = None
+            return
+
         connections_dict = {conn.nickname: conn for conn in connections}
-        
+
         # Get group hierarchy
         hierarchy = self.group_manager.get_group_hierarchy()
-        
+
         # Build the list with groups
         self._build_grouped_list(hierarchy, connections_dict, 0)
-        
+
         # Add ungrouped connections at the end
         ungrouped_connections = []
         for conn in connections:
             if not self.group_manager.get_connection_group(conn.nickname):
                 ungrouped_connections.append(conn)
-        
+
         if ungrouped_connections:
             # No separator - just add ungrouped connections directly
             pass
-            
+
             # Add ungrouped connections
             for conn in sorted(ungrouped_connections, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
-        
+
         # Store reference to ungrouped area (hidden by default)
         self._ungrouped_area_row = None
     
@@ -1048,6 +1070,25 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Apply current hide-hosts setting to new row
         if hasattr(row, 'apply_hide_hosts'):
             row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
+
+    def on_search_changed(self, entry):
+        self.rebuild_connection_list()
+        first_row = self.connection_list.get_row_at_index(0)
+        if first_row:
+            self.connection_list.select_row(first_row)
+
+    def on_search_stopped(self, entry):
+        entry.set_text('')
+        self.rebuild_connection_list()
+
+    def _on_search_entry_key_pressed(self, controller, keyval, keycode, state):
+        if keyval in (Gdk.KEY_Down, Gdk.KEY_Return):
+            first_row = self.connection_list.get_row_at_index(0)
+            if first_row:
+                self.connection_list.select_row(first_row)
+            self.connection_list.grab_focus()
+            return True
+        return False
 
     def setup_signals(self):
         """Connect to manager signals"""
