@@ -1,0 +1,24 @@
+# macOS-specific requirements for building sshPilot
+# Install these before building
+
+# Core build tools
+py2app>=0.28
+setuptools>=65.0
+wheel>=0.38
+
+# GUI framework (may need special installation on macOS)
+PyGObject>=3.42
+pycairo>=1.20.0
+
+# Application dependencies
+paramiko>=3.4
+cryptography>=42.0
+psutil>=5.9.0
+
+# macOS-specific packages
+pyobjc-core>=9.0
+pyobjc-framework-Cocoa>=9.0
+pyobjc-framework-Quartz>=9.0
+
+# Optional: For better macOS integration
+rumps>=0.4.0

@@ -1,0 +1,58 @@
+name: Build macOS Universal DMG
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-macos-dmg:
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install Homebrew dependencies
+      run: |
+        brew install create-dmg gtk4 libadwaita pygobject3
+        
+    - name: Install Python dependencies
+      run: |
+        python3 -m pip install --upgrade pip
+        pip3 install -r macos_requirements.txt
+        
+    - name: Build universal app bundle
+      run: |
+        python3 build_complete.py
+        
+    - name: Verify universal binary
+      run: |
+        if [ -f "dist/sshPilot.app/Contents/MacOS/sshPilot" ]; then
+          echo "Binary info:"
+          file "dist/sshPilot.app/Contents/MacOS/sshPilot"
+          echo "Architecture info:"
+          lipo -info "dist/sshPilot.app/Contents/MacOS/sshPilot"
+        fi
+        
+    - name: Upload DMG artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: sshPilot-macOS-Universal
+        path: dist/*.dmg
+        
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/*.dmg
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
