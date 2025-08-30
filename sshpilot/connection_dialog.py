@@ -393,9 +393,14 @@ class SSHConfigAdvancedTab(Gtk.Box):
             string_list.append(option)
         
         key_dropdown.set_model(string_list)
+        
+        # Set expression for StringList items to enable search
+        expr = Gtk.PropertyExpression.new(Gtk.StringObject, None, "string")
+        key_dropdown.set_expression(expr)
+        
         key_dropdown.set_selected(0)  # Default to "Select SSH option..."
         
-        # Enable keyboard navigation for jumping to options by typing
+        # Enable search functionality
         key_dropdown.set_enable_search(True)
         
         # Value entry
