@@ -566,6 +566,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         sidebar_box.append(header)
 
+        # Search container
+        search_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        search_container.add_css_class('search-container')
+        search_container.set_margin_start(2)
+        search_container.set_margin_end(2)
+        search_container.set_margin_bottom(6)
+        
         # Search entry for filtering connections
         self.search_entry = Gtk.SearchEntry()
         self.search_entry.set_placeholder_text(_('Search connections'))
@@ -574,7 +581,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         search_key = Gtk.EventControllerKey()
         search_key.connect('key-pressed', self._on_search_entry_key_pressed)
         self.search_entry.add_controller(search_key)
-        sidebar_box.append(self.search_entry)
+        # Prevent search entry from being the default focus widget
+        self.search_entry.set_can_focus(True)
+        self.search_entry.set_focus_on_click(False)
+        search_container.append(self.search_entry)
+        
+        # Store reference to search container for showing/hiding
+        self.search_container = search_container
+        
+        # Hide search container by default
+        search_container.set_visible(False)
+        
+        sidebar_box.append(search_container)
 
         # Connection list
         scrolled = Gtk.ScrolledWindow()
@@ -600,6 +618,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_list.set_can_focus(True)
         self.connection_list.set_focus_on_click(True)
         self.connection_list.set_activate_on_single_click(False)  # Require double-click to activate
+        
+        # Set connection list as the default focus widget for the sidebar
+        sidebar_box.set_focus_child(self.connection_list)
         
         # Set up drag and drop for reordering
         build_sidebar(self)
@@ -940,6 +961,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         self._set_content_widget(self.content_stack)
 
+
+
     def create_menu(self):
         """Create application menu"""
         menu = Gio.Menu()
@@ -1072,16 +1095,25 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
 
     def on_search_changed(self, entry):
+        """Handle search text changes and update connection list."""
         self.rebuild_connection_list()
         first_row = self.connection_list.get_row_at_index(0)
         if first_row:
             self.connection_list.select_row(first_row)
 
     def on_search_stopped(self, entry):
+        """Handle search stop (Esc key)."""
         entry.set_text('')
         self.rebuild_connection_list()
+        # Hide the search container
+        if hasattr(self, 'search_container') and self.search_container:
+            self.search_container.set_visible(False)
+        # Return focus to connection list
+        if hasattr(self, 'connection_list') and self.connection_list:
+            self.connection_list.grab_focus()
 
     def _on_search_entry_key_pressed(self, controller, keyval, keycode, state):
+        """Handle key presses in search entry."""
         if keyval in (Gdk.KEY_Down, Gdk.KEY_Return):
             first_row = self.connection_list.get_row_at_index(0)
             if first_row:
@@ -1130,9 +1162,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             first_row = self.connection_list.get_row_at_index(0)
             if not selected and first_row:
                 self.connection_list.select_row(first_row)
-            # If no widget currently has focus in the window, give it to the list
-            focus_widget = self.get_focus() if hasattr(self, 'get_focus') else None
-            if focus_widget is None and first_row:
+            
+            # Always focus the connection list on startup, regardless of current focus
+            # This ensures the connection list gets focus instead of the search entry
+            if first_row:
                 self.connection_list.grab_focus()
         except Exception:
             pass
@@ -1168,9 +1201,41 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     "Switched to connection list — ↑/↓ navigate, Enter open, Ctrl+Enter new tab"
                 )
                 toast.set_timeout(3)  # seconds
-                self.toast_overlay.add_toast(toast)
+                if hasattr(self, 'toast_overlay'):
+                    self.toast_overlay.add_toast(toast)
         except Exception as e:
             logger.error(f"Error focusing connection list: {e}")
+
+    def focus_search_entry(self):
+        """Show and focus the search entry and show a toast notification."""
+        try:
+            if hasattr(self, 'search_entry') and self.search_entry:
+                # If sidebar is hidden, show it first
+                if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
+                    if not self.sidebar_toggle_button.get_active():
+                        self.sidebar_toggle_button.set_active(True)
+                
+                # Show the search container if it's hidden
+                if hasattr(self, 'search_container') and self.search_container:
+                    self.search_container.set_visible(True)
+                
+                # Focus the search entry
+                self.search_entry.grab_focus()
+                
+                # Select all text if there's any
+                text = self.search_entry.get_text()
+                if text:
+                    self.search_entry.select_region(0, len(text))
+                
+                # Show toast notification
+                toast = Adw.Toast.new(
+                    "Search mode — Type to filter connections, Esc to clear and hide"
+                )
+                toast.set_timeout(3)  # seconds
+                if hasattr(self, 'toast_overlay'):
+                    self.toast_overlay.add_toast(toast)
+        except Exception as e:
+            logger.error(f"Failed to focus search entry: {e}")
     
     def show_tab_view(self):
         """Show the tab view when connections are active"""

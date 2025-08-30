@@ -74,6 +74,7 @@ class SshPilotApplication(Adw.Application):
         self.create_action('new-connection', self.on_new_connection, ['<primary>n'])
         self.create_action('open-new-connection-tab', self.on_open_new_connection_tab, ['<primary><alt>n'])
         self.create_action('toggle-list', self.on_toggle_list, ['<primary>l'])
+        self.create_action('search', self.on_search, ['<primary>f'])
         self.create_action('new-key', self.on_new_key, ['<primary><shift>k'])
         self.create_action('local-terminal', self.on_local_terminal, ['<primary><shift>t'])
         self.create_action('show-resources', self.on_show_resources, ['<primary>r'])
@@ -234,6 +235,12 @@ class SshPilotApplication(Adw.Application):
         logging.debug("Toggle list focus action triggered")
         if self.props.active_window:
             self.props.active_window.toggle_list_focus()
+
+    def on_search(self, action, param):
+        """Handle search action"""
+        logging.debug("Search action triggered")
+        if self.props.active_window:
+            self.props.active_window.focus_search_entry()
 
     def on_new_key(self, action, param):
         """Handle new SSH key action"""
