@@ -1207,7 +1207,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.error(f"Error focusing connection list: {e}")
 
     def focus_search_entry(self):
-        """Show and focus the search entry and show a toast notification."""
+        """Toggle search on/off and show appropriate toast notification."""
         try:
             if hasattr(self, 'search_entry') and self.search_entry:
                 # If sidebar is hidden, show it first
@@ -1215,27 +1215,47 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     if not self.sidebar_toggle_button.get_active():
                         self.sidebar_toggle_button.set_active(True)
                 
-                # Show the search container if it's hidden
+                # Toggle search container visibility
                 if hasattr(self, 'search_container') and self.search_container:
-                    self.search_container.set_visible(True)
-                
-                # Focus the search entry
-                self.search_entry.grab_focus()
-                
-                # Select all text if there's any
-                text = self.search_entry.get_text()
-                if text:
-                    self.search_entry.select_region(0, len(text))
-                
-                # Show toast notification
-                toast = Adw.Toast.new(
-                    "Search mode — Type to filter connections, Esc to clear and hide"
-                )
-                toast.set_timeout(3)  # seconds
-                if hasattr(self, 'toast_overlay'):
-                    self.toast_overlay.add_toast(toast)
+                    is_visible = self.search_container.get_visible()
+                    self.search_container.set_visible(not is_visible)
+                    
+                    if not is_visible:
+                        # Search was hidden, now showing it
+                        # Focus the search entry
+                        self.search_entry.grab_focus()
+                        
+                        # Select all text if there's any
+                        text = self.search_entry.get_text()
+                        if text:
+                            self.search_entry.select_region(0, len(text))
+                        
+                        # Show toast notification
+                        toast = Adw.Toast.new(
+                            "Search mode — Type to filter connections, Esc to clear and hide"
+                        )
+                        toast.set_timeout(3)  # seconds
+                        if hasattr(self, 'toast_overlay'):
+                            self.toast_overlay.add_toast(toast)
+                    else:
+                        # Search was visible, now hiding it
+                        # Clear search text
+                        self.search_entry.set_text('')
+                        self.rebuild_connection_list()
+                        
+                        # Return focus to connection list
+                        if hasattr(self, 'connection_list') and self.connection_list:
+                            self.connection_list.grab_focus()
+                        
+                        # Show toast notification
+                        toast = Adw.Toast.new(
+                            "Search hidden — Ctrl+F to search again"
+                        )
+                        toast.set_timeout(2)  # seconds
+                        if hasattr(self, 'toast_overlay'):
+                            self.toast_overlay.add_toast(toast)
         except Exception as e:
-            logger.error(f"Failed to focus search entry: {e}")
+            logger.error(f"Failed to toggle search entry: {e}")
     
     def show_tab_view(self):
         """Show the tab view when connections are active"""
