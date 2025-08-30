@@ -408,6 +408,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
         value_entry = Gtk.Entry()
         value_entry.set_placeholder_text("Enter value...")
         value_entry.set_hexpand(True)
+        value_entry.connect("activate", self.on_value_entry_activate, row_grid)
         
         # Remove button
         remove_button = Gtk.Button()
@@ -466,6 +467,21 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.update_config_preview()
         # Update the parent connection object if we're editing
         self._update_parent_connection()
+        
+    def on_value_entry_activate(self, entry, row_grid):
+        """Handle Enter key press in value entry - move to next row or add new one"""
+        current_index = self.config_entries.index(row_grid)
+        
+        # If this is the last row, add a new one
+        if current_index == len(self.config_entries) - 1:
+            self.on_add_option(None)
+            # Focus on the key entry of the new row
+            new_row = self.config_entries[-1]
+            new_row.key_entry.grab_focus()
+        else:
+            # Move to the next row's key entry
+            next_row = self.config_entries[current_index + 1]
+            next_row.key_entry.grab_focus()
         
     def update_config_preview(self):
         """Update the SSH config preview"""
