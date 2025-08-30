@@ -360,7 +360,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
         preview_scrolled.set_min_content_height(150)
         preview_scrolled.set_child(self.config_text_view)
         
-        preview_desc = Gtk.Label(label="Advanced ssh options will override these settings.")
+        preview_desc = Gtk.Label(label="To edit the SSH config file directly, press the button below.")
         preview_desc.add_css_class("dim-label")
         preview_desc.set_halign(Gtk.Align.START)
         preview_desc.set_wrap(True)
@@ -372,6 +372,33 @@ class SSHConfigAdvancedTab(Gtk.Box):
         # Always show preview
         self.append(self.preview_box)
         
+        # Open SSH Config Editor button
+        self.setup_editor_button()
+        
+    def setup_editor_button(self):
+        """Setup the SSH Config Editor button"""
+        # Editor button
+        editor_button = Gtk.Button(label=_("Open SSH Config Editor"))
+        editor_button.set_icon_name("text-editor-symbolic")
+        editor_button.set_tooltip_text(_("Open full SSH config editor for advanced editing"))
+        editor_button.connect("clicked", self.on_open_editor_clicked)
+        editor_button.set_halign(Gtk.Align.START)
+        self.append(editor_button)
+        
+    def on_open_editor_clicked(self, button):
+        """Handle SSH Config Editor button click"""
+        try:
+            # Get the parent dialog to access the connection
+            parent_dialog = self.get_ancestor(Adw.PreferencesWindow)
+            if parent_dialog and hasattr(parent_dialog, 'connection') and parent_dialog.connection:
+                # Create and show the SSH config editor window
+                editor_window = SSHConfigEditorWindow(parent_dialog, parent_dialog.connection)
+                editor_window.present()
+                logger.debug("Opened SSH Config Editor from advanced tab")
+            else:
+                logger.warning("No connection available for SSH Config Editor")
+        except Exception as e:
+            logger.error(f"Failed to open SSH Config Editor: {e}")
 
         
 
@@ -477,11 +504,11 @@ class SSHConfigAdvancedTab(Gtk.Box):
             self.on_add_option(None)
             # Focus on the key entry of the new row
             new_row = self.config_entries[-1]
-            new_row.key_entry.grab_focus()
+            new_row.key_dropdown.grab_focus()
         else:
             # Move to the next row's key entry
             next_row = self.config_entries[current_index + 1]
-            next_row.key_entry.grab_focus()
+            next_row.key_dropdown.grab_focus()
         
     def update_config_preview(self):
         """Update the SSH config preview"""
