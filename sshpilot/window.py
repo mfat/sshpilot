@@ -45,6 +45,7 @@ from .sftp_utils import open_remote_in_file_manager
 from .welcome_page import WelcomePage
 from .actions import WindowActions, register_window_actions
 from . import shutdown
+from .search_utils import connection_matches
 
 logger = logging.getLogger(__name__)
 
@@ -562,9 +563,37 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
         header.append(hide_button)
-        
+
         sidebar_box.append(header)
+
+        # Search container
+        search_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        search_container.add_css_class('search-container')
+        search_container.set_margin_start(2)
+        search_container.set_margin_end(2)
+        search_container.set_margin_bottom(6)
         
+        # Search entry for filtering connections
+        self.search_entry = Gtk.SearchEntry()
+        self.search_entry.set_placeholder_text(_('Search connections'))
+        self.search_entry.connect('search-changed', self.on_search_changed)
+        self.search_entry.connect('stop-search', self.on_search_stopped)
+        search_key = Gtk.EventControllerKey()
+        search_key.connect('key-pressed', self._on_search_entry_key_pressed)
+        self.search_entry.add_controller(search_key)
+        # Prevent search entry from being the default focus widget
+        self.search_entry.set_can_focus(True)
+        self.search_entry.set_focus_on_click(False)
+        search_container.append(self.search_entry)
+        
+        # Store reference to search container for showing/hiding
+        self.search_container = search_container
+        
+        # Hide search container by default
+        search_container.set_visible(False)
+        
+        sidebar_box.append(search_container)
+
         # Connection list
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -589,6 +618,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_list.set_can_focus(True)
         self.connection_list.set_focus_on_click(True)
         self.connection_list.set_activate_on_single_click(False)  # Require double-click to activate
+        
+        # Set connection list as the default focus widget for the sidebar
+        sidebar_box.set_focus_child(self.connection_list)
         
         # Set up drag and drop for reordering
         build_sidebar(self)
@@ -929,6 +961,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         self._set_content_widget(self.content_stack)
 
+
+
     def create_menu(self):
         """Create application menu"""
         menu = Gio.Menu()
@@ -937,7 +971,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         menu.append('New Connection', 'app.new-connection')
         menu.append('Create Group', 'win.create-group')
         menu.append('Local Terminal', 'app.local-terminal')
-        menu.append('Generate SSH Key', 'app.new-key')
+        menu.append('Copy Key to Server', 'app.new-key')
         menu.append('Broadcast Command', 'app.broadcast-command')
         menu.append('Preferences', 'app.preferences')
         menu.append('Help', 'app.help')
@@ -971,28 +1005,39 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Get all connections
         connections = self.connection_manager.get_connections()
+        search_text = ''
+        if hasattr(self, 'search_entry') and self.search_entry:
+            search_text = self.search_entry.get_text().strip().lower()
+
+        if search_text:
+            matches = [c for c in connections if connection_matches(c, search_text)]
+            for conn in sorted(matches, key=lambda c: c.nickname.lower()):
+                self.add_connection_row(conn)
+            self._ungrouped_area_row = None
+            return
+
         connections_dict = {conn.nickname: conn for conn in connections}
-        
+
         # Get group hierarchy
         hierarchy = self.group_manager.get_group_hierarchy()
-        
+
         # Build the list with groups
         self._build_grouped_list(hierarchy, connections_dict, 0)
-        
+
         # Add ungrouped connections at the end
         ungrouped_connections = []
         for conn in connections:
             if not self.group_manager.get_connection_group(conn.nickname):
                 ungrouped_connections.append(conn)
-        
+
         if ungrouped_connections:
             # No separator - just add ungrouped connections directly
             pass
-            
+
             # Add ungrouped connections
             for conn in sorted(ungrouped_connections, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
-        
+
         # Store reference to ungrouped area (hidden by default)
         self._ungrouped_area_row = None
     
@@ -1049,6 +1094,54 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if hasattr(row, 'apply_hide_hosts'):
             row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
 
+    def on_search_changed(self, entry):
+        """Handle search text changes and update connection list."""
+        self.rebuild_connection_list()
+        first_row = self.connection_list.get_row_at_index(0)
+        if first_row:
+            self.connection_list.select_row(first_row)
+
+    def on_search_stopped(self, entry):
+        """Handle search stop (Esc key)."""
+        entry.set_text('')
+        self.rebuild_connection_list()
+        # Hide the search container
+        if hasattr(self, 'search_container') and self.search_container:
+            self.search_container.set_visible(False)
+        # Return focus to connection list
+        if hasattr(self, 'connection_list') and self.connection_list:
+            self.connection_list.grab_focus()
+
+    def _on_search_entry_key_pressed(self, controller, keyval, keycode, state):
+        """Handle key presses in search entry."""
+        if keyval == Gdk.KEY_Down:
+            # Move focus to connection list
+            if hasattr(self, 'connection_list') and self.connection_list:
+                first_row = self.connection_list.get_row_at_index(0)
+                if first_row:
+                    self.connection_list.select_row(first_row)
+                self.connection_list.grab_focus()
+            return True
+        elif keyval == Gdk.KEY_Return:
+            # If there's search text, move to first result
+            if hasattr(self, 'search_entry') and self.search_entry:
+                search_text = self.search_entry.get_text().strip()
+                if search_text:
+                    first_row = self.connection_list.get_row_at_index(0)
+                    if first_row:
+                        self.connection_list.select_row(first_row)
+                        self.connection_list.grab_focus()
+                    return True
+                else:
+                    # No search text, just move to connection list
+                    if hasattr(self, 'connection_list') and self.connection_list:
+                        first_row = self.connection_list.get_row_at_index(0)
+                        if first_row:
+                            self.connection_list.select_row(first_row)
+                        self.connection_list.grab_focus()
+                    return True
+        return False
+
     def setup_signals(self):
         """Connect to manager signals"""
         # Connection manager signals - use connect_after to avoid conflict with GObject.connect
@@ -1089,9 +1182,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             first_row = self.connection_list.get_row_at_index(0)
             if not selected and first_row:
                 self.connection_list.select_row(first_row)
-            # If no widget currently has focus in the window, give it to the list
-            focus_widget = self.get_focus() if hasattr(self, 'get_focus') else None
-            if focus_widget is None and first_row:
+            
+            # Always focus the connection list on startup, regardless of current focus
+            # This ensures the connection list gets focus instead of the search entry
+            if first_row:
                 self.connection_list.grab_focus()
         except Exception:
             pass
@@ -1127,9 +1221,61 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     "Switched to connection list — ↑/↓ navigate, Enter open, Ctrl+Enter new tab"
                 )
                 toast.set_timeout(3)  # seconds
-                self.toast_overlay.add_toast(toast)
+                if hasattr(self, 'toast_overlay'):
+                    self.toast_overlay.add_toast(toast)
         except Exception as e:
             logger.error(f"Error focusing connection list: {e}")
+
+    def focus_search_entry(self):
+        """Toggle search on/off and show appropriate toast notification."""
+        try:
+            if hasattr(self, 'search_entry') and self.search_entry:
+                # If sidebar is hidden, show it first
+                if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
+                    if not self.sidebar_toggle_button.get_active():
+                        self.sidebar_toggle_button.set_active(True)
+                
+                # Toggle search container visibility
+                if hasattr(self, 'search_container') and self.search_container:
+                    is_visible = self.search_container.get_visible()
+                    self.search_container.set_visible(not is_visible)
+                    
+                    if not is_visible:
+                        # Search was hidden, now showing it
+                        # Focus the search entry
+                        self.search_entry.grab_focus()
+                        
+                        # Select all text if there's any
+                        text = self.search_entry.get_text()
+                        if text:
+                            self.search_entry.select_region(0, len(text))
+                        
+                        # Show toast notification
+                        toast = Adw.Toast.new(
+                            "Search mode — Type to filter connections, Esc to clear and hide"
+                        )
+                        toast.set_timeout(3)  # seconds
+                        if hasattr(self, 'toast_overlay'):
+                            self.toast_overlay.add_toast(toast)
+                    else:
+                        # Search was visible, now hiding it
+                        # Clear search text
+                        self.search_entry.set_text('')
+                        self.rebuild_connection_list()
+                        
+                        # Return focus to connection list
+                        if hasattr(self, 'connection_list') and self.connection_list:
+                            self.connection_list.grab_focus()
+                        
+                        # Show toast notification
+                        toast = Adw.Toast.new(
+                            "Search hidden — Ctrl+F to search again"
+                        )
+                        toast.set_timeout(2)  # seconds
+                        if hasattr(self, 'toast_overlay'):
+                            self.toast_overlay.add_toast(toast)
+        except Exception as e:
+            logger.error(f"Failed to toggle search entry: {e}")
     
     def show_tab_view(self):
         """Show the tab view when connections are active"""
@@ -1376,6 +1522,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         selected_row = self.connection_list.get_selected_row()
         if not selected_row or not getattr(selected_row, "connection", None):
             logger.warning("Main window: No connection selected for ssh-copy-id")
+            # Show message dialog
+            try:
+                error_dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("No Server Selected"),
+                    body=_("Select a server first!")
+                )
+                error_dialog.add_response('ok', _('OK'))
+                error_dialog.present()
+            except Exception as e:
+                logger.error(f"Failed to show error dialog: {e}")
             return
         connection = selected_row.connection
         logger.info(f"Main window: Selected connection: {getattr(connection, 'nickname', 'unknown')}")
@@ -3125,9 +3283,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Force a redraw of the row
             row.queue_draw()
 
-        # If this was a controlled reconnect and we are now connected, hide feedback
+        # If this was a controlled reconnect and we are now connected, reset the flag
         if is_connected and getattr(self, '_is_controlled_reconnect', False):
-            GLib.idle_add(shutdown.hide_reconnecting_message, self)
             self._is_controlled_reconnect = False
 
         # Use the same reliable status to control terminal banners
@@ -3390,6 +3547,37 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_broadcast_command_action(self, action, param=None):
         """Handle broadcast command action - shows dialog to input command"""
         try:
+            # Check if there are any SSH terminals open
+            ssh_terminals_count = 0
+            for i in range(self.tab_view.get_n_pages()):
+                page = self.tab_view.get_nth_page(i)
+                if page is None:
+                    continue
+                terminal_widget = page.get_child()
+                if terminal_widget is None or not hasattr(terminal_widget, 'vte'):
+                    continue
+                if hasattr(terminal_widget, 'connection'):
+                    if (hasattr(terminal_widget.connection, 'nickname') and
+                            terminal_widget.connection.nickname == "Local Terminal"):
+                        continue
+                    if hasattr(terminal_widget.connection, 'host'):
+                        ssh_terminals_count += 1
+            
+            if ssh_terminals_count == 0:
+                # Show message dialog
+                try:
+                    error_dialog = Adw.MessageDialog(
+                        transient_for=self,
+                        modal=True,
+                        heading=_("No SSH Terminals Open"),
+                        body=_("Connect to your server first!")
+                    )
+                    error_dialog.add_response('ok', _('OK'))
+                    error_dialog.present()
+                except Exception as e:
+                    logger.error(f"Failed to show error dialog: {e}")
+                return
+            
             # Create a custom dialog window instead of using Adw.MessageDialog
             dialog = Gtk.Dialog(
                 title=_("Broadcast Command"),
@@ -3972,20 +4160,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self._show_terminal_error_dialog()
                 return
             
+            # Get the basename for terminal type detection
+            import os
+            terminal_basename = os.path.basename(terminal_command)
+            
             # Launch the terminal with SSH command
-            if terminal_command in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
+            if terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
                 # These terminals use -- to separate options from command
                 cmd = [terminal_command, '--', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_command in ['konsole', 'terminator']:
+            elif terminal_basename in ['konsole', 'terminator', 'guake']:
                 # These terminals use -e for command execution
                 cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
-            elif terminal_command in ['alacritty', 'kitty']:
+            elif terminal_basename in ['alacritty', 'kitty']:
                 # These terminals use -e for command execution
                 cmd = [terminal_command, '-e', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_command == 'xterm':
+            elif terminal_basename == 'xterm':
                 # xterm uses -e for command execution
                 cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
-            elif terminal_command == 'xdg-terminal':
+            elif terminal_basename == 'xdg-terminal':
                 # xdg-terminal opens the default terminal
                 cmd = [terminal_command, ssh_command]
             else:
@@ -4018,20 +4210,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self._show_terminal_error_dialog()
                 return
             
+            # Get the basename for terminal type detection
+            import os
+            terminal_basename = os.path.basename(terminal_command)
+            
             # Launch the terminal with SSH command
-            if terminal_command in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
+            if terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
                 # These terminals use -- to separate options from command
                 cmd = [terminal_command, '--', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_command in ['konsole', 'terminator']:
+            elif terminal_basename in ['konsole', 'terminator', 'guake']:
                 # These terminals use -e for command execution
                 cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
-            elif terminal_command in ['alacritty', 'kitty']:
+            elif terminal_basename in ['alacritty', 'kitty']:
                 # These terminals use -e for command execution
                 cmd = [terminal_command, '-e', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_command == 'xterm':
+            elif terminal_basename == 'xterm':
                 # xterm uses -e for command execution
                 cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
-            elif terminal_command == 'xdg-terminal':
+            elif terminal_basename == 'xdg-terminal':
                 # xdg-terminal opens the default terminal
                 cmd = [terminal_command, ssh_command]
             else:
@@ -4069,7 +4265,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Check for common terminals in PATH
             common_terminals = [
                 'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty', 
-                'kitty', 'terminator', 'tilix'
+                'kitty', 'terminator', 'tilix', 'guake'
             ]
             
             for term in common_terminals:
@@ -4095,10 +4291,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if preferred_terminal == 'custom':
                 # Use custom path
                 custom_path = self.config.get_setting('custom-terminal-path', '')
-                if custom_path and self._is_valid_unix_path(custom_path):
+                if custom_path:
                     return custom_path
                 else:
-                    logger.warning("Custom terminal path is invalid or not set, falling back to built-in terminal")
+                    logger.warning("Custom terminal path is not set, falling back to built-in terminal")
                     return None
             
             # Check if the preferred terminal is available
@@ -4116,6 +4312,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to get user preferred terminal: {e}")
             return None
+
+
 
     def _show_terminal_error_dialog(self):
         """Show error dialog when no terminal is found"""
@@ -4292,6 +4490,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     'forwarding_rules': _norm_rules(getattr(old_connection, 'forwarding_rules', [])),
                     'local_command': _norm_str(getattr(old_connection, 'local_command', '') or (getattr(old_connection, 'data', {}).get('local_command') if hasattr(old_connection, 'data') else '')),
                     'remote_command': _norm_str(getattr(old_connection, 'remote_command', '') or (getattr(old_connection, 'data', {}).get('remote_command') if hasattr(old_connection, 'data') else '')),
+                    'extra_ssh_config': _norm_str(getattr(old_connection, 'extra_ssh_config', '') or (getattr(old_connection, 'data', {}).get('extra_ssh_config') if hasattr(old_connection, 'data') else '')),
                 }
                 incoming = {
                     'nickname': _norm_str(connection_data.get('nickname')),
@@ -4310,6 +4509,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     'forwarding_rules': _norm_rules(connection_data.get('forwarding_rules')),
                     'local_command': _norm_str(connection_data.get('local_command')),
                     'remote_command': _norm_str(connection_data.get('remote_command')),
+                    'extra_ssh_config': _norm_str(connection_data.get('extra_ssh_config')),
                 }
                 # Determine if anything meaningful changed by comparing canonical SSH config blocks
                 try:
@@ -4365,6 +4565,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 try:
                     old_connection.local_command = connection_data.get('local_command', '')
                     old_connection.remote_command = connection_data.get('remote_command', '')
+                    old_connection.extra_ssh_config = connection_data.get('extra_ssh_config', '')
                 except Exception:
                     pass
                 
@@ -4426,9 +4627,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 try:
                     connection.use_raw_sshconfig = connection_data.get('use_raw_sshconfig', False)
                     connection.raw_ssh_config_block = connection_data.get('raw_ssh_config_block', '')
+                    connection.extra_ssh_config = connection_data.get('extra_ssh_config', '')
                 except Exception:
                     connection.use_raw_sshconfig = False
                     connection.raw_ssh_config_block = ''
+                    connection.extra_ssh_config = ''
                 # Add the new connection to the manager's connections list
                 self.connection_manager.connections.append(connection)
                 
@@ -4523,8 +4726,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Set controlled reconnect flag
         self._is_controlled_reconnect = True
 
-        # Show reconnecting feedback
-        shutdown.show_reconnecting_message(self, connection)
+
         
         try:
             # Disconnect first (defer to avoid blocking)
@@ -4603,8 +4805,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
     def _show_reconnect_error(self, connection, error_message=None):
         """Show an error message when reconnection fails"""
-        # Ensure reconnecting feedback is hidden
-        shutdown.hide_reconnecting_message(self)
         # Remove from active terminals if reconnection fails
         if connection in self.active_terminals:
             del self.active_terminals[connection]

@@ -418,14 +418,6 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 
                 # Set current selection
                 current_terminal = self.config.get_setting('external-terminal', 'gnome-terminal')
-                self._set_terminal_dropdown_selection(current_terminal)
-                
-                # Show/hide custom path entry based on current selection
-                if hasattr(self, 'custom_terminal_box'):
-                    if current_terminal == 'custom':
-                        self.custom_terminal_box.set_visible(True)
-                    else:
-                        self.custom_terminal_box.set_visible(False)
                 
                 # Connect dropdown changes
                 self.terminal_dropdown.connect('notify::selected', self.on_terminal_dropdown_changed)
@@ -446,12 +438,12 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 
                 self.custom_terminal_box.append(self.custom_terminal_entry)
                 
-                # Initially hide custom path entry
-                self.custom_terminal_box.set_visible(False)
-                
                 # Add dropdown and custom path to box
                 self.external_terminal_box.append(self.terminal_dropdown)
                 self.external_terminal_box.append(self.custom_terminal_box)
+                
+                # Now set the dropdown selection and show/hide custom path entry
+                self._set_terminal_dropdown_selection(current_terminal)
                 
                 # Initial sensitivity will be set by radio button state
                 
@@ -1082,12 +1074,12 @@ class PreferencesWindow(Adw.PreferencesWindow):
         custom_path = entry.get_text().strip()
         logger.info(f"Custom terminal path changed to: {custom_path}")
         
-        # Validate the path
-        if custom_path and self._is_valid_unix_path(custom_path):
+        # Save the path if not empty
+        if custom_path:
             self.config.set_setting('custom-terminal-path', custom_path)
             self.config.set_setting('external-terminal', 'custom')
         else:
-            # Clear invalid path
+            # Clear empty path
             self.config.set_setting('custom-terminal-path', '')
     
     def _populate_terminal_dropdown(self):
@@ -1099,7 +1091,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             # Add common terminals
             common_terminals = [
                 'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty', 
-                'kitty', 'terminator', 'tilix', 'xterm'
+                'kitty', 'terminator', 'tilix', 'xterm', 'guake'
             ]
             
             # Check which terminals are available
@@ -1134,10 +1126,21 @@ class PreferencesWindow(Adw.PreferencesWindow):
             if not model:
                 return
             
+            # Handle the case where terminal_name is 'custom' but dropdown has 'Custom'
+            if terminal_name == 'custom':
+                terminal_name = 'Custom'
+            
             # Find the terminal in the model
             for i in range(model.get_n_items()):
                 if model.get_string(i) == terminal_name:
                     self.terminal_dropdown.set_selected(i)
+                    
+                    # Show/hide custom path entry based on selection
+                    if hasattr(self, 'custom_terminal_box'):
+                        if terminal_name == "Custom":
+                            self.custom_terminal_box.set_visible(True)
+                        else:
+                            self.custom_terminal_box.set_visible(False)
                     return
             
             # If not found, default to first available terminal
@@ -1147,25 +1150,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
         except Exception as e:
             logger.error(f"Failed to set terminal dropdown selection: {e}")
     
-    def _is_valid_unix_path(self, path):
-        """Validate if the path is a valid Unix path"""
-        if not path:
-            return False
-        
-        # Check if it starts with / (absolute path)
-        if not path.startswith('/'):
-            return False
-        
-        # Check if it contains only valid characters
-        import re
-        if not re.match(r'^[a-zA-Z0-9/._-]+$', path):
-            return False
-        
-        # Check if the file exists and is executable
-        try:
-            return os.path.isfile(path) and os.access(path, os.X_OK)
-        except Exception:
-            return False
+
     
     def apply_color_scheme_to_terminals(self, scheme_key):
         """Apply color scheme to all active terminal widgets"""
