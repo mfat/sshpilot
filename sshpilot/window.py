@@ -4305,6 +4305,26 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.error(f"Failed to get user preferred terminal: {e}")
             return None
 
+    def _is_valid_unix_path(self, path):
+        """Validate if the path is a valid Unix path"""
+        if not path:
+            return False
+        
+        # Check if it starts with / (absolute path)
+        if not path.startswith('/'):
+            return False
+        
+        # Check if it contains only valid characters
+        import re
+        if not re.match(r'^[a-zA-Z0-9/._-]+$', path):
+            return False
+        
+        # Check if the file exists and is executable
+        try:
+            return os.path.isfile(path) and os.access(path, os.X_OK)
+        except Exception:
+            return False
+
     def _show_terminal_error_dialog(self):
         """Show error dialog when no terminal is found"""
         try:
