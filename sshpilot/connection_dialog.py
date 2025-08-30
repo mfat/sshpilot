@@ -932,7 +932,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.add(general_page)
 
         forwarding_page = Adw.PreferencesPage()
-        forwarding_page.set_title(_("Advanced"))
+        forwarding_page.set_title(_("Port Forwarding"))
         forwarding_page.set_icon_name("network-transmit-receive-symbolic")
         for group in self.build_port_forwarding_groups():
             forwarding_page.add(group)
