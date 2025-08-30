@@ -1,5 +1,11 @@
 // Screenshot data with captions
 const screenshotData = {
+    'Screenshot From 2025-08-31 00-19-47.png': 'Screenshot From 2025 08 31 00 19 47',
+    'Screenshot From 2025-08-31 00-19-56.png': 'Screenshot From 2025 08 31 00 19 56',
+    'Screenshot From 2025-08-31 00-20-04.png': 'Screenshot From 2025 08 31 00 20 04',
+    'Screenshot From 2025-08-31 00-20-23.png': 'Screenshot From 2025 08 31 00 20 23',
+    'Screenshot From 2025-08-31 00-20-55.png': 'Screenshot From 2025 08 31 00 20 55',
+    'Screenshot From 2025-08-31 00-22-48.png': 'Screenshot From 2025 08 31 00 22 48',
     'commands.png': 'Commands',
     'htop.png': 'Htop',
     'main-window.png': 'Main Window',
