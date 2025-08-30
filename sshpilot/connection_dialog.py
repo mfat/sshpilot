@@ -389,7 +389,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
         """Handle SSH Config Editor button click"""
         try:
             # Get the parent dialog to access the connection
-            parent_dialog = self.get_ancestor(Adw.PreferencesWindow)
+            parent_dialog = self.get_ancestor(Adw.Window)
             if parent_dialog and hasattr(parent_dialog, 'connection') and parent_dialog.connection:
                 # Create and show the SSH config editor window
                 editor_window = SSHConfigEditorWindow(parent_dialog, parent_dialog.connection)
@@ -516,7 +516,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
         if hasattr(self, 'connection_manager') and self.connection_manager:
             try:
                 # Get current connection data from the parent dialog
-                parent_dialog = self.get_ancestor(Adw.PreferencesWindow)
+                parent_dialog = self.get_ancestor(Adw.Window)
                 if parent_dialog and hasattr(parent_dialog, 'connection'):
                     connection = parent_dialog.connection
                     if connection:
@@ -661,7 +661,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
     def _update_parent_connection(self):
         """Update the parent connection object with current advanced tab data"""
         try:
-            parent_dialog = self.get_ancestor(Adw.PreferencesWindow)
+            parent_dialog = self.get_ancestor(Adw.Window)
             if parent_dialog and hasattr(parent_dialog, 'connection') and parent_dialog.connection:
                 extra_config = self.get_extra_ssh_config()
                 parent_dialog.connection.extra_ssh_config = extra_config
@@ -697,8 +697,8 @@ class SSHConfigAdvancedTab(Gtk.Box):
         # Update the parent connection object if we're editing
         self._update_parent_connection()
 
-class ConnectionDialog(Adw.PreferencesWindow):
-    """Dialog for adding/editing SSH connections using PreferencesWindow layout"""
+class ConnectionDialog(Adw.Window):
+    """Dialog for adding/editing SSH connections using custom layout with pinned buttons"""
     
     __gtype_name__ = 'ConnectionDialog'
     
@@ -727,25 +727,163 @@ class ConnectionDialog(Adw.PreferencesWindow):
         
         self.setup_ui()
         GLib.idle_add(self.load_connection_data)
-        
-        # Add ESC key to cancel/close the dialog
-        try:
-            key_ctrl = Gtk.EventControllerKey()
-            if hasattr(key_ctrl, 'set_propagation_phase'):
-                key_ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-
-            def _on_key_pressed(ctrl, keyval, keycode, state):
-                if keyval == Gdk.KEY_Escape:
-                    self.on_cancel_clicked(None)
-                    return True
-                return False
-
-            key_ctrl.connect('key-pressed', _on_key_pressed)
-            self.add_controller(key_ctrl)
-        except Exception:
-            pass
     
+    def setup_ui(self):
+        """Set up the dialog UI with pinned buttons"""
+        # Create main vertical container
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        
+        # Create header bar
+        header_bar = Adw.HeaderBar()
+        header_bar.set_show_end_title_buttons(True)
+        main_box.append(header_bar)
+        
+        # Create scrollable content area
+        scrolled_window = Gtk.ScrolledWindow()
+        scrolled_window.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled_window.set_vexpand(True)
+        
+        # Create preferences content
+        self.preferences_content = self.create_preferences_content()
+        scrolled_window.set_child(self.preferences_content)
+        
+        # Create pinned bottom section with buttons
+        bottom_section = self.create_bottom_section()
+        
+        # Assemble the layout
+        main_box.append(scrolled_window)
+        main_box.append(bottom_section)
+        
+        # Set the content
+        self.set_content(main_box)
+        
+        # Install inline validators for key fields
+        try:
+            self._install_inline_validators()
+        except Exception as e:
+            logger.debug(f"Failed to install inline validators: {e}")
+        # After building views, populate existing data if editing
+        try:
+            self.load_connection_data()
+            # Re-run validations after loading existing values
+            try:
+                self._run_initial_validation()
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Failed to populate connection data: {e}")
+    
+    def create_preferences_content(self):
+        """Create the preferences content with all pages"""
+        # Create a notebook for tabbed interface
+        notebook = Gtk.Notebook()
+        notebook.set_show_tabs(True)
+        notebook.set_show_border(False)
+        
+        # General page
+        general_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        general_page.set_margin_top(12)
+        general_page.set_margin_bottom(12)
+        general_page.set_margin_start(12)
+        general_page.set_margin_end(12)
+        
+        for group in self.build_connection_groups():
+            general_page.append(group)
+        
+        general_label = Gtk.Label(label=_("Connection"))
+        notebook.append_page(general_page, general_label)
 
+        # Port Forwarding page
+        forwarding_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        forwarding_page.set_margin_top(12)
+        forwarding_page.set_margin_bottom(12)
+        forwarding_page.set_margin_start(12)
+        forwarding_page.set_margin_end(12)
+        
+        for group in self.build_port_forwarding_groups():
+            forwarding_page.append(group)
+        
+        forwarding_label = Gtk.Label(label=_("Port Forwarding"))
+        notebook.append_page(forwarding_page, forwarding_label)
+
+        # Advanced page
+        advanced_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        advanced_page.set_margin_top(12)
+        advanced_page.set_margin_bottom(12)
+        advanced_page.set_margin_start(12)
+        advanced_page.set_margin_end(12)
+        
+        # Create the advanced tab and wrap it in a preferences group
+        self.advanced_tab = SSHConfigAdvancedTab(self.connection_manager)
+        advanced_group = Adw.PreferencesGroup()
+        advanced_group.add(self.advanced_tab)
+        advanced_page.append(advanced_group)
+        
+        advanced_label = Gtk.Label(label=_("Advanced"))
+        notebook.append_page(advanced_page, advanced_label)
+        
+        return notebook
+    
+    def create_bottom_section(self):
+        """Create the pinned bottom section with save/cancel buttons"""
+        bottom_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        
+        # Visual separator
+        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        bottom_container.append(separator)
+        
+        # Button container with proper spacing
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        button_box.set_margin_start(24)
+        button_box.set_margin_end(24)
+        button_box.set_margin_top(12)
+        button_box.set_margin_bottom(12)
+        button_box.set_halign(Gtk.Align.END)  # Align buttons to the right
+        
+        # Cancel button
+        self.cancel_button = Gtk.Button(label=_("Cancel"))
+        self.cancel_button.connect("clicked", self.on_cancel_clicked)
+        
+        # Save button with suggested action styling
+        self.save_button = Gtk.Button(label=_("Save"))
+        self.save_button.add_css_class("suggested-action")
+        self.save_button.connect("clicked", self.on_save_clicked)
+        
+        button_box.append(self.cancel_button)
+        button_box.append(self.save_button)
+        
+        bottom_container.append(button_box)
+        
+        # Store reference to save button for validation updates
+        self._save_buttons = [self.save_button]
+        
+        # Setup keyboard shortcuts
+        self.setup_keyboard_shortcuts()
+        
+        return bottom_container
+    
+    def setup_keyboard_shortcuts(self):
+        """Setup keyboard shortcuts for common actions"""
+        
+        shortcut_controller = Gtk.ShortcutController()
+        
+        # Ctrl+S to save
+        save_shortcut = Gtk.Shortcut()
+        save_shortcut.set_trigger(Gtk.ShortcutTrigger.parse_string("<Control>s"))
+        save_shortcut.set_action(Gtk.CallbackAction.new(
+            lambda widget, args: self.on_save_clicked(None)
+        ))
+        shortcut_controller.add_shortcut(save_shortcut)
+        
+        # Escape to cancel
+        cancel_shortcut = Gtk.Shortcut()
+        cancel_shortcut.set_trigger(Gtk.ShortcutTrigger.parse_string("Escape"))
+        cancel_shortcut.set_action(Gtk.CallbackAction.new(
+            lambda widget, args: self.on_cancel_clicked(None)
+        ))
+        shortcut_controller.add_shortcut(cancel_shortcut)
+        
+        self.add_controller(shortcut_controller)
     
     def on_auth_method_changed(self, combo_row, param):
         """Handle authentication method change"""
@@ -1328,60 +1466,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             logger.error(f"Error loading connection data: {e}")
             self.show_error(_("Failed to load connection data"))
     
-    def setup_ui(self):
-        """Set up the dialog UI"""
-        # Build pages using PreferencesWindow model
-        general_page = Adw.PreferencesPage()
-        general_page.set_title(_("Connection"))
-        general_page.set_icon_name("network-server-symbolic")
-        for group in self.build_connection_groups():
-            general_page.add(group)
-        self.add(general_page)
 
-        forwarding_page = Adw.PreferencesPage()
-        forwarding_page.set_title(_("Port Forwarding"))
-        forwarding_page.set_icon_name("network-transmit-receive-symbolic")
-        for group in self.build_port_forwarding_groups():
-            forwarding_page.add(group)
-        self.add(forwarding_page)
-
-        # Advanced page
-        advanced_page = Adw.PreferencesPage()
-        advanced_page.set_title(_("Advanced"))
-        advanced_page.set_icon_name("applications-system-symbolic")
-        
-        # Create the advanced tab and wrap it in a preferences group
-        self.advanced_tab = SSHConfigAdvancedTab(self.connection_manager)
-        advanced_group = Adw.PreferencesGroup()
-        advanced_group.add(self.advanced_tab)
-        advanced_page.add(advanced_group)
-        self.add(advanced_page)
-
-        # Add a persistent action bar at the bottom of each page
-        try:
-            action_group_general = self._build_action_bar_group()
-            general_page.add(action_group_general)
-            action_group_forward = self._build_action_bar_group()
-            forwarding_page.add(action_group_forward)
-            action_group_advanced = self._build_action_bar_group()
-            advanced_page.add(action_group_advanced)
-        except Exception as e:
-            logger.debug(f"Failed to add action bars: {e}")
-        # Install inline validators for key fields
-        try:
-            self._install_inline_validators()
-        except Exception as e:
-            logger.debug(f"Failed to install inline validators: {e}")
-        # After building views, populate existing data if editing
-        try:
-            self.load_connection_data()
-            # Re-run validations after loading existing values
-            try:
-                self._run_initial_validation()
-            except Exception:
-                pass
-        except Exception as e:
-            logger.error(f"Failed to populate connection data: {e}")
     
     # --- Inline validation helpers ---
     def _apply_validation_to_row(self, row, result):
@@ -2618,80 +2703,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         except Exception as e:
             logger.error(f"Failed to open certificate file chooser: {e}")
 
-    def _build_action_bar_group(self):
-        """Build a bottom-aligned action bar with Cancel/Save."""
-        actions_group = Adw.PreferencesGroup()
-        actions_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        actions_box.set_halign(Gtk.Align.END)
-        try:
-            cancel_btn = Gtk.Button(label=_("Cancel"))
-            save_btn = Gtk.Button(label=_("Save"))
-            cancel_btn.add_css_class('flat')
-            save_btn.add_css_class('suggested-action')
-        except Exception:
-            cancel_btn = Gtk.Button(label="Cancel")
-            save_btn = Gtk.Button(label="Save")
-        cancel_btn.connect('clicked', self.on_cancel_clicked)
-        save_btn.connect('clicked', self.on_save_clicked)
-        actions_box.append(cancel_btn)
-        actions_box.append(save_btn)
-        actions_group.add(actions_box)
-        try:
-            self._save_buttons.append(save_btn)
-        except Exception:
-            pass
-        return actions_group
 
-        # Fallback to Gtk.FileChooserDialog
-        dialog = Gtk.FileChooserDialog(
-            title=_("Select SSH Key File"),
-            action=Gtk.FileChooserAction.OPEN,
-        )
-        # Parent must be a Gtk.Window; PreferencesDialog is not one.
-        try:
-            parent_win = self.get_transient_for()
-            if isinstance(parent_win, Gtk.Window):
-                dialog.set_transient_for(parent_win)
-        except Exception:
-            pass
-        dialog.set_modal(True)
-        dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
-        dialog.add_button(_("Open"), Gtk.ResponseType.ACCEPT)
-        # Default to ~/.ssh directory when available
-        try:
-            ssh_dir = os.path.expanduser('~/.ssh')
-            if os.path.isdir(ssh_dir):
-                try:
-                    dialog.set_current_folder(Gio.File.new_for_path(ssh_dir))
-                except Exception:
-                    try:
-                        dialog.set_current_folder(ssh_dir)
-                    except Exception:
-                        try:
-                            dialog.set_current_folder_uri(Gio.File.new_for_path(ssh_dir).get_uri())
-                        except Exception:
-                            pass
-        except Exception:
-            pass
-        
-        # Set filters
-        filter_ssh = Gtk.FileFilter()
-        filter_ssh.set_name(_("SSH Private Keys"))
-        filter_ssh.add_pattern("id_rsa")
-        filter_ssh.add_pattern("id_dsa")
-        filter_ssh.add_pattern("id_ecdsa")
-        filter_ssh.add_pattern("id_ed25519")
-        filter_ssh.add_pattern("*.pem")
-        filter_ssh.add_pattern("*.key")
-        dialog.add_filter(filter_ssh)
-        
-        filter_any = Gtk.FileFilter()
-        filter_any.set_name(_("All Files"))
-        filter_any.add_pattern("*")
-        dialog.add_filter(filter_any)
-        
-        dialog.connect("response", self.on_key_file_selected)
-        dialog.show()
     
     def on_key_file_selected(self, dialog, response):
         """Handle selected key file from file chooser"""
