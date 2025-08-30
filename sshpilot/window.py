@@ -1114,12 +1114,32 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _on_search_entry_key_pressed(self, controller, keyval, keycode, state):
         """Handle key presses in search entry."""
-        if keyval in (Gdk.KEY_Down, Gdk.KEY_Return):
-            first_row = self.connection_list.get_row_at_index(0)
-            if first_row:
-                self.connection_list.select_row(first_row)
-            self.connection_list.grab_focus()
+        if keyval == Gdk.KEY_Down:
+            # Move focus to connection list
+            if hasattr(self, 'connection_list') and self.connection_list:
+                first_row = self.connection_list.get_row_at_index(0)
+                if first_row:
+                    self.connection_list.select_row(first_row)
+                self.connection_list.grab_focus()
             return True
+        elif keyval == Gdk.KEY_Return:
+            # If there's search text, move to first result
+            if hasattr(self, 'search_entry') and self.search_entry:
+                search_text = self.search_entry.get_text().strip()
+                if search_text:
+                    first_row = self.connection_list.get_row_at_index(0)
+                    if first_row:
+                        self.connection_list.select_row(first_row)
+                        self.connection_list.grab_focus()
+                    return True
+                else:
+                    # No search text, just move to connection list
+                    if hasattr(self, 'connection_list') and self.connection_list:
+                        first_row = self.connection_list.get_row_at_index(0)
+                        if first_row:
+                            self.connection_list.select_row(first_row)
+                        self.connection_list.grab_focus()
+                    return True
         return False
 
     def setup_signals(self):
