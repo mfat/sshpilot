@@ -38,47 +38,57 @@ get_script_dir() {
     cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
 }
 
-# Function to check and install dependencies
-check_dependencies() {
-    print_status "Checking dependencies..."
+# Function to check and install Homebrew
+check_homebrew() {
+    print_status "Checking Homebrew installation..."
     
-    # Check if Homebrew is installed
     if ! command_exists brew; then
-        print_error "Homebrew is not installed. Please install it first:"
-        echo "   /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
-        exit 1
+        print_warning "Homebrew is not installed. Installing now..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        
+        # Add Homebrew to PATH for current session
+        if [[ -f "/opt/homebrew/bin/brew" ]]; then
+            eval "$(/opt/homebrew/bin/brew shellenv)"
+        elif [[ -f "/usr/local/bin/brew" ]]; then
+            eval "$(/usr/local/bin/brew shellenv)"
+        fi
+        
+        print_success "Homebrew installed successfully"
+    else
+        print_success "Homebrew is already installed"
     fi
+}
+
+# Function to check and install system dependencies
+check_system_dependencies() {
+    print_status "Checking system dependencies..."
     
-    # Check if required packages are installed
+    # List of required Homebrew packages
+    local required_packages=(
+        "gtk4"
+        "libadwaita"
+        "pygobject3"
+        "py3cairo"
+        "vte3"
+        "gobject-introspection"
+        "adwaita-icon-theme"
+        "pkg-config"
+        "glib"
+        "graphene"
+        "icu4c"
+        "sshpass"
+    )
+    
+    # Get all installed packages at once (much faster)
+    local installed_packages=$(brew list --formula 2>/dev/null || brew list)
     local missing_packages=()
     
-    if ! brew list gtk4 >/dev/null 2>&1; then
-        missing_packages+=("gtk4")
-    fi
-    
-    if ! brew list libadwaita >/dev/null 2>&1; then
-        missing_packages+=("libadwaita")
-    fi
-    
-    if ! brew list pygobject3 >/dev/null 2>&1; then
-        missing_packages+=("pygobject3")
-    fi
-    
-    if ! brew list vte3 >/dev/null 2>&1; then
-        missing_packages+=("vte3")
-    fi
-    
-    if ! brew list gobject-introspection >/dev/null 2>&1; then
-        missing_packages+=("gobject-introspection")
-    fi
-    
-    if ! brew list adwaita-icon-theme >/dev/null 2>&1; then
-        missing_packages+=("adwaita-icon-theme")
-    fi
-    
-    if ! brew list sshpass >/dev/null 2>&1; then
-        missing_packages+=("sshpass")
-    fi
+    # Check each required package
+    for package in "${required_packages[@]}"; do
+        if ! echo "$installed_packages" | grep -q "^${package}$"; then
+            missing_packages+=("$package")
+        fi
+    done
     
     # Install missing packages
     if [ ${#missing_packages[@]} -ne 0 ]; then
@@ -88,10 +98,68 @@ check_dependencies() {
         
         # Ensure libadwaita is properly linked
         print_status "Linking libadwaita..."
-        brew link --overwrite libadwaita
+        brew link --overwrite libadwaita 2>/dev/null || true
+        
+        print_success "All system dependencies installed"
     else
-        print_success "All dependencies are installed"
+        print_success "All system dependencies are already installed"
     fi
+}
+
+# Function to check and install Python dependencies
+check_python_dependencies() {
+    print_status "Checking Python dependencies..."
+    
+    # Get the script directory to find requirements.txt
+    local script_dir=$(get_script_dir)
+    local requirements_file="$script_dir/requirements.txt"
+    
+    if [[ ! -f "$requirements_file" ]]; then
+        print_error "requirements.txt not found in $script_dir"
+        exit 1
+    fi
+    
+    # Check if we're in a virtual environment
+    if [[ "$VIRTUAL_ENV" != "" ]]; then
+        print_status "Using virtual environment: $VIRTUAL_ENV"
+        pip install -r "$requirements_file"
+    else
+        # Check if key packages are installed
+        local missing_python_packages=()
+        
+        # Check key packages that are essential
+        if ! python3 -c "import paramiko" 2>/dev/null; then
+            missing_python_packages+=("paramiko")
+        fi
+        
+        if ! python3 -c "import cryptography" 2>/dev/null; then
+            missing_python_packages+=("cryptography")
+        fi
+        
+        if ! python3 -c "import keyring" 2>/dev/null; then
+            missing_python_packages+=("keyring")
+        fi
+        
+        if ! python3 -c "import psutil" 2>/dev/null; then
+            missing_python_packages+=("psutil")
+        fi
+        
+        if [ ${#missing_python_packages[@]} -ne 0 ]; then
+            print_warning "Missing Python packages: ${missing_python_packages[*]}"
+            print_status "Installing Python dependencies..."
+            pip3 install -r "$requirements_file"
+            print_success "Python dependencies installed"
+        else
+            print_success "All Python dependencies are already installed"
+        fi
+    fi
+}
+
+# Function to check dependencies
+check_dependencies() {
+    check_homebrew
+    check_system_dependencies
+    check_python_dependencies
 }
 
 # Function to set up environment variables
@@ -103,6 +171,7 @@ setup_environment() {
     export PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
     
     # Set up environment variables for PyGObject and GTK4
+    export PATH="$BREW_PREFIX/bin:$PATH"
     export PYTHONPATH="$BREW_PREFIX/lib/python$PYTHON_VERSION/site-packages:$PYTHONPATH"
     export GI_TYPELIB_PATH="$BREW_PREFIX/lib/girepository-1.0"
     export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_LIBRARY_PATH"
@@ -114,8 +183,17 @@ setup_environment() {
 
 # Function to test the setup
 test_setup() {
-    print_status "Testing PyGObject and libadwaita availability..."
+    print_status "Testing setup..."
     
+    # Test system dependencies
+    print_status "Testing system dependencies..."
+    if ! command_exists sshpass; then
+        print_error "sshpass not found in PATH"
+        exit 1
+    fi
+    
+    # Test Python dependencies
+    print_status "Testing Python dependencies..."
     python3 -c "
 import sys
 sys.path.insert(0, '$BREW_PREFIX/lib/python$PYTHON_VERSION/site-packages')
@@ -125,11 +203,19 @@ try:
     gi.require_version('Gtk', '4.0')
     gi.require_version('Vte', '3.91')
     from gi.repository import Adw, Gtk, Vte
+    import paramiko
+    import cryptography
+    import keyring
+    import psutil
     print('✅ All components available!')
     print('   - PyGObject (gi)')
     print('   - libadwaita (Adw)')
     print('   - GTK4 (Gtk)')
     print('   - VTE (Vte)')
+    print('   - paramiko')
+    print('   - cryptography')
+    print('   - keyring')
+    print('   - psutil')
 except Exception as e:
     print(f'❌ Setup failed: {e}')
     sys.exit(1)
@@ -148,20 +234,16 @@ launch_application() {
     # Get the script directory
     local script_dir=$(get_script_dir)
     
-    # Check if we're in a virtual environment
-    if [[ "$VIRTUAL_ENV" != "" ]]; then
-        print_status "Using virtual environment: $VIRTUAL_ENV"
-        python3 "$script_dir/run.py"
-    else
-        # Check if run.py exists in the current directory
-        if [[ -f "$script_dir/run.py" ]]; then
-            python3 "$script_dir/run.py"
-        else
-            print_error "run.py not found in $script_dir"
-            print_status "Please run this script from the sshpilot project directory"
-            exit 1
-        fi
+    # Check if run.py exists
+    if [[ ! -f "$script_dir/run.py" ]]; then
+        print_error "run.py not found in $script_dir"
+        print_status "Please run this script from the sshpilot project directory"
+        exit 1
     fi
+    
+    # Launch the application
+    cd "$script_dir"
+    python3 run.py
 }
 
 # Main execution
@@ -169,7 +251,7 @@ main() {
     echo "🚀 sshpilot macOS Launcher"
     echo "=========================="
     
-    # Check dependencies
+    # Check and install dependencies
     check_dependencies
     
     # Set up environment
