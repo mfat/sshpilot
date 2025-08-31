@@ -32,9 +32,23 @@ try:
     import secretstorage
 except Exception:
     secretstorage = None
+try:
+    import keyring
+except Exception:
+    keyring = None
 
 def get_passphrase(key_path: str) -> str:
-    """Retrieve passphrase from secretstorage"""
+    """Retrieve passphrase from keyring or secretstorage"""
+    # Try keyring first (macOS)
+    if keyring and os.name == 'posix' and hasattr(os, 'uname') and os.uname().sysname == 'Darwin':
+        try:
+            passphrase = keyring.get_password('sshPilot', key_path)
+            if passphrase:
+                return passphrase
+        except Exception:
+            pass
+    
+    # Fall back to secretstorage (Linux)
     if secretstorage is None:
         return ""
     try:

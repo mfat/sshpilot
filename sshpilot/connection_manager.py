@@ -50,6 +50,10 @@ if os.name == 'posix':
 logger = logging.getLogger(__name__)
 _SERVICE_NAME = "sshPilot"
 
+def _is_macos():
+    """Check if running on macOS"""
+    return os.name == 'posix' and hasattr(os, 'uname') and os.uname().sysname == 'Darwin'
+
 class Connection:
     """Represents an SSH connection"""
     
@@ -1031,48 +1035,63 @@ class ConnectionManager(GObject.Object):
 
     def store_key_passphrase(self, key_path: str, passphrase: str) -> bool:
         """Store key passphrase securely in system keyring"""
-        if not self._ensure_collection():
-            return False
         try:
-            # Create unique identifier for this key
-            key_id = f"key_passphrase_{os.path.basename(key_path)}_{hash(key_path)}"
-            
-            attributes = {
-                'application': 'sshPilot',
-                'type': 'key_passphrase',
-                'key_path': key_path,
-                'key_id': key_id
-            }
-            
-            # Store the passphrase
-            self.collection.create_item(
-                f"SSH Key Passphrase: {os.path.basename(key_path)}",
-                attributes,
-                passphrase.encode('utf-8'),
-                replace=True
-            )
-            logger.debug(f"Stored key passphrase for {key_path}")
-            return True
+            # Use keyring on macOS, secretstorage on Linux
+            if keyring and _is_macos():
+                # macOS: use keyring
+                keyring.set_password('sshPilot', key_path, passphrase)
+                logger.debug(f"Stored key passphrase for {key_path} using keyring")
+                return True
+            elif self._ensure_collection():
+                # Linux: use secretstorage
+                key_id = f"key_passphrase_{os.path.basename(key_path)}_{hash(key_path)}"
+                
+                attributes = {
+                    'application': 'sshPilot',
+                    'type': 'key_passphrase',
+                    'key_path': key_path,
+                    'key_id': key_id
+                }
+                
+                # Store the passphrase
+                self.collection.create_item(
+                    f"SSH Key Passphrase: {os.path.basename(key_path)}",
+                    attributes,
+                    passphrase.encode('utf-8'),
+                    replace=True
+                )
+                logger.debug(f"Stored key passphrase for {key_path} using secretstorage")
+                return True
+            else:
+                logger.warning("No keyring backend available for storing passphrase")
+                return False
         except Exception as e:
             logger.error(f"Error storing key passphrase for {key_path}: {e}")
             return False
 
     def get_key_passphrase(self, key_path: str) -> Optional[str]:
         """Retrieve key passphrase from system keyring"""
-        if not self._ensure_collection():
-            return None
         try:
-            attributes = {
-                'application': 'sshPilot',
-                'type': 'key_passphrase',
-                'key_path': key_path
-            }
-            
-            items = list(self.collection.search_items(attributes))
-            if items:
-                passphrase = items[0].get_secret().decode('utf-8')
-                logger.debug(f"Retrieved key passphrase for {key_path}")
+            # Use keyring on macOS, secretstorage on Linux
+            if keyring and _is_macos():
+                # macOS: use keyring
+                passphrase = keyring.get_password('sshPilot', key_path)
+                if passphrase:
+                    logger.debug(f"Retrieved key passphrase for {key_path} using keyring")
                 return passphrase
+            elif self._ensure_collection():
+                # Linux: use secretstorage
+                attributes = {
+                    'application': 'sshPilot',
+                    'type': 'key_passphrase',
+                    'key_path': key_path
+                }
+                
+                items = list(self.collection.search_items(attributes))
+                if items:
+                    passphrase = items[0].get_secret().decode('utf-8')
+                    logger.debug(f"Retrieved key passphrase for {key_path} using secretstorage")
+                    return passphrase
             return None
         except Exception as e:
             logger.error(f"Error retrieving key passphrase for {key_path}: {e}")
@@ -1080,26 +1099,37 @@ class ConnectionManager(GObject.Object):
 
     def delete_key_passphrase(self, key_path: str) -> bool:
         """Delete stored key passphrase from system keyring"""
-        if not self._ensure_collection():
-            return False
         try:
-            attributes = {
-                'application': 'sshPilot',
-                'type': 'key_passphrase',
-                'key_path': key_path
-            }
-            
-            items = list(self.collection.search_items(attributes))
-            removed_any = False
-            for item in items:
+            # Use keyring on macOS, secretstorage on Linux
+            if keyring and _is_macos():
+                # macOS: use keyring
                 try:
-                    item.delete()
-                    removed_any = True
-                except Exception:
-                    pass
-            if removed_any:
-                logger.debug(f"Deleted stored key passphrase for {key_path}")
-            return removed_any
+                    keyring.delete_password('sshPilot', key_path)
+                    logger.debug(f"Deleted stored key passphrase for {key_path} using keyring")
+                    return True
+                except keyring.errors.PasswordDeleteError:
+                    # Password doesn't exist, which is fine
+                    return True
+            elif self._ensure_collection():
+                # Linux: use secretstorage
+                attributes = {
+                    'application': 'sshPilot',
+                    'type': 'key_passphrase',
+                    'key_path': key_path
+                }
+                
+                items = list(self.collection.search_items(attributes))
+                removed_any = False
+                for item in items:
+                    try:
+                        item.delete()
+                        removed_any = True
+                    except Exception:
+                        pass
+                if removed_any:
+                    logger.debug(f"Deleted stored key passphrase for {key_path} using secretstorage")
+                return removed_any
+            return False
         except Exception as e:
             logger.error(f"Error deleting key passphrase for {key_path}: {e}")
             return False
