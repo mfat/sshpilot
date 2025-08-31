@@ -850,9 +850,9 @@ class ConnectionDialog(Adw.Window):
         if hasattr(self, 'key_select_row'):
             self.key_select_row.set_visible(is_key_based)
             
-        # Show/hide password field for password-based auth
+        # Password field is always available since key-based auth can also require a password
         if hasattr(self, 'password_row'):
-            self.password_row.set_visible(not is_key_based)
+            self.password_row.set_visible(True)
 
         # Also update browse availability per key selection mode
         try:
@@ -1026,16 +1026,21 @@ class ConnectionDialog(Adw.Window):
                 config_lines.append(f"    Port {port_val}")
             
             # Add authentication settings
-            if auth_method_val == 0:  # Key-based auth
+            password_val = self.password_row.get_text().strip() if hasattr(self, 'password_row') else ''
+
+            if auth_method_val == 0:  # Key-based auth (password optional)
                 if key_select_mode_val == 1 and keyfile_val:  # Specific key
                     config_lines.append(f"    IdentityFile {keyfile_val}")
                     config_lines.append("    IdentitiesOnly yes")
-                    
+
                     # Add certificate if specified (validate to skip placeholder text)
                     if certificate_val and certificate_val.lower() not in ['select certificate file (optional)', '']:
                         config_lines.append(f"    CertificateFile {certificate_val}")
+                # Add combined authentication if a password is provided
+                if password_val:
+                    config_lines.append("    PreferredAuthentications publickey,password")
                 # For automatic key selection, don't add IdentityFile
-            else:  # Password auth
+            else:  # Password auth only
                 config_lines.append("    PreferredAuthentications password")
                 config_lines.append("    PubkeyAuthentication no")
             
@@ -2052,7 +2057,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Password
         self.password_row = Adw.PasswordEntryRow(title=_("Password"))
         self.password_row.set_show_apply_button(False)
-        self.password_row.set_visible(False)
+        # Always visible; optional for key-based auth
+        self.password_row.set_visible(True)
         auth_group.add(self.password_row)
         
 

@@ -2161,19 +2161,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Determine auth method and check for saved password
             logger.debug("Main window: Determining authentication preferences")
             try:
-                prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
-                logger.debug(
-                    f"Main window: Auth method from connection object: {getattr(connection, 'auth_method', 0)} -> prefer_password={prefer_password}"
-                )
+                auth_method = int(getattr(connection, 'auth_method', 0) or 0)
+                prefer_password = (auth_method == 1)
             except Exception as e2:
                 logger.debug(f"Main window: Failed to get auth method from connection object: {e2}")
+                auth_method = 0
                 prefer_password = False
-            
+
             has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username))
+            combined_auth = (auth_method == 0 and has_saved_password)
             logger.debug(f"Main window: Has saved password: {has_saved_password}")
-            logger.debug(f"Main window: Authentication setup - prefer_password={prefer_password}, has_saved_password={has_saved_password}")
-            
-            if prefer_password and has_saved_password:
+            logger.debug(
+                f"Main window: Authentication setup - prefer_password={prefer_password}, combined_auth={combined_auth}, has_saved_password={has_saved_password}"
+            )
+
+            if (prefer_password or combined_auth) and has_saved_password:
                 # Use sshpass for password authentication
                 logger.debug("Main window: Using sshpass for password authentication")
                 import shutil
@@ -2239,8 +2241,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     askpass_env = get_ssh_env_with_askpass()
                     logger.debug(f"Main window: Askpass environment variables: {list(askpass_env.keys())}")
                     env.update(askpass_env)
-            elif prefer_password and not has_saved_password:
-                # Password auth selected but no saved password - let SSH prompt interactively
+            elif (prefer_password or combined_auth) and not has_saved_password:
+                # Password may be required but none saved - let SSH prompt interactively
                 # Don't set any askpass environment variables
                 logger.debug("Main window: Password auth selected but no saved password - using interactive prompt")
             else:
@@ -2456,16 +2458,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         key_mode = 0
         keyfile = getattr(connection, 'keyfile', '') or ''
         logger.debug(f"Main window: Connection keyfile: '{keyfile}'")
-        
+
         try:
-            prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
-            logger.debug(
-                f"Main window: Auth method from connection object: {getattr(connection, 'auth_method', 0)} -> prefer_password={prefer_password}"
-            )
+            auth_method = int(getattr(connection, 'auth_method', 0) or 0)
+            prefer_password = (auth_method == 1)
         except Exception as e2:
             logger.debug(f"Main window: Error getting auth method from connection object: {e2}")
+            auth_method = 0
             prefer_password = False
-        
+
+        has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username))
+        combined_auth = (auth_method == 0 and has_saved_password)
+
         try:
             # key_select_mode is saved in ssh config, our connection object should have it post-load
             key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
@@ -2473,7 +2477,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.debug(f"Main window: Error getting key select mode: {e}")
             key_mode = 0
-        
+
         # Validate keyfile path
         try:
             keyfile_ok = bool(keyfile) and os.path.isfile(keyfile)
@@ -2483,7 +2487,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             keyfile_ok = False
 
         # Priority: if UI selected a specific key and it exists, use it; otherwise fall back to password prefs/try-all
-        logger.debug(f"Main window: Applying authentication options - key_mode={key_mode}, keyfile_ok={keyfile_ok}, prefer_password={prefer_password}")
+        logger.debug(f"Main window: Applying authentication options - key_mode={key_mode}, keyfile_ok={keyfile_ok}, prefer_password={prefer_password}, combined_auth={combined_auth}")
         
         # For ssh-copy-id, we should NOT add IdentityFile options because:
         # 1. ssh-copy-id should use the same key for authentication that it's copying
@@ -2494,10 +2498,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Don't add IdentityFile for ssh-copy-id - it should use the key being copied
             logger.debug(f"Main window: Skipping IdentityFile for ssh-copy-id - using key being copied for authentication")
         else:
-            # Only force password when user selected password auth
+            # Apply authentication preferences
             if prefer_password:
                 argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password']
                 logger.debug("Main window: Added password authentication options - PubkeyAuthentication=no, PreferredAuthentications=password")
+            elif combined_auth:
+                argv += ['-o', 'PreferredAuthentications=publickey,password']
+                logger.debug("Main window: Added combined authentication options - PreferredAuthentications=publickey,password")
         
         # Target
         target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
@@ -2807,9 +2814,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         key_mode = 0
         keyfile = getattr(connection, 'keyfile', '') or ''
         try:
-            prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
+            auth_method = int(getattr(connection, 'auth_method', 0) or 0)
+            prefer_password = (auth_method == 1)
         except Exception:
+            auth_method = 0
             prefer_password = False
+        has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username)) if hasattr(self, 'connection_manager') and self.connection_manager else False
+        combined_auth = (auth_method == 0 and has_saved_password)
         try:
             key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
         except Exception:
@@ -2842,8 +2853,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception as e:
                 logger.debug(f"Failed to get saved passphrase for SCP: {e}")
                 
-        elif prefer_password:
-            argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password']
+        elif prefer_password or combined_auth:
+            if prefer_password:
+                argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password']
+            else:
+                argv += ['-o', 'PreferredAuthentications=publickey,password']
             
             # Try to get saved password
             try:

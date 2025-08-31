@@ -1216,8 +1216,11 @@ class ConnectionManager(GObject.Object):
                     if ' ' in certificate and not (certificate.startswith('"') and certificate.endswith('"')):
                         certificate = f'"{certificate}"'
                     lines.append(f"    CertificateFile {certificate}")
+            # Include password-based fallback if a password is provided
+            if data.get('password'):
+                lines.append("    PreferredAuthentications publickey,password")
         else:
-            # Password-based authentication
+            # Password-based authentication only
             lines.append("    PreferredAuthentications password")
             lines.append("    PubkeyAuthentication no")
         

@@ -480,31 +480,31 @@ class TerminalWidget(Gtk.Box):
             batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
             compression = bool(ssh_cfg.get('compression', True)) if apply_adv else False
 
-            # Determine auth method from connection
+            # Determine auth method from connection and retrieve any saved password
             password_auth_selected = False
-            try:
-                # In our UI: 0 = key-based, 1 = password
-                password_auth_selected = (getattr(self.connection, 'auth_method', 0) == 1)
-            except Exception:
-                password_auth_selected = False
-
-            # Check if we have a saved password for password authentication
             has_saved_password = False
             password_value = None
-            if password_auth_selected:
-                try:
-                    # Try to fetch without storing in argv
-                    password_value = getattr(self.connection, 'password', None)
-                    if (not password_value) and hasattr(self, 'connection_manager') and self.connection_manager:
-                        password_value = self.connection_manager.get_password(self.connection.host, self.connection.username)
-                    has_saved_password = bool(password_value)
-                except Exception:
-                    has_saved_password = False
+            auth_method = 0
+            try:
+                # In our UI: 0 = key-based, 1 = password
+                auth_method = getattr(self.connection, 'auth_method', 0)
+                password_auth_selected = (auth_method == 1)
+                # Try to fetch stored password regardless of auth method
+                password_value = getattr(self.connection, 'password', None)
+                if (not password_value) and hasattr(self, 'connection_manager') and self.connection_manager:
+                    password_value = self.connection_manager.get_password(self.connection.host, self.connection.username)
+                has_saved_password = bool(password_value)
+            except Exception:
+                auth_method = 0
+                password_auth_selected = False
+                has_saved_password = False
+
+            using_password = password_auth_selected or has_saved_password
 
             # Apply advanced args only when user explicitly enabled them
             if apply_adv:
                 # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
-                if batch_mode and not password_auth_selected:
+                if batch_mode and not using_password:
                     ssh_cmd.extend(['-o', 'BatchMode=yes'])
                 if connect_timeout is not None:
                     ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
@@ -589,6 +589,10 @@ class TerminalWidget(Gtk.Box):
                         logger.debug(f"Using SSH certificate: {self.connection.certificate}")
                 else:
                     logger.debug("Using default SSH key selection (key_select_mode=0 or no valid key specified)")
+
+                # If a password exists, allow publickey+password authentication
+                if has_saved_password:
+                    ssh_cmd.extend(['-o', 'PreferredAuthentications=publickey,password'])
             else:
                 # Force password authentication when user chose password auth
                 ssh_cmd.extend(['-o', 'PreferredAuthentications=password'])
@@ -725,7 +729,7 @@ class TerminalWidget(Gtk.Box):
                     ssh_cmd.append(final_remote_cmd)
                 
                 # Make sure ssh will prompt in our VTE if no saved password:
-                if password_auth_selected and not has_saved_password:
+                if (password_auth_selected or auth_method == 0) and not has_saved_password:
                     if '-t' not in ssh_cmd and '-tt' not in ssh_cmd:
                         ssh_cmd.append('-t')  # force a TTY for interactive password
             
@@ -744,7 +748,7 @@ class TerminalWidget(Gtk.Box):
             env = os.environ.copy()
             logger.debug(f"Initial environment SSH_ASKPASS: {env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE: {env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
 
-            if password_auth_selected and has_saved_password and password_value:
+            if has_saved_password and password_value:
                 # Use sshpass for password authentication
                 import shutil
                 sshpass_path = None
@@ -790,10 +794,9 @@ class TerminalWidget(Gtk.Box):
                     ensure_askpass_script()
                     askpass_env = get_ssh_env_with_askpass_for_password(self.connection.host, self.connection.username)
                     env.update(askpass_env)
-            elif password_auth_selected and not has_saved_password:
-                # Password auth selected but no saved password - let SSH prompt interactively
-                # Don't set any askpass environment variables
-                logger.debug("Password auth selected but no saved password - using interactive prompt")
+            elif (password_auth_selected or auth_method == 0) and not has_saved_password:
+                # Password may be required but none saved - allow interactive prompt
+                logger.debug("No saved password - using interactive prompt if required")
             else:
                 # Use askpass for passphrase prompts (key-based auth)
                 from .askpass_utils import get_ssh_env_with_askpass
