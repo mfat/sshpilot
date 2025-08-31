@@ -637,54 +637,54 @@ class TerminalWidget(Gtk.Box):
                     rule_type = rule.get('type')
                     listen_addr = rule.get('listen_addr', '127.0.0.1')
                     listen_port = rule.get('listen_port')
-                        
-                        # Check for local port conflicts (for local and dynamic forwarding)
-                        if rule_type in ['local', 'dynamic'] and listen_port:
-                            try:
-                                conflicts = port_checker.get_port_conflicts([listen_port], listen_addr)
-                                if conflicts:
-                                    port, port_info = conflicts[0]
-                                    conflict_msg = f"Port {port} is already in use"
-                                    if port_info.process_name:
-                                        conflict_msg += f" by {port_info.process_name} (PID: {port_info.pid})"
-                                    port_conflicts.append(conflict_msg)
-                                    continue  # Skip this rule
-                            except Exception as e:
-                                logger.debug(f"Could not check port conflict for {listen_port}: {e}")
-                        
-                        # Add the forwarding rule if no conflicts
-                        if rule_type == 'dynamic' and listen_port:
-                            try:
-                                ssh_cmd.extend(['-D', f"{listen_addr}:{listen_port}"])
-                                logger.debug(f"Added dynamic port forwarding: {listen_addr}:{listen_port}")
-                            except Exception as e:
-                                logger.error(f"Failed to set up dynamic forwarding: {e}")
-                                
-                        elif rule_type == 'local' and listen_port and 'remote_host' in rule and 'remote_port' in rule:
-                            try:
-                                remote_host = rule.get('remote_host', 'localhost')
-                                remote_port = rule.get('remote_port')
-                                ssh_cmd.extend(['-L', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"])
-                                logger.debug(f"Added local port forwarding: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
-                            except Exception as e:
-                                logger.error(f"Failed to set up local forwarding: {e}")
-                                
-                        # Handle remote port forwarding (remote bind -> local destination)
-                        elif rule_type == 'remote' and listen_port:
-                            try:
-                                local_host = rule.get('local_host') or rule.get('remote_host', 'localhost')
-                                local_port = rule.get('local_port') or rule.get('remote_port')
-                                if local_port:
-                                    ssh_cmd.extend(['-R', f"{listen_addr}:{listen_port}:{local_host}:{local_port}"])
-                                    logger.debug(f"Added remote port forwarding: {listen_addr}:{listen_port} -> {local_host}:{local_port}")
-                            except Exception as e:
-                                logger.error(f"Failed to set up remote forwarding: {e}")
                     
-                    # Show port conflict warnings if any
-                    if port_conflicts:
-                        conflict_message = "Port forwarding conflicts detected:\n" + "\n".join([f"• {msg}" for msg in port_conflicts])
-                        logger.warning(conflict_message)
-                        GLib.idle_add(self._show_forwarding_error_dialog, conflict_message)
+                    # Check for local port conflicts (for local and dynamic forwarding)
+                    if rule_type in ['local', 'dynamic'] and listen_port:
+                        try:
+                            conflicts = port_checker.get_port_conflicts([listen_port], listen_addr)
+                            if conflicts:
+                                port, port_info = conflicts[0]
+                                conflict_msg = f"Port {port} is already in use"
+                                if port_info.process_name:
+                                    conflict_msg += f" by {port_info.process_name} (PID: {port_info.pid})"
+                                port_conflicts.append(conflict_msg)
+                                continue  # Skip this rule
+                        except Exception as e:
+                            logger.debug(f"Could not check port conflict for {listen_port}: {e}")
+                    
+                    # Add the forwarding rule if no conflicts
+                    if rule_type == 'dynamic' and listen_port:
+                        try:
+                            ssh_cmd.extend(['-D', f"{listen_addr}:{listen_port}"])
+                            logger.debug(f"Added dynamic port forwarding: {listen_addr}:{listen_port}")
+                        except Exception as e:
+                            logger.error(f"Failed to set up dynamic forwarding: {e}")
+                            
+                    elif rule_type == 'local' and listen_port and 'remote_host' in rule and 'remote_port' in rule:
+                        try:
+                            remote_host = rule.get('remote_host', 'localhost')
+                            remote_port = rule.get('remote_port')
+                            ssh_cmd.extend(['-L', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"])
+                            logger.debug(f"Added local port forwarding: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
+                        except Exception as e:
+                            logger.error(f"Failed to set up local forwarding: {e}")
+                            
+                    # Handle remote port forwarding (remote bind -> local destination)
+                    elif rule_type == 'remote' and listen_port:
+                        try:
+                            local_host = rule.get('local_host') or rule.get('remote_host', 'localhost')
+                            local_port = rule.get('local_port') or rule.get('remote_port')
+                            if local_port:
+                                ssh_cmd.extend(['-R', f"{listen_addr}:{listen_port}:{local_host}:{local_port}"])
+                                logger.debug(f"Added remote port forwarding: {listen_addr}:{listen_port} -> {local_host}:{local_port}")
+                        except Exception as e:
+                            logger.error(f"Failed to set up remote forwarding: {e}")
+                
+                # Show port conflict warnings if any
+                if port_conflicts:
+                    conflict_message = "Port forwarding conflicts detected:\n" + "\n".join([f"• {msg}" for msg in port_conflicts])
+                    logger.warning(conflict_message)
+                    GLib.idle_add(self._show_forwarding_error_dialog, conflict_message)
                 
                 # Add extra SSH config options from advanced tab
                 extra_ssh_config = getattr(self.connection, 'extra_ssh_config', '').strip()
@@ -709,12 +709,12 @@ class TerminalWidget(Gtk.Box):
                 # Add NumberOfPasswordPrompts option before hostname and command
                 ssh_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
                 
-                # Add host and user
-                ssh_cmd.append(f"{self.connection.username}@{self.connection.host}" if hasattr(self.connection, 'username') and self.connection.username else self.connection.host)
-
-                # Add port if not default (ideally before host, but keep consistent with existing behavior)
+                # Add port if not default (must be before host)
                 if hasattr(self.connection, 'port') and self.connection.port != 22:
                     ssh_cmd.extend(['-p', str(self.connection.port)])
+                
+                # Add host and user
+                ssh_cmd.append(f"{self.connection.username}@{self.connection.host}" if hasattr(self.connection, 'username') and self.connection.username else self.connection.host)
 
                 # Append remote command last so ssh treats it as the command to run, ensure shell remains active
                 if remote_cmd:
