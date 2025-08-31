@@ -40,18 +40,23 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
     batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
     compression = bool(ssh_cfg.get('compression', True)) if apply_adv else False
 
-    # Determine auth method from connection (same as terminal.py)
+    # Determine auth method from connection and whether a password is available
     password_auth_selected = False
+    has_saved_password = False
     try:
         # In our UI: 0 = key-based, 1 = password
-        password_auth_selected = (getattr(connection, 'auth_method', 0) == 1)
+        auth_method = getattr(connection, 'auth_method', 0)
+        password_auth_selected = (auth_method == 1)
+        has_saved_password = bool(getattr(connection, 'password', None))
     except Exception:
         password_auth_selected = False
+        has_saved_password = False
+    using_password = password_auth_selected or (not password_auth_selected and has_saved_password)
 
     # Apply advanced args only when user explicitly enabled them (same as terminal.py)
     if apply_adv:
         # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
-        if batch_mode and not password_auth_selected:
+        if batch_mode and not using_password:
             options.extend(['-o', 'BatchMode=yes'])
         if connect_timeout is not None:
             options.extend(['-o', f'ConnectTimeout={connect_timeout}'])
@@ -120,6 +125,14 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
             if hasattr(connection, 'certificate') and connection.certificate and \
                os.path.isfile(connection.certificate):
                 options.extend(['-o', f'CertificateFile={connection.certificate}'])
+
+            # If a password is available, allow publickey+password authentication
+            if has_saved_password:
+                options.extend(['-o', 'PreferredAuthentications=publickey,password'])
+        else:
+            # If no specific key or certificate, still append combined auth if password exists
+            if has_saved_password:
+                options.extend(['-o', 'PreferredAuthentications=publickey,password'])
     else:
         # Force password authentication when user chose password auth (same as terminal.py)
         # But don't disable pubkey auth for ssh-copy-id since we're installing a key

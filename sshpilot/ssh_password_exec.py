@@ -17,10 +17,12 @@ def run_ssh_with_password(host: str, user: str, password: str, *,
                           argv_tail: list[str] | None = None,
                           known_hosts_path: str | None = None,
                           extra_ssh_opts: list[str] | None = None,
-                          inherit_env: dict | None = None) -> subprocess.CompletedProcess:
+                          inherit_env: dict | None = None,
+                          use_publickey: bool = False) -> subprocess.CompletedProcess:
     """Launch `ssh` using sshpass -f <FIFO> safely.
     - No password in argv/env.
     - FIFO lives in private temp dir, removed afterwards.
+    - When ``use_publickey`` is True, allow publickey+password authentication.
     """
     tmpdir = _mk_priv_dir()
     fifo = os.path.join(tmpdir, "pw.fifo")
@@ -30,9 +32,13 @@ def run_ssh_with_password(host: str, user: str, password: str, *,
     t = threading.Thread(target=_write_once_fifo, args=(fifo, password), daemon=True)
     t.start()
 
-    ssh_opts = [
-        "-o", "PreferredAuthentications=password",
-        "-o", "PubkeyAuthentication=no",
+    ssh_opts = []
+    if use_publickey:
+        ssh_opts += ["-o", "PreferredAuthentications=publickey,password"]
+    else:
+        ssh_opts += ["-o", "PreferredAuthentications=password",
+                     "-o", "PubkeyAuthentication=no"]
+    ssh_opts += [
         "-o", "NumberOfPasswordPrompts=1",
         "-o", "ServerAliveInterval=30",
         "-o", "ServerAliveCountMax=3",
@@ -102,7 +108,8 @@ def run_scp_with_password(host: str, user: str, password: str,
                           port: int = 22,
                           known_hosts_path: str | None = None,
                           extra_ssh_opts: list[str] | None = None,
-                          inherit_env: dict | None = None) -> subprocess.CompletedProcess:
+                          inherit_env: dict | None = None,
+                          use_publickey: bool = False) -> subprocess.CompletedProcess:
     tmpdir = _mk_priv_dir()
     fifo = os.path.join(tmpdir, "pw.fifo")
     os.mkfifo(fifo, 0o600)
@@ -110,6 +117,12 @@ def run_scp_with_password(host: str, user: str, password: str,
     t.start()
 
     ssh_opts = []
+    if use_publickey:
+        ssh_opts += ["-o", "PreferredAuthentications=publickey,password"]
+    else:
+        ssh_opts += ["-o", "PreferredAuthentications=password",
+                     "-o", "PubkeyAuthentication=no"]
+    ssh_opts += ["-o", "NumberOfPasswordPrompts=1"]
     if known_hosts_path:
         ssh_opts += ["-o", f"UserKnownHostsFile={known_hosts_path}",
                      "-o", "StrictHostKeyChecking=accept-new"]
