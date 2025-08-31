@@ -213,6 +213,7 @@ class TerminalWidget(Gtk.Box):
         self.ssh_client = None
         self.session_id = str(id(self))  # Unique ID for this session
         self._is_quitting = False  # Flag to suppress signal handlers during quit
+        self.last_error_message = None  # Store last SSH error for reporting
         
         # Register with process manager
         process_manager.register_terminal(self)
@@ -1018,21 +1019,24 @@ class TerminalWidget(Gtk.Box):
     def _on_connection_failed(self, error_message):
         """Handle connection failure (called from main thread)"""
         logger.error(f"Connection failed: {error_message}")
-        
+
         # Ensure theme is applied so background remains consistent
         try:
             self.apply_theme()
         except Exception:
             pass
-        
-        # Show error in terminal
+
+        # Show raw error in terminal
         try:
-            self.vte.feed(f"\r\n\x1b[31mConnection failed: {error_message}\x1b[0m\r\n".encode('utf-8'))
+            self.vte.feed(f"\r\n\x1b[31m{error_message}\x1b[0m\r\n".encode('utf-8'))
         except Exception as e:
             logger.error(f"Error displaying connection error: {e}")
-        
+
         self.is_connected = False
+        self.last_error_message = error_message
         self.emit('connection-failed', error_message)
+        self._set_connecting_overlay_visible(False)
+        self._set_disconnected_banner_visible(True, error_message)
 
     
 
@@ -1434,27 +1438,29 @@ class TerminalWidget(Gtk.Box):
         self.connection_manager.emit('connection-status-changed', self.connection, True)
         
         self.emit('connection-established')
-        
+
         # Apply theme after connection is established
         self.apply_theme()
         # Hide any reconnect banner on success
         self._set_disconnected_banner_visible(False)
+        self.last_error_message = None
         
-    def _on_connection_lost(self):
+    def _on_connection_lost(self, message: str = None):
         """Handle SSH connection loss"""
         if self.is_connected:
             logger.info(f"SSH connection to {self.connection.host} lost")
             self.is_connected = False
-            
+
             # Update connection status in the connection manager
             if hasattr(self, 'connection') and self.connection:
                 self.connection.is_connected = False
                 self.connection_manager.emit('connection-status-changed', self.connection, False)
-            
+
             self.emit('connection-lost')
             # Show reconnect UI
             self._set_connecting_overlay_visible(False)
-            self._set_disconnected_banner_visible(True, _('Connection lost.'))
+            banner_text = message or self.last_error_message or _('Connection lost.')
+            self._set_disconnected_banner_visible(True, banner_text)
     
     def _on_terminal_input(self, widget, text, size):
         """Handle input from the terminal (handled automatically by VTE)"""
@@ -1742,10 +1748,10 @@ class TerminalWidget(Gtk.Box):
     def _on_connection_failed(self, error_message):
         """Handle connection failure (called from main thread)"""
         logger.error(f"Connection failed: {error_message}")
-        
+
         try:
-            # Show error in terminal
-            error_msg = f"\r\n\x1b[31mConnection failed: {error_message}\x1b[0m\r\n"
+            # Show raw error in terminal
+            error_msg = f"\r\n\x1b[31m{error_message}\x1b[0m\r\n"
             self.vte.feed(error_msg.encode('utf-8'))
 
             self.is_connected = False
@@ -1755,22 +1761,15 @@ class TerminalWidget(Gtk.Box):
                 self.pty.close()
                 del self.pty
 
-            # Do not reset here to avoid losing theme; leave buffer with error text
+            # Remember last error for later reporting
+            self.last_error_message = error_message
 
             # Notify UI
             self.emit('connection-failed', error_message)
 
-            # Show reconnect banner for new-connection failures as well
+            # Show reconnect banner with the raw SSH error
             self._set_connecting_overlay_visible(False)
-            # Detect timeout-ish messages to provide clearer text
-            msg_lower = (error_message or '').lower()
-            if 'timeout' in msg_lower or 'timed out' in msg_lower:
-                banner_text = _('Connection timeout. Try again?')
-            elif 'failed to read ssh banner' in msg_lower:
-                banner_text = _('Server not ready yet. Try again?')
-            else:
-                banner_text = _('Connection failed.')
-            self._set_disconnected_banner_visible(True, banner_text)
+            self._set_disconnected_banner_visible(True, error_message)
 
         except Exception as e:
             logger.error(f"Error in _on_connection_failed: {e}")
@@ -1896,12 +1895,18 @@ class TerminalWidget(Gtk.Box):
             try:
                 logger.debug("Emitting connection-lost signal")
                 self.emit('connection-lost')
-                
-                # Show reconnect UI
+
+                # Show reconnect UI with detailed error if available
                 logger.debug("Updating UI elements")
                 self._set_connecting_overlay_visible(False)
-                self._set_disconnected_banner_visible(True, _('Session ended.'))
-                
+                banner_text = self.last_error_message
+                if not banner_text:
+                    if exit_code and exit_code != 0:
+                        banner_text = _('SSH exited with status {code}').format(code=exit_code)
+                    else:
+                        banner_text = _('Session ended.')
+                self._set_disconnected_banner_visible(True, banner_text)
+
                 logger.debug("Exit cleanup completed successfully")
             except Exception as e:
                 logger.error(f"Error in final exit cleanup: {e}")
