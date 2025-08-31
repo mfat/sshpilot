@@ -297,7 +297,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             # Font selection row
             self.font_row = Adw.ActionRow()
             self.font_row.set_title("Font")
-            current_font = self.config.get_setting('terminal-font', 'Monospace 12')
+            current_font = self.config.get_setting('terminal.font', 'Monospace 12')
             self.font_row.set_subtitle(current_font)
             
             font_button = Gtk.Button()
@@ -682,7 +682,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
         logger.info("Font button clicked")
         
         # Get current font from config
-        current_font = self.config.get_setting('terminal-font', 'Monospace 12')
+        current_font = self.config.get_setting('terminal.font', 'Monospace 12')
         
         # Create custom monospace font dialog
         font_dialog = MonospaceFontDialog(parent=self, current_font=current_font)
@@ -692,7 +692,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             logger.info(f"Font selected: {font_string}")
             
             # Save to config
-            self.config.set_setting('terminal-font', font_string)
+            self.config.set_setting('terminal.font', font_string)
             
             # Apply to all active terminals
             self.apply_font_to_terminals(font_string)
