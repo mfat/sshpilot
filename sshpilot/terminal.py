@@ -214,6 +214,7 @@ class TerminalWidget(Gtk.Box):
         self.session_id = str(id(self))  # Unique ID for this session
         self._is_quitting = False  # Flag to suppress signal handlers during quit
         self.last_error_message = None  # Store last SSH error for reporting
+        self._fallback_timer_id = None  # GLib timeout ID for spawn fallback
         
         # Register with process manager
         process_manager.register_terminal(self)
@@ -867,10 +868,10 @@ class TerminalWidget(Gtk.Box):
             
             # Focus the terminal
             self.vte.grab_focus()
-            
+
             # Add fallback timer to hide spinner if spawn completion doesn't fire
-            GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
-            
+            self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
+
             logger.info(f"SSH terminal connected to {self.connection}")
             
         except Exception as e:
@@ -921,7 +922,15 @@ class TerminalWidget(Gtk.Box):
         if getattr(self, '_is_quitting', False):
             logger.debug("Terminal is quitting, skipping spawn complete handler")
             return
-            
+
+        # Cancel fallback timer if it's still pending
+        if getattr(self, '_fallback_timer_id', None):
+            try:
+                GLib.source_remove(self._fallback_timer_id)
+            except Exception:
+                pass
+            self._fallback_timer_id = None
+
         logger.debug(f"Flatpak debug: _on_spawn_complete called with pid={pid}, error={error}, user_data={user_data}")
         
         if error:
@@ -986,12 +995,21 @@ class TerminalWidget(Gtk.Box):
     
     def _fallback_hide_spinner(self):
         """Fallback method to hide spinner if spawn completion doesn't fire"""
+        # Clear stored timer ID
+        self._fallback_timer_id = None
+
         # Skip if terminal is quitting
         if getattr(self, '_is_quitting', False):
             logger.debug("Terminal is quitting, skipping fallback hide spinner")
             return False
-            
+
         logger.debug("Flatpak debug: Fallback hide spinner called")
+
+        # If a connection error was recorded, skip forcing a connected state
+        if self.last_error_message:
+            logger.debug("Fallback timer triggered after connection failure; ignoring")
+            return False
+
         if not self.is_connected:
             logger.warning("Flatpak: Spawn completion callback didn't fire, forcing connection state")
             self.is_connected = True
@@ -1015,30 +1033,7 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 pass
         return False  # Don't repeat the timer
-    
-    def _on_connection_failed(self, error_message):
-        """Handle connection failure (called from main thread)"""
-        logger.error(f"Connection failed: {error_message}")
-
-        # Ensure theme is applied so background remains consistent
-        try:
-            self.apply_theme()
-        except Exception:
-            pass
-
-        # Show raw error in terminal
-        try:
-            self.vte.feed(f"\r\n\x1b[31m{error_message}\x1b[0m\r\n".encode('utf-8'))
-        except Exception as e:
-            logger.error(f"Error displaying connection error: {e}")
-
-        self.is_connected = False
-        self.last_error_message = error_message
-        self.emit('connection-failed', error_message)
-        self._set_connecting_overlay_visible(False)
-        self._set_disconnected_banner_visible(True, error_message)
-
-    
+        
 
     def _show_forwarding_error_dialog(self, message):
         try:
@@ -1274,10 +1269,10 @@ class TerminalWidget(Gtk.Box):
                 self._on_spawn_complete,
                 ()
             )
-            
+
             # Add fallback timer to hide spinner if spawn completion doesn't fire
-            GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
-            
+            self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
+
             logger.info("Local shell terminal setup initiated")
             
         except Exception as e:
@@ -1748,6 +1743,14 @@ class TerminalWidget(Gtk.Box):
     def _on_connection_failed(self, error_message):
         """Handle connection failure (called from main thread)"""
         logger.error(f"Connection failed: {error_message}")
+
+        # Cancel any pending fallback timer so we don't mark connection as successful
+        if getattr(self, '_fallback_timer_id', None):
+            try:
+                GLib.source_remove(self._fallback_timer_id)
+            except Exception:
+                pass
+            self._fallback_timer_id = None
 
         try:
             # Show raw error in terminal
