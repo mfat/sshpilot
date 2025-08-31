@@ -7,6 +7,7 @@ Main application entry point
 import sys
 import os
 import logging
+import argparse
 from logging.handlers import RotatingFileHandler
 
 import gi
@@ -18,7 +19,7 @@ from gi.repository import Adw, Gtk, Gio, GLib
 
 # Register resources before importing any UI modules
 def load_resources():
-    # Simplified lookup: prefer installed site-packages path, with one system fallback.
+    """Load UI resources from known locations."""
     current_dir = os.path.dirname(os.path.abspath(__file__))
     possible_paths = [
         os.path.join(current_dir, 'resources', 'sshpilot.gresource'),
@@ -30,11 +31,11 @@ def load_resources():
             try:
                 resource = Gio.Resource.load(path)
                 Gio.resources_register(resource)
-                print(f"Loaded resources from: {path}")
+                logging.getLogger(__name__).debug("Loaded resources from: %s", path)
                 return True
             except GLib.Error as e:
-                print(f"Failed to load resources from {path}: {e}")
-    print("ERROR: Could not load GResource bundle")
+                logging.getLogger(__name__).error("Failed to load resources from %s: %s", path, e)
+    logging.getLogger(__name__).error("Could not load GResource bundle")
     return False
 
 if not load_resources():
@@ -44,13 +45,16 @@ from .window import MainWindow
 
 class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
-    
-    def __init__(self):
+
+    def __init__(self, verbose: bool = False):
         super().__init__(
             application_id='io.github.mfat.sshpilot',
             flags=Gio.ApplicationFlags.FLAGS_NONE
         )
-        
+
+        # Command line verbosity override
+        self.verbose_override = verbose
+
         # Set up logging
         self.setup_logging()
         
@@ -140,19 +144,15 @@ class SshPilotApplication(Adw.Application):
         # Create log directory if it doesn't exist
         log_dir = os.path.expanduser('~/.local/share/sshPilot')
         os.makedirs(log_dir, exist_ok=True)
-        
-        # Set log level to DEBUG to capture all messages
-        log_level = logging.DEBUG
-        
-        # Create a more detailed formatter
+
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
-        
+
         # Clear any existing handlers
         logging.getLogger().handlers.clear()
-        
+
         # File handler with rotation
         file_handler = RotatingFileHandler(
             os.path.join(log_dir, 'sshpilot.log'),
@@ -160,33 +160,38 @@ class SshPilotApplication(Adw.Application):
             backupCount=5,
             encoding='utf-8'
         )
-        file_handler.setLevel(log_level)
         file_handler.setFormatter(formatter)
-        
+
         # Console handler
         console_handler = logging.StreamHandler()
-        console_handler.setLevel(log_level)
         console_handler.setFormatter(formatter)
-        
+
         # Add handlers to root logger
         root_logger = logging.getLogger()
-        root_logger.setLevel(log_level)
         root_logger.addHandler(file_handler)
         root_logger.addHandler(console_handler)
-        
-        # Set specific log levels for noisy modules, but allow runtime override via config
+
+        # Determine verbosity via config or command line
         try:
             from .config import Config
             cfg = Config()
             verbose = bool(cfg.get_setting('ssh.debug_enabled', False))
         except Exception:
             verbose = False
-        logging.getLogger('asyncio').setLevel(logging.DEBUG if verbose else logging.INFO)
+        if getattr(self, 'verbose_override', False):
+            verbose = True
+
+        # Default to warnings unless verbose debugging is requested
+        effective_level = logging.DEBUG if verbose else logging.WARNING
+        file_handler.setLevel(effective_level)
+        console_handler.setLevel(effective_level)
+        root_logger.setLevel(effective_level)
+
+        logging.getLogger('asyncio').setLevel(logging.DEBUG if verbose else logging.WARNING)
         logging.getLogger('gi').setLevel(logging.INFO if verbose else logging.WARNING)
         logging.getLogger('PIL').setLevel(logging.INFO if verbose else logging.WARNING)
-        
-        # App module logging: DEBUG if debug_enabled, else INFO
-        app_level = logging.DEBUG if verbose else logging.INFO
+
+        app_level = logging.DEBUG if verbose else logging.WARNING
         logging.getLogger('sshpilot').setLevel(app_level)
         logging.getLogger(__name__).setLevel(app_level)
 
@@ -305,7 +310,10 @@ class SshPilotApplication(Adw.Application):
 
 def main():
     """Main entry point"""
-    app = SshPilotApplication()
+    parser = argparse.ArgumentParser(description="sshPilot SSH connection manager")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose debug logging")
+    args = parser.parse_args()
+    app = SshPilotApplication(verbose=args.verbose)
     return app.run(None)  # Pass None to use default command line arguments
 
 if __name__ == '__main__':
