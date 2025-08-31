@@ -2503,8 +2503,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password']
                 logger.debug("Main window: Added password authentication options - PubkeyAuthentication=no, PreferredAuthentications=password")
             elif combined_auth:
-                argv += ['-o', 'PreferredAuthentications=publickey,password']
-                logger.debug("Main window: Added combined authentication options - PreferredAuthentications=publickey,password")
+                argv += [
+                    '-o',
+                    'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
+                ]
+                logger.debug(
+                    "Main window: Added combined authentication options - "
+                    "PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password"
+                )
         
         # Target
         target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
@@ -2857,7 +2863,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if prefer_password:
                 argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password']
             else:
-                argv += ['-o', 'PreferredAuthentications=publickey,password']
+                argv += [
+                    '-o',
+                    'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
+                ]
             
             # Try to get saved password
             try:

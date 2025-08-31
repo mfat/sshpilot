@@ -34,7 +34,10 @@ def run_ssh_with_password(host: str, user: str, password: str, *,
 
     ssh_opts = []
     if use_publickey:
-        ssh_opts += ["-o", "PreferredAuthentications=publickey,password"]
+        ssh_opts += [
+            "-o",
+            "PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password",
+        ]
     else:
         ssh_opts += ["-o", "PreferredAuthentications=password",
                      "-o", "PubkeyAuthentication=no"]
@@ -118,7 +121,10 @@ def run_scp_with_password(host: str, user: str, password: str,
 
     ssh_opts = []
     if use_publickey:
-        ssh_opts += ["-o", "PreferredAuthentications=publickey,password"]
+        ssh_opts += [
+            "-o",
+            "PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password",
+        ]
     else:
         ssh_opts += ["-o", "PreferredAuthentications=password",
                      "-o", "PubkeyAuthentication=no"]

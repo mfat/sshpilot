@@ -1038,7 +1038,9 @@ class ConnectionDialog(Adw.Window):
                         config_lines.append(f"    CertificateFile {certificate_val}")
                 # Add combined authentication if a password is provided
                 if password_val:
-                    config_lines.append("    PreferredAuthentications publickey,password")
+                    config_lines.append(
+                        "    PreferredAuthentications gssapi-with-mic,hostbased,publickey,keyboard-interactive,password"
+                    )
                 # For automatic key selection, don't add IdentityFile
             else:  # Password auth only
                 config_lines.append("    PreferredAuthentications password")
