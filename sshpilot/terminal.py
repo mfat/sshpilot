@@ -461,96 +461,61 @@ class TerminalWidget(Gtk.Box):
     def _setup_ssh_terminal(self):
         """Set up terminal with direct SSH command (called from main thread)"""
         try:
-            # Check if raw SSH config is enabled
-            use_raw_sshconfig = getattr(self.connection, 'use_raw_sshconfig', False)
-            
-            if use_raw_sshconfig:
-                # Use raw SSH config - just the host alias (connection nickname)
-                ssh_cmd = ['ssh']
-                
-                # Apply verbosity settings even in raw mode
-                try:
-                    ssh_cfg = self.config.get_ssh_config() if hasattr(self.config, 'get_ssh_config') else {}
-                    verbosity = int(ssh_cfg.get('verbosity', 0))
-                    debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
-                    v = max(0, min(3, verbosity))
-                    for _ in range(v):
-                        ssh_cmd.append('-v')
-                    # Map verbosity to LogLevel to ensure messages are not suppressed by defaults
-                    if v == 1:
-                        ssh_cmd.extend(['-o', 'LogLevel=VERBOSE'])
-                    elif v == 2:
-                        ssh_cmd.extend(['-o', 'LogLevel=DEBUG2'])
-                    elif v >= 3:
-                        ssh_cmd.extend(['-o', 'LogLevel=DEBUG3'])
-                    elif debug_enabled:
-                        ssh_cmd.extend(['-o', 'LogLevel=DEBUG'])
-                    if v > 0 or debug_enabled:
-                        logger.debug(f"Raw SSH config verbosity configured: -v x {v}, LogLevel set")
-                except Exception as e:
-                    logger.warning(f"Could not check SSH verbosity/debug settings in raw mode: {e}")
-                
-                # Add the host alias
-                ssh_cmd.append(self.connection.nickname)
-                logger.debug(f"Using raw SSH config with host alias: {self.connection.nickname}")
-                # Don't return here - continue to spawn the process
-            else:
-                # Build SSH command (existing logic)
-                ssh_cmd = ['ssh']
+            ssh_cmd = ['ssh']
 
-                # Read SSH behavior from config with sane defaults
-                try:
-                    ssh_cfg = self.config.get_ssh_config() if hasattr(self.config, 'get_ssh_config') else {}
-                except Exception:
-                    ssh_cfg = {}
-                apply_adv = bool(ssh_cfg.get('apply_advanced', False))
-                connect_timeout = int(ssh_cfg.get('connection_timeout', 10)) if apply_adv else None
-                connection_attempts = int(ssh_cfg.get('connection_attempts', 1)) if apply_adv else None
-                keepalive_interval = int(ssh_cfg.get('keepalive_interval', 30)) if apply_adv else None
-                keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3)) if apply_adv else None
-                strict_host = str(ssh_cfg.get('strict_host_key_checking', '')) if apply_adv else ''
-                auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
-                batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
-                compression = bool(ssh_cfg.get('compression', True)) if apply_adv else False
+            # Read SSH behavior from config with sane defaults
+            try:
+                ssh_cfg = self.config.get_ssh_config() if hasattr(self.config, 'get_ssh_config') else {}
+            except Exception:
+                ssh_cfg = {}
+            apply_adv = bool(ssh_cfg.get('apply_advanced', False))
+            connect_timeout = int(ssh_cfg.get('connection_timeout', 10)) if apply_adv else None
+            connection_attempts = int(ssh_cfg.get('connection_attempts', 1)) if apply_adv else None
+            keepalive_interval = int(ssh_cfg.get('keepalive_interval', 30)) if apply_adv else None
+            keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3)) if apply_adv else None
+            strict_host = str(ssh_cfg.get('strict_host_key_checking', '')) if apply_adv else ''
+            auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
+            batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
+            compression = bool(ssh_cfg.get('compression', True)) if apply_adv else False
 
-                # Determine auth method from connection
+            # Determine auth method from connection
+            password_auth_selected = False
+            try:
+                # In our UI: 0 = key-based, 1 = password
+                password_auth_selected = (getattr(self.connection, 'auth_method', 0) == 1)
+            except Exception:
                 password_auth_selected = False
+
+            # Check if we have a saved password for password authentication
+            has_saved_password = False
+            password_value = None
+            if password_auth_selected:
                 try:
-                    # In our UI: 0 = key-based, 1 = password
-                    password_auth_selected = (getattr(self.connection, 'auth_method', 0) == 1)
+                    # Try to fetch without storing in argv
+                    password_value = getattr(self.connection, 'password', None)
+                    if (not password_value) and hasattr(self, 'connection_manager') and self.connection_manager:
+                        password_value = self.connection_manager.get_password(self.connection.host, self.connection.username)
+                    has_saved_password = bool(password_value)
                 except Exception:
-                    password_auth_selected = False
+                    has_saved_password = False
 
-                # Check if we have a saved password for password authentication
-                has_saved_password = False
-                password_value = None
-                if password_auth_selected:
-                    try:
-                        # Try to fetch without storing in argv
-                        password_value = getattr(self.connection, 'password', None)
-                        if (not password_value) and hasattr(self, 'connection_manager') and self.connection_manager:
-                            password_value = self.connection_manager.get_password(self.connection.host, self.connection.username)
-                        has_saved_password = bool(password_value)
-                    except Exception:
-                        has_saved_password = False
-
-                # Apply advanced args only when user explicitly enabled them
-                if apply_adv:
-                    # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
-                    if batch_mode and not password_auth_selected:
-                        ssh_cmd.extend(['-o', 'BatchMode=yes'])
-                    if connect_timeout is not None:
-                        ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
-                    if connection_attempts is not None:
-                        ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
-                    if keepalive_interval is not None:
-                        ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
-                    if keepalive_count is not None:
-                        ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
-                    if strict_host:
-                        ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
-                    if compression:
-                        ssh_cmd.append('-C')
+            # Apply advanced args only when user explicitly enabled them
+            if apply_adv:
+                # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
+                if batch_mode and not password_auth_selected:
+                    ssh_cmd.extend(['-o', 'BatchMode=yes'])
+                if connect_timeout is not None:
+                    ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
+                if connection_attempts is not None:
+                    ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+                if keepalive_interval is not None:
+                    ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
+                if keepalive_count is not None:
+                    ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
+                if strict_host:
+                    ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
+                if compression:
+                    ssh_cmd.append('-C')
 
                 # Apply auto-add host keys policy even when advanced block is off, unless user explicitly set a policy
                 try:
@@ -775,17 +740,16 @@ class TerminalWidget(Gtk.Box):
                 except Exception:
                     logger.debug("Prepared SSH command")
                 
-                # End of SSH command building for non-raw mode
-            
+                # End of SSH command building
+
             # Start the SSH process using VTE's spawn_async with our PTY
             logger.debug(f"Flatpak debug: About to spawn SSH with command: {ssh_cmd}")
-            
+
             # Handle password authentication with sshpass if available
             env = os.environ.copy()
             logger.debug(f"Initial environment SSH_ASKPASS: {env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE: {env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
-            
-            # For raw SSH config mode, we don't need password handling since SSH config handles it
-            if not use_raw_sshconfig and password_auth_selected and has_saved_password and password_value:
+
+            if password_auth_selected and has_saved_password and password_value:
                 # Use sshpass for password authentication
                 import shutil
                 sshpass_path = None
@@ -831,11 +795,11 @@ class TerminalWidget(Gtk.Box):
                     ensure_askpass_script()
                     askpass_env = get_ssh_env_with_askpass_for_password(self.connection.host, self.connection.username)
                     env.update(askpass_env)
-            elif not use_raw_sshconfig and password_auth_selected and not has_saved_password:
+            elif password_auth_selected and not has_saved_password:
                 # Password auth selected but no saved password - let SSH prompt interactively
                 # Don't set any askpass environment variables
                 logger.debug("Password auth selected but no saved password - using interactive prompt")
-            elif not use_raw_sshconfig:
+            else:
                 # Use askpass for passphrase prompts (key-based auth)
                 from .askpass_utils import get_ssh_env_with_askpass
                 askpass_env = get_ssh_env_with_askpass()

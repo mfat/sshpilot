@@ -19,12 +19,6 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
         config: Optional config object
         for_ssh_copy_id: If True, filter out options not supported by ssh-copy-id
     """
-    # Check if raw SSH config is enabled
-    if getattr(connection, 'use_raw_sshconfig', False):
-        # Return empty options - raw SSH config will handle everything
-        logger.debug(f"Raw SSH config enabled for {connection.nickname}, returning empty options")
-        return []
-    
     options = []
     
     # Read SSH behavior from config with sane defaults (same as terminal.py)
