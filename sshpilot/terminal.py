@@ -517,133 +517,126 @@ class TerminalWidget(Gtk.Box):
                 if compression:
                     ssh_cmd.append('-C')
 
-                # Apply auto-add host keys policy even when advanced block is off, unless user explicitly set a policy
+            # Default to accepting new host keys non-interactively on fresh installs
+            try:
+                if (not strict_host) and auto_add_host_keys:
+                    ssh_cmd.extend(['-o', 'StrictHostKeyChecking=accept-new'])
+            except Exception:
+                pass
+
+            # Ensure SSH exits immediately on failure rather than waiting in background
+            ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
+
+            # Only add verbose flag if explicitly enabled in config
+            try:
+                ssh_cfg = self.config.get_ssh_config() if hasattr(self.config, 'get_ssh_config') else {}
+                verbosity = int(ssh_cfg.get('verbosity', 0))
+                debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
+                v = max(0, min(3, verbosity))
+                for _ in range(v):
+                    ssh_cmd.append('-v')
+                # Map verbosity to LogLevel to ensure messages are not suppressed by defaults
+                if v == 1:
+                    ssh_cmd.extend(['-o', 'LogLevel=VERBOSE'])
+                elif v == 2:
+                    ssh_cmd.extend(['-o', 'LogLevel=DEBUG2'])
+                elif v >= 3:
+                    ssh_cmd.extend(['-o', 'LogLevel=DEBUG3'])
+                elif debug_enabled:
+                    ssh_cmd.extend(['-o', 'LogLevel=DEBUG'])
+                if v > 0 or debug_enabled:
+                    logger.debug("SSH verbosity configured: -v x %d, LogLevel set", v)
+            except Exception as e:
+                logger.warning(f"Could not check SSH verbosity/debug settings: {e}")
+                # Default to non-verbose on error
+
+            # Add key file/options only for key-based auth
+            if not password_auth_selected:
+                # Get key selection mode
+                key_select_mode = 0
                 try:
-                    if (not strict_host) and auto_add_host_keys:
-                        ssh_cmd.extend(['-o', 'StrictHostKeyChecking=accept-new'])
+                    key_select_mode = int(getattr(self.connection, 'key_select_mode', 0) or 0)
                 except Exception:
                     pass
 
-                # Ensure SSH exits immediately on failure rather than waiting in background
-                ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
-                
-                # Default to accepting new host keys non-interactively on fresh installs
-                try:
-                    if (not strict_host) and auto_add_host_keys:
-                        ssh_cmd.extend(['-o', 'StrictHostKeyChecking=accept-new'])
-                except Exception:
-                    pass
-                
-                # Only add verbose flag if explicitly enabled in config
-                try:
-                    ssh_cfg = self.config.get_ssh_config() if hasattr(self.config, 'get_ssh_config') else {}
-                    verbosity = int(ssh_cfg.get('verbosity', 0))
-                    debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
-                    v = max(0, min(3, verbosity))
-                    for _ in range(v):
-                        ssh_cmd.append('-v')
-                    # Map verbosity to LogLevel to ensure messages are not suppressed by defaults
-                    if v == 1:
-                        ssh_cmd.extend(['-o', 'LogLevel=VERBOSE'])
-                    elif v == 2:
-                        ssh_cmd.extend(['-o', 'LogLevel=DEBUG2'])
-                    elif v >= 3:
-                        ssh_cmd.extend(['-o', 'LogLevel=DEBUG3'])
-                    elif debug_enabled:
-                        ssh_cmd.extend(['-o', 'LogLevel=DEBUG'])
-                    if v > 0 or debug_enabled:
-                        logger.debug("SSH verbosity configured: -v x %d, LogLevel set", v)
-                except Exception as e:
-                    logger.warning(f"Could not check SSH verbosity/debug settings: {e}")
-                    # Default to non-verbose on error
-                
-                # Add key file/options only for key-based auth
-                if not password_auth_selected:
-                    # Get key selection mode
-                    key_select_mode = 0
-                    try:
-                        key_select_mode = int(getattr(self.connection, 'key_select_mode', 0) or 0)
-                    except Exception:
-                        pass
-                    
-                    # Only add specific key if key_select_mode == 1 (specific key)
-                    if key_select_mode == 1 and hasattr(self.connection, 'keyfile') and self.connection.keyfile and \
-                       os.path.isfile(self.connection.keyfile) and \
-                       not self.connection.keyfile.startswith('Select key file'):
-                        
-                        # Prepare key for connection (add to ssh-agent if needed)
-                        if hasattr(self, 'connection_manager') and self.connection_manager:
-                            try:
-                                if hasattr(self.connection_manager, 'prepare_key_for_connection'):
-                                    key_prepared = self.connection_manager.prepare_key_for_connection(self.connection.keyfile)
-                                    if key_prepared:
-                                        logger.debug(f"Key prepared for connection: {self.connection.keyfile}")
-                                    else:
-                                        logger.warning(f"Failed to prepare key for connection: {self.connection.keyfile}")
-                            except Exception as e:
-                                logger.warning(f"Error preparing key for connection: {e}")
-                        
-                        ssh_cmd.extend(['-i', self.connection.keyfile])
-                        logger.debug(f"Using SSH key: {self.connection.keyfile}")
-                        ssh_cmd.extend(['-o', 'IdentitiesOnly=yes'])
-                        
-                        # Add certificate if specified
-                        if hasattr(self.connection, 'certificate') and self.connection.certificate and \
-                           os.path.isfile(self.connection.certificate):
-                            ssh_cmd.extend(['-o', f'CertificateFile={self.connection.certificate}'])
-                            logger.debug(f"Using SSH certificate: {self.connection.certificate}")
-                    else:
-                        logger.debug("Using default SSH key selection (key_select_mode=0 or no valid key specified)")
+                # Only add specific key if key_select_mode == 1 (specific key)
+                if key_select_mode == 1 and hasattr(self.connection, 'keyfile') and self.connection.keyfile and \
+                   os.path.isfile(self.connection.keyfile) and \
+                   not self.connection.keyfile.startswith('Select key file'):
+
+                    # Prepare key for connection (add to ssh-agent if needed)
+                    if hasattr(self, 'connection_manager') and self.connection_manager:
+                        try:
+                            if hasattr(self.connection_manager, 'prepare_key_for_connection'):
+                                key_prepared = self.connection_manager.prepare_key_for_connection(self.connection.keyfile)
+                                if key_prepared:
+                                    logger.debug(f"Key prepared for connection: {self.connection.keyfile}")
+                                else:
+                                    logger.warning(f"Failed to prepare key for connection: {self.connection.keyfile}")
+                        except Exception as e:
+                            logger.warning(f"Error preparing key for connection: {e}")
+
+                    ssh_cmd.extend(['-i', self.connection.keyfile])
+                    logger.debug(f"Using SSH key: {self.connection.keyfile}")
+                    ssh_cmd.extend(['-o', 'IdentitiesOnly=yes'])
+
+                    # Add certificate if specified
+                    if hasattr(self.connection, 'certificate') and self.connection.certificate and \
+                       os.path.isfile(self.connection.certificate):
+                        ssh_cmd.extend(['-o', f'CertificateFile={self.connection.certificate}'])
+                        logger.debug(f"Using SSH certificate: {self.connection.certificate}")
                 else:
-                    # Force password authentication when user chose password auth
-                    ssh_cmd.extend(['-o', 'PreferredAuthentications=password'])
-                    ssh_cmd.extend(['-o', 'PubkeyAuthentication=no'])
-            
-                # Add X11 forwarding if enabled
-                if hasattr(self.connection, 'x11_forwarding') and self.connection.x11_forwarding:
-                    ssh_cmd.append('-X')
-                
-                # Prepare command-related options (must appear before host)
+                    logger.debug("Using default SSH key selection (key_select_mode=0 or no valid key specified)")
+            else:
+                # Force password authentication when user chose password auth
+                ssh_cmd.extend(['-o', 'PreferredAuthentications=password'])
+                ssh_cmd.extend(['-o', 'PubkeyAuthentication=no'])
+
+            # Add X11 forwarding if enabled
+            if hasattr(self.connection, 'x11_forwarding') and self.connection.x11_forwarding:
+                ssh_cmd.append('-X')
+
+            # Prepare command-related options (must appear before host)
+            remote_cmd = ''
+            local_cmd = ''
+            try:
+                if hasattr(self.connection, 'remote_command'):
+                    remote_cmd = (self.connection.remote_command or '').strip()
+                if not remote_cmd and hasattr(self.connection, 'data'):
+                    remote_cmd = (self.connection.data.get('remote_command') or '').strip()
+            except Exception:
                 remote_cmd = ''
+            try:
+                if hasattr(self.connection, 'local_command'):
+                    local_cmd = (self.connection.local_command or '').strip()
+                if not local_cmd and hasattr(self.connection, 'data'):
+                    local_cmd = (self.connection.data.get('local_command') or '').strip()
+            except Exception:
                 local_cmd = ''
-                try:
-                    if hasattr(self.connection, 'remote_command'):
-                        remote_cmd = (self.connection.remote_command or '').strip()
-                    if not remote_cmd and hasattr(self.connection, 'data'):
-                        remote_cmd = (self.connection.data.get('remote_command') or '').strip()
-                except Exception:
-                    remote_cmd = ''
-                try:
-                    if hasattr(self.connection, 'local_command'):
-                        local_cmd = (self.connection.local_command or '').strip()
-                    if not local_cmd and hasattr(self.connection, 'data'):
-                        local_cmd = (self.connection.data.get('local_command') or '').strip()
-                except Exception:
-                    local_cmd = ''
 
-                # If remote command is specified, request a TTY (twice for force allocation)
-                if remote_cmd:
-                    ssh_cmd.extend(['-t', '-t'])
+            # If remote command is specified, request a TTY (twice for force allocation)
+            if remote_cmd:
+                ssh_cmd.extend(['-t', '-t'])
 
-                # If local command specified, allow and set it via options
-                if local_cmd:
-                    ssh_cmd.extend(['-o', 'PermitLocalCommand=yes'])
-                    # Pass exactly as user provided, letting ssh parse quoting
-                    ssh_cmd.extend(['-o', f'LocalCommand={local_cmd}'])
+            # If local command specified, allow and set it via options
+            if local_cmd:
+                ssh_cmd.extend(['-o', 'PermitLocalCommand=yes'])
+                # Pass exactly as user provided, letting ssh parse quoting
+                ssh_cmd.extend(['-o', f'LocalCommand={local_cmd}'])
 
-                # Add port forwarding rules with conflict checking
-                if hasattr(self.connection, 'forwarding_rules'):
-                    port_conflicts = []
-                    port_checker = get_port_checker()
-                    
-                    # Check for port conflicts before adding rules
-                    for rule in self.connection.forwarding_rules:
-                        if not rule.get('enabled', True):
-                            continue
-                            
-                        rule_type = rule.get('type')
-                        listen_addr = rule.get('listen_addr', '127.0.0.1')
-                        listen_port = rule.get('listen_port')
+            # Add port forwarding rules with conflict checking
+            if hasattr(self.connection, 'forwarding_rules'):
+                port_conflicts = []
+                port_checker = get_port_checker()
+
+                # Check for port conflicts before adding rules
+                for rule in self.connection.forwarding_rules:
+                    if not rule.get('enabled', True):
+                        continue
+
+                    rule_type = rule.get('type')
+                    listen_addr = rule.get('listen_addr', '127.0.0.1')
+                    listen_port = rule.get('listen_port')
                         
                         # Check for local port conflicts (for local and dynamic forwarding)
                         if rule_type in ['local', 'dynamic'] and listen_port:
