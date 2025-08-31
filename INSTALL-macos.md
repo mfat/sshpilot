@@ -15,7 +15,6 @@ Use the launcher script for automatic setup:
 ```bash
 git clone https://github.com/mfat/sshpilot.git
 cd sshpilot
-git checkout mac
 chmod +x sshpilot-mac.sh
 ./sshpilot-mac.sh
 ```
@@ -46,7 +45,6 @@ brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwa
 ```bash
 git clone https://github.com/mfat/sshpilot.git
 cd sshpilot
-git checkout mac
 pip3 install -r requirements.txt
 ```
 
@@ -78,7 +76,6 @@ brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwa
 ```bash
 git clone https://github.com/mfat/sshpilot.git
 cd sshpilot
-git checkout mac
 ```
 
 **Step 4: Create and activate virtual environment**
@@ -118,7 +115,6 @@ python run.py
 ```bash
 # Option A (system-wide)
 cd sshpilot
-git checkout mac  # Ensure you're on the mac branch
 export PATH="$(brew --prefix)/bin:$PATH"
 export GI_TYPELIB_PATH="$(brew --prefix)/lib/girepository-1.0"
 export DYLD_LIBRARY_PATH="$(brew --prefix)/lib:$DYLD_LIBRARY_PATH"
@@ -126,7 +122,6 @@ python3 run.py
 
 # Option B (virtual environment)
 cd sshpilot
-git checkout mac  # Ensure you're on the mac branch
 source .venv/bin/activate
 export PATH="$(brew --prefix)/bin:$PATH"
 export GI_TYPELIB_PATH="$(brew --prefix)/lib/girepository-1.0"
