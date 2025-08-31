@@ -1583,9 +1583,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             APP_VERSION = "0.0.0"
         about.set_version(APP_VERSION)
         about.set_comments('SSH connection manager with integrated terminal')
-        about.set_website('https://github.com/mfat/sshpilot')
+        about.set_website('https://sshpilot.app')
         # Gtk.AboutDialog in GTK4 has no set_issue_url; include issue link in website label
-        about.set_website_label('Project homepage')
+        about.set_website_label('sshPilot Website')
         about.set_license_type(Gtk.License.GPL_3_0)
         about.set_authors(['mFat <newmfat@gmail.com>'])
         
