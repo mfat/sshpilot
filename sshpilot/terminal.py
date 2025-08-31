@@ -942,7 +942,7 @@ class TerminalWidget(Gtk.Box):
                 pass
             self._on_connection_failed(str(error))
             return
-            
+
         logger.debug(f"Terminal spawned with PID: {pid}")
         self.process_pid = pid
         

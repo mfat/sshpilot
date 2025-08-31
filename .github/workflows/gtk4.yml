@@ -1,0 +1,332 @@
+name: GTK4 Multi-Platform Build
+
+on:
+  push:
+    branches: [ "mac" ]
+  pull_request:
+    branches: [ "mac" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-13, windows-latest]  # macos-13 for Intel x86_64 compatibility
+        include:
+          - os: ubuntu-latest
+            platform: Linux
+            artifact_name: sshpilot-linux
+          - os: macos-13
+            platform: macOS
+            artifact_name: sshpilot-macos-intel
+          - os: windows-latest
+            platform: Windows
+            artifact_name: sshpilot-windows
+
+    runs-on: ${{ matrix.os }}
+    name: Build on ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: mac
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      # Linux GTK4 setup
+      - name: Install GTK4 dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libvte-2.91-gtk4-dev \
+            gobject-introspection \
+            libgirepository1.0-dev \
+            python3-gi \
+            python3-gi-cairo \
+            gir1.2-gtk-4.0 \
+            gir1.2-adw-1 \
+            gir1.2-vte-3.91 \
+            sshpass \
+            pkg-config
+
+      # macOS GTK4 setup
+      - name: Install GTK4 dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install \
+            gtk4 \
+            libadwaita \
+            vte3 \
+            pygobject3 \
+            py3cairo \
+            gobject-introspection \
+            adwaita-icon-theme \
+            pkg-config \
+            glib \
+            graphene \
+            icu4c \
+            sshpass
+          
+          # Set up environment for PyGObject
+          echo "PKG_CONFIG_PATH=$(brew --prefix)/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+          echo "GI_TYPELIB_PATH=$(brew --prefix)/lib/girepository-1.0" >> $GITHUB_ENV
+          echo "DYLD_LIBRARY_PATH=$(brew --prefix)/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
+
+      # Windows GTK4 setup
+      - name: Install GTK4 dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          # Install MSYS2 and GTK4
+          choco install msys2 -y
+          $env:PATH = "C:\tools\msys64\usr\bin;$env:PATH"
+          
+          # Update MSYS2 and install GTK4
+          C:\tools\msys64\usr\bin\bash.exe -lc "pacman -Syu --noconfirm"
+          C:\tools\msys64\usr\bin\bash.exe -lc "pacman -S --noconfirm mingw-w64-x86_64-gtk4 mingw-w64-x86_64-libadwaita mingw-w64-x86_64-python mingw-w64-x86_64-python-gobject mingw-w64-x86_64-vte3"
+          
+          # Set environment variables
+          echo "PKG_CONFIG_PATH=C:\tools\msys64\mingw64\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "GI_TYPELIB_PATH=C:\tools\msys64\mingw64\lib\girepository-1.0" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install paramiko cryptography keyring
+          
+          # Platform-specific PyGObject installation
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            # Use system PyGObject on Linux
+            echo "Using system PyGObject"
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            # Install secretstorage for macOS
+            pip install secretstorage || echo "secretstorage installation failed, will patch"
+          elif [ "${{ runner.os }}" = "Windows" ]; then
+            # Install PyGObject for Windows
+            pip install PyGObject
+          fi
+        shell: bash
+
+      - name: Patch secretstorage for macOS
+        if: runner.os == 'macOS'
+        run: |
+          if ! python -c "import secretstorage" >/dev/null 2>&1; then
+            if grep -q "^import secretstorage$" sshpilot/connection_manager.py 2>/dev/null; then
+              echo "Patching secretstorage import for macOS..."
+              python - <<'PY'
+          from pathlib import Path
+          p = Path('sshpilot/connection_manager.py')
+          if p.exists():
+              s = p.read_text()
+              s = s.replace('import secretstorage', 'try:\n    import secretstorage\nexcept Exception:\n    secretstorage = None')
+              p.write_text(s)
+              print('Patched', p)
+          PY
+            fi
+          fi
+
+      - name: Verify GTK4 installation
+        run: |
+          echo "=== Testing GTK4 Installation ==="
+          
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            pkg-config --modversion gtk4
+            python3 -c "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk; print('GTK4 version:', Gtk.get_major_version(), Gtk.get_minor_version())"
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$PKG_CONFIG_PATH"
+            export PYTHONPATH="$(brew --prefix)/lib/python3.12/site-packages:$PYTHONPATH"
+            pkg-config --modversion gtk4
+            python -c "import sys; sys.path.insert(0, '$(brew --prefix)/lib/python3.12/site-packages'); import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk; print('GTK4 version:', Gtk.get_major_version(), Gtk.get_minor_version())"
+          elif [ "${{ runner.os }}" = "Windows" ]; then
+            echo "Windows GTK4 verification"
+            python -c "import gi; gi.require_version('Gtk', '4.0'); from gi.repository import Gtk; print('GTK4 version:', Gtk.get_major_version(), Gtk.get_minor_version())" || echo "GTK4 verification failed on Windows"
+          fi
+        shell: bash
+
+      - name: Test application import
+        run: |
+          echo "=== Testing Application Import ==="
+          
+          # Set up environment
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            export PYTHONPATH="$(brew --prefix)/lib/python3.12/site-packages:$PYTHONPATH"
+            export GI_TYPELIB_PATH="$(brew --prefix)/lib/girepository-1.0"
+            export DYLD_LIBRARY_PATH="$(brew --prefix)/lib:$DYLD_LIBRARY_PATH"
+          fi
+          
+          # Test application imports
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          try:
+              from sshpilot.main import main
+              print('✓ Application imports successful')
+          except ImportError as e:
+              print(f'✗ Application import failed: {e}')
+              sys.exit(1)
+          except Exception as e:
+              print(f'✗ Application error: {e}')
+              sys.exit(1)
+          "
+        shell: bash
+
+      - name: Create distribution package
+        run: |
+          echo "=== Creating Distribution Package ==="
+          
+          # Create platform-specific distribution
+          mkdir -p dist/${{ matrix.artifact_name }}
+          
+          # Copy application files
+          cp -r sshpilot dist/${{ matrix.artifact_name }}/
+          cp run.py dist/${{ matrix.artifact_name }}/
+          
+          # Create platform-specific launcher
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cat > dist/${{ matrix.artifact_name }}/sshpilot.bat << 'EOF'
+          @echo off
+          cd /d "%~dp0"
+          python run.py %*
+          EOF
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            cat > dist/${{ matrix.artifact_name }}/sshpilot.command << 'EOF'
+          #!/bin/bash
+          cd "$(dirname "$0")"
+          
+          # Set up macOS environment
+          export PYTHONPATH="$(brew --prefix)/lib/python3.12/site-packages:$PYTHONPATH"
+          export GI_TYPELIB_PATH="$(brew --prefix)/lib/girepository-1.0"
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib:$DYLD_LIBRARY_PATH"
+          
+          python3 run.py "$@"
+          EOF
+            chmod +x dist/${{ matrix.artifact_name }}/sshpilot.command
+          else
+            cat > dist/${{ matrix.artifact_name }}/sshpilot.sh << 'EOF'
+          #!/bin/bash
+          cd "$(dirname "$0")"
+          python3 run.py "$@"
+          EOF
+            chmod +x dist/${{ matrix.artifact_name }}/sshpilot.sh
+          fi
+          
+          # Create README with installation instructions
+          cat > dist/${{ matrix.artifact_name }}/README.md << EOF
+          # sshPilot for ${{ matrix.platform }}
+          
+          ## Prerequisites
+          
+          ### ${{ matrix.platform }} Requirements:
+          EOF
+          
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            cat >> dist/${{ matrix.artifact_name }}/README.md << 'EOF'
+          
+          Install GTK4 and dependencies:
+          ```bash
+          sudo apt-get install python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-vte-3.91 sshpass
+          ```
+          
+          ## Running
+          ```bash
+          ./sshpilot.sh
+          ```
+          EOF
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            cat >> dist/${{ matrix.artifact_name }}/README.md << 'EOF'
+          
+          Install GTK4 via Homebrew:
+          ```bash
+          brew install gtk4 libadwaita pygobject3 vte3 sshpass
+          ```
+          
+          ## Running
+          ```bash
+          ./sshpilot.command
+          ```
+          Or double-click the .command file in Finder.
+          EOF
+          elif [ "${{ runner.os }}" = "Windows" ]; then
+            cat >> dist/${{ matrix.artifact_name }}/README.md << 'EOF'
+          
+          Install MSYS2 and GTK4:
+          1. Install MSYS2 from https://www.msys2.org/
+          2. Run in MSYS2 terminal:
+          ```bash
+          pacman -S mingw-w64-x86_64-gtk4 mingw-w64-x86_64-libadwaita mingw-w64-x86_64-python mingw-w64-x86_64-python-gobject
+          ```
+          
+          ## Running
+          ```cmd
+          sshpilot.bat
+          ```
+          EOF
+          fi
+        shell: bash
+
+      - name: Create archive
+        run: |
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "${{ matrix.artifact_name }}-$(date +%Y%m%d).zip" "${{ matrix.artifact_name }}/"
+          else
+            tar -czf "${{ matrix.artifact_name }}-$(date +%Y%m%d).tar.gz" "${{ matrix.artifact_name }}/"
+          fi
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}-build
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          retention-days: 30
+
+  # Create a combined release with all platforms
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/mac'
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release summary
+        run: |
+          echo "# sshPilot GTK4 Multi-Platform Release" > release-info.md
+          echo "" >> release-info.md
+          echo "Built from commit: ${{ github.sha }}" >> release-info.md
+          echo "Build date: $(date)" >> release-info.md
+          echo "" >> release-info.md
+          echo "## Platforms:" >> release-info.md
+          echo "- **Linux**: Native GTK4 application" >> release-info.md
+          echo "- **macOS**: GTK4 with Homebrew dependencies" >> release-info.md  
+          echo "- **Windows**: GTK4 with MSYS2 dependencies" >> release-info.md
+          echo "" >> release-info.md
+          echo "## Installation:" >> release-info.md
+          echo "Each platform package includes a README.md with specific installation instructions." >> release-info.md
+          echo "" >> release-info.md
+          echo "This build uses the proven GTK4 workflow pattern from the [hello-world-gtk project](https://github.com/zevlee/hello-world-gtk/tree/main/.github/workflows)." >> release-info.md
+
+      - name: Upload combined release
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshpilot-gtk4-multiplatform
+          path: |
+            artifacts/**/*
+            release-info.md
+          retention-days: 90
