@@ -590,9 +590,12 @@ class TerminalWidget(Gtk.Box):
                 else:
                     logger.debug("Using default SSH key selection (key_select_mode=0 or no valid key specified)")
 
-                # If a password exists, allow publickey+password authentication
+                # If a password exists, allow all standard authentication methods
                 if has_saved_password:
-                    ssh_cmd.extend(['-o', 'PreferredAuthentications=publickey,password'])
+                    ssh_cmd.extend([
+                        '-o',
+                        'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
+                    ])
             else:
                 # Force password authentication when user chose password auth
                 ssh_cmd.extend(['-o', 'PreferredAuthentications=password'])

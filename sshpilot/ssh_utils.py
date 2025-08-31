@@ -126,13 +126,19 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
                os.path.isfile(connection.certificate):
                 options.extend(['-o', f'CertificateFile={connection.certificate}'])
 
-            # If a password is available, allow publickey+password authentication
+            # If a password is available, allow all standard authentication methods
             if has_saved_password:
-                options.extend(['-o', 'PreferredAuthentications=publickey,password'])
+                options.extend([
+                    '-o',
+                    'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
+                ])
         else:
             # If no specific key or certificate, still append combined auth if password exists
             if has_saved_password:
-                options.extend(['-o', 'PreferredAuthentications=publickey,password'])
+                options.extend([
+                    '-o',
+                    'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
+                ])
     else:
         # Force password authentication when user chose password auth (same as terminal.py)
         # But don't disable pubkey auth for ssh-copy-id since we're installing a key

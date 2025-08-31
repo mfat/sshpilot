@@ -1218,7 +1218,9 @@ class ConnectionManager(GObject.Object):
                     lines.append(f"    CertificateFile {certificate}")
             # Include password-based fallback if a password is provided
             if data.get('password'):
-                lines.append("    PreferredAuthentications publickey,password")
+                lines.append(
+                    "    PreferredAuthentications gssapi-with-mic,hostbased,publickey,keyboard-interactive,password"
+                )
         else:
             # Password-based authentication only
             lines.append("    PreferredAuthentications password")
