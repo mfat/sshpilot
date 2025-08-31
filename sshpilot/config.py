@@ -97,7 +97,7 @@ class Config(GObject.Object):
                 'window_height': 800,
                 'sidebar_width': 250,
             },
-            'connections_meta': {},  # per-connection metadata (e.g., auth_method)
+            'connections_meta': {},  # per-connection metadata
             'ssh': {
                 'connection_timeout': 30,
                 'keepalive_interval': 60,
@@ -429,7 +429,7 @@ class Config(GObject.Object):
         return {}
 
     def set_connection_meta(self, key: str, meta: Dict[str, Any]):
-        """Store metadata for a connection (e.g., {'auth_method': 1})."""
+        """Store metadata for a connection."""
         try:
             meta_all = self.get_setting('connections_meta', {})
             if not isinstance(meta_all, dict):

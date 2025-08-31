@@ -3950,18 +3950,7 @@ Host {host_nickname}
                                     # Reload the connection data in the dialog to reflect the updated nickname
                                     GLib.idle_add(self.parent_dialog.load_connection_data)
                                     
-                                    # Save connection metadata to ensure use_raw_sshconfig persists
-                                    if hasattr(self, 'parent_dialog') and self.parent_dialog and hasattr(self.parent_dialog, 'parent_window'):
-                                        try:
-                                            main_window = self.parent_dialog.parent_window
-                                            if hasattr(main_window, 'config') and hasattr(main_window.config, 'set_connection_meta'):
-                                                # Save the connection metadata
-                                                main_window.config.set_connection_meta(self.connection.nickname, {
-                                                    'auth_method': getattr(self.connection, 'auth_method', 0)
-                                                })
-                                                logger.debug(f"Saved connection metadata for '{self.connection.nickname}'")
-                                        except Exception as e:
-                                            logger.debug(f"Failed to save connection metadata: {e}")
+                                    # Legacy metadata persistence removed; authentication method now stored in SSH config
                                     
                                     if new_host_name and new_host_name != original_nickname:
                                         logger.debug(f"Refreshed connection dialog data after nickname change to '{new_host_name}'")

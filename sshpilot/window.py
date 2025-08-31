@@ -1583,9 +1583,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             APP_VERSION = "0.0.0"
         about.set_version(APP_VERSION)
         about.set_comments('SSH connection manager with integrated terminal')
-        about.set_website('https://github.com/mfat/sshpilot')
+        about.set_website('https://sshpilot.app')
         # Gtk.AboutDialog in GTK4 has no set_issue_url; include issue link in website label
-        about.set_website_label('Project homepage')
+        about.set_website_label('sshPilot Website')
         about.set_license_type(Gtk.License.GPL_3_0)
         about.set_authors(['mFat <newmfat@gmail.com>'])
         
@@ -2159,23 +2159,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.debug(f"Main window: Environment variables count: {len(env)}")
             
             # Determine auth method and check for saved password
-            prefer_password = False
             logger.debug("Main window: Determining authentication preferences")
             try:
-                cfg = Config()
-                meta = cfg.get_connection_meta(connection.nickname) if hasattr(cfg, 'get_connection_meta') else {}
-                logger.debug(f"Main window: Connection metadata: {meta}")
-                if isinstance(meta, dict) and 'auth_method' in meta:
-                    prefer_password = int(meta.get('auth_method', 0) or 0) == 1
-                    logger.debug(f"Main window: Auth method from metadata: {meta.get('auth_method')} -> prefer_password={prefer_password}")
-            except Exception as e:
-                logger.debug(f"Main window: Failed to get auth method from metadata: {e}")
-                try:
-                    prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
-                    logger.debug(f"Main window: Auth method from connection object: {getattr(connection, 'auth_method', 0)} -> prefer_password={prefer_password}")
-                except Exception as e2:
-                    logger.debug(f"Main window: Failed to get auth method from connection object: {e2}")
-                    prefer_password = False
+                prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
+                logger.debug(
+                    f"Main window: Auth method from connection object: {getattr(connection, 'auth_method', 0)} -> prefer_password={prefer_password}"
+                )
+            except Exception as e2:
+                logger.debug(f"Main window: Failed to get auth method from connection object: {e2}")
+                prefer_password = False
             
             has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username))
             logger.debug(f"Main window: Has saved password: {has_saved_password}")
@@ -2466,20 +2458,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         logger.debug(f"Main window: Connection keyfile: '{keyfile}'")
         
         try:
-            cfg = Config()
-            meta = cfg.get_connection_meta(connection.nickname) if hasattr(cfg, 'get_connection_meta') else {}
-            logger.debug(f"Main window: Connection metadata: {meta}")
-            if isinstance(meta, dict) and 'auth_method' in meta:
-                prefer_password = int(meta.get('auth_method', 0) or 0) == 1
-                logger.debug(f"Main window: Auth method from metadata: {meta.get('auth_method')} -> prefer_password={prefer_password}")
-        except Exception as e:
-            logger.debug(f"Main window: Error getting auth method from metadata: {e}")
-            try:
-                prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
-                logger.debug(f"Main window: Auth method from connection object: {getattr(connection, 'auth_method', 0)} -> prefer_password={prefer_password}")
-            except Exception as e2:
-                logger.debug(f"Main window: Error getting auth method from connection object: {e2}")
-                prefer_password = False
+            prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
+            logger.debug(
+                f"Main window: Auth method from connection object: {getattr(connection, 'auth_method', 0)} -> prefer_password={prefer_password}"
+            )
+        except Exception as e2:
+            logger.debug(f"Main window: Error getting auth method from connection object: {e2}")
+            prefer_password = False
         
         try:
             # key_select_mode is saved in ssh config, our connection object should have it post-load
@@ -2822,15 +2807,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         key_mode = 0
         keyfile = getattr(connection, 'keyfile', '') or ''
         try:
-            cfg = Config()
-            meta = cfg.get_connection_meta(connection.nickname) if hasattr(cfg, 'get_connection_meta') else {}
-            if isinstance(meta, dict) and 'auth_method' in meta:
-                prefer_password = int(meta.get('auth_method', 0) or 0) == 1
+            prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
         except Exception:
-            try:
-                prefer_password = int(getattr(connection, 'auth_method', 0) or 0) == 1
-            except Exception:
-                prefer_password = False
+            prefer_password = False
         try:
             key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
         except Exception:
@@ -4576,7 +4555,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 try:
                     meta_key = old_connection.nickname
                     self.config.set_connection_meta(meta_key, {
-                        'auth_method': connection_data.get('auth_method', 0),
                         'use_raw_sshconfig': connection_data.get('use_raw_sshconfig', False),
                         'raw_ssh_config_block': connection_data.get('raw_ssh_config_block', '')
                     })
@@ -4648,7 +4626,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Persist per-connection metadata then reload config
                     try:
                         self.config.set_connection_meta(connection.nickname, {
-                            'auth_method': connection_data.get('auth_method', 0),
                             'use_raw_sshconfig': connection_data.get('use_raw_sshconfig', False),
                             'raw_ssh_config_block': connection_data.get('raw_ssh_config_block', '')
                         })
