@@ -1583,9 +1583,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             APP_VERSION = "0.0.0"
         about.set_version(APP_VERSION)
         about.set_comments('SSH connection manager with integrated terminal')
-        about.set_website('https://github.com/mfat/sshpilot')
+        about.set_website('https://sshpilot.app')
         # Gtk.AboutDialog in GTK4 has no set_issue_url; include issue link in website label
-        about.set_website_label('Project homepage')
+        about.set_website_label('sshPilot Website')
         about.set_license_type(Gtk.License.GPL_3_0)
         about.set_authors(['mFat <newmfat@gmail.com>'])
         
@@ -4546,6 +4546,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 # The forwarding rules are already updated in the connection_data
                 
 
+
                 # Update UI
                 if old_connection in self.connection_rows:
                     # Get the row before potentially modifying the dictionary
@@ -4606,8 +4607,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         pass
                     # Reload config after saving
                     try:
+
                         self.connection_manager.load_ssh_config()
                         self.rebuild_connection_list()
+
                     except Exception:
                         pass
                     # Sync forwarding rules from a fresh reload to ensure UI matches disk
