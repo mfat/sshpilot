@@ -59,16 +59,8 @@ class SSHConnectionValidator:
         if not name or not name.strip():
             return ValidationResult(False, _("Connection name is required"), "error")
         name = name.strip()
-        if len(name) > 64:
-            return ValidationResult(False, _("Connection name too long (max 64 characters)"), "error")
-        if not re.match(r'^[a-zA-Z0-9\s\-_\.]+$', name):
-            return ValidationResult(False, _("Name contains invalid characters"), "error")
-        if not re.match(r'^[a-zA-Z0-9]', name):
-            return ValidationResult(False, _("Name must start with letter or number"), "error")
         if name.strip().lower() in self.existing_names:
             return ValidationResult(False, _("Nickname already exists"), "error")
-        if name.lower() in ['localhost', 'local', 'test', 'temp']:
-            return ValidationResult(True, _("Consider using a more specific name"), "warning")
         return ValidationResult(True, _("Valid connection name"))
 
     def _validate_ip_address(self, ip_str: str) -> 'ValidationResult':
@@ -167,17 +159,6 @@ class SSHConnectionValidator:
     def validate_username(self, username: str) -> 'ValidationResult':
         if not username or not username.strip():
             return ValidationResult(False, _("Username is required"), "error")
-        username = username.strip()
-        if len(username) > 32:
-            return ValidationResult(False, _("Username too long (max 32 characters)"), "error")
-        if not re.match(r'^[a-z_][a-z0-9_\-]*[$]?$', username, re.IGNORECASE):
-            return ValidationResult(False, _("Invalid username format"), "error")
-        if not re.match(r'^[a-zA-Z_]', username):
-            return ValidationResult(False, _("Username must start with letter or underscore"), "error")
-        if username.lower() in self.reserved_usernames:
-            return ValidationResult(True, _("System/reserved username"), "warning")
-        if username.lower() in ['admin', 'administrator', 'user', 'guest']:
-            return ValidationResult(True, _("Common username - consider more specific"), "warning")
         return ValidationResult(True, _("Valid username"))
 
     def verify_key_passphrase(self, key_path: str, passphrase: str) -> bool:
@@ -1557,13 +1538,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if not text:
             self._row_set_message(row, _("Nickname is required"), is_error=True)
             return False
-        if len(text) > 64:
-            self._row_set_message(row, _("Nickname is too long (max 64 characters)"), is_error=True)
-            return False
-        # Allow letters, numbers, spaces, underscore, hyphen, dot
-        if not re.fullmatch(r"[A-Za-z0-9 _.-]+", text):
-            self._row_set_message(row, _("Only letters, numbers, spaces, '-', '_' and '.' allowed"), is_error=True)
-            return False
         if self._is_nickname_taken(text):
             self._row_set_message(row, _("Nickname already exists"), is_error=True)
             return False
@@ -1919,7 +1893,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         basic_group = Adw.PreferencesGroup(title=_("Basic Settings"))
         
         # Nickname
-        self.nickname_row = Adw.EntryRow(title=_("Nickname (Only letters, digits, dot, underscore, dash)"))
+        self.nickname_row = Adw.EntryRow(title=_("Nickname"))
         basic_group.add(self.nickname_row)
         
         # Host
