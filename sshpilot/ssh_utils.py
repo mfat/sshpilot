@@ -66,7 +66,7 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
         if compression and not for_ssh_copy_id:
             options.append('-C')
 
-    # Apply auto-add host keys policy even when advanced block is off (same as terminal.py)
+    # Default to accepting new host keys non-interactively on fresh installs (same as terminal.py)
     try:
         if (not strict_host) and auto_add_host_keys:
             options.extend(['-o', 'StrictHostKeyChecking=accept-new'])
@@ -75,13 +75,6 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
 
     # Ensure SSH exits immediately on failure rather than waiting in background (same as terminal.py)
     options.extend(['-o', 'ExitOnForwardFailure=yes'])
-    
-    # Default to accepting new host keys non-interactively on fresh installs (same as terminal.py)
-    try:
-        if (not strict_host) and auto_add_host_keys:
-            options.extend(['-o', 'StrictHostKeyChecking=accept-new'])
-    except Exception:
-        pass
     
     # Only add verbose flag if explicitly enabled in config (same as terminal.py)
     # Note: ssh-copy-id doesn't support -v flags, only -x for debug
