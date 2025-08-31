@@ -111,11 +111,9 @@ jobs:
           install -d %{buildroot}%{python3_sitelib}/sshpilot
           cp -a sshpilot/*.py %{buildroot}%{python3_sitelib}/sshpilot/
           
-          # Install resources and UI files
+          # Install resources
           install -d %{buildroot}%{python3_sitelib}/sshpilot/resources
-          install -d %{buildroot}%{python3_sitelib}/sshpilot/ui
           cp -a sshpilot/resources/* %{buildroot}%{python3_sitelib}/sshpilot/resources/
-          cp -a sshpilot/ui/* %{buildroot}%{python3_sitelib}/sshpilot/ui/
           
           # Install desktop file and icon
           install -D -m 644 io.github.mfat.sshpilot.desktop %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
