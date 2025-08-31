@@ -18,6 +18,7 @@ import weakref
 import subprocess
 from datetime import datetime
 from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
+from .port_utils import get_port_checker
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
@@ -116,7 +117,7 @@ class SSHProcessManager:
             os.killpg(pgid, signal.SIGTERM)
             
             # Wait with timeout
-            for _ in range(50):  # 5 seconds max
+            for _ in range(10):  # 1 second max
                 try:
                     os.killpg(pgid, 0)
                     time.sleep(0.1)
@@ -128,10 +129,6 @@ class SSHProcessManager:
             return True
         except Exception:
             return False
-        finally:
-            with self.lock:
-                if pid in self.processes:
-                    del self.processes[pid]
     
     def register_terminal(self, terminal):
         """Register a terminal for tracking"""
@@ -146,9 +143,9 @@ class SSHProcessManager:
             logger.warning("Cleanup timeout - forcing exit")
             os._exit(1)
         
-        # Set 10-second timeout for entire cleanup
+        # Set 5-second timeout for entire cleanup
         signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(10)
+        signal.alarm(5)
         
         try:
             logger.info("Cleaning up all SSH processes...")
@@ -162,20 +159,22 @@ class SSHProcessManager:
                 processes_to_clean = dict(self.processes)
                 self.processes.clear()
             
-            # Clean up without holding the lock
+            # Clean up processes without holding the lock
             for pid, info in processes_to_clean.items():
+                logger.debug(f"Cleaning up process {pid} (command: {info.get('command', 'unknown')})")
                 self._terminate_process_by_pid(pid)
-                
-                # Clean up any remaining terminals (only if they're still connected)
-                for terminal in list(self.terminals):
-                    try:
-                        if hasattr(terminal, 'disconnect') and hasattr(terminal, 'is_connected') and terminal.is_connected:
-                            terminal.disconnect()
-                    except Exception as e:
-                        logger.error(f"Error cleaning up terminal {id(terminal)}: {e}")
-                
-                # Clear terminal references
-                self.terminals.clear()
+            
+            # Clean up terminals separately
+            for terminal in list(self.terminals):
+                try:
+                    if hasattr(terminal, 'disconnect') and hasattr(terminal, 'is_connected') and terminal.is_connected:
+                        logger.debug(f"Disconnecting terminal {id(terminal)}")
+                        terminal.disconnect()
+                except Exception as e:
+                    logger.error(f"Error cleaning up terminal {id(terminal)}: {e}")
+            
+            # Clear terminal references
+            self.terminals.clear()
                 
             logger.info("SSH process cleanup completed")
         finally:
@@ -214,6 +213,8 @@ class TerminalWidget(Gtk.Box):
         self.ssh_client = None
         self.session_id = str(id(self))  # Unique ID for this session
         self._is_quitting = False  # Flag to suppress signal handlers during quit
+        self.last_error_message = None  # Store last SSH error for reporting
+        self._fallback_timer_id = None  # GLib timeout ID for spawn fallback
         
         # Register with process manager
         process_manager.register_terminal(self)
@@ -462,7 +463,6 @@ class TerminalWidget(Gtk.Box):
     def _setup_ssh_terminal(self):
         """Set up terminal with direct SSH command (called from main thread)"""
         try:
-            # Build SSH command
             ssh_cmd = ['ssh']
 
             # Read SSH behavior from config with sane defaults
@@ -519,7 +519,7 @@ class TerminalWidget(Gtk.Box):
                 if compression:
                     ssh_cmd.append('-C')
 
-            # Apply auto-add host keys policy even when advanced block is off, unless user explicitly set a policy
+            # Default to accepting new host keys non-interactively on fresh installs
             try:
                 if (not strict_host) and auto_add_host_keys:
                     ssh_cmd.extend(['-o', 'StrictHostKeyChecking=accept-new'])
@@ -528,14 +528,7 @@ class TerminalWidget(Gtk.Box):
 
             # Ensure SSH exits immediately on failure rather than waiting in background
             ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
-            
-            # Default to accepting new host keys non-interactively on fresh installs
-            try:
-                if (not strict_host) and auto_add_host_keys:
-                    ssh_cmd.extend(['-o', 'StrictHostKeyChecking=accept-new'])
-            except Exception:
-                pass
-            
+
             # Only add verbose flag if explicitly enabled in config
             try:
                 ssh_cfg = self.config.get_ssh_config() if hasattr(self.config, 'get_ssh_config') else {}
@@ -558,13 +551,21 @@ class TerminalWidget(Gtk.Box):
             except Exception as e:
                 logger.warning(f"Could not check SSH verbosity/debug settings: {e}")
                 # Default to non-verbose on error
-            
+
             # Add key file/options only for key-based auth
             if not password_auth_selected:
-                if hasattr(self.connection, 'keyfile') and self.connection.keyfile and \
+                # Get key selection mode
+                key_select_mode = 0
+                try:
+                    key_select_mode = int(getattr(self.connection, 'key_select_mode', 0) or 0)
+                except Exception:
+                    pass
+
+                # Only add specific key if key_select_mode == 1 (specific key)
+                if key_select_mode == 1 and hasattr(self.connection, 'keyfile') and self.connection.keyfile and \
                    os.path.isfile(self.connection.keyfile) and \
                    not self.connection.keyfile.startswith('Select key file'):
-                    
+
                     # Prepare key for connection (add to ssh-agent if needed)
                     if hasattr(self, 'connection_manager') and self.connection_manager:
                         try:
@@ -576,26 +577,27 @@ class TerminalWidget(Gtk.Box):
                                     logger.warning(f"Failed to prepare key for connection: {self.connection.keyfile}")
                         except Exception as e:
                             logger.warning(f"Error preparing key for connection: {e}")
-                    
+
                     ssh_cmd.extend(['-i', self.connection.keyfile])
                     logger.debug(f"Using SSH key: {self.connection.keyfile}")
-                    # Enforce using only the specified key when key_select_mode == 1
-                    try:
-                        if int(getattr(self.connection, 'key_select_mode', 0) or 0) == 1:
-                            ssh_cmd.extend(['-o', 'IdentitiesOnly=yes'])
-                    except Exception:
-                        pass
+                    ssh_cmd.extend(['-o', 'IdentitiesOnly=yes'])
+
+                    # Add certificate if specified
+                    if hasattr(self.connection, 'certificate') and self.connection.certificate and \
+                       os.path.isfile(self.connection.certificate):
+                        ssh_cmd.extend(['-o', f'CertificateFile={self.connection.certificate}'])
+                        logger.debug(f"Using SSH certificate: {self.connection.certificate}")
                 else:
-                    logger.debug("No valid SSH key specified, using default")
+                    logger.debug("Using default SSH key selection (key_select_mode=0 or no valid key specified)")
             else:
-                # Prefer password/interactive methods when user chose password auth
-                ssh_cmd.extend(['-o', 'PreferredAuthentications=password,keyboard-interactive'])
+                # Force password authentication when user chose password auth
+                ssh_cmd.extend(['-o', 'PreferredAuthentications=password'])
                 ssh_cmd.extend(['-o', 'PubkeyAuthentication=no'])
-            
+
             # Add X11 forwarding if enabled
             if hasattr(self.connection, 'x11_forwarding') and self.connection.x11_forwarding:
                 ssh_cmd.append('-X')
-            
+
             # Prepare command-related options (must appear before host)
             remote_cmd = ''
             local_cmd = ''
@@ -624,16 +626,35 @@ class TerminalWidget(Gtk.Box):
                 # Pass exactly as user provided, letting ssh parse quoting
                 ssh_cmd.extend(['-o', f'LocalCommand={local_cmd}'])
 
-            # Add port forwarding rules
+            # Add port forwarding rules with conflict checking
             if hasattr(self.connection, 'forwarding_rules'):
+                port_conflicts = []
+                port_checker = get_port_checker()
+
+                # Check for port conflicts before adding rules
                 for rule in self.connection.forwarding_rules:
                     if not rule.get('enabled', True):
                         continue
-                        
+
                     rule_type = rule.get('type')
                     listen_addr = rule.get('listen_addr', '127.0.0.1')
                     listen_port = rule.get('listen_port')
                     
+                    # Check for local port conflicts (for local and dynamic forwarding)
+                    if rule_type in ['local', 'dynamic'] and listen_port:
+                        try:
+                            conflicts = port_checker.get_port_conflicts([listen_port], listen_addr)
+                            if conflicts:
+                                port, port_info = conflicts[0]
+                                conflict_msg = f"Port {port} is already in use"
+                                if port_info.process_name:
+                                    conflict_msg += f" by {port_info.process_name} (PID: {port_info.pid})"
+                                port_conflicts.append(conflict_msg)
+                                continue  # Skip this rule
+                        except Exception as e:
+                            logger.debug(f"Could not check port conflict for {listen_port}: {e}")
+                    
+                    # Add the forwarding rule if no conflicts
                     if rule_type == 'dynamic' and listen_port:
                         try:
                             ssh_cmd.extend(['-D', f"{listen_addr}:{listen_port}"])
@@ -660,43 +681,69 @@ class TerminalWidget(Gtk.Box):
                                 logger.debug(f"Added remote port forwarding: {listen_addr}:{listen_port} -> {local_host}:{local_port}")
                         except Exception as e:
                             logger.error(f"Failed to set up remote forwarding: {e}")
-            
-            # Add NumberOfPasswordPrompts option before hostname and command
-            ssh_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
-            
-            # Add host and user
-            ssh_cmd.append(f"{self.connection.username}@{self.connection.host}" if hasattr(self.connection, 'username') and self.connection.username else self.connection.host)
+                
+                # Show port conflict warnings if any
+                if port_conflicts:
+                    conflict_message = "Port forwarding conflicts detected:\n" + "\n".join([f"• {msg}" for msg in port_conflicts])
+                    logger.warning(conflict_message)
+                    GLib.idle_add(self._show_forwarding_error_dialog, conflict_message)
+                
+                # Add extra SSH config options from advanced tab
+                extra_ssh_config = getattr(self.connection, 'extra_ssh_config', '').strip()
+                if extra_ssh_config:
+                    logger.debug(f"Adding extra SSH config options: {extra_ssh_config}")
+                    # Parse and add each extra SSH config option
+                    for line in extra_ssh_config.split('\n'):
+                        line = line.strip()
+                        if line and not line.startswith('#'):  # Skip empty lines and comments
+                            # Split on first space to separate option and value
+                            parts = line.split(' ', 1)
+                            if len(parts) == 2:
+                                option, value = parts
+                                ssh_cmd.extend(['-o', f"{option}={value}"])
+                                logger.debug(f"Added SSH option: {option}={value}")
+                            elif len(parts) == 1:
+                                # Option without value (e.g., "Compression yes" becomes "Compression=yes")
+                                option = parts[0]
+                                ssh_cmd.extend(['-o', f"{option}=yes"])
+                                logger.debug(f"Added SSH option: {option}=yes")
+                
+                # Add NumberOfPasswordPrompts option before hostname and command
+                ssh_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
+                
+                # Add port if not default (must be before host)
+                if hasattr(self.connection, 'port') and self.connection.port != 22:
+                    ssh_cmd.extend(['-p', str(self.connection.port)])
+                
+                # Add host and user
+                ssh_cmd.append(f"{self.connection.username}@{self.connection.host}" if hasattr(self.connection, 'username') and self.connection.username else self.connection.host)
 
-            # Add port if not default (ideally before host, but keep consistent with existing behavior)
-            if hasattr(self.connection, 'port') and self.connection.port != 22:
-                ssh_cmd.extend(['-p', str(self.connection.port)])
+                # Append remote command last so ssh treats it as the command to run, ensure shell remains active
+                if remote_cmd:
+                    final_remote_cmd = remote_cmd if 'exec $SHELL' in remote_cmd else f"{remote_cmd} ; exec $SHELL -l"
+                    # Append as single argument; let shell on remote parse quotes. Keep as-is to allow user quoting.
+                    ssh_cmd.append(final_remote_cmd)
+                
+                # Make sure ssh will prompt in our VTE if no saved password:
+                if password_auth_selected and not has_saved_password:
+                    if '-t' not in ssh_cmd and '-tt' not in ssh_cmd:
+                        ssh_cmd.append('-t')  # force a TTY for interactive password
+            
+                            # Log the SSH command
+                try:
+                    logger.debug(f"SSH command: {' '.join(ssh_cmd)}")
+                except Exception:
+                    logger.debug("Prepared SSH command")
+                
+                # End of SSH command building
 
-            # Append remote command last so ssh treats it as the command to run, ensure shell remains active
-            if remote_cmd:
-                final_remote_cmd = remote_cmd if 'exec $SHELL' in remote_cmd else f"{remote_cmd} ; exec $SHELL -l"
-                # Append as single argument; let shell on remote parse quotes. Keep as-is to allow user quoting.
-                ssh_cmd.append(final_remote_cmd)
-            
-            # Make sure ssh will prompt in our VTE if no saved password:
-            if password_auth_selected and not has_saved_password:
-                if '-t' not in ssh_cmd and '-tt' not in ssh_cmd:
-                    ssh_cmd.append('-t')  # force a TTY for interactive password
-            
-            # Log the SSH command
-            try:
-                logger.debug(f"SSH command: {' '.join(ssh_cmd)}")
-            except Exception:
-                logger.debug("Prepared SSH command")
-            
-            # Create a new PTY for the terminal
-            pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
-            
             # Start the SSH process using VTE's spawn_async with our PTY
             logger.debug(f"Flatpak debug: About to spawn SSH with command: {ssh_cmd}")
-            
+
             # Handle password authentication with sshpass if available
             env = os.environ.copy()
             logger.debug(f"Initial environment SSH_ASKPASS: {env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE: {env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
+
             if password_auth_selected and has_saved_password and password_value:
                 # Use sshpass for password authentication
                 import shutil
@@ -750,7 +797,7 @@ class TerminalWidget(Gtk.Box):
             else:
                 # Use askpass for passphrase prompts (key-based auth)
                 from .askpass_utils import get_ssh_env_with_askpass
-                askpass_env = get_ssh_env_with_askpass("force")
+                askpass_env = get_ssh_env_with_askpass()
                 env.update(askpass_env)
             env['TERM'] = env.get('TERM', 'xterm-256color')
             env['SHELL'] = env.get('SHELL', '/bin/bash')
@@ -769,6 +816,9 @@ class TerminalWidget(Gtk.Box):
             # Log the command being executed for debugging
             logger.debug(f"Spawning SSH command: {ssh_cmd}")
             logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
+            
+            # Create a new PTY for the terminal
+            pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
             
             try:
                 self.vte.spawn_async(
@@ -818,10 +868,10 @@ class TerminalWidget(Gtk.Box):
             
             # Focus the terminal
             self.vte.grab_focus()
-            
+
             # Add fallback timer to hide spinner if spawn completion doesn't fire
-            GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
-            
+            self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
+
             logger.info(f"SSH terminal connected to {self.connection}")
             
         except Exception as e:
@@ -872,7 +922,15 @@ class TerminalWidget(Gtk.Box):
         if getattr(self, '_is_quitting', False):
             logger.debug("Terminal is quitting, skipping spawn complete handler")
             return
-            
+
+        # Cancel fallback timer if it's still pending
+        if getattr(self, '_fallback_timer_id', None):
+            try:
+                GLib.source_remove(self._fallback_timer_id)
+            except Exception:
+                pass
+            self._fallback_timer_id = None
+
         logger.debug(f"Flatpak debug: _on_spawn_complete called with pid={pid}, error={error}, user_data={user_data}")
         
         if error:
@@ -895,10 +953,12 @@ class TerminalWidget(Gtk.Box):
             
             # Store process info for cleanup
             with process_manager.lock:
+                # Determine command type based on connection type
+                command_type = 'bash' if hasattr(self.connection, 'host') and self.connection.host == 'localhost' else 'ssh'
                 process_manager.processes[pid] = {
                     'terminal': weakref.ref(self),
                     'start_time': datetime.now(),
-                    'command': 'ssh',
+                    'command': command_type,
                     'pgid': self.process_pgid
                 }
             
@@ -909,13 +969,15 @@ class TerminalWidget(Gtk.Box):
             # Spawn succeeded; mark as connected and hide overlay
             self.is_connected = True
             
-            # Update connection status in the connection manager
-            if hasattr(self, 'connection') and self.connection:
+            # Update connection status in the connection manager (only for SSH connections)
+            if hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'host') and self.connection.host != 'localhost':
                 if hasattr(self, 'connection_manager') and self.connection_manager:
                     self.connection_manager.update_connection_status(self.connection, True)
                     logger.debug(f"Terminal {self.session_id} updated connection status to connected")
                 else:
                     logger.warning(f"Terminal {self.session_id} has no connection manager")
+            elif hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'host') and self.connection.host == 'localhost':
+                logger.debug(f"Local terminal {self.session_id} spawned successfully")
             else:
                 logger.warning(f"Terminal {self.session_id} has no connection object to update")
             
@@ -933,23 +995,34 @@ class TerminalWidget(Gtk.Box):
     
     def _fallback_hide_spinner(self):
         """Fallback method to hide spinner if spawn completion doesn't fire"""
+        # Clear stored timer ID
+        self._fallback_timer_id = None
+
         # Skip if terminal is quitting
         if getattr(self, '_is_quitting', False):
             logger.debug("Terminal is quitting, skipping fallback hide spinner")
             return False
-            
+
         logger.debug("Flatpak debug: Fallback hide spinner called")
+
+        # If a connection error was recorded, skip forcing a connected state
+        if self.last_error_message:
+            logger.debug("Fallback timer triggered after connection failure; ignoring")
+            return False
+
         if not self.is_connected:
             logger.warning("Flatpak: Spawn completion callback didn't fire, forcing connection state")
             self.is_connected = True
             
-            # Update connection status in the connection manager
-            if hasattr(self, 'connection') and self.connection:
+            # Update connection status in the connection manager (only for SSH connections)
+            if hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'host') and self.connection.host != 'localhost':
                 if hasattr(self, 'connection_manager') and self.connection_manager:
                     self.connection_manager.update_connection_status(self.connection, True)
                     logger.debug(f"Terminal {self.session_id} updated connection status to connected (fallback)")
                 else:
                     logger.warning(f"Terminal {self.session_id} has no connection manager (fallback)")
+            elif hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'host') and self.connection.host == 'localhost':
+                logger.debug(f"Local terminal {self.session_id} spawned successfully (fallback)")
             else:
                 logger.warning(f"Terminal {self.session_id} has no connection object to update (fallback)")
             
@@ -960,27 +1033,7 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 pass
         return False  # Don't repeat the timer
-    
-    def _on_connection_failed(self, error_message):
-        """Handle connection failure (called from main thread)"""
-        logger.error(f"Connection failed: {error_message}")
         
-        # Ensure theme is applied so background remains consistent
-        try:
-            self.apply_theme()
-        except Exception:
-            pass
-        
-        # Show error in terminal
-        try:
-            self.vte.feed(f"\r\n\x1b[31mConnection failed: {error_message}\x1b[0m\r\n".encode('utf-8'))
-        except Exception as e:
-            logger.error(f"Error displaying connection error: {e}")
-        
-        self.is_connected = False
-        self.emit('connection-failed', error_message)
-
-    
 
     def _show_forwarding_error_dialog(self, message):
         try:
@@ -1175,6 +1228,57 @@ class TerminalWidget(Gtk.Box):
         self._install_shortcuts()
         self._setup_context_menu()
 
+    def setup_local_shell(self):
+        """Set up the terminal for local shell (not SSH)"""
+        logger.info("Setting up local shell terminal")
+        try:
+            # Hide connecting overlay immediately for local shell
+            self._set_connecting_overlay_visible(False)
+            
+            # Set up the terminal for local shell
+            self.setup_terminal()
+            
+            # Start a simple local shell - just like GNOME Terminal
+            env = os.environ.copy()
+            
+            # Ensure we have a proper environment
+            if 'SHELL' not in env:
+                env['SHELL'] = '/bin/bash'
+            if 'TERM' not in env:
+                env['TERM'] = 'xterm-256color'
+            
+            # Set initial title for local terminal
+            self.emit('title-changed', 'Local Terminal')
+            
+            # Convert environment dict to list for VTE compatibility
+            env_list = []
+            for key, value in env.items():
+                env_list.append(f"{key}={value}")
+            
+            # Start bash shell
+            self.vte.spawn_async(
+                Vte.PtyFlags.DEFAULT,
+                os.path.expanduser('~') or '/',
+                ['bash'],
+                env_list,
+                GLib.SpawnFlags.DEFAULT,
+                None,
+                None,
+                -1,
+                None,
+                self._on_spawn_complete,
+                ()
+            )
+
+            # Add fallback timer to hide spinner if spawn completion doesn't fire
+            self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
+
+            logger.info("Local shell terminal setup initiated")
+            
+        except Exception as e:
+            logger.error(f"Failed to setup local shell: {e}")
+            self.emit('connection-failed', str(e))
+
     def _setup_context_menu(self):
         """Set up a robust per-terminal context menu and actions."""
         try:
@@ -1329,27 +1433,29 @@ class TerminalWidget(Gtk.Box):
         self.connection_manager.emit('connection-status-changed', self.connection, True)
         
         self.emit('connection-established')
-        
+
         # Apply theme after connection is established
         self.apply_theme()
         # Hide any reconnect banner on success
         self._set_disconnected_banner_visible(False)
+        self.last_error_message = None
         
-    def _on_connection_lost(self):
+    def _on_connection_lost(self, message: str = None):
         """Handle SSH connection loss"""
         if self.is_connected:
             logger.info(f"SSH connection to {self.connection.host} lost")
             self.is_connected = False
-            
+
             # Update connection status in the connection manager
             if hasattr(self, 'connection') and self.connection:
                 self.connection.is_connected = False
                 self.connection_manager.emit('connection-status-changed', self.connection, False)
-            
+
             self.emit('connection-lost')
             # Show reconnect UI
             self._set_connecting_overlay_visible(False)
-            self._set_disconnected_banner_visible(True, _('Connection lost.'))
+            banner_text = message or self.last_error_message or _('Connection lost.')
+            self._set_disconnected_banner_visible(True, banner_text)
     
     def _on_terminal_input(self, widget, text, size):
         """Handle input from the terminal (handled automatically by VTE)"""
@@ -1431,6 +1537,15 @@ class TerminalWidget(Gtk.Box):
         
         # Disconnect the terminal
         self.disconnect()
+        
+        # Remove from process manager terminals set (only if not already quitting)
+        if not getattr(self, '_is_quitting', False):
+            try:
+                if self in process_manager.terminals:
+                    process_manager.terminals.remove(self)
+                    logger.debug(f"Removed terminal {self.session_id} from process manager terminals set")
+            except Exception as e:
+                logger.debug(f"Error removing terminal from process manager: {e}")
 
     def _terminate_process_tree(self, pid):
         """Terminate a process and all its children"""
@@ -1597,12 +1712,17 @@ class TerminalWidget(Gtk.Box):
                 finally:
                     self._sshpass_tmpdir = None
             
-            # Clean up from process manager
-            with process_manager.lock:
-                for proc_pid in list(process_manager.processes.keys()):
-                    proc_info = process_manager.processes[proc_pid]
-                    if proc_info.get('terminal')() is self:
-                        del process_manager.processes[proc_pid]
+            # Clean up from process manager (only if not quitting)
+            if not getattr(self, '_is_quitting', False):
+                try:
+                    with process_manager.lock:
+                        for proc_pid in list(process_manager.processes.keys()):
+                            proc_info = process_manager.processes[proc_pid]
+                            if proc_info.get('terminal')() is self:
+                                logger.debug(f"Removing process {proc_pid} from process manager for terminal {self.session_id}")
+                                del process_manager.processes[proc_pid]
+                except Exception as e:
+                    logger.debug(f"Error cleaning up from process manager: {e}")
             
             # Do not hard-reset here; keep current theme/colors
             
@@ -1623,10 +1743,18 @@ class TerminalWidget(Gtk.Box):
     def _on_connection_failed(self, error_message):
         """Handle connection failure (called from main thread)"""
         logger.error(f"Connection failed: {error_message}")
-        
+
+        # Cancel any pending fallback timer so we don't mark connection as successful
+        if getattr(self, '_fallback_timer_id', None):
+            try:
+                GLib.source_remove(self._fallback_timer_id)
+            except Exception:
+                pass
+            self._fallback_timer_id = None
+
         try:
-            # Show error in terminal
-            error_msg = f"\r\n\x1b[31mConnection failed: {error_message}\x1b[0m\r\n"
+            # Show raw error in terminal
+            error_msg = f"\r\n\x1b[31m{error_message}\x1b[0m\r\n"
             self.vte.feed(error_msg.encode('utf-8'))
 
             self.is_connected = False
@@ -1636,22 +1764,15 @@ class TerminalWidget(Gtk.Box):
                 self.pty.close()
                 del self.pty
 
-            # Do not reset here to avoid losing theme; leave buffer with error text
+            # Remember last error for later reporting
+            self.last_error_message = error_message
 
             # Notify UI
             self.emit('connection-failed', error_message)
 
-            # Show reconnect banner for new-connection failures as well
+            # Show reconnect banner with the raw SSH error
             self._set_connecting_overlay_visible(False)
-            # Detect timeout-ish messages to provide clearer text
-            msg_lower = (error_message or '').lower()
-            if 'timeout' in msg_lower or 'timed out' in msg_lower:
-                banner_text = _('Connection timeout. Try again?')
-            elif 'failed to read ssh banner' in msg_lower:
-                banner_text = _('Server not ready yet. Try again?')
-            else:
-                banner_text = _('Connection failed.')
-            self._set_disconnected_banner_visible(True, banner_text)
+            self._set_disconnected_banner_visible(True, error_message)
 
         except Exception as e:
             logger.error(f"Error in _on_connection_failed: {e}")
@@ -1777,12 +1898,18 @@ class TerminalWidget(Gtk.Box):
             try:
                 logger.debug("Emitting connection-lost signal")
                 self.emit('connection-lost')
-                
-                # Show reconnect UI
+
+                # Show reconnect UI with detailed error if available
                 logger.debug("Updating UI elements")
                 self._set_connecting_overlay_visible(False)
-                self._set_disconnected_banner_visible(True, _('Session ended.'))
-                
+                banner_text = self.last_error_message
+                if not banner_text:
+                    if exit_code and exit_code != 0:
+                        banner_text = _('SSH exited with status {code}').format(code=exit_code)
+                    else:
+                        banner_text = _('Session ended.')
+                self._set_disconnected_banner_visible(True, banner_text)
+
                 logger.debug("Exit cleanup completed successfully")
             except Exception as e:
                 logger.error(f"Error in final exit cleanup: {e}")

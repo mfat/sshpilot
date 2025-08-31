@@ -2,7 +2,7 @@
 <img width="154" height="154" alt="logo" src="https://github.com/user-attachments/assets/42b73dbf-778c-45ff-9361-22a52988f1b3" />
 </p>
 
-**sshPilot** is a user-friendly, modern and lightweight SSH connection manager for Linux. It's a free (as in freedom) alternative to Putty and Termius.
+**sshPilot** is a user-friendly, modern and lightweight SSH connection manager for Linux, with an integrated terminal. It's a free (as in freedom) alternative to Putty and Termius.
 
 <img width="1057" height="705" alt="Screenshot From 2025-08-20 18-32-09" src="https://github.com/user-attachments/assets/f57b25a9-c3ce-4355-891e-caad17a906f9" />
 
@@ -18,8 +18,12 @@
 ## Features
 
 - Tabbed interface
-- Full support for Local, Remote and Dynamic port forwarding 
 - Intuitive, minimal UI with keyboard navigation and shortcuts
+- File management in standard file managers using SFTP
+- Organize servers in groups
+- Option to use the built-in terminal or your favorite one
+- Broadcast commands to all open tabs
+- Full support for Local, Remote and Dynamic port forwarding 
 - SCP support for quicly uploading a file to remote server
 - Keypair generation and copying to remote servers (ssh-copy-id)
 - Support for running remote and local commands upon login
@@ -30,110 +34,34 @@
 - Load/save standard .ssh/config entries
 - Free software (GPL v3 license)
 
-## Installation 
 
-### Linux
-The app is currently distributed as deb and rpm packages (see releases) and can be installed on recent versions of Debian (testing/unstable), Ubuntu and Fedora. Debian bookworm is not supported due to older libadwaita version. A flatpak is also provided that should work on any distro with flatpak support. (Do NOT install deb/rpm and Flatpak together as the desktop launcher will not work)
-[Download](https://github.com/mfat/sshpilot/releases/)
 
-### macOS
 
-#### Option 1: Using the Launcher Script (Recommended)
-```bash
-# Make the launcher executable and run it
-chmod +x sshpilot-mac.sh
-./sshpilot-mac.sh
-```
 
-The launcher script will:
-- Check and install required dependencies via Homebrew
-- Set up environment variables automatically
-- Test the setup and launch the application
 
-#### Option 2: Manual Setup
-```bash
-# Install dependencies
-brew install gtk4 libadwaita vte3 adwaita-icon-theme gobject-introspection pygobject3 sshpass
-
-# Set up environment variables
-export BREW_PREFIX=$(brew --prefix)
-export PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-export PYTHONPATH="$BREW_PREFIX/lib/python$PYTHON_VERSION/site-packages:$PYTHONPATH"
-export GI_TYPELIB_PATH="$BREW_PREFIX/lib/girepository-1.0"
-export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_LIBRARY_PATH"
-export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
-
-# Run the application
-python3 run.py
-```
-
-#### Option 3: Development Setup
-```bash
-# Use the development setup script
-./setup_dev_env.sh
-```
-
-## Features
-
-- SSH connection management
-- Integrated terminal
-- Key management
-- Port forwarding
-- Resource monitoring
-
-## Building
-
-### macOS Application Bundles
-
-The project includes GitHub Actions workflows to build macOS application bundles:
-
-- **py2app**: Creates `.app` bundles using py2app
-- **PyInstaller**: Creates `.app` bundles using PyInstaller
-- **Nuitka**: Creates standalone executables
-- **GTK4**: Multi-platform GTK4 builds
-
-Workflows are triggered on pushes to the `mac` branch or manually via GitHub Actions.
-
-## Development
-
-### Prerequisites
-
-- Python 3.11+
-- GTK4 and libadwaita
-- VTE terminal widget
-- PyGObject bindings
-
-### Installation
-
-1. Clone the repository
-2. Install dependencies (see Quick Start section)
-3. Run the application
-
-### Environment Variables
-
-The following environment variables are required for PyGObject and GTK4:
-
-```bash
-export PYTHONPATH="$BREW_PREFIX/lib/python$PYTHON_VERSION/site-packages:$PYTHONPATH"
-export GI_TYPELIB_PATH="$BREW_PREFIX/lib/girepository-1.0"
-export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_LIBRARY_PATH"
-export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
-```
-
-## License
-
-[Add your license information here]
 
 ## Download
 
+- ### DEB/RPM/Flatpak
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
 
-If your distro doesn't use DEB or RPM, the Flatpak version should work. 
+- ### Arch linux
+Arch linux package via AUR: https://aur.archlinux.org/packages/sshpilot
 
+- ### macOS (not extensively tested)
+(WIP) On the [Mac branch](https://github.com/mfat/sshpilot/tree/mac) there are [instructions](https://github.com/mfat/sshpilot/blob/mac/INSTALL-macos.md) for running sshPilot on macOS
+
+- ### Run from source
 You can also run the app from source. Install the modules listed in requirements.txt and a fairly recent version of GNOME and it should run.
 
 `
 python3 run.py
+`
+
+To enable verbose debugging output, run the app with the `--verbose` flag:
+
+`
+python3 run.py --verbose
 `
 
 
@@ -173,6 +101,12 @@ Run from source
 
 ```
 python3 run.py
+```
+
+Enable verbose debugging with:
+
+```
+python3 run.py --verbose
 ```
 
 

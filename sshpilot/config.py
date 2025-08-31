@@ -12,6 +12,9 @@ from gi.repository import Gio, GLib, GObject
 
 logger = logging.getLogger(__name__)
 
+# Increment this whenever the configuration format changes
+CONFIG_VERSION = 2
+
 class Config(GObject.Object):
     """Configuration manager for sshPilot"""
     
@@ -54,7 +57,30 @@ class Config(GObject.Object):
         try:
             if os.path.exists(self.config_file):
                 with open(self.config_file, 'r') as f:
-                    return json.load(f)
+                    config = json.load(f)
+
+                # Purge outdated configurations
+                stored_version = config.get('config_version', 1)
+                if stored_version < CONFIG_VERSION:
+                    backup_file = f"{self.config_file}.bak"
+                    try:
+                        os.replace(self.config_file, backup_file)
+                        logger.warning(
+                            "Outdated config version %s detected; backing up to %s and regenerating defaults",
+                            stored_version,
+                            backup_file,
+                        )
+                    except OSError:
+                        os.remove(self.config_file)
+                        logger.warning(
+                            "Outdated config version %s detected; old config removed and new defaults generated",
+                            stored_version,
+                        )
+
+                    config = self.get_default_config()
+                    self.save_json_config(config)
+
+                return config
             else:
                 # Create default config
                 default_config = self.get_default_config()
@@ -81,6 +107,7 @@ class Config(GObject.Object):
     def get_default_config(self) -> Dict[str, Any]:
         """Get default configuration values"""
         return {
+            'config_version': CONFIG_VERSION,
             'terminal': {
                 'theme': 'default',
                 'font': 'Monospace 12',
@@ -97,7 +124,7 @@ class Config(GObject.Object):
                 'window_height': 800,
                 'sidebar_width': 250,
             },
-            'connections_meta': {},  # per-connection metadata (e.g., auth_method)
+            'connections_meta': {},  # per-connection metadata
             'ssh': {
                 'connection_timeout': 30,
                 'keepalive_interval': 60,
@@ -429,7 +456,7 @@ class Config(GObject.Object):
         return {}
 
     def set_connection_meta(self, key: str, meta: Dict[str, Any]):
-        """Store metadata for a connection (e.g., {'auth_method': 1})."""
+        """Store metadata for a connection."""
         try:
             meta_all = self.get_setting('connections_meta', {})
             if not isinstance(meta_all, dict):

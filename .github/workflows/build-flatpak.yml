@@ -2,8 +2,9 @@ name: Build Flatpak
 
 on:
   push:
-    tags:
-      - 'v*'  # Trigger build when a tag is pushed (e.g., v2.7.1)
+    branches:
+      - main
+  # Trigger build when a tag is pushed (e.g., v2.7.1)
   workflow_dispatch:  # Allow manual trigger
 
 jobs:

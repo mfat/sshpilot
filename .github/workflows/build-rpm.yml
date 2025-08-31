@@ -2,7 +2,9 @@ name: Build RPM Package
 
 on:
   push:
-    tags: [ 'v*' ]
+    tags:
+      - 'v*'
+
   workflow_dispatch:
 
 permissions:
@@ -109,11 +111,9 @@ jobs:
           install -d %{buildroot}%{python3_sitelib}/sshpilot
           cp -a sshpilot/*.py %{buildroot}%{python3_sitelib}/sshpilot/
           
-          # Install resources and UI files
+          # Install resources
           install -d %{buildroot}%{python3_sitelib}/sshpilot/resources
-          install -d %{buildroot}%{python3_sitelib}/sshpilot/ui
           cp -a sshpilot/resources/* %{buildroot}%{python3_sitelib}/sshpilot/resources/
-          cp -a sshpilot/ui/* %{buildroot}%{python3_sitelib}/sshpilot/ui/
           
           # Install desktop file and icon
           install -D -m 644 io.github.mfat.sshpilot.desktop %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
@@ -188,13 +188,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rpm-packages-${{ steps.version.outputs.version }}
-          path: artifacts/*.rpm
+          path: artifacts/*.noarch.rpm
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/*.rpm
+          files: artifacts/*.noarch.rpm
           generate_release_notes: false
           body: ""
         env:

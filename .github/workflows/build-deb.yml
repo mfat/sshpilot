@@ -2,7 +2,9 @@ name: Build Debian Package
 
 on:
   push:
-    tags: [ 'v*' ]
+    tags:
+      - 'v*'
+
   workflow_dispatch:
 
 permissions:
@@ -102,9 +104,8 @@ jobs:
             echo -e "\t# Install resources into site-packages so app can import"
             echo -e "\tinstall -d \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot"
             echo -e "\tcp -a sshpilot/*.py \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/"
-            echo -e "\tinstall -d \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui"
+            echo -e "\tinstall -d \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources"
             echo -e "\tcp -a sshpilot/resources/* \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources/"
-            echo -e "\tcp -a sshpilot/ui/* \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/ui/"
             echo -e "\t# Install desktop file and icon"
             echo -e "\tinstall -D -m 644 io.github.mfat.sshpilot.desktop \$(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop"
             echo -e "\tinstall -D -m 644 sshpilot/resources/sshpilot.svg \$(CURDIR)/debian/sshpilot/usr/share/pixmaps/io.github.mfat.sshpilot.svg"

@@ -7,6 +7,7 @@ Main application entry point
 import sys
 import os
 import logging
+import argparse
 from logging.handlers import RotatingFileHandler
 
 import gi
@@ -18,18 +19,10 @@ from gi.repository import Adw, Gtk, Gio, GLib
 
 # Register resources before importing any UI modules
 def load_resources():
-    # Lookup locations for the compiled GResource bundle
+    # Simplified lookup: prefer installed site-packages path, with one system fallback.
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    # macOS app bundle path when frozen with PyInstaller
-    bundle_res = os.path.normpath(os.path.join(
-        os.path.dirname(sys.executable), '..', 'Resources', 'app', 'sshpilot', 'resources', 'sshpilot.gresource'
-    )) if getattr(sys, 'frozen', False) else None
-    # PyInstaller temporary extraction dir (fallback)
-    meipass_res = os.path.join(getattr(sys, '_MEIPASS', ''), 'sshpilot', 'resources', 'sshpilot.gresource') if getattr(sys, '_MEIPASS', None) else None
     possible_paths = [
         os.path.join(current_dir, 'resources', 'sshpilot.gresource'),
-        bundle_res,
-        meipass_res,
         '/usr/share/io.github.mfat.sshpilot/io.github.mfat.sshpilot.gresource',
     ]
 
@@ -52,13 +45,16 @@ from .window import MainWindow
 
 class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
-    
-    def __init__(self):
+
+    def __init__(self, verbose: bool = False):
         super().__init__(
             application_id='io.github.mfat.sshpilot',
             flags=Gio.ApplicationFlags.FLAGS_NONE
         )
-        
+
+        # Command line verbosity override
+        self.verbose_override = verbose
+
         # Set up logging
         self.setup_logging()
         
@@ -82,8 +78,9 @@ class SshPilotApplication(Adw.Application):
         self.create_action('new-connection', self.on_new_connection, ['<primary>n'])
         self.create_action('open-new-connection-tab', self.on_open_new_connection_tab, ['<primary><alt>n'])
         self.create_action('toggle-list', self.on_toggle_list, ['<primary>l'])
+        self.create_action('search', self.on_search, ['<primary>f'])
         self.create_action('new-key', self.on_new_key, ['<primary><shift>k'])
-        self.create_action('show-resources', self.on_show_resources, ['<primary>r'])
+        self.create_action('local-terminal', self.on_local_terminal, ['<primary><shift>t'])
         self.create_action('preferences', self.on_preferences, ['<primary>comma'])
         self.create_action('about', self.on_about)
         self.create_action('help', self.on_help, ['F1'])
@@ -92,6 +89,8 @@ class SshPilotApplication(Adw.Application):
         self.create_action('tab-prev', self.on_tab_prev, ['<alt>Left'])
         # Close tab accelerator (use Ctrl+F4 to avoid conflicts with TUI editors like nano/vim)
         self.create_action('tab-close', self.on_tab_close, ['<primary>F4'])
+        # Broadcast command to all SSH terminals
+        self.create_action('broadcast-command', self.on_broadcast_command, ['<primary><shift>b'])
         
         # Connect to signals
         self.connect('shutdown', self.on_shutdown)
@@ -145,19 +144,18 @@ class SshPilotApplication(Adw.Application):
         # Create log directory if it doesn't exist
         log_dir = os.path.expanduser('~/.local/share/sshPilot')
         os.makedirs(log_dir, exist_ok=True)
-        
-        # Set log level to DEBUG to capture all messages
-        log_level = logging.DEBUG
-        
-        # Create a more detailed formatter
+
+        # Default log level is INFO for cleaner logs
+        log_level = logging.INFO
+
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
-        
+
         # Clear any existing handlers
         logging.getLogger().handlers.clear()
-        
+
         # File handler with rotation
         file_handler = RotatingFileHandler(
             os.path.join(log_dir, 'sshpilot.log'),
@@ -167,29 +165,37 @@ class SshPilotApplication(Adw.Application):
         )
         file_handler.setLevel(log_level)
         file_handler.setFormatter(formatter)
-        
+
         # Console handler
         console_handler = logging.StreamHandler()
         console_handler.setLevel(log_level)
         console_handler.setFormatter(formatter)
-        
+
         # Add handlers to root logger
         root_logger = logging.getLogger()
         root_logger.setLevel(log_level)
         root_logger.addHandler(file_handler)
         root_logger.addHandler(console_handler)
-        
-        # Set specific log levels for noisy modules, but allow runtime override via config
+
+        # Determine verbosity via config or command line
         try:
             from .config import Config
             cfg = Config()
             verbose = bool(cfg.get_setting('ssh.debug_enabled', False))
         except Exception:
             verbose = False
+        if getattr(self, 'verbose_override', False):
+            verbose = True
+
+        effective_level = logging.DEBUG if verbose else logging.INFO
+        file_handler.setLevel(effective_level)
+        console_handler.setLevel(effective_level)
+        root_logger.setLevel(effective_level)
+
         logging.getLogger('asyncio').setLevel(logging.DEBUG if verbose else logging.INFO)
         logging.getLogger('gi').setLevel(logging.INFO if verbose else logging.WARNING)
-        
-        # App module logging: DEBUG if debug_enabled, else INFO
+        logging.getLogger('PIL').setLevel(logging.INFO if verbose else logging.WARNING)
+
         app_level = logging.DEBUG if verbose else logging.INFO
         logging.getLogger('sshpilot').setLevel(app_level)
         logging.getLogger(__name__).setLevel(app_level)
@@ -239,17 +245,23 @@ class SshPilotApplication(Adw.Application):
         if self.props.active_window:
             self.props.active_window.toggle_list_focus()
 
+    def on_search(self, action, param):
+        """Handle search action"""
+        logging.debug("Search action triggered")
+        if self.props.active_window:
+            self.props.active_window.focus_search_entry()
+
     def on_new_key(self, action, param):
         """Handle new SSH key action"""
         logging.debug("New SSH key action triggered")
         if self.props.active_window:
-            self.props.active_window.show_key_dialog()
+            self.props.active_window.on_copy_key_to_server_clicked(None)
 
-    def on_show_resources(self, action, param):
-        """Handle show resources action"""
-        logging.debug("Show resources action triggered")
+    def on_local_terminal(self, action, param):
+        """Handle local terminal action"""
+        logging.debug("Local terminal action triggered")
         if self.props.active_window:
-            self.props.active_window.show_resource_view()
+            self.props.active_window.terminal_manager.show_local_terminal()
 
     def on_preferences(self, action, param):
         """Handle preferences action"""
@@ -294,9 +306,19 @@ class SshPilotApplication(Adw.Application):
         except Exception:
             pass
 
+    def on_broadcast_command(self, action, param):
+        """Handle broadcast command action (Ctrl+Shift+B)"""
+        logging.debug("Broadcast command action triggered")
+        if self.props.active_window:
+            # Forward to the window's action
+            self.props.active_window.broadcast_command_action.activate(None)
+
 def main():
     """Main entry point"""
-    app = SshPilotApplication()
+    parser = argparse.ArgumentParser(description="sshPilot SSH connection manager")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose debug logging")
+    args = parser.parse_args()
+    app = SshPilotApplication(verbose=args.verbose)
     return app.run(None)  # Pass None to use default command line arguments
 
 if __name__ == '__main__':

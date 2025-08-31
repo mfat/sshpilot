@@ -66,7 +66,7 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
         if compression and not for_ssh_copy_id:
             options.append('-C')
 
-    # Apply auto-add host keys policy even when advanced block is off (same as terminal.py)
+    # Default to accepting new host keys non-interactively on fresh installs (same as terminal.py)
     try:
         if (not strict_host) and auto_add_host_keys:
             options.extend(['-o', 'StrictHostKeyChecking=accept-new'])
@@ -75,13 +75,6 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
 
     # Ensure SSH exits immediately on failure rather than waiting in background (same as terminal.py)
     options.extend(['-o', 'ExitOnForwardFailure=yes'])
-    
-    # Default to accepting new host keys non-interactively on fresh installs (same as terminal.py)
-    try:
-        if (not strict_host) and auto_add_host_keys:
-            options.extend(['-o', 'StrictHostKeyChecking=accept-new'])
-    except Exception:
-        pass
     
     # Only add verbose flag if explicitly enabled in config (same as terminal.py)
     # Note: ssh-copy-id doesn't support -v flags, only -x for debug
@@ -107,24 +100,52 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
     # Add key file/options only for key-based auth (same as terminal.py)
     # Note: ssh-copy-id already specifies the key with -i, so we don't add it again
     if not password_auth_selected:
-        if hasattr(connection, 'keyfile') and connection.keyfile and \
+        # Get key selection mode
+        key_select_mode = 0
+        try:
+            key_select_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
+        except Exception:
+            pass
+        
+        # Only add specific key if key_select_mode == 1 (specific key)
+        if key_select_mode == 1 and hasattr(connection, 'keyfile') and connection.keyfile and \
            os.path.isfile(connection.keyfile) and \
            not connection.keyfile.startswith('Select key file'):
             
             if not for_ssh_copy_id:
                 options.extend(['-i', connection.keyfile])
-            # Enforce using only the specified key when key_select_mode == 1
-            try:
-                if int(getattr(connection, 'key_select_mode', 0) or 0) == 1:
-                    options.extend(['-o', 'IdentitiesOnly=yes'])
-            except Exception:
-                pass
+            options.extend(['-o', 'IdentitiesOnly=yes'])
+            
+            # Add certificate if specified
+            if hasattr(connection, 'certificate') and connection.certificate and \
+               os.path.isfile(connection.certificate):
+                options.extend(['-o', f'CertificateFile={connection.certificate}'])
     else:
-        # Prefer password/interactive methods when user chose password auth (same as terminal.py)
+        # Force password authentication when user chose password auth (same as terminal.py)
         # But don't disable pubkey auth for ssh-copy-id since we're installing a key
-        options.extend(['-o', 'PreferredAuthentications=password,keyboard-interactive'])
+        options.extend(['-o', 'PreferredAuthentications=password'])
         if not for_ssh_copy_id:
             options.extend(['-o', 'PubkeyAuthentication=no'])
+    
+    # Add extra SSH config options from advanced tab (same as terminal.py)
+    extra_ssh_config = getattr(connection, 'extra_ssh_config', '').strip()
+    if extra_ssh_config:
+        logger.debug(f"Adding extra SSH config options: {extra_ssh_config}")
+        # Parse and add each extra SSH config option
+        for line in extra_ssh_config.split('\n'):
+            line = line.strip()
+            if line and not line.startswith('#'):  # Skip empty lines and comments
+                # Split on first space to separate option and value
+                parts = line.split(' ', 1)
+                if len(parts) == 2:
+                    option, value = parts
+                    options.extend(['-o', f"{option}={value}"])
+                    logger.debug(f"Added SSH option: {option}={value}")
+                elif len(parts) == 1:
+                    # Option without value (e.g., "Compression yes" becomes "Compression=yes")
+                    option = parts[0]
+                    options.extend(['-o', f"{option}=yes"])
+                    logger.debug(f"Added SSH option: {option}=yes")
     
     # Add X11 forwarding if enabled (same as terminal.py) - not supported by ssh-copy-id
     if hasattr(connection, 'x11_forwarding') and connection.x11_forwarding and not for_ssh_copy_id:

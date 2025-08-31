@@ -66,11 +66,14 @@ class Connection:
         self.port = data.get('port', 22)
         # previously: self.keyfile = data.get('keyfile', '')
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
+        self.certificate = data.get('certificate') or ''
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
         # Commands
         self.local_command = data.get('local_command', '')
         self.remote_command = data.get('remote_command', '')
+        # Extra SSH config parameters
+        self.extra_ssh_config = data.get('extra_ssh_config', '')
         # Authentication method: 0 = key-based, 1 = password
         try:
             self.auth_method = int(data.get('auth_method', 0))
@@ -97,7 +100,6 @@ class Connection:
     async def connect(self):
         """Prepare SSH command for later use (no preflight echo)."""
         try:
-            # Build SSH command
             ssh_cmd = ['ssh']
 
             # Pull advanced SSH defaults from config when available
@@ -155,13 +157,16 @@ class Connection:
             except Exception:
                 pass
             
-            # Add key file only when key-based auth and specific key mode
+            # Add key file and certificate only when key-based auth and specific key mode
             try:
                 if int(getattr(self, 'auth_method', 0) or 0) == 0 and int(getattr(self, 'key_select_mode', 0) or 0) == 1:
                     if self.keyfile and os.path.exists(self.keyfile):
                         ssh_cmd.extend(['-i', self.keyfile])
                         if self.key_passphrase:
                             logger.warning("Passphrase-protected keys may require additional setup")
+                    # Add certificate if specified
+                    if self.certificate and os.path.exists(self.certificate):
+                        ssh_cmd.extend(['-o', f'CertificateFile={self.certificate}'])
             except Exception:
                 pass
             
@@ -532,10 +537,15 @@ class Connection:
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
+
+
+        self.certificate = data.get('certificate') or ''
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
         self.local_command = data.get('local_command', '')
         self.remote_command = data.get('remote_command', '')
+        # Extra SSH config parameters
+        self.extra_ssh_config = data.get('extra_ssh_config', '')
         
         # Authentication method: 0 = key-based, 1 = password
         # Preserve existing auth_method if not present in new data
@@ -679,30 +689,10 @@ class ConnectionManager(GObject.Object):
                                     if existing:
                                         # Update existing connection with new data
                                         existing.update_data(connection_data)
-                                        # Apply per-connection metadata from app config (auth method, etc.)
-                                        try:
-                                            from .config import Config
-                                            cfg = Config()
-                                            meta = cfg.get_connection_meta(existing.nickname)
-                                            if isinstance(meta, dict):
-                                                if 'auth_method' in meta:
-                                                    existing.auth_method = meta['auth_method']
-                                        except Exception:
-                                            pass
                                         self.connections.append(existing)
                                     else:
                                         # Create new connection only if none exists
                                         conn = Connection(connection_data)
-                                        # Apply per-connection metadata from app config (auth method, etc.)
-                                        try:
-                                            from .config import Config
-                                            cfg = Config()
-                                            meta = cfg.get_connection_meta(conn.nickname)
-                                            if isinstance(meta, dict):
-                                                if 'auth_method' in meta:
-                                                    conn.auth_method = meta['auth_method']
-                                        except Exception:
-                                            pass
                                         self.connections.append(conn)
                             
                             # Start new host
@@ -727,30 +717,10 @@ class ConnectionManager(GObject.Object):
                     if existing:
                         # Update existing connection with new data
                         existing.update_data(connection_data)
-                        # Apply per-connection metadata from app config (auth method, etc.)
-                        try:
-                            from .config import Config
-                            cfg = Config()
-                            meta = cfg.get_connection_meta(existing.nickname)
-                            if isinstance(meta, dict):
-                                if 'auth_method' in meta:
-                                    existing.auth_method = meta['auth_method']
-                        except Exception:
-                            pass
                         self.connections.append(existing)
                     else:
                         # Create new connection only if none exists
                         conn = Connection(connection_data)
-                        # Apply per-connection metadata from app config (auth method, etc.)
-                        try:
-                            from .config import Config
-                            cfg = Config()
-                            meta = cfg.get_connection_meta(conn.nickname)
-                            if isinstance(meta, dict):
-                                if 'auth_method' in meta:
-                                    conn.auth_method = meta['auth_method']
-                        except Exception:
-                            pass
                         self.connections.append(conn)
             
             logger.info(f"Loaded {len(self.connections)} connections from SSH config")
@@ -782,7 +752,9 @@ class ConnectionManager(GObject.Object):
                 'port': int(_unwrap(config.get('port', 22))),
                 'username': _unwrap(config.get('user', getpass.getuser())),
                 # previously: 'private_key': config.get('identityfile'),
-                'keyfile': os.path.expanduser(_unwrap(config.get('identityfile'))) if config.get('identityfile') else None,
+
+                'keyfile': os.path.expanduser(_unwrap(config.get('identityfile'))) if config.get('identityfile') else '',
+                'certificate': os.path.expanduser(_unwrap(config.get('certificatefile'))) if config.get('certificatefile') else '',
                 'forwarding_rules': []
             }
             
@@ -899,6 +871,41 @@ class ConnectionManager(GObject.Object):
                     parsed['key_select_mode'] = 0
             except Exception:
                 parsed['key_select_mode'] = 0
+
+            # Determine authentication method
+            try:
+                prefer_auth = str(config.get('preferredauthentications', '')).strip().lower()
+                pubkey_auth = str(config.get('pubkeyauthentication', '')).strip().lower()
+                if 'password' in prefer_auth or pubkey_auth == 'no':
+                    parsed['auth_method'] = 1
+                else:
+                    parsed['auth_method'] = 0
+            except Exception:
+                parsed['auth_method'] = 0
+            
+            # Parse extra SSH config options (custom options not handled by standard fields)
+            extra_config_lines = []
+            # Only include options that are explicitly handled by the main UI fields
+            standard_options = {
+                'host', 'hostname', 'port', 'user', 'identityfile', 'certificatefile',
+                'forwardx11', 'localforward', 'remoteforward', 'dynamicforward',
+                'proxycommand', 'localcommand', 'remotecommand', 'requesttty',
+                'identitiesonly', 'permitlocalcommand',
+                'preferredauthentications', 'pubkeyauthentication'
+            }
+            
+            for key, value in config.items():
+                if key.lower() not in standard_options:
+                    # This is a custom SSH option (including Ciphers, Compression, etc.)
+                    if isinstance(value, list):
+                        # Handle multiple values for the same option
+                        for val in value:
+                            extra_config_lines.append(f"{key} {val}")
+                    else:
+                        extra_config_lines.append(f"{key} {value}")
+            
+            if extra_config_lines:
+                parsed['extra_ssh_config'] = '\n'.join(extra_config_lines)
                 
             return parsed
             
@@ -1166,14 +1173,23 @@ class ConnectionManager(GObject.Object):
         auth_method = int(data.get('auth_method', 0) or 0)
         key_select_mode = int(data.get('key_select_mode', 0) or 0)  # 0=try all, 1=specific
         if auth_method == 0:
-            # Always write IdentityFile if a concrete key path is provided (even in mode 0)
-            if keyfile and keyfile.strip() and not keyfile.strip().lower().startswith('select key file'):
+            # Only write IdentityFile if key_select_mode == 1 (specific key)
+            if key_select_mode == 1 and keyfile and keyfile.strip() and not keyfile.strip().lower().startswith('select key file'):
                 if ' ' in keyfile and not (keyfile.startswith('"') and keyfile.endswith('"')):
                     keyfile = f'"{keyfile}"'
                 lines.append(f"    IdentityFile {keyfile}")
-            # Only enforce exclusive key usage in mode 1
-            if key_select_mode == 1:
                 lines.append("    IdentitiesOnly yes")
+
+                # Add certificate if specified (exclude placeholder text)
+                certificate = data.get('certificate')
+                if certificate and certificate.strip() and not certificate.strip().lower().startswith('select certificate'):
+                    if ' ' in certificate and not (certificate.startswith('"') and certificate.endswith('"')):
+                        certificate = f'"{certificate}"'
+                    lines.append(f"    CertificateFile {certificate}")
+        else:
+            # Password-based authentication
+            lines.append("    PreferredAuthentications password")
+            lines.append("    PubkeyAuthentication no")
         
         # Add X11 forwarding if enabled
         if data.get('x11_forwarding', False):
@@ -1212,7 +1228,38 @@ class ConnectionManager(GObject.Object):
             elif rule.get('type') == 'dynamic':
                 lines.append(f"    DynamicForward {listen_spec}")
         
-        return '\n'.join(lines)
+        # Add extra SSH config parameters if provided
+        extra_config = data.get('extra_ssh_config', '').strip()
+        if extra_config:
+            # Split by lines and add each line as a separate config option
+            for line in extra_config.split('\n'):
+                line = line.strip()
+                if line and not line.startswith('#'):  # Skip empty lines and comments
+                    # Ensure proper indentation
+                    if not line.startswith('    '):
+                        line = f"    {line}"
+                    lines.append(line)
+
+        # Remove duplicate or unwanted auth lines
+        cleaned_lines = []
+        seen_auth_lines = set()
+        auth_keys = {
+            'preferredauthentications password',
+            'pubkeyauthentication no',
+        }
+        for line in lines:
+            key = line.strip().lower()
+            if key in auth_keys:
+                if auth_method == 0:
+                    # Skip entirely for key-based auth
+                    continue
+                if key in seen_auth_lines:
+                    # Avoid duplicates for password auth
+                    continue
+                seen_auth_lines.add(key)
+            cleaned_lines.append(line)
+
+        return '\n'.join(cleaned_lines)
 
     def update_ssh_config_file(self, connection: Connection, new_data: Dict[str, Any], original_nickname: str = None):
         """Update SSH config file with new connection data"""
@@ -1250,6 +1297,9 @@ class ConnectionManager(GObject.Object):
             # Add the original nickname to candidate names for proper matching during renames
             if original_nickname:
                 candidate_names.add(original_nickname)
+            
+            logger.debug(f"Looking for host block with candidate names: {candidate_names}")
+            logger.debug(f"Original nickname: {original_nickname}, New name: {new_name}")
 
             i = 0
             while i < len(lines):
@@ -1262,7 +1312,14 @@ class ConnectionManager(GObject.Object):
                     current_names = parts[1:] if len(parts) > 1 else []
                     
                     # Check if this Host block matches our candidate names
-                    if (full_value in candidate_names) or any(name in candidate_names for name in current_names):
+                    # Split the full_value into individual host names (in case of multiple hosts on one line)
+                    host_names = [name.strip() for name in full_value.split()]
+                    
+                    logger.debug(f"Found Host line: '{lstripped.strip()}' -> full_value='{full_value}' -> host_names={host_names}")
+                    
+                    # Check if any of the host names in this block match our candidate names
+                    if any(host_name in candidate_names for host_name in host_names):
+                        logger.debug(f"MATCH FOUND! Host '{host_names}' matches candidate names {candidate_names}")
                         host_found = True
                         if not replaced_once:
                             updated_config = self.format_ssh_config_entry(new_data)
