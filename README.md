@@ -58,6 +58,12 @@ You can also run the app from source. Install the modules listed in requirements
 python3 run.py
 `
 
+By default, only warnings and errors are printed. To enable verbose debugging output, run the app with the `--verbose` flag:
+
+`
+python3 run.py --verbose
+`
+
 
 
 
@@ -95,6 +101,12 @@ Run from source
 
 ```
 python3 run.py
+```
+
+By default, logs only show warnings and errors. Enable verbose debugging with:
+
+```
+python3 run.py --verbose
 ```
 
 
