@@ -7,6 +7,7 @@ Main application entry point
 import sys
 import os
 import logging
+import argparse
 from logging.handlers import RotatingFileHandler
 
 import gi
@@ -44,13 +45,16 @@ from .window import MainWindow
 
 class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
-    
-    def __init__(self):
+
+    def __init__(self, verbose: bool = False):
         super().__init__(
             application_id='io.github.mfat.sshpilot',
             flags=Gio.ApplicationFlags.FLAGS_NONE
         )
-        
+
+        # Command line verbosity override
+        self.verbose_override = verbose
+
         # Set up logging
         self.setup_logging()
         
@@ -140,19 +144,18 @@ class SshPilotApplication(Adw.Application):
         # Create log directory if it doesn't exist
         log_dir = os.path.expanduser('~/.local/share/sshPilot')
         os.makedirs(log_dir, exist_ok=True)
-        
-        # Set log level to DEBUG to capture all messages
-        log_level = logging.DEBUG
-        
-        # Create a more detailed formatter
+
+        # Default log level is INFO for cleaner logs
+        log_level = logging.INFO
+
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
-        
+
         # Clear any existing handlers
         logging.getLogger().handlers.clear()
-        
+
         # File handler with rotation
         file_handler = RotatingFileHandler(
             os.path.join(log_dir, 'sshpilot.log'),
@@ -162,30 +165,37 @@ class SshPilotApplication(Adw.Application):
         )
         file_handler.setLevel(log_level)
         file_handler.setFormatter(formatter)
-        
+
         # Console handler
         console_handler = logging.StreamHandler()
         console_handler.setLevel(log_level)
         console_handler.setFormatter(formatter)
-        
+
         # Add handlers to root logger
         root_logger = logging.getLogger()
         root_logger.setLevel(log_level)
         root_logger.addHandler(file_handler)
         root_logger.addHandler(console_handler)
-        
-        # Set specific log levels for noisy modules, but allow runtime override via config
+
+        # Determine verbosity via config or command line
         try:
             from .config import Config
             cfg = Config()
             verbose = bool(cfg.get_setting('ssh.debug_enabled', False))
         except Exception:
             verbose = False
+        if getattr(self, 'verbose_override', False):
+            verbose = True
+
+        effective_level = logging.DEBUG if verbose else logging.INFO
+        file_handler.setLevel(effective_level)
+        console_handler.setLevel(effective_level)
+        root_logger.setLevel(effective_level)
+
         logging.getLogger('asyncio').setLevel(logging.DEBUG if verbose else logging.INFO)
         logging.getLogger('gi').setLevel(logging.INFO if verbose else logging.WARNING)
         logging.getLogger('PIL').setLevel(logging.INFO if verbose else logging.WARNING)
-        
-        # App module logging: DEBUG if debug_enabled, else INFO
+
         app_level = logging.DEBUG if verbose else logging.INFO
         logging.getLogger('sshpilot').setLevel(app_level)
         logging.getLogger(__name__).setLevel(app_level)
@@ -305,7 +315,10 @@ class SshPilotApplication(Adw.Application):
 
 def main():
     """Main entry point"""
-    app = SshPilotApplication()
+    parser = argparse.ArgumentParser(description="sshPilot SSH connection manager")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose debug logging")
+    args = parser.parse_args()
+    app = SshPilotApplication(verbose=args.verbose)
     return app.run(None)  # Pass None to use default command line arguments
 
 if __name__ == '__main__':
