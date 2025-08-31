@@ -12,6 +12,9 @@ from gi.repository import Gio, GLib, GObject
 
 logger = logging.getLogger(__name__)
 
+# Increment this whenever the configuration format changes
+CONFIG_VERSION = 2
+
 class Config(GObject.Object):
     """Configuration manager for sshPilot"""
     
@@ -54,7 +57,30 @@ class Config(GObject.Object):
         try:
             if os.path.exists(self.config_file):
                 with open(self.config_file, 'r') as f:
-                    return json.load(f)
+                    config = json.load(f)
+
+                # Purge outdated configurations
+                stored_version = config.get('config_version', 1)
+                if stored_version < CONFIG_VERSION:
+                    backup_file = f"{self.config_file}.bak"
+                    try:
+                        os.replace(self.config_file, backup_file)
+                        logger.warning(
+                            "Outdated config version %s detected; backing up to %s and regenerating defaults",
+                            stored_version,
+                            backup_file,
+                        )
+                    except OSError:
+                        os.remove(self.config_file)
+                        logger.warning(
+                            "Outdated config version %s detected; old config removed and new defaults generated",
+                            stored_version,
+                        )
+
+                    config = self.get_default_config()
+                    self.save_json_config(config)
+
+                return config
             else:
                 # Create default config
                 default_config = self.get_default_config()
@@ -81,6 +107,7 @@ class Config(GObject.Object):
     def get_default_config(self) -> Dict[str, Any]:
         """Get default configuration values"""
         return {
+            'config_version': CONFIG_VERSION,
             'terminal': {
                 'theme': 'default',
                 'font': 'Monospace 12',

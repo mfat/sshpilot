@@ -4460,8 +4460,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     'auth_method': int(getattr(old_connection, 'auth_method', 0) or 0),
                     'keyfile': _norm_str(getattr(old_connection, 'keyfile', '')),
                     'certificate': _norm_str(getattr(old_connection, 'certificate', '')),
-                    'use_raw_sshconfig': bool(getattr(old_connection, 'use_raw_sshconfig', False)),
-                    'raw_ssh_config_block': _norm_str(getattr(old_connection, 'raw_ssh_config_block', '')),
                     'key_select_mode': int(getattr(old_connection, 'key_select_mode', 0) or 0),
                     'password': _norm_str(getattr(old_connection, 'password', '')),
                     'key_passphrase': _norm_str(getattr(old_connection, 'key_passphrase', '')),
@@ -4479,8 +4477,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     'auth_method': int(connection_data.get('auth_method') or 0),
                     'keyfile': _norm_str(connection_data.get('keyfile')),
                     'certificate': _norm_str(connection_data.get('certificate')),
-                    'use_raw_sshconfig': bool(connection_data.get('use_raw_sshconfig', False)),
-                    'raw_ssh_config_block': _norm_str(connection_data.get('raw_ssh_config_block')),
                     'key_select_mode': int(connection_data.get('key_select_mode') or 0),
                     'password': _norm_str(connection_data.get('password')),
                     'key_passphrase': _norm_str(connection_data.get('key_passphrase')),
@@ -4528,8 +4524,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 old_connection.port = connection_data['port']
                 old_connection.keyfile = connection_data['keyfile']
                 old_connection.certificate = connection_data.get('certificate', '')
-                old_connection.use_raw_sshconfig = connection_data.get('use_raw_sshconfig', False)
-                old_connection.raw_ssh_config_block = connection_data.get('raw_ssh_config_block', '')
                 old_connection.password = connection_data['password']
                 old_connection.key_passphrase = connection_data['key_passphrase']
                 old_connection.auth_method = connection_data['auth_method']
@@ -4551,15 +4545,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 # The connection has already been updated in-place, so we don't need to reload from disk
                 # The forwarding rules are already updated in the connection_data
                 
-                # Persist per-connection metadata not stored in SSH config (auth method, etc.)
-                try:
-                    meta_key = old_connection.nickname
-                    self.config.set_connection_meta(meta_key, {
-                        'use_raw_sshconfig': connection_data.get('use_raw_sshconfig', False),
-                        'raw_ssh_config_block': connection_data.get('raw_ssh_config_block', '')
-                    })
-                except Exception:
-                    pass
+
 
                 # Update UI
                 if old_connection in self.connection_rows:
@@ -4601,14 +4587,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     connection.certificate = connection_data.get('certificate', '')
                 except Exception:
                     connection.certificate = ''
-                # Ensure raw SSH config settings are applied immediately
+                # Ensure extra SSH config settings are applied immediately
                 try:
-                    connection.use_raw_sshconfig = connection_data.get('use_raw_sshconfig', False)
-                    connection.raw_ssh_config_block = connection_data.get('raw_ssh_config_block', '')
                     connection.extra_ssh_config = connection_data.get('extra_ssh_config', '')
                 except Exception:
-                    connection.use_raw_sshconfig = False
-                    connection.raw_ssh_config_block = ''
                     connection.extra_ssh_config = ''
                 # Add the new connection to the manager's connections list
                 self.connection_manager.connections.append(connection)
@@ -4623,17 +4605,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         self.rebuild_connection_list()
                     except Exception:
                         pass
-                    # Persist per-connection metadata then reload config
+                    # Reload config after saving
                     try:
-                        self.config.set_connection_meta(connection.nickname, {
-                            'use_raw_sshconfig': connection_data.get('use_raw_sshconfig', False),
-                            'raw_ssh_config_block': connection_data.get('raw_ssh_config_block', '')
-                        })
-                        try:
-                            self.connection_manager.load_ssh_config()
-                            self.rebuild_connection_list()
-                        except Exception:
-                            pass
+
+                        self.connection_manager.load_ssh_config()
+                        self.rebuild_connection_list()
+
                     except Exception:
                         pass
                     # Sync forwarding rules from a fresh reload to ensure UI matches disk
