@@ -1,0 +1,163 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sshpilot"
+version = "3.5.4"
+description = "A user-friendly, modern and lightweight SSH connection manager for Linux, with an integrated terminal"
+readme = "README.md"
+license = {text = "GPL-3.0"}
+authors = [
+    {name = "mFat", email = "newmfat@gmail.com"}
+]
+maintainers = [
+    {name = "mFat", email = "newmfat@gmail.com"}
+]
+keywords = ["ssh", "terminal", "connection-manager", "gtk", "linux"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: System Administrators",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Networking",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Terminals",
+    "Topic :: Desktop Environment :: GNOME",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "PyGObject>=3.42",
+    "pycairo>=1.20.0",
+    "paramiko>=3.4",
+    "cryptography>=42.0",
+    "keyring>=24.3",
+    "psutil>=5.9.0",
+    "secretstorage>=3.3; sys_platform == 'linux'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/mfat/sshpilot"
+Documentation = "https://github.com/mfat/sshpilot#readme"
+Repository = "https://github.com/mfat/sshpilot.git"
+"Bug Tracker" = "https://github.com/mfat/sshpilot/issues"
+"Release Notes" = "https://github.com/mfat/sshpilot/releases"
+
+[project.scripts]
+sshpilot = "sshpilot.main:main"
+
+[project.gui-scripts]
+sshpilot = "sshpilot.main:main"
+
+[tool.setuptools]
+packages = ["sshpilot"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+sshpilot = [
+    "resources/*",
+    "*.svg",
+    "*.desktop",
+    "*.metainfo.xml",
+]
+
+[tool.setuptools.data-files]
+"share/applications" = ["io.github.mfat.sshpilot.desktop"]
+"share/metainfo" = ["io.github.mfat.sshpilot.metainfo.xml"]
+"share/icons/hicolor/scalable/apps" = ["sshpilot/io.github.mfat.sshpilot.svg"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["sshpilot"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "gi.*",
+    "cairo.*",
+    "secretstorage.*",
+    "keyring.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers --strict-config"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+source = ["sshpilot"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
