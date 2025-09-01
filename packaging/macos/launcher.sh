@@ -54,5 +54,12 @@ if /bin/expr "x$1" : '^x-psn_' > /dev/null; then
 fi
 
 # Execute the Python launcher script from Resources
-cd "$bundle_res"
-$EXEC "python3" "sshPilot-launcher-bin" "$@"
+# Handle both cases: when run from bundle root and when run from MacOS directory
+if [ -d "$bundle_res" ]; then
+    cd "$bundle_res"
+    $EXEC "python3" "sshPilot-launcher-bin" "$@"
+else
+    # Fallback: try to find Resources relative to current directory
+    cd "$(dirname "$0")/../Resources"
+    $EXEC "python3" "sshPilot-launcher-bin" "$@"
+fi
