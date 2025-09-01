@@ -1,12 +1,11 @@
 #!/bin/bash
-set -euo pipefail
 
 # Get the app bundle root directory
 APP="$(cd "$(dirname "$0")/.."; pwd -P)"/..
 RES="$APP/Contents/Resources"
 
-# Set up Python environment (use system Python for now)
-export PYTHONPATH="$RES/app:${PYTHONPATH:-}"
+# Set up Python environment (use system Python with bundled site-packages)
+export PYTHONPATH="$RES/app:$RES/lib/python3.13/site-packages:$RES/lib/python3.12/site-packages:${PYTHONPATH:-}"
 
 # GTK/GLib/GObject Introspection paths (bundled inside app)
 export GI_TYPELIB_PATH="$RES/lib/girepository-1.0"
@@ -29,9 +28,15 @@ export GTK_THEME=""
 export GTK_USE_PORTAL="1"
 export GTK_CSD="1"
 
-# Change to the app directory and run
-cd "$RES/app"
+# Change to the Resources directory and run from there
+cd "$RES"
 
-# Start the application using system Python
-# Just run run.py directly - it handles its own path setup
-exec python3 run.py
+# Start the application using system Python with bundled libraries
+# Run from the parent directory so the package can be imported properly
+exec python3 -c "
+import sys
+import os
+sys.path.insert(0, os.path.join(os.getcwd(), 'app'))
+from app.main import main
+main()
+"

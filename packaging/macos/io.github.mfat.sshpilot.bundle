@@ -12,13 +12,28 @@
   <main-binary dest="${bundle}/Contents/MacOS/sshPilot">${env:BUILD_DIR}/sshPilot-launcher-main.py</main-binary>
 
   <!-- Copy application files -->
-  <data dest="${bundle}/Contents/Resources/sshpilot">
+  <data dest="${bundle}/Contents/Resources/app">
     ${env:BUILD_DIR}/sshpilot/
   </data>
 
-  <!-- Copy resources -->
-  <data dest="${bundle}/Contents/Resources">
+  <!-- Copy main entry point -->
+  <data dest="${bundle}/Contents/Resources/app">
     ${env:BUILD_DIR}/run.py
+  </data>
+
+  <!-- Copy Python runtime and site-packages -->
+  <data dest="${bundle}/Contents/Resources/python">
+    ${env:PYTHON_RUNTIME}
+  </data>
+
+  <!-- Copy GTK libraries and dependencies -->
+  <data dest="${bundle}/Contents/Resources/lib">
+    ${env:GTK_LIBS}
+  </data>
+
+  <!-- Copy GTK data files -->
+  <data dest="${bundle}/Contents/Resources/share">
+    ${env:GTK_DATA}
   </data>
 
   <!-- Copy app icon -->

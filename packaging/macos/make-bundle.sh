@@ -63,10 +63,22 @@ cp "${SCRIPT_DIR}/Info.plist" "${BUILD_DIR}/"
 # Copy the app icon
 cp "${SCRIPT_DIR}/sshPilot.icns" "${BUILD_DIR}/"
 
+# Set up environment variables for gtk-mac-bundler
+export BUILD_DIR="${BUILD_DIR}"
+export BREW_PREFIX="${BREW_PREFIX}"
+
+# Set up Python runtime and GTK paths for bundling
+export PYTHON_RUNTIME="${BREW_PREFIX}/bin/python3"
+export GTK_LIBS="${BREW_PREFIX}/lib"
+export GTK_DATA="${BREW_PREFIX}/share"
+
 # Use gtk-mac-bundler to create the app bundle
 echo "Creating app bundle with gtk-mac-bundler..."
 export BUILD_DIR="${BUILD_DIR}"
 export BREW_PREFIX="${BREW_PREFIX}"
+export PYTHON_RUNTIME="${PYTHON_RUNTIME}"
+export GTK_LIBS="${GTK_LIBS}"
+export GTK_DATA="${GTK_DATA}"
 pushd "${BUILD_DIR}" >/dev/null
 gtk-mac-bundler "${BUNDLE_XML}"
 popd >/dev/null
@@ -85,7 +97,8 @@ if [ -d "${HOME}/Desktop/sshPilot.app" ]; then
   echo "You can now open: open ${DIST_DIR}/sshPilot.app"
   echo "Or double-click sshPilot.app in Finder"
   echo ""
-  echo "This is a professional, redistributable bundle with custom icon!"
+  echo "This is now a fully self-contained, redistributable bundle!"
+  echo "Users don't need to install Python, PyGObject, or GTK libraries!"
 else
   echo "gtk-mac-bundler failed to create app bundle" >&2
   exit 1

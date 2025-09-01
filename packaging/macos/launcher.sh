@@ -1,65 +1,42 @@
-#!/bin/sh
+#!/bin/bash
 
-if test "x$GTK_DEBUG_LAUNCHER" != x; then
-    set -x
-fi
+# Get the app bundle root directory
+APP="$(cd "$(dirname "$0")/.."; pwd -P)"/..
+RES="$APP/Contents/Resources"
 
-if test "x$GTK_DEBUG_GDB" != x; then
-    EXEC="gdb --args"
-else
-    EXEC=exec
-fi
+# Set up Python environment (use system Python with bundled site-packages)
+export PYTHONPATH="$RES/app:$RES/lib/python3.13/site-packages:$RES/lib/python3.12/site-packages:${PYTHONPATH:-}"
 
-name=`basename "$0"`
-tmp="$0"
-tmp=`dirname "$tmp"`
-tmp=`dirname "$tmp"`
-bundle=`dirname "$tmp"`
-bundle_contents="$bundle"/Contents
-bundle_res="$bundle_contents"/Resources
-bundle_lib="$bundle_res"/lib
-bundle_bin="$bundle_res"/bin
-bundle_data="$bundle_res"/share
-bundle_etc="$bundle_res"/etc
+# GTK/GLib/GObject Introspection paths (bundled inside app)
+export GI_TYPELIB_PATH="$RES/lib/girepository-1.0"
+export GSETTINGS_SCHEMA_DIR="$RES/share/glib-2.0/schemas"
+export XDG_DATA_DIRS="$RES/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 
-export XDG_CONFIG_DIRS="$bundle_etc"/xdg
-export XDG_DATA_DIRS="/usr/local/share:$bundle_data"
-export GTK_DATA_PREFIX="$bundle_res"
-export GTK_EXE_PREFIX="$bundle_res"
-export GTK_PATH="$bundle_res"
+# GTK-specific paths
+export GTK_DATA_PREFIX="$RES"
+export GTK_EXE_PREFIX="$RES"
+export GTK_PATH="$RES"
 
-# Use system Homebrew GTK libraries instead of bundled ones
-export DYLD_FALLBACK_LIBRARY_PATH="/usr/local/lib:$DYLD_FALLBACK_LIBRARY_PATH"
-export GI_TYPELIB_PATH="/usr/local/lib/girepository-1.0:$GI_TYPELIB_PATH"
+# macOS loader paths (bundled libraries)
+export DYLD_LIBRARY_PATH="$RES/lib"
+export DYLD_FALLBACK_LIBRARY_PATH="$RES/lib:${DYLD_FALLBACK_LIBRARY_PATH:-}"
 
-# Set icon theme to use system Adwaita theme (but allow theme switching)
+# Icon and theme settings
 export GTK_ICON_THEME="Adwaita"
 export XDG_ICON_THEME="Adwaita"
-
-# Enable theme switching by not hardcoding GTK_THEME
-# GTK will automatically detect light/dark mode from macOS
-export GTK_APPLICATION_PREFERS_DARK_THEME=""
-export GTK_THEME_VARIANT=""
-
-# Force GTK to use system default theme (enables light/dark switching)
 export GTK_THEME=""
-
-# Enable macOS appearance detection for theme switching
 export GTK_USE_PORTAL="1"
 export GTK_CSD="1"
 
-# Strip out the argument added by the OS.
-if /bin/expr "x$1" : '^x-psn_' > /dev/null; then
-    shift 1
-fi
+# Change to the Resources directory and run from there
+cd "$RES"
 
-# Execute the Python launcher script from Resources
-# Handle both cases: when run from bundle root and when run from MacOS directory
-if [ -d "$bundle_res" ]; then
-    cd "$bundle_res"
-    $EXEC "python3" "sshPilot-launcher-bin" "$@"
-else
-    # Fallback: try to find Resources relative to current directory
-    cd "$(dirname "$0")/../Resources"
-    $EXEC "python3" "sshPilot-launcher-bin" "$@"
-fi
+# Start the application using system Python with bundled libraries
+# Run from the parent directory so the package can be imported properly
+exec python3 -c "
+import sys
+import os
+sys.path.insert(0, os.path.join(os.getcwd(), 'app'))
+from app.main import main
+main()
+"
