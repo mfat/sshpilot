@@ -93,7 +93,15 @@ This automatically:
 brew install gtk4 libadwaita pygobject3
 
 # Bundling Tools
-brew install gtk-mac-bundler create-dmg
+# gtk-mac-bundler is installed from source (not available in Homebrew)
+git clone https://gitlab.gnome.org/GNOME/gtk-mac-bundler.git
+cd gtk-mac-bundler
+make install
+cd ..
+rm -rf gtk-mac-bundler
+
+# DMG Creation Tool
+brew install create-dmg
 
 # Python Dependencies
 pip3 install -r requirements.txt

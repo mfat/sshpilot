@@ -33,7 +33,7 @@ jobs:
         fi
         
         # Install GTK4 and dependencies
-        brew install gtk4 libadwaita pygobject3 gtk-mac-bundler
+        brew install gtk4 libadwaita pygobject3
         
         # Install create-dmg for DMG creation
         brew install create-dmg
@@ -41,6 +41,24 @@ jobs:
         # Install Python dependencies
         pip3 install --upgrade pip
         pip3 install -r requirements.txt
+    
+    - name: Install gtk-mac-bundler
+      run: |
+        # Install gtk-mac-bundler from GTK macOS project
+        # This is the correct way to get the bundling tool
+        git clone https://gitlab.gnome.org/GNOME/gtk-mac-bundler.git
+        cd gtk-mac-bundler
+        make install
+        cd ..
+        rm -rf gtk-mac-bundler
+        
+        # Verify installation
+        if ! command -v gtk-mac-bundler >/dev/null 2>&1; then
+          echo "Error: gtk-mac-bundler not found after installation"
+          exit 1
+        fi
+        
+        echo "gtk-mac-bundler installed successfully"
     
     - name: Set up environment
       run: |

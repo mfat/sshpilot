@@ -11,8 +11,15 @@ This directory contains everything needed to create a professional macOS applica
 
 ### Install Dependencies
 ```bash
-# Install GTK4 and bundling tools
-brew install gtk4 libadwaita pygobject3 gtk-mac-bundler
+# Install GTK4 and dependencies
+brew install gtk4 libadwaita pygobject3
+
+# Install gtk-mac-bundler from source
+git clone https://gitlab.gnome.org/GNOME/gtk-mac-bundler.git
+cd gtk-mac-bundler
+make install
+cd ..
+rm -rf gtk-mac-bundler
 
 # Install DMG creation tool
 brew install create-dmg
@@ -119,7 +126,12 @@ This ensures your builds work before creating releases.
 
 **"gtk-mac-bundler not found"**
 ```bash
-brew install gtk-mac-bundler
+# Install from source (not available in Homebrew)
+git clone https://gitlab.gnome.org/GNOME/gtk-mac-bundler.git
+cd gtk-mac-bundler
+make install
+cd ..
+rm -rf gtk-mac-bundler
 ```
 
 **"create-dmg not found"**
