@@ -38,9 +38,14 @@ jobs:
         # Install create-dmg for DMG creation
         brew install create-dmg
         
-        # Install Python dependencies
-        pip3 install --upgrade pip
-        pip3 install -r requirements.txt
+        # Install Python dependencies in virtual environment
+        python3 -m venv venv
+        source venv/bin/activate
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        
+        # Deactivate virtual environment
+        deactivate
     
     - name: Install gtk-mac-bundler
       run: |
@@ -69,9 +74,15 @@ jobs:
         # Set up GTK environment
         echo "GI_TYPELIB_PATH=$(brew --prefix)/lib/girepository-1.0" >> $GITHUB_ENV
         echo "DYLD_LIBRARY_PATH=$(brew --prefix)/lib" >> $GITHUB_ENV
+        
+        # Set up Python virtual environment
+        echo "VENV_PATH=$(pwd)/venv" >> $GITHUB_ENV
     
     - name: Build application bundle
       run: |
+        # Activate virtual environment
+        source venv/bin/activate
+        
         # Make the build script executable
         chmod +x packaging/macos/make-bundle.sh
         
@@ -86,6 +97,9 @@ jobs:
         
         echo "App bundle created successfully"
         ls -la dist/
+        
+        # Deactivate virtual environment
+        deactivate
     
     - name: Create DMG installer
       run: |

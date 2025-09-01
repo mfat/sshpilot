@@ -24,17 +24,26 @@ rm -rf gtk-mac-bundler
 # Install DMG creation tool
 brew install create-dmg
 
-# Install Python dependencies
-pip3 install -r ../../requirements.txt
+# Install Python dependencies (use virtual environment for Python 3.13+)
+python3 -m venv venv
+source venv/bin/activate
+pip install -r ../../requirements.txt
+deactivate
 ```
 
 ### Build Everything
 ```bash
+# Activate virtual environment
+source venv/bin/activate
+
 # Build the app bundle
 bash make-bundle.sh
 
 # Create the DMG installer
 bash create-dmg.sh
+
+# Deactivate virtual environment
+deactivate
 ```
 
 ## 📁 What Gets Created
@@ -46,7 +55,13 @@ bash create-dmg.sh
 
 ### 1. Build App Bundle
 ```bash
+# Activate virtual environment first
+source venv/bin/activate
+
 bash make-bundle.sh
+
+# Deactivate when done
+deactivate
 ```
 
 This script:
@@ -137,6 +152,15 @@ rm -rf gtk-mac-bundler
 **"create-dmg not found"**
 ```bash
 brew install create-dmg
+```
+
+**"externally-managed-environment" error (Python 3.13+)**
+```bash
+# Use virtual environment instead of system pip
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+deactivate
 ```
 
 **App doesn't launch with double-click**
