@@ -2500,8 +2500,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         else:
             # Apply authentication preferences
             if prefer_password:
-                argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password']
-                logger.debug("Main window: Added password authentication options - PubkeyAuthentication=no, PreferredAuthentications=password")
+                argv += ['-o', 'PreferredAuthentications=password']
+                if getattr(connection, 'pubkey_auth_no', False):
+                    argv += ['-o', 'PubkeyAuthentication=no']
+                    logger.debug("Main window: Added password authentication options - PubkeyAuthentication=no, PreferredAuthentications=password")
+                else:
+                    logger.debug("Main window: Added password authentication option - PreferredAuthentications=password")
             elif combined_auth:
                 argv += [
                     '-o',
@@ -2861,7 +2865,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 
         elif prefer_password or combined_auth:
             if prefer_password:
-                argv += ['-o', 'PubkeyAuthentication=no', '-o', 'PreferredAuthentications=password']
+                argv += ['-o', 'PreferredAuthentications=password']
+                if getattr(connection, 'pubkey_auth_no', False):
+                    argv += ['-o', 'PubkeyAuthentication=no']
             else:
                 argv += [
                     '-o',

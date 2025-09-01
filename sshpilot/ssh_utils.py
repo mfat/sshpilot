@@ -143,7 +143,7 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
         # Force password authentication when user chose password auth (same as terminal.py)
         # But don't disable pubkey auth for ssh-copy-id since we're installing a key
         options.extend(['-o', 'PreferredAuthentications=password'])
-        if not for_ssh_copy_id:
+        if not for_ssh_copy_id and getattr(connection, 'pubkey_auth_no', False):
             options.extend(['-o', 'PubkeyAuthentication=no'])
     
     # Add extra SSH config options from advanced tab (same as terminal.py)

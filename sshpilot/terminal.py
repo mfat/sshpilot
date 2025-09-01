@@ -599,7 +599,8 @@ class TerminalWidget(Gtk.Box):
             else:
                 # Force password authentication when user chose password auth
                 ssh_cmd.extend(['-o', 'PreferredAuthentications=password'])
-                ssh_cmd.extend(['-o', 'PubkeyAuthentication=no'])
+                if getattr(self.connection, 'pubkey_auth_no', False):
+                    ssh_cmd.extend(['-o', 'PubkeyAuthentication=no'])
 
             # Add X11 forwarding if enabled
             if hasattr(self.connection, 'x11_forwarding') and self.connection.x11_forwarding:

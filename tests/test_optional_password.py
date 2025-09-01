@@ -19,3 +19,17 @@ def test_key_auth_without_password_omits_combined_options():
         'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
         not in opts
     )
+
+
+def test_password_auth_without_pubkeyauth_no():
+    conn = types.SimpleNamespace(auth_method=1)
+    opts = ssh_utils.build_connection_ssh_options(conn)
+    assert 'PreferredAuthentications=password' in opts
+    assert 'PubkeyAuthentication=no' not in opts
+
+
+def test_password_auth_with_pubkeyauth_no():
+    conn = types.SimpleNamespace(auth_method=1, pubkey_auth_no=True)
+    opts = ssh_utils.build_connection_ssh_options(conn)
+    assert 'PreferredAuthentications=password' in opts
+    assert 'PubkeyAuthentication=no' in opts
