@@ -2073,7 +2073,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # Disable pubkey authentication toggle for password auth
         self.pubkey_auth_row = Adw.SwitchRow()
-        self.pubkey_auth_row.set_title(_("Disable public key authentication"))
+        self.pubkey_auth_row.set_title(_("Disable public key authentication (force password only)"))
         self.pubkey_auth_row.set_active(False)
         auth_group.add(self.pubkey_auth_row)
         
