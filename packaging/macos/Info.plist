@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleExecutable</key>
-	<string>sshPilot-launcher</string>
+	<string>sshPilot</string>
 	<key>CFBundleIdentifier</key>
 	<string>io.github.mfat.sshpilot</string>
 	<key>CFBundleName</key>
@@ -40,5 +40,7 @@
 	<true/>
 	<key>NSRequiresAquaSystemAppearance</key>
 	<false/>
+	<key>CFBundleIconFile</key>
+	<string>sshPilot.icns</string>
 </dict>
 </plist>

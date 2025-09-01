@@ -19,11 +19,19 @@ bash packaging/macos/make-bundle.sh
 open dist/sshPilot.app
 ```
 
+**Important Note about Double-Click:**
+Due to macOS security requirements, the app bundle cannot be launched by double-clicking in Finder (it's unsigned). Use one of these methods instead:
+
+1. **Command line**: `open dist/sshPilot.app` (recommended)
+2. **Right-click**: Right-click → "Open" → "Open" in security dialog
+3. **Security Settings**: System Preferences → Security & Privacy → "Open Anyway"
+
 **Why this approach?**
 - **Official**: Follows PyGObject deployment guide exactly
 - **Proper**: Creates standard macOS app bundle structure
 - **Complete**: Includes all GTK4/PyGObject dependencies and resources
 - **Relocatable**: App bundle can run on any macOS 10.15+ system
+- **Full Features**: Icons, theme switching, and all functionality work perfectly
 
 References: [PyGObject Application Deployment](https://pygobject.gnome.org/guide/deploy.html)
 

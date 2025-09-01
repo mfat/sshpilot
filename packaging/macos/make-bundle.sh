@@ -60,9 +60,12 @@ cp "${ROOT_DIR}/sshpilot/resources/sshpilot.svg" "${BUILD_DIR}/"
 # Copy the Info.plist file
 cp "${SCRIPT_DIR}/Info.plist" "${BUILD_DIR}/"
 
-# Copy the launcher script
-cp "${SCRIPT_DIR}/launcher.sh" "${BUILD_DIR}/"
-chmod +x "${BUILD_DIR}/launcher.sh"
+# Copy the Python launcher
+cp "${SCRIPT_DIR}/sshPilot-launcher-main.py" "${BUILD_DIR}/"
+chmod +x "${BUILD_DIR}/sshPilot-launcher-main.py"
+
+# Copy the app icon
+cp "${SCRIPT_DIR}/sshPilot.icns" "${BUILD_DIR}/"
 
 # Use gtk-mac-bundler to create the app bundle
 echo "Creating app bundle with gtk-mac-bundler..."
@@ -77,8 +80,14 @@ if [ -d "${HOME}/Desktop/sshPilot.app" ]; then
   # Remove existing app bundle if it exists
   rm -rf "${DIST_DIR}/sshPilot.app"
   mv "${HOME}/Desktop/sshPilot.app" "${DIST_DIR}/"
+  
+  # Sign the app bundle for macOS compatibility (allows double-click)
+  echo "Signing app bundle..."
+  codesign --force --deep --sign - "${DIST_DIR}/sshPilot.app"
+  
   echo "sshPilot.app created in ${DIST_DIR}"
   echo "You can now open: open ${DIST_DIR}/sshPilot.app"
+  echo "Or double-click sshPilot.app in Finder"
 else
   echo "gtk-mac-bundler failed to create app bundle" >&2
   exit 1

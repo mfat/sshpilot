@@ -9,7 +9,7 @@
 
   <plist>${project}/Info.plist</plist>
 
-  <main-binary dest="${bundle}/Contents/MacOS/sshPilot">${env:BUILD_DIR}/launcher.sh</main-binary>
+  <main-binary dest="${bundle}/Contents/MacOS/sshPilot">${env:BUILD_DIR}/sshPilot-launcher-main.py</main-binary>
 
   <data dest="${bundle}/Contents/Resources">
     ${env:BUILD_DIR}/sshpilot.gresource
@@ -29,5 +29,9 @@
 
   <data dest="${bundle}/Contents/Resources/sshPilot-launcher-bin">
     ${env:BUILD_DIR}/sshPilot-launcher
+  </data>
+
+  <data dest="${bundle}/Contents/Resources">
+    ${env:BUILD_DIR}/sshPilot.icns
   </data>
 </app-bundle>
