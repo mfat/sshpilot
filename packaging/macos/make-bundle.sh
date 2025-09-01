@@ -41,8 +41,15 @@ fi
 # Build the Python application (no PyInstaller, just Python)
 echo "Building Python application..."
 
-# Install dependencies
-python3 -m pip install --upgrade pip -r "${ROOT_DIR}/requirements.txt"
+# Check if we're in a CI environment or if dependencies are already installed
+if [ -z "${CI:-}" ] && [ -z "${GITHUB_ACTIONS:-}" ]; then
+  # Only install dependencies locally, not in CI
+  echo "Installing Python dependencies locally..."
+  python3 -m pip install --user --upgrade pip
+  python3 -m pip install --user -r "${ROOT_DIR}/requirements.txt"
+else
+  echo "Running in CI environment, skipping pip install (dependencies should be pre-installed)"
+fi
 
 # Copy application files to build directory
 cp -R "${ROOT_DIR}/sshpilot" "${BUILD_DIR}/"
@@ -74,11 +81,8 @@ export GTK_DATA="${BREW_PREFIX}/share"
 
 # Use gtk-mac-bundler to create the app bundle
 echo "Creating app bundle with gtk-mac-bundler..."
-export BUILD_DIR="${BUILD_DIR}"
-export BREW_PREFIX="${BREW_PREFIX}"
-export PYTHON_RUNTIME="${PYTHON_RUNTIME}"
-export GTK_LIBS="${GTK_LIBS}"
-export GTK_DATA="${GTK_DATA}"
+
+# Change to build directory and run gtk-mac-bundler
 pushd "${BUILD_DIR}" >/dev/null
 gtk-mac-bundler "${BUNDLE_XML}"
 popd >/dev/null
