@@ -11,26 +11,17 @@
 
   <main-binary dest="${bundle}/Contents/MacOS/sshPilot">${env:BUILD_DIR}/sshPilot-launcher-main.py</main-binary>
 
-  <data dest="${bundle}/Contents/Resources">
-    ${env:BUILD_DIR}/sshpilot.gresource
-  </data>
-
-  <data dest="${bundle}/Contents/Resources">
-    ${env:BUILD_DIR}/sshpilot.svg
-  </data>
-
+  <!-- Copy application files -->
   <data dest="${bundle}/Contents/Resources/sshpilot">
     ${env:BUILD_DIR}/sshpilot/
   </data>
 
+  <!-- Copy resources -->
   <data dest="${bundle}/Contents/Resources">
     ${env:BUILD_DIR}/run.py
   </data>
 
-  <data dest="${bundle}/Contents/Resources/sshPilot-launcher-bin">
-    ${env:BUILD_DIR}/sshPilot-launcher
-  </data>
-
+  <!-- Copy app icon -->
   <data dest="${bundle}/Contents/Resources">
     ${env:BUILD_DIR}/sshPilot.icns
   </data>

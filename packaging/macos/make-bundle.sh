@@ -49,9 +49,9 @@ cp -R "${ROOT_DIR}/sshpilot" "${BUILD_DIR}/"
 cp "${ROOT_DIR}/run.py" "${BUILD_DIR}/"
 cp "${ROOT_DIR}/requirements.txt" "${BUILD_DIR}/"
 
-# Copy the Python launcher script
-cp "${SCRIPT_DIR}/sshPilot-launcher.py" "${BUILD_DIR}/sshPilot-launcher"
-chmod +x "${BUILD_DIR}/sshPilot-launcher"
+# Copy the Python launcher
+cp "${SCRIPT_DIR}/sshPilot-launcher-main.py" "${BUILD_DIR}/"
+chmod +x "${BUILD_DIR}/sshPilot-launcher-main.py"
 
 # Copy resources
 cp "${ROOT_DIR}/sshpilot/resources/sshpilot.gresource" "${BUILD_DIR}/"
@@ -59,10 +59,6 @@ cp "${ROOT_DIR}/sshpilot/resources/sshpilot.svg" "${BUILD_DIR}/"
 
 # Copy the Info.plist file
 cp "${SCRIPT_DIR}/Info.plist" "${BUILD_DIR}/"
-
-# Copy the Python launcher
-cp "${SCRIPT_DIR}/sshPilot-launcher-main.py" "${BUILD_DIR}/"
-chmod +x "${BUILD_DIR}/sshPilot-launcher-main.py"
 
 # Copy the app icon
 cp "${SCRIPT_DIR}/sshPilot.icns" "${BUILD_DIR}/"
@@ -80,14 +76,16 @@ if [ -d "${HOME}/Desktop/sshPilot.app" ]; then
   # Remove existing app bundle if it exists
   rm -rf "${DIST_DIR}/sshPilot.app"
   mv "${HOME}/Desktop/sshPilot.app" "${DIST_DIR}/"
-  
+
   # Sign the app bundle for macOS compatibility (allows double-click)
   echo "Signing app bundle..."
   codesign --force --deep --sign - "${DIST_DIR}/sshPilot.app"
-  
+
   echo "sshPilot.app created in ${DIST_DIR}"
   echo "You can now open: open ${DIST_DIR}/sshPilot.app"
   echo "Or double-click sshPilot.app in Finder"
+  echo ""
+  echo "This is a professional, redistributable bundle with custom icon!"
 else
   echo "gtk-mac-bundler failed to create app bundle" >&2
   exit 1
