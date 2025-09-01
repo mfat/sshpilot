@@ -91,9 +91,14 @@ copy_lib libfreetype
 copy_lib libfontconfig
 copy_lib libz
 
+# Rename PyInstaller-generated binary so we can wrap it with env setup
+ORIG_BIN="${MACOS_DIR}/${APP_NAME}"
+if [ -f "$ORIG_BIN" ]; then
+  mv "$ORIG_BIN" "${ORIG_BIN}-bin"
+fi
+
 # Create launcher that sets env for bundled GI/GTK
-LAUNCHER="${MACOS_DIR}/${APP_NAME}"
-cat > "$LAUNCHER" <<'EOF'
+cat > "$ORIG_BIN" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -107,12 +112,12 @@ export XDG_DATA_DIRS="${RES}/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}
 export GTK_DATA_PREFIX="${RES}"
 export GTK_EXE_PREFIX="${RES}"
 
-exec "${HERE}/sshPilot" "$@"
+exec "${HERE}/sshPilot-bin" "$@"
 EOF
-chmod +x "$LAUNCHER"
+chmod +x "$ORIG_BIN"
 
 # Ensure main binary exists (PyInstaller output name)
-if [ ! -f "${MACOS_DIR}/sshPilot" ]; then
+if [ ! -f "${ORIG_BIN}-bin" ]; then
   echo "PyInstaller main binary not found; build may have failed" >&2
   exit 1
 fi
