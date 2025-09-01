@@ -32,10 +32,21 @@ export GTK_PATH="$bundle_res"
 export DYLD_FALLBACK_LIBRARY_PATH="/usr/local/lib:$DYLD_FALLBACK_LIBRARY_PATH"
 export GI_TYPELIB_PATH="/usr/local/lib/girepository-1.0:$GI_TYPELIB_PATH"
 
-# Set icon theme to use system Adwaita theme
-export GTK_THEME="Adwaita"
+# Set icon theme to use system Adwaita theme (but allow theme switching)
 export GTK_ICON_THEME="Adwaita"
 export XDG_ICON_THEME="Adwaita"
+
+# Enable theme switching by not hardcoding GTK_THEME
+# GTK will automatically detect light/dark mode from macOS
+export GTK_APPLICATION_PREFERS_DARK_THEME=""
+export GTK_THEME_VARIANT=""
+
+# Force GTK to use system default theme (enables light/dark switching)
+export GTK_THEME=""
+
+# Enable macOS appearance detection for theme switching
+export GTK_USE_PORTAL="1"
+export GTK_CSD="1"
 
 # Strip out the argument added by the OS.
 if /bin/expr "x$1" : '^x-psn_' > /dev/null; then
