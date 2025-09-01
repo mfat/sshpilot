@@ -78,6 +78,7 @@ class Connection:
         self.remote_command = data.get('remote_command', '')
         # Extra SSH config parameters
         self.extra_ssh_config = data.get('extra_ssh_config', '')
+        self.pubkey_auth_no = bool(data.get('pubkey_auth_no', False))
         # Authentication method: 0 = key-based, 1 = password
         try:
             self.auth_method = int(data.get('auth_method', 0))
@@ -550,7 +551,8 @@ class Connection:
         self.remote_command = data.get('remote_command', '')
         # Extra SSH config parameters
         self.extra_ssh_config = data.get('extra_ssh_config', '')
-        
+        self.pubkey_auth_no = bool(data.get('pubkey_auth_no', False))
+
         # Authentication method: 0 = key-based, 1 = password
         # Preserve existing auth_method if not present in new data
         if 'auth_method' in data:
@@ -880,6 +882,7 @@ class ConnectionManager(GObject.Object):
             try:
                 prefer_auth = str(config.get('preferredauthentications', '')).strip().lower()
                 pubkey_auth = str(config.get('pubkeyauthentication', '')).strip().lower()
+                parsed['pubkey_auth_no'] = (pubkey_auth == 'no')
                 if 'password' in prefer_auth or pubkey_auth == 'no':
                     parsed['auth_method'] = 1
                 else:
@@ -1224,7 +1227,8 @@ class ConnectionManager(GObject.Object):
         else:
             # Password-based authentication only
             lines.append("    PreferredAuthentications password")
-            lines.append("    PubkeyAuthentication no")
+            if data.get('pubkey_auth_no'):
+                lines.append("    PubkeyAuthentication no")
         
         # Add X11 forwarding if enabled
         if data.get('x11_forwarding', False):

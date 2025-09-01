@@ -39,8 +39,7 @@ def run_ssh_with_password(host: str, user: str, password: str, *,
             "PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password",
         ]
     else:
-        ssh_opts += ["-o", "PreferredAuthentications=password",
-                     "-o", "PubkeyAuthentication=no"]
+        ssh_opts += ["-o", "PreferredAuthentications=password"]
     ssh_opts += [
         "-o", "NumberOfPasswordPrompts=1",
         "-o", "ServerAliveInterval=30",
@@ -126,8 +125,7 @@ def run_scp_with_password(host: str, user: str, password: str,
             "PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password",
         ]
     else:
-        ssh_opts += ["-o", "PreferredAuthentications=password",
-                     "-o", "PubkeyAuthentication=no"]
+        ssh_opts += ["-o", "PreferredAuthentications=password"]
     ssh_opts += ["-o", "NumberOfPasswordPrompts=1"]
     if known_hosts_path:
         ssh_opts += ["-o", f"UserKnownHostsFile={known_hosts_path}",

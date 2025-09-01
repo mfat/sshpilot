@@ -853,6 +853,8 @@ class ConnectionDialog(Adw.Window):
         # Password field is always available since key-based auth can also require a password
         if hasattr(self, 'password_row'):
             self.password_row.set_visible(True)
+        if hasattr(self, 'pubkey_auth_row'):
+            self.pubkey_auth_row.set_visible(not is_key_based)
 
         # Also update browse availability per key selection mode
         try:
@@ -1044,7 +1046,8 @@ class ConnectionDialog(Adw.Window):
                 # For automatic key selection, don't add IdentityFile
             else:  # Password auth only
                 config_lines.append("    PreferredAuthentications password")
-                config_lines.append("    PubkeyAuthentication no")
+                if self.pubkey_auth_row.get_active():
+                    config_lines.append("    PubkeyAuthentication no")
             
             # Add X11 forwarding if enabled
             if hasattr(self, 'x11_row') and self.x11_row.get_active():
@@ -1086,7 +1089,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # Ensure UI controls exist
             required_attrs = [
                 'nickname_row', 'host_row', 'username_row', 'port_row',
-                'auth_method_row', 'keyfile_row', 'password_row', 'key_passphrase_row'
+                'auth_method_row', 'keyfile_row', 'password_row', 'key_passphrase_row',
+                'pubkey_auth_row'
             ]
             for attr in required_attrs:
                 if not hasattr(self, attr):
@@ -1108,6 +1112,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             auth_method = getattr(self.connection, 'auth_method', 0)
             self.auth_method_row.set_selected(auth_method)
             self.on_auth_method_changed(self.auth_method_row, None)  # Update UI state
+            try:
+                self.pubkey_auth_row.set_active(bool(getattr(self.connection, 'pubkey_auth_no', False)))
+            except Exception:
+                self.pubkey_auth_row.set_active(False)
             
             # Get keyfile path from either keyfile or private_key attribute
             keyfile = getattr(self.connection, 'keyfile', None) or getattr(self.connection, 'private_key', None)
@@ -2062,6 +2070,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Always visible; optional for key-based auth
         self.password_row.set_visible(True)
         auth_group.add(self.password_row)
+
+        # Disable pubkey authentication toggle for password auth
+        self.pubkey_auth_row = Adw.SwitchRow()
+        self.pubkey_auth_row.set_title(_("Disable public key authentication"))
+        self.pubkey_auth_row.set_active(False)
+        auth_group.add(self.pubkey_auth_row)
         
 
         
@@ -3224,6 +3238,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'key_passphrase': self.key_passphrase_row.get_text(),
             'password': self.password_row.get_text(),
             'x11_forwarding': self.x11_row.get_active(),
+            'pubkey_auth_no': self.pubkey_auth_row.get_active(),
 
             'forwarding_rules': forwarding_rules,
             'local_command': (self.local_command_row.get_text() if hasattr(self, 'local_command_row') else ''),
