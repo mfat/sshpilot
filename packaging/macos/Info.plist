@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>sshPilot-launcher</string>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.mfat.sshpilot</string>
+	<key>CFBundleName</key>
+	<string>sshPilot</string>
+	<key>CFBundleDisplayName</key>
+	<string>sshPilot</string>
+	<key>CFBundleVersion</key>
+	<string>2.7.1</string>
+	<key>CFBundleShortVersionString</key>
+	<string>2.7.1</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>SSH Config File</string>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>ssh</string>
+				<string>config</string>
+			</array>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+		</dict>
+	</array>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.15</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSRequiresAquaSystemAppearance</key>
+	<false/>
+</dict>
+</plist>

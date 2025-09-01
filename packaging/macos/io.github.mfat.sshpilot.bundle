@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<app-bundle>
+  <meta>
+    <prefix name="default">${env:BREW_PREFIX}</prefix>
+    <destination overwrite="yes">${env:HOME}/Desktop</destination>
+    <run-install-name-tool/>
+    <gtk>gtk4</gtk>
+  </meta>
+
+  <plist>${project}/Info.plist</plist>
+
+  <main-binary dest="${bundle}/Contents/MacOS/sshPilot">${env:BUILD_DIR}/launcher.sh</main-binary>
+
+  <data dest="${bundle}/Contents/Resources">
+    ${env:BUILD_DIR}/sshpilot.gresource
+  </data>
+
+  <data dest="${bundle}/Contents/Resources">
+    ${env:BUILD_DIR}/sshpilot.svg
+  </data>
+
+  <data dest="${bundle}/Contents/Resources/sshpilot">
+    ${env:BUILD_DIR}/sshpilot/
+  </data>
+
+  <data dest="${bundle}/Contents/Resources">
+    ${env:BUILD_DIR}/run.py
+  </data>
+
+  <data dest="${bundle}/Contents/Resources/sshPilot-launcher-bin">
+    ${env:BUILD_DIR}/sshPilot-launcher
+  </data>
+</app-bundle>

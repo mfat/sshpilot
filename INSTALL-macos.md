@@ -2,6 +2,31 @@
 
 This guide provides simple step-by-step instructions to install and run sshPilot on macOS.
 
+### New: gtk-mac-bundler macOS App Bundle Packaging
+
+Per the PyGObject deployment guide [“Application Deployment”](https://pygobject.gnome.org/guide/deploy.html), you can build a relocatable macOS bundle using `gtk-osx` (jhbuild) and `gtk-mac-bundler`.
+
+Quick steps:
+
+```bash
+# 1) Ensure Homebrew GTK stack is available (quick setup)
+bash packaging/macos/gtk-osx-setup.sh
+
+# 2) Build sshPilot.app via gtk-mac-bundler
+bash packaging/macos/make-bundle.sh
+
+# Result: dist/sshPilot.app (ready to run)
+open dist/sshPilot.app
+```
+
+**Why this approach?**
+- **Official**: Follows PyGObject deployment guide exactly
+- **Proper**: Creates standard macOS app bundle structure
+- **Complete**: Includes all GTK4/PyGObject dependencies and resources
+- **Relocatable**: App bundle can run on any macOS 10.15+ system
+
+References: [PyGObject Application Deployment](https://pygobject.gnome.org/guide/deploy.html)
+
 ### Prerequisites
 
 - macOS 10.15 (Catalina) or later

@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build sshPilot.app using gtk-mac-bundler following PyGObject deployment guide.
+# Docs: https://pygobject.gnome.org/guide/deploy.html
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+BUNDLE_XML="${SCRIPT_DIR}/io.github.mfat.sshpilot.bundle"
+DIST_DIR="${ROOT_DIR}/dist"
+BUILD_DIR="${ROOT_DIR}/build/macos-bundle"
+
+mkdir -p "${DIST_DIR}"
+rm -rf "${BUILD_DIR}"
+mkdir -p "${BUILD_DIR}"
+
+# Check if gtk-mac-bundler is available
+if ! command -v gtk-mac-bundler >/dev/null 2>&1; then
+  echo "gtk-mac-bundler not found. Run gtk-osx-setup.sh first." >&2
+  exit 1
+fi
+
+# Check if Homebrew GTK stack is available
+if ! command -v brew >/dev/null 2>&1; then
+  echo "Homebrew not found. Install it first." >&2
+  exit 1
+fi
+
+BREW_PREFIX="$(brew --prefix)"
+export PATH="${BREW_PREFIX}/bin:${PATH}"
+export GI_TYPELIB_PATH="${BREW_PREFIX}/lib/girepository-1.0"
+export DYLD_LIBRARY_PATH="${BREW_PREFIX}/lib:${DYLD_LIBRARY_PATH:-}"
+
+# Precompile resources if needed
+if [ -f "${ROOT_DIR}/sshpilot/resources/sshpilot.gresource.xml" ]; then
+  glib-compile-resources --sourcedir="${ROOT_DIR}/sshpilot/resources" \
+    --target="${ROOT_DIR}/sshpilot/resources/sshpilot.gresource" \
+    "${ROOT_DIR}/sshpilot/resources/sshpilot.gresource.xml"
+fi
+
+# Build the Python application (no PyInstaller, just Python)
+echo "Building Python application..."
+
+# Install dependencies
+python3 -m pip install --upgrade pip -r "${ROOT_DIR}/requirements.txt"
+
+# Copy application files to build directory
+cp -R "${ROOT_DIR}/sshpilot" "${BUILD_DIR}/"
+cp "${ROOT_DIR}/run.py" "${BUILD_DIR}/"
+cp "${ROOT_DIR}/requirements.txt" "${BUILD_DIR}/"
+
+# Copy the Python launcher script
+cp "${SCRIPT_DIR}/sshPilot-launcher.py" "${BUILD_DIR}/sshPilot-launcher"
+chmod +x "${BUILD_DIR}/sshPilot-launcher"
+
+# Copy resources
+cp "${ROOT_DIR}/sshpilot/resources/sshpilot.gresource" "${BUILD_DIR}/"
+cp "${ROOT_DIR}/sshpilot/resources/sshpilot.svg" "${BUILD_DIR}/"
+
+# Copy the Info.plist file
+cp "${SCRIPT_DIR}/Info.plist" "${BUILD_DIR}/"
+
+# Copy the launcher script
+cp "${SCRIPT_DIR}/launcher.sh" "${BUILD_DIR}/"
+chmod +x "${BUILD_DIR}/launcher.sh"
+
+# Use gtk-mac-bundler to create the app bundle
+echo "Creating app bundle with gtk-mac-bundler..."
+export BUILD_DIR="${BUILD_DIR}"
+export BREW_PREFIX="${BREW_PREFIX}"
+pushd "${BUILD_DIR}" >/dev/null
+gtk-mac-bundler "${BUNDLE_XML}"
+popd >/dev/null
+
+# Move the created bundle to dist directory (gtk-mac-bundler creates it on Desktop)
+if [ -d "${HOME}/Desktop/sshPilot.app" ]; then
+  # Remove existing app bundle if it exists
+  rm -rf "${DIST_DIR}/sshPilot.app"
+  mv "${HOME}/Desktop/sshPilot.app" "${DIST_DIR}/"
+  echo "sshPilot.app created in ${DIST_DIR}"
+  echo "You can now open: open ${DIST_DIR}/sshPilot.app"
+else
+  echo "gtk-mac-bundler failed to create app bundle" >&2
+  exit 1
+fi
+
+
