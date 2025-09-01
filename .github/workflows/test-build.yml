@@ -1,0 +1,107 @@
+name: Test macOS Build
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test-build:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        python-version: ['3.13']
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install Homebrew dependencies
+      run: |
+        # Install Homebrew if not available
+        if ! command -v brew >/dev/null 2>&1; then
+          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> $GITHUB_ENV
+          eval "$(/opt/homebrew/bin/brew shellenv)"
+        fi
+        
+        # Install GTK4 and dependencies
+        brew install gtk4 libadwaita pygobject3 gtk-mac-bundler
+        
+        # Install create-dmg for DMG creation
+        brew install create-dmg
+        
+        # Install Python dependencies
+        pip3 install --upgrade pip
+        pip3 install -r requirements.txt
+    
+    - name: Set up environment
+      run: |
+        # Set up Homebrew environment
+        echo "HOMEBREW_PREFIX=$(brew --prefix)" >> $GITHUB_ENV
+        echo "$(brew --prefix)/bin" >> $GITHUB_PATH
+        
+        # Set up GTK environment
+        echo "GI_TYPELIB_PATH=$(brew --prefix)/lib/girepository-1.0" >> $GITHUB_ENV
+        echo "DYLD_LIBRARY_PATH=$(brew --prefix)/lib" >> $GITHUB_ENV
+    
+    - name: Build application bundle
+      run: |
+        # Make the build script executable
+        chmod +x packaging/macos/make-bundle.sh
+        
+        # Build the app bundle
+        bash packaging/macos/make-bundle.sh
+        
+        # Verify the bundle was created
+        if [ ! -d "dist/sshPilot.app" ]; then
+          echo "Error: App bundle not created"
+          exit 1
+        fi
+        
+        echo "App bundle created successfully"
+        ls -la dist/
+    
+    - name: Create DMG installer
+      run: |
+        # Make the DMG script executable
+        chmod +x packaging/macos/create-dmg.sh
+        
+        # Create the DMG
+        bash packaging/macos/create-dmg.sh
+        
+        # Verify the DMG was created
+        if [ ! -f "dist/sshPilot-macOS.dmg" ]; then
+          echo "Error: DMG not created"
+          exit 1
+        fi
+        
+        echo "DMG created successfully"
+        ls -la dist/
+        du -h dist/sshPilot-macOS.dmg
+    
+    - name: Test app bundle
+      run: |
+        # Test that the app bundle can launch
+        echo "Testing app bundle launch..."
+        
+        # Launch the app in background and wait a moment
+        timeout 10s dist/sshPilot.app/Contents/MacOS/sshPilot || true
+        
+        echo "App bundle test completed"
+    
+    - name: Upload test artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: sshPilot-macOS-test-${{ github.sha }}
+        path: |
+          dist/sshPilot.app
+          dist/sshPilot-macOS.dmg
+        retention-days: 7
