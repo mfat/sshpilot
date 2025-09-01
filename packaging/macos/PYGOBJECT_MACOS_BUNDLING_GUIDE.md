@@ -80,10 +80,15 @@ The XML configuration file that tells `gtk-mac-bundler` how to structure the app
 - Python launcher provides better error handling and debugging
 - More reliable path resolution and environment setup
 
+**Critical: Use Subprocess to Avoid PyGObject Circular Imports**
+
+The most important lesson we learned: **Never import PyGObject directly in the launcher**. This causes circular import issues that crash the app. Instead, use subprocess to launch the main application:
+
 ```python
 #!/usr/bin/env python3
 import os
 import sys
+import subprocess
 
 def setup_environment():
     """Set up environment variables for GTK/PyGObject"""
@@ -93,35 +98,88 @@ def setup_environment():
     bundle_contents = os.path.join(script_dir, '..', '..')
     bundle_res = os.path.join(bundle_contents, 'Resources')
     
+    # Get Homebrew prefix (fallback to common locations)
+    brew_prefix = os.environ.get('HOMEBREW_PREFIX', '/usr/local')
+    if not os.path.exists(brew_prefix):
+        for prefix in ['/opt/homebrew', '/usr/local']:
+            if os.path.exists(prefix):
+                brew_prefix = prefix
+                break
+    
+    # Find the correct Python with PyGObject
+    python_paths = [
+        '/Library/Frameworks/Python.framework/Versions/3.13/bin/python3',
+        '/usr/local/bin/python3',
+        '/opt/homebrew/bin/python3',
+        '/usr/bin/python3'
+    ]
+    
+    python_executable = None
+    for path in python_paths:
+        if os.path.exists(path):
+            try:
+                result = subprocess.run([path, '-c', 'import gi; print("PyGObject found")'], 
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    python_executable = path
+                    break
+            except:
+                continue
+    
+    if not python_executable:
+        print("Error: Could not find Python with PyGObject")
+        sys.exit(1)
+    
     # Set environment variables
     env_vars = {
-        'XDG_DATA_DIRS': f'/usr/local/share:{bundle_res}/share',
+        'PATH': f'{brew_prefix}/bin:/usr/bin:/bin',
+        'XDG_DATA_DIRS': f'{brew_prefix}/share:{bundle_res}/share',
         'GTK_DATA_PREFIX': bundle_res,
-        'DYLD_FALLBACK_LIBRARY_PATH': f'/usr/local/lib:{os.environ.get("DYLD_FALLBACK_LIBRARY_PATH", "")}',
-        'GI_TYPELIB_PATH': f'/usr/local/lib/girepository-1.0:{os.environ.get("GI_TYPELIB_PATH", "")}',
+        'DYLD_FALLBACK_LIBRARY_PATH': f'{brew_prefix}/lib:/usr/lib',
+        'GI_TYPELIB_PATH': f'{brew_prefix}/lib/girepository-1.0',
         'GTK_ICON_THEME': 'Adwaita',
-        'GTK_THEME': '',  # Allow automatic theme switching
+        'GTK_THEME': '',  # Allow automatic switching
     }
     
     for key, value in env_vars.items():
         os.environ[key] = value
+    
+    return python_executable
 
 def main():
-    setup_environment()
+    """Main launcher function"""
+    python_executable = setup_environment()
     
-    # Add Resources to Python path
+    # Get paths
     script_dir = os.path.dirname(os.path.abspath(__file__))
     bundle_res = os.path.join(script_dir, '..', 'Resources')
-    sys.path.insert(0, bundle_res)
     
-    # Change to Resources directory and run app
+    # Change to Resources directory
     os.chdir(bundle_res)
-    from run import main as app_main
-    app_main()
+    
+    # Launch using subprocess to avoid PyGObject circular imports
+    try:
+        result = subprocess.run([
+            python_executable, 'run.py'
+        ], env=os.environ, cwd=bundle_res)
+        
+        if result.returncode != 0:
+            print(f"Application exited with code: {result.returncode}")
+            sys.exit(result.returncode)
+            
+    except Exception as e:
+        print(f"Error launching sshPilot: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
 ```
+
+**Why Subprocess?**
+- **Avoids Circular Imports**: PyGObject has complex initialization that can cause circular imports
+- **Clean Environment**: Each subprocess gets a fresh Python environment
+- **Better Isolation**: Launcher and app run in separate processes
+- **Easier Debugging**: Clear separation of concerns
 
 ### 3. Info.plist
 
@@ -282,6 +340,28 @@ codesign --force --deep --sign - "${DIST_DIR}/sshPilot.app"
 - Set `GTK_ICON_THEME="Adwaita"`
 - Include `/usr/local/share` in `XDG_DATA_DIRS`
 
+### 8. PyGObject Circular Import Errors ⚠️ **CRITICAL**
+
+**Problem**: `cannot import name '_gi' from partially initialized module 'gi'`
+**Solution**: 
+- **NEVER import PyGObject directly in the launcher**
+- Use subprocess to launch the main application
+- Keep launcher focused only on environment setup
+
+**Example of what NOT to do:**
+```python
+# ❌ WRONG - This causes circular imports
+import gi
+gi.require_version('Gtk', '4.0')
+from gi.repository import Gtk
+```
+
+**Example of what TO do:**
+```python
+# ✅ CORRECT - Use subprocess
+subprocess.run([python_executable, 'run.py'], env=os.environ)
+```
+
 ## Environment Variables Reference
 
 ```bash
@@ -310,7 +390,14 @@ cd dist/sshPilot.app/Contents/MacOS
 ./sshPilot
 ```
 
-### 2. Check Bundle Structure
+### 2. Test with Isolated Environment
+
+```bash
+# Test that launcher works even with minimal environment
+env -i dist/sshPilot.app/Contents/MacOS/sshPilot
+```
+
+### 3. Check Bundle Structure
 
 ```bash
 # Verify executable
@@ -323,7 +410,7 @@ ls -la dist/sshPilot.app/Contents/Resources/
 plutil -p dist/sshPilot.app/Contents/Info.plist
 ```
 
-### 3. Debug Environment Variables
+### 4. Debug Environment Variables
 
 ```bash
 # Add debug output to launcher
@@ -331,7 +418,7 @@ export GTK_DEBUG_LAUNCHER=1
 ./sshPilot
 ```
 
-### 4. Check Code Signing
+### 5. Check Code Signing
 
 ```bash
 codesign --verify --verbose dist/sshPilot.app
@@ -341,12 +428,13 @@ spctl --assess --type execute --verbose dist/sshPilot.app
 ## Best Practices
 
 1. **Use Python Launcher**: More reliable than shell scripts
-2. **Don't Bundle GTK Libraries**: Use system Homebrew stack
-3. **Proper Icon Sizes**: Include all required macOS icon resolutions
-4. **Environment Variables**: Set all necessary GTK/PyGObject paths
-5. **Error Handling**: Add proper error handling in launcher
-6. **Documentation**: Document launch methods for users
-7. **Code Signing**: Always sign the bundle (even ad-hoc)
+2. **Use Subprocess**: Never import PyGObject in launcher
+3. **Don't Bundle GTK Libraries**: Use system Homebrew stack
+4. **Proper Icon Sizes**: Include all required macOS icon resolutions
+5. **Environment Variables**: Set all necessary GTK/PyGObject paths
+6. **Error Handling**: Add proper error handling in launcher
+7. **Documentation**: Document launch methods for users
+8. **Code Signing**: Always sign the bundle (even ad-hoc)
 
 ## Complete Working Example
 
@@ -354,6 +442,7 @@ The sshPilot project demonstrates all these concepts working together:
 
 - ✅ Proper bundle structure with gtk-mac-bundler
 - ✅ Python-based launcher with environment setup
+- ✅ **Subprocess-based launch to avoid PyGObject issues**
 - ✅ System GTK stack integration
 - ✅ Icon and theme support
 - ✅ Code signing and security handling
@@ -368,4 +457,4 @@ The sshPilot project demonstrates all these concepts working together:
 
 ---
 
-*This guide is based on real-world experience bundling sshPilot. The solutions presented here address actual challenges we encountered and resolved.*
+*This guide is based on real-world experience bundling sshPilot. The solutions presented here address actual challenges we encountered and resolved, including the critical PyGObject circular import issue.*

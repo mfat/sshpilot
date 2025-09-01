@@ -48,14 +48,32 @@ spctl --assess --type execute --verbose sshPilot.app
 | Double-click not working | Use `open sshPilot.app` command |
 | Missing icons | Create .icns file + CFBundleIconFile |
 | GTK libraries not found | Set `DYLD_FALLBACK_LIBRARY_PATH` |
+| **PyGObject circular imports** | **Use subprocess in launcher** |
+
+## 🚨 CRITICAL: PyGObject Circular Imports
+
+**NEVER import PyGObject directly in the launcher!**
+
+```python
+# ❌ WRONG - Causes circular imports
+import gi
+gi.require_version('Gtk', '4.0')
+from gi.repository import Gtk
+
+# ✅ CORRECT - Use subprocess
+subprocess.run([python_executable, 'run.py'], env=os.environ)
+```
+
+**Why?** PyGObject has complex initialization that causes `cannot import name '_gi'` errors when imported in the launcher.
 
 ## 🌟 Pro Tips
 
 1. **Use Python launcher** instead of shell scripts
-2. **Don't bundle GTK libraries** - use system Homebrew stack
-3. **Always sign the bundle** (even ad-hoc)
-4. **Test launcher directly** before bundling
-5. **Set all environment variables** for GTK/PyGObject
+2. **Use subprocess** to avoid PyGObject circular imports
+3. **Don't bundle GTK libraries** - use system Homebrew stack
+4. **Always sign the bundle** (even ad-hoc)
+5. **Test launcher directly** before bundling
+6. **Set all environment variables** for GTK/PyGObject
 
 ## 📚 Full Documentation
 
