@@ -14,19 +14,28 @@ mkdir -p "${DIST_DIR}"
 rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}"
 
-# Check if gtk-mac-bundler is available
-if ! command -v gtk-mac-bundler >/dev/null 2>&1; then
-  echo "gtk-mac-bundler not found. Run gtk-osx-setup.sh first." >&2
-  exit 1
-fi
-
-# Check if Homebrew GTK stack is available
+# Determine Homebrew prefix
 if ! command -v brew >/dev/null 2>&1; then
   echo "Homebrew not found. Install it first." >&2
   exit 1
 fi
 
 BREW_PREFIX="$(brew --prefix)"
+BUNDLER_BIN="${BREW_PREFIX}/bin/gtk-mac-bundler"
+
+# Ensure gtk-mac-bundler is available
+if [ ! -x "${BUNDLER_BIN}" ]; then
+  echo "gtk-mac-bundler not found. Running gtk-osx-setup.sh..."
+  # shellcheck source=packaging/macos/gtk-osx-setup.sh
+  source "${SCRIPT_DIR}/gtk-osx-setup.sh"
+fi
+
+# Verify installation succeeded
+if [ ! -x "${BUNDLER_BIN}" ]; then
+  echo "gtk-mac-bundler installation failed." >&2
+  exit 1
+fi
+
 export PATH="${BREW_PREFIX}/bin:${PATH}"
 export GI_TYPELIB_PATH="${BREW_PREFIX}/lib/girepository-1.0"
 export DYLD_LIBRARY_PATH="${BREW_PREFIX}/lib:${DYLD_LIBRARY_PATH:-}"
@@ -45,8 +54,8 @@ echo "Building Python application..."
 if [ -z "${CI:-}" ] && [ -z "${GITHUB_ACTIONS:-}" ]; then
   # Only install dependencies locally, not in CI
   echo "Installing Python dependencies locally..."
-  python3 -m pip install --user --upgrade pip
-  python3 -m pip install --user -r "${ROOT_DIR}/requirements.txt"
+  python3 -m pip install --user --break-system-packages --upgrade pip
+  python3 -m pip install --user --break-system-packages -r "${ROOT_DIR}/requirements.txt"
 else
   echo "Running in CI environment, skipping pip install (dependencies should be pre-installed)"
 fi
@@ -84,7 +93,7 @@ echo "Creating app bundle with gtk-mac-bundler..."
 
 # Change to build directory and run gtk-mac-bundler
 pushd "${BUILD_DIR}" >/dev/null
-gtk-mac-bundler "${BUNDLE_XML}"
+"${BUNDLER_BIN}" "${BUNDLE_XML}"
 popd >/dev/null
 
 # Move the created bundle to dist directory (gtk-mac-bundler creates it on Desktop)

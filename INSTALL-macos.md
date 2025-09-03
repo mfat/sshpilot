@@ -9,10 +9,7 @@ Per the PyGObject deployment guide [“Application Deployment”](https://pygobj
 Quick steps:
 
 ```bash
-# 1) Ensure Homebrew GTK stack is available (quick setup)
-bash packaging/macos/gtk-osx-setup.sh
-
-# 2) Build sshPilot.app via gtk-mac-bundler
+# Build sshPilot.app via gtk-mac-bundler (installs dependencies if needed)
 bash packaging/macos/make-bundle.sh
 
 # Result: dist/sshPilot.app (ready to run)
