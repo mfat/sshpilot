@@ -15,6 +15,7 @@ rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}"
 
 # Determine Homebrew prefix
+
 if ! command -v brew >/dev/null 2>&1; then
   echo "Homebrew not found. Install it first." >&2
   exit 1
@@ -33,6 +34,7 @@ fi
 
 # Verify installation succeeded
 if [ -z "${BUNDLER_BIN}" ]; then
+
   echo "gtk-mac-bundler installation failed." >&2
   exit 1
 fi
