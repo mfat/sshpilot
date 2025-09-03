@@ -3,7 +3,8 @@
   <meta>
     <prefix name="default">${env:BREW_PREFIX}</prefix>
     <destination overwrite="yes">${env:HOME}/Desktop</destination>
-    <run-install-name-tool/>
+    <!-- Disable install_name_tool to avoid code signing conflicts -->
+    <!-- <run-install-name-tool/> -->
     <gtk>gtk4</gtk>
   </meta>
 
@@ -31,6 +32,11 @@
   <!-- Copy GTK data files -->
   <data dest="${bundle}/Contents/Resources/share">
     ${env:GTK_DATA}
+  </data>
+
+  <!-- Copy Adwaita icon theme (required for proper icon display) -->
+  <data dest="${bundle}/Contents/Resources/share/icons">
+    ${env:BREW_PREFIX}/share/icons/Adwaita
   </data>
 
   <!-- Copy app icon -->

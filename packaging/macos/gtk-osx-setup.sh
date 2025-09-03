@@ -24,6 +24,12 @@ if ! brew list gtk4 >/dev/null 2>&1; then
   brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection
 fi
 
+# Ensure we have the Adwaita icon theme (required for proper icon display)
+if ! brew list adwaita-icon-theme >/dev/null 2>&1; then
+  echo "Installing Adwaita icon theme..."
+  brew install adwaita-icon-theme
+fi
+
 # Install gtk-mac-bundler from source
 if [ ! -d "${GTK_MAC_BUNDLER_DIR}" ]; then
   echo "Installing gtk-mac-bundler..."
