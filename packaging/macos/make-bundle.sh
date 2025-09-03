@@ -14,9 +14,16 @@ mkdir -p "${DIST_DIR}"
 rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}"
 
-# Check if gtk-mac-bundler is available
+# Ensure gtk-mac-bundler is available
 if ! command -v gtk-mac-bundler >/dev/null 2>&1; then
-  echo "gtk-mac-bundler not found. Run gtk-osx-setup.sh first." >&2
+  echo "gtk-mac-bundler not found. Running gtk-osx-setup.sh..."
+  # shellcheck source=packaging/macos/gtk-osx-setup.sh
+  source "${SCRIPT_DIR}/gtk-osx-setup.sh"
+fi
+
+# Verify installation succeeded
+if ! command -v gtk-mac-bundler >/dev/null 2>&1; then
+  echo "gtk-mac-bundler installation failed." >&2
   exit 1
 fi
 
@@ -45,8 +52,8 @@ echo "Building Python application..."
 if [ -z "${CI:-}" ] && [ -z "${GITHUB_ACTIONS:-}" ]; then
   # Only install dependencies locally, not in CI
   echo "Installing Python dependencies locally..."
-  python3 -m pip install --user --upgrade pip
-  python3 -m pip install --user -r "${ROOT_DIR}/requirements.txt"
+  python3 -m pip install --user --break-system-packages --upgrade pip
+  python3 -m pip install --user --break-system-packages -r "${ROOT_DIR}/requirements.txt"
 else
   echo "Running in CI environment, skipping pip install (dependencies should be pre-installed)"
 fi
