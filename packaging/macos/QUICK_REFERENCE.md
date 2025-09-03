@@ -3,13 +3,10 @@
 ## 🚀 Quick Start
 
 ```bash
-# 1. Setup environment
-bash packaging/macos/gtk-osx-setup.sh
-
-# 2. Build app bundle
+# 1. Build app bundle (sets up dependencies automatically)
 bash packaging/macos/make-bundle.sh
 
-# 3. Launch app
+# 2. Launch app
 open dist/sshPilot.app
 ```
 
