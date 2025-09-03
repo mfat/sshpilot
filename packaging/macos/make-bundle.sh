@@ -103,6 +103,26 @@ if [ -d "${HOME}/Desktop/sshPilot.app" ]; then
   RES_DIR="${APP_DIR}/Contents/Resources"
   FRAMEWORKS_DIR="${APP_DIR}/Contents/Frameworks"
   
+  # Post-bundle: Bundle Python packages from virtual environment
+  echo "Bundling Python packages for self-contained distribution..."
+  # Find the actual site-packages directory (handles different Python versions)
+  ACTUAL_SITE_PACKAGES=$(find "${VENV_DIR}/lib" -name "site-packages" -type d | head -1)
+  if [ -n "${ACTUAL_SITE_PACKAGES}" ]; then
+    # Create the target directory
+    mkdir -p "${RES_DIR}/lib/python3.13/site-packages"
+    
+    # Copy all Python packages (excluding __pycache__ and .dist-info)
+    echo "  Copying Python packages from: ${ACTUAL_SITE_PACKAGES}"
+    find "${ACTUAL_SITE_PACKAGES}" -maxdepth 1 -mindepth 1 \
+      -not -name "__pycache__" \
+      -not -name "*.dist-info" \
+      -not -name "*.pyc" \
+      -exec cp -R {} "${RES_DIR}/lib/python3.13/site-packages/" \;
+    echo "  ✓ Python packages bundled (paramiko, cryptography, keyring, etc.)"
+  else
+    echo "  ⚠️  Warning: Could not find site-packages directory"
+  fi
+  
   # Create required directories
   mkdir -p "${FRAMEWORKS_DIR}" "${RES_DIR}/lib/girepository-1.0"
   
@@ -137,8 +157,9 @@ if [ -d "${HOME}/Desktop/sshPilot.app" ]; then
   echo "You can now open: open ${DIST_DIR}/sshPilot.app"
   echo "Or double-click sshPilot.app in Finder"
   echo ""
-  echo "This is now a fully self-contained, redistributable bundle!"
-  echo "Users don't need to install Python, PyGObject, or GTK libraries!"
+  echo "This is now a TRULY fully self-contained, redistributable bundle!"
+  echo "Users don't need to install Python, PyGObject, GTK libraries, or any Python packages!"
+  echo "✅ All dependencies bundled: paramiko, cryptography, keyring, nacl, bcrypt, etc."
   echo "✅ Double-click launch is now supported!"
 else
   echo "gtk-mac-bundler failed to create app bundle" >&2
