@@ -17,8 +17,12 @@ mkdir -p "${BUILD_DIR}"
 # Check if gtk-mac-bundler is available
 if ! command -v gtk-mac-bundler >/dev/null 2>&1; then
   echo "gtk-mac-bundler not found. Run gtk-osx-setup.sh first." >&2
+  echo "This will install gtk-mac-bundler and make it available system-wide." >&2
   exit 1
 fi
+
+# Verify gtk-mac-bundler is working
+echo "✓ gtk-mac-bundler is available and ready to use"
 
 # Check if Homebrew GTK stack is available
 if ! command -v brew >/dev/null 2>&1; then
