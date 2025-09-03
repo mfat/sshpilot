@@ -52,6 +52,8 @@ fi
 export PATH="${GTK_MAC_BUNDLER_INSTALL_DIR}:${PATH}"
 
 echo "Setup complete! gtk-mac-bundler installed at ${GTK_MAC_BUNDLER_INSTALL_DIR}"
-echo "Now run: bash packaging/macos/make-bundle.sh"
 
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  echo "Now run: bash packaging/macos/make-bundle.sh"
+fi
 
