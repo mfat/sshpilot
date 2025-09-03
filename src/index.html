@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSHPilot</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="stylesheet" href="styles/components.css">
+    <link rel="stylesheet" href="styles/terminal.css">
+    <link rel="stylesheet" href="styles/themes.css">
+    <link rel="stylesheet" href="node_modules/xterm/css/xterm.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Header Bar -->
+        <header class="header-bar">
+            <div class="header-left">
+                <button id="sidebar-toggle" class="icon-button" title="Toggle Sidebar">
+                    <svg width="16" height="16" viewBox="0 0 16 16">
+                        <path d="M1 3h14v2H1V3zm0 4h14v2H1V7zm0 4h14v2H1v-2z"/>
+                    </svg>
+                </button>
+                <h1 class="app-title">SSHPilot</h1>
+            </div>
+            
+            <div class="header-center">
+                <div class="search-container">
+                    <input type="text" id="search-input" placeholder="Search connections, keys, or commands..." class="search-input">
+                    <button id="search-button" class="search-button">
+                        <svg width="16" height="16" viewBox="0 0 16 16">
+                            <path d="M10.5 9.5L14 13l-1 1-3.5-3.5A5.5 5.5 0 1 1 10.5 9.5zM5.5 9.5a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="header-right">
+                <button id="new-connection-btn" class="primary-button">New Connection</button>
+                <button id="new-terminal-btn" class="secondary-button">New Terminal</button>
+                <button id="new-key-btn" class="secondary-button">New Key</button>
+                <button id="preferences-btn" class="icon-button" title="Preferences">
+                    <svg width="16" height="16" viewBox="0 0 16 16">
+                        <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/>
+                        <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.319-.094a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433 2.54-2.541l.292.159a.873.873 0 0 1 1.255-.52l.094-.319zM8 2.994a.5.5 0 1 1-1 0 .5.5 0 0 1 1 0zM8 13a.5.5 0 1 1-1 0 .5.5 0 0 1 1 0z"/>
+                    </svg>
+                </button>
+                <button id="theme-toggle" class="icon-button" title="Toggle Theme">
+                    <svg width="16" height="16" viewBox="0 0 16 16">
+                        <path d="M8 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM8 0a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 0zm0 13a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 13zm8-5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2a.5.5 0 0 1 .5.5zM3 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 3 8zm10.657-5.657a.5.5 0 0 1 0 .707l-1.414 1.415a.5.5 0 1 1-.707-.708l1.414-1.414a.5.5 0 0 1 .707 0zm-9.193 9.193a.5.5 0 0 1 0 .707L3.05 13.657a.5.5 0 0 1-.707-.707l1.414-1.414a.5.5 0 0 1 .707 0zm9.193 2.121a.5.5 0 0 1-.707 0l-1.414-1.414a.5.5 0 0 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .707zM4.464 4.465a.5.5 0 0 1-.707 0L2.343 3.05a.5.5 0 1 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .708z"/>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Sidebar -->
+            <aside id="sidebar" class="sidebar">
+                <div class="sidebar-section">
+                    <div class="sidebar-header">
+                        <h3>Connections</h3>
+                        <button id="add-connection-btn" class="sidebar-action-btn" title="Add Connection">
+                            <svg width="12" height="12" viewBox="0 0 16 16">
+                                <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div id="connections-list" class="sidebar-list"></div>
+                </div>
+
+                <div class="sidebar-section">
+                    <div class="sidebar-header">
+                        <h3>Groups</h3>
+                        <button id="add-group-btn" class="sidebar-action-btn" title="Add Group">
+                            <svg width="12" height="12" viewBox="0 0 16 16">
+                                <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div id="groups-list" class="sidebar-list"></div>
+                </div>
+
+                <div class="sidebar-section">
+                    <div class="sidebar-header">
+                        <h3>SSH Keys</h3>
+                        <button id="add-key-btn" class="sidebar-action-btn" title="Generate Key">
+                            <svg width="12" height="12" viewBox="0 0 16 16">
+                                <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div id="keys-list" class="sidebar-list"></div>
+                </div>
+            </aside>
+
+            <!-- Terminal Area -->
+            <div class="terminal-area">
+                <!-- Terminal Tabs -->
+                <div class="terminal-tabs" id="terminal-tabs">
+                    <!-- Terminal tabs will be dynamically added here -->
+                </div>
+
+                <!-- Terminal Container -->
+                <div class="terminal-container" id="terminal-container">
+                    <!-- Welcome Screen -->
+                    <div id="welcome-screen" class="welcome-screen">
+                        <div class="welcome-content">
+                            <div class="welcome-icon">
+                                <svg width="64" height="64" viewBox="0 0 16 16">
+                                    <path d="M0 4.5A1.5 1.5 0 0 1 1.5 3h1A1.5 1.5 0 0 1 4 4.5v1A1.5 1.5 0 0 1 2.5 7h-1A1.5 1.5 0 0 1 0 5.5v-1zM1.5 4a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h1a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5-.5h-1zM5 4.5A1.5 1.5 0 0 1 6.5 3h1A1.5 1.5 0 0 1 9 4.5v1A1.5 1.5 0 0 1 7.5 7h-1A1.5 1.5 0 0 1 5 5.5v-1zM6.5 4a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h1a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5-.5h-1zM0 10.5A1.5 1.5 0 0 1 1.5 9h1A1.5 1.5 0 0 1 4 10.5v1A1.5 1.5 0 0 1 2.5 13h-1A1.5 1.5 0 0 1 0 11.5v-1zM1.5 10a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h1a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5-.5h-1zM5 10.5A1.5 1.5 0 0 1 6.5 9h1a1.5 1.5 0 0 1 1.5 1.5v1A1.5 1.5 0 0 1 7.5 13h-1A1.5 1.5 0 0 1 5 11.5v-1zM6.5 10a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h1a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5-.5h-1z"/>
+                                </svg>
+                            </div>
+                            <h2>Welcome to SSHPilot</h2>
+                            <p>Your modern SSH client with terminal emulation</p>
+                            <div class="welcome-actions">
+                                <button id="welcome-new-connection" class="primary-button">Create SSH Connection</button>
+                                <button id="welcome-new-terminal" class="secondary-button">Open Local Terminal</button>
+                                <button id="welcome-generate-key" class="secondary-button">Generate SSH Key</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal Dialogs -->
+    
+    <!-- New SSH Connection Modal -->
+    <div id="connection-modal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>New SSH Connection</h3>
+                <button class="modal-close" data-modal="connection-modal">&times;</button>
+            </div>
+            <div class="modal-content">
+                <form id="connection-form">
+                    <div class="form-group">
+                        <label for="connection-nickname">Nickname</label>
+                        <input type="text" id="connection-nickname" required placeholder="My Server">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="connection-host">Host</label>
+                        <input type="text" id="connection-host" required placeholder="192.168.1.100 or example.com">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="connection-port">Port</label>
+                        <input type="number" id="connection-port" value="22" min="1" max="65535">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="connection-username">Username</label>
+                        <input type="text" id="connection-username" required placeholder="user">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="connection-auth-method">Authentication Method</label>
+                        <select id="connection-auth-method">
+                            <option value="password">Password</option>
+                            <option value="key">SSH Key</option>
+                            <option value="key-with-passphrase">SSH Key with Passphrase</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group" id="password-group">
+                        <label for="connection-password">Password</label>
+                        <input type="password" id="connection-password" placeholder="Enter password">
+                    </div>
+                    
+                    <div class="form-group" id="key-group" style="display: none;">
+                        <label for="connection-key-path">SSH Key Path</label>
+                        <div class="input-with-button">
+                            <input type="text" id="connection-key-path" placeholder="~/.ssh/id_rsa">
+                            <button type="button" id="browse-key-btn" class="secondary-button">Browse</button>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group" id="passphrase-group" style="display: none;">
+                        <label for="connection-passphrase">Key Passphrase</label>
+                        <input type="password" id="connection-passphrase" placeholder="Enter key passphrase">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="connection-commands">Initial Commands (optional)</label>
+                        <textarea id="connection-commands" rows="3" placeholder="cd /var/www&#10;ls -la"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="connection-group">Group (optional)</label>
+                        <input type="text" id="connection-group" placeholder="Web Servers">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="secondary-button" data-modal="connection-modal">Cancel</button>
+                <button type="submit" form="connection-form" class="primary-button">Connect</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Generate SSH Key Modal -->
+    <div id="key-modal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Generate SSH Key</h3>
+                <button class="modal-close" data-modal="key-modal">&times;</button>
+            </div>
+            <div class="modal-content">
+                <form id="key-form">
+                    <div class="form-group">
+                        <label for="key-name">Key Name</label>
+                        <input type="text" id="key-name" required placeholder="my-key">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="key-type">Key Type</label>
+                        <select id="key-type">
+                            <option value="ed25519">Ed25519 (Recommended)</option>
+                            <option value="rsa">RSA 4096</option>
+                            <option value="ecdsa">ECDSA 521</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="key-passphrase">Passphrase (optional)</label>
+                        <input type="password" id="key-passphrase" placeholder="Enter passphrase for extra security">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="key-comment">Comment (optional)</label>
+                        <input type="text" id="key-comment" placeholder="user@hostname">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="secondary-button" data-modal="key-modal">Cancel</button>
+                <button type="submit" form="key-form" class="primary-button">Generate Key</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Container -->
+    <div id="notification-container" class="notification-container"></div>
+
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>

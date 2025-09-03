@@ -1,0 +1,11 @@
+/Users/mahdi/GitHub/sshpilot/src-tauri/target/debug/deps/tauri_macros-359ccc9a41ccb1bd.d: /Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/lib.rs /Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/command/mod.rs /Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/command/handler.rs /Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/command/wrapper.rs /Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/command_module.rs /Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/runtime.rs /Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/context.rs
+
+/Users/mahdi/GitHub/sshpilot/src-tauri/target/debug/deps/libtauri_macros-359ccc9a41ccb1bd.dylib: /Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/lib.rs /Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/command/mod.rs /Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/command/handler.rs /Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/command/wrapper.rs /Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/command_module.rs /Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/runtime.rs /Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/context.rs
+
+/Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/lib.rs:
+/Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/command/mod.rs:
+/Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/command/handler.rs:
+/Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/command/wrapper.rs:
+/Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/command_module.rs:
+/Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/runtime.rs:
+/Users/mahdi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-macros-1.4.7/src/context.rs:
