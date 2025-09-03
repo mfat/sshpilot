@@ -57,8 +57,8 @@ cp -R "${ROOT_DIR}/sshpilot" "${BUILD_DIR}/"
 cp "${ROOT_DIR}/run.py" "${BUILD_DIR}/"
 cp "${ROOT_DIR}/requirements.txt" "${BUILD_DIR}/"
 
-# Copy the shell launcher (per official PyGObject docs)
-cp "${SCRIPT_DIR}/sshPilot-launcher.sh" "${BUILD_DIR}/"
+# Copy the enhanced launcher script
+cp "${SCRIPT_DIR}/enhanced-launcher.sh" "${BUILD_DIR}/sshPilot-launcher.sh"
 chmod +x "${BUILD_DIR}/sshPilot-launcher.sh"
 
 # Copy resources
@@ -127,9 +127,11 @@ if [ -d "${HOME}/Desktop/sshPilot.app" ]; then
     fi
   fi
 
-  # Sign the app bundle for macOS compatibility (allows double-click)
-  echo "Signing app bundle..."
-  codesign --force --deep --sign - "${DIST_DIR}/sshPilot.app"
+  # Post-bundle: Replace the launcher with our enhanced version
+  echo "Installing enhanced launcher for double-click support..."
+  cp "${SCRIPT_DIR}/enhanced-launcher.sh" "${APP_DIR}/Contents/MacOS/sshPilot"
+  chmod +x "${APP_DIR}/Contents/MacOS/sshPilot"
+  echo "  ✓ Enhanced launcher installed"
 
   echo "sshPilot.app created in ${DIST_DIR}"
   echo "You can now open: open ${DIST_DIR}/sshPilot.app"
@@ -137,6 +139,7 @@ if [ -d "${HOME}/Desktop/sshPilot.app" ]; then
   echo ""
   echo "This is now a fully self-contained, redistributable bundle!"
   echo "Users don't need to install Python, PyGObject, or GTK libraries!"
+  echo "✅ Double-click launch is now supported!"
 else
   echo "gtk-mac-bundler failed to create app bundle" >&2
   exit 1

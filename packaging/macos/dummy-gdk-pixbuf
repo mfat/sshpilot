@@ -1,7 +1,0 @@
-#!/bin/bash
-# Dummy gdk-pixbuf-query-loaders to avoid gtk-mac-bundler hang
-# This tool is called during bundling but hangs, so we replace it temporarily
-
-echo "# gdk-pixbuf loader cache (dummy - generated manually after bundling)"
-echo "# This file is generated manually in the post-bundle step"
-exit 0

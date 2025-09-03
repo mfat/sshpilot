@@ -1,8 +1,13 @@
 #!/bin/bash
 
-# Get the app bundle root directory
-APP="$(cd "$(dirname "$0")/.."; pwd -P)"/..
-RES="$APP/Contents/Resources"
+# Get the app bundle root directory from environment variable set by C launcher
+if [ -n "${SSHPILOT_RESOURCES_DIR:-}" ]; then
+    RES="$SSHPILOT_RESOURCES_DIR"
+else
+    # Fallback: Get the app bundle root directory (for direct execution)
+    APP="$(cd "$(dirname "$0")/.."; pwd -P)"/..
+    RES="$APP/Contents/Resources"
+fi
 
 # Set up Python environment (use system Python with bundled site-packages)
 export PYTHONPATH="$RES/app:$RES/lib/python3.13/site-packages:$RES/lib/python3.12/site-packages:${PYTHONPATH:-}"
@@ -53,9 +58,6 @@ fi
 
 export GTK_USE_PORTAL="1"
 export GTK_CSD="1"
-
-# Change to the Resources directory and run from there
-cd "$RES"
 
 # Start the application using system Python with bundled libraries
 # Run from the parent directory so the package can be imported properly
