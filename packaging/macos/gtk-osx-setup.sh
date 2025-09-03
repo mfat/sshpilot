@@ -7,6 +7,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 GTK_MAC_BUNDLER_DIR="${HOME}/gtk-mac-bundler"
+# Directory where the gtk-mac-bundler executable will be installed
+GTK_MAC_BUNDLER_INSTALL_DIR=""
 
 echo "Setting up gtk-mac-bundler for sshPilot packaging"
 
@@ -28,14 +30,28 @@ if [ ! -d "${GTK_MAC_BUNDLER_DIR}" ]; then
   echo "Installing gtk-mac-bundler..."
   git clone https://gitlab.gnome.org/GNOME/gtk-mac-bundler.git "${GTK_MAC_BUNDLER_DIR}"
   cd "${GTK_MAC_BUNDLER_DIR}"
-  make
+  make install
+  cd "${ROOT_DIR}"
+else
+  # Ensure gtk-mac-bundler is installed even if repo exists
+  cd "${GTK_MAC_BUNDLER_DIR}"
+  make install
   cd "${ROOT_DIR}"
 fi
 
-# Add gtk-mac-bundler to PATH
-export PATH="${GTK_MAC_BUNDLER_DIR}:${PATH}"
+# Determine where gtk-mac-bundler was installed
+if command -v brew >/dev/null 2>&1; then
+  GTK_MAC_BUNDLER_INSTALL_DIR="$(brew --prefix)/bin"
+elif command -v jhbuild >/dev/null 2>&1; then
+  GTK_MAC_BUNDLER_INSTALL_DIR="$(jhbuild --prefix)/bin"
+else
+  GTK_MAC_BUNDLER_INSTALL_DIR="${HOME}/.local/bin"
+fi
 
-echo "Setup complete! gtk-mac-bundler installed at ${GTK_MAC_BUNDLER_DIR}"
+# Add gtk-mac-bundler to PATH
+export PATH="${GTK_MAC_BUNDLER_INSTALL_DIR}:${PATH}"
+
+echo "Setup complete! gtk-mac-bundler installed at ${GTK_MAC_BUNDLER_INSTALL_DIR}"
 echo "Now run: bash packaging/macos/make-bundle.sh"
 
 
