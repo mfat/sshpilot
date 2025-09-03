@@ -45,17 +45,21 @@ fi
 # Build the Python application (no PyInstaller, just Python)
 echo "Building Python application..."
 
-# Install dependencies
-python3 -m pip install --upgrade pip -r "${ROOT_DIR}/requirements.txt"
+# Install dependencies inside an isolated virtual environment (PEP 668 safe)
+VENV_DIR="${BUILD_DIR}/.venv-bundle"
+python3 -m venv "${VENV_DIR}"
+source "${VENV_DIR}/bin/activate"
+pip install --upgrade pip
+pip install -r "${ROOT_DIR}/requirements.txt"
 
 # Copy application files to build directory
 cp -R "${ROOT_DIR}/sshpilot" "${BUILD_DIR}/"
 cp "${ROOT_DIR}/run.py" "${BUILD_DIR}/"
 cp "${ROOT_DIR}/requirements.txt" "${BUILD_DIR}/"
 
-# Copy the Python launcher
-cp "${SCRIPT_DIR}/sshPilot-launcher-main.py" "${BUILD_DIR}/"
-chmod +x "${BUILD_DIR}/sshPilot-launcher-main.py"
+# Copy the shell launcher (per official PyGObject docs)
+cp "${SCRIPT_DIR}/sshPilot-launcher.sh" "${BUILD_DIR}/"
+chmod +x "${BUILD_DIR}/sshPilot-launcher.sh"
 
 # Copy resources
 cp "${ROOT_DIR}/sshpilot/resources/sshpilot.gresource" "${BUILD_DIR}/"
@@ -92,6 +96,36 @@ if [ -d "${HOME}/Desktop/sshPilot.app" ]; then
   # Remove existing app bundle if it exists
   rm -rf "${DIST_DIR}/sshPilot.app"
   mv "${HOME}/Desktop/sshPilot.app" "${DIST_DIR}/"
+
+  # Post-bundle: Add runtime assets (ICU dylibs, GI typelibs, gdk-pixbuf loaders)
+  echo "Adding runtime assets to the bundle..."
+  APP_DIR="${DIST_DIR}/sshPilot.app"
+  RES_DIR="${APP_DIR}/Contents/Resources"
+  FRAMEWORKS_DIR="${APP_DIR}/Contents/Frameworks"
+  
+  # Create required directories
+  mkdir -p "${FRAMEWORKS_DIR}" "${RES_DIR}/lib/girepository-1.0"
+  
+  # Copy ICU dylibs (VTE needs these at runtime)
+  if [ -d "${BREW_PREFIX}/opt/icu4c/lib" ]; then
+    cp "${BREW_PREFIX}/opt/icu4c/lib"/libicu*.dylib "${FRAMEWORKS_DIR}/" 2>/dev/null || true
+    echo "  ✓ ICU dylibs copied to Frameworks"
+  fi
+  
+  # Copy GI typelibs
+  if [ -d "${BREW_PREFIX}/lib/girepository-1.0" ]; then
+    cp "${BREW_PREFIX}/lib/girepository-1.0"/*.typelib "${RES_DIR}/lib/girepository-1.0/" 2>/dev/null || true
+    echo "  ✓ GI typelibs copied to Resources/lib/girepository-1.0"
+  fi
+  
+  # Generate gdk-pixbuf loaders cache manually
+  PIXBUF_DIR="${RES_DIR}/lib/gdk-pixbuf-2.0/2.10.0"
+  if [ -d "${PIXBUF_DIR}/loaders" ]; then
+    if command -v gdk-pixbuf-query-loaders >/dev/null 2>&1; then
+      gdk-pixbuf-query-loaders "${PIXBUF_DIR}/loaders"/*.so > "${PIXBUF_DIR}/loaders.cache" 2>/dev/null || true
+      echo "  ✓ gdk-pixbuf loaders cache generated"
+    fi
+  fi
 
   # Sign the app bundle for macOS compatibility (allows double-click)
   echo "Signing app bundle..."

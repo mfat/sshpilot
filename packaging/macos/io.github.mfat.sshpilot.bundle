@@ -9,7 +9,7 @@
 
   <plist>${project}/Info.plist</plist>
 
-  <main-binary dest="${bundle}/Contents/MacOS/sshPilot">${env:BUILD_DIR}/sshPilot-launcher-main.py</main-binary>
+  <main-binary dest="${bundle}/Contents/MacOS/sshPilot">${project}/sshPilot-launcher.sh</main-binary>
 
   <!-- Copy application files -->
   <data dest="${bundle}/Contents/Resources/app">
@@ -21,12 +21,9 @@
     ${env:BUILD_DIR}/run.py
   </data>
 
-  <!-- Copy Python runtime and site-packages -->
-  <data dest="${bundle}/Contents/Resources/python">
-    ${env:PYTHON_RUNTIME}
-  </data>
+  <!-- We do not copy a full Python runtime; system Python is used per official docs -->
 
-  <!-- Copy GTK libraries and dependencies -->
+  <!-- Copy GTK libraries -->
   <data dest="${bundle}/Contents/Resources/lib">
     ${env:GTK_LIBS}
   </data>
