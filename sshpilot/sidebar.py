@@ -18,6 +18,27 @@ from .groups import GroupManager
 logger = logging.getLogger(__name__)
 
 
+def truncate_nickname_for_display(nickname: str, max_length: int = 20) -> str:
+    """
+    Truncate nickname for UI display while preserving the full nickname in data.
+    
+    Args:
+        nickname: The full nickname string
+        max_length: Maximum length before truncation (default: 20)
+    
+    Returns:
+        Truncated nickname with "+" if needed
+    """
+    if not nickname:
+        return ""
+    
+    if len(nickname) <= max_length:
+        return nickname
+    
+    # Truncate and add "+" indicator
+    return nickname[:max_length-1] + "+"
+
+
 # ---------------------------------------------------------------------------
 # Row widgets
 # ---------------------------------------------------------------------------
@@ -151,7 +172,9 @@ class ConnectionRow(Gtk.ListBoxRow):
         info_box.set_hexpand(True)
 
         self.nickname_label = Gtk.Label()
-        self.nickname_label.set_markup(f"<b>{connection.nickname}</b>")
+        # Use truncated nickname for display, but preserve full nickname in data
+        display_nickname = truncate_nickname_for_display(connection.nickname)
+        self.nickname_label.set_markup(f"<b>{display_nickname}</b>")
         self.nickname_label.set_halign(Gtk.Align.START)
         info_box.append(self.nickname_label)
 
@@ -328,7 +351,9 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     def update_display(self):
         if hasattr(self.connection, "nickname") and hasattr(self, "nickname_label"):
-            self.nickname_label.set_markup(f"<b>{self.connection.nickname}</b>")
+            # Use truncated nickname for display, but preserve full nickname in data
+            display_nickname = truncate_nickname_for_display(self.connection.nickname)
+            self.nickname_label.set_markup(f"<b>{display_nickname}</b>")
 
         if hasattr(self.connection, "username") and hasattr(self.connection, "host") and hasattr(self, "host_label"):
             port_text = f":{self.connection.port}" if getattr(self.connection, "port", 22) != 22 else ""
