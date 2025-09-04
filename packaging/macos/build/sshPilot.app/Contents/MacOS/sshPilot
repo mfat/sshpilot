@@ -1,0 +1,73 @@
+#!/bin/bash
+
+# sshPilot main executable
+# Sets up environment and launches the application
+
+# Get the bundle directory (sshPilot.app)
+BUNDLE_DIR="$(dirname "$(dirname "$(dirname "${BASH_SOURCE[0]}")")")"
+RESOURCES_DIR="$BUNDLE_DIR/Contents/Resources"
+
+# Convert to absolute path
+BUNDLE_DIR="$(cd "$BUNDLE_DIR" && pwd)"
+RESOURCES_DIR="$BUNDLE_DIR/Contents/Resources"
+
+# Set up environment variables
+export PYTHONPATH="$RESOURCES_DIR/venv/lib/python*/site-packages:$PYTHONPATH"
+export GI_TYPELIB_PATH="/opt/homebrew/lib/girepository-1.0:/usr/local/lib/girepository-1.0:$GI_TYPELIB_PATH"
+export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+export LD_LIBRARY_PATH="/opt/homebrew/lib:/usr/local/lib:$LD_LIBRARY_PATH"
+export DYLD_LIBRARY_PATH="/opt/homebrew/lib:/usr/local/lib:$DYLD_LIBRARY_PATH"
+export XDG_DATA_DIRS="/opt/homebrew/share:/usr/local/share:$XDG_DATA_DIRS"
+
+# Set up keyring environment for macOS
+export KEYRING_BACKEND="keyring.backends.macOS.Keyring"
+export PYTHON_KEYRING_BACKEND="keyring.backends.macOS.Keyring"
+
+# Ensure keyring can access the user's keychain
+export HOME="$HOME"
+export USER="$USER"
+
+# Additional environment variables for keyring access
+export LOGNAME="$USER"
+export SHELL="/bin/bash"
+
+# Ensure the app can access the user's keychain
+# This is important for macOS keychain access
+export KEYCHAIN_ACCESS_GROUP="*"
+
+# Set up XDG directories for keyring
+export XDG_CONFIG_HOME="$HOME/.config"
+export XDG_DATA_HOME="$HOME/.local/share"
+export XDG_CACHE_HOME="$HOME/.cache"
+
+# Create XDG directories if they don't exist
+mkdir -p "$XDG_CONFIG_HOME"
+mkdir -p "$XDG_DATA_HOME" 
+mkdir -p "$XDG_CACHE_HOME"
+
+# Ensure sshpass is available
+if ! command -v sshpass &> /dev/null; then
+    # Try to find sshpass in common locations
+    for location in "/opt/homebrew/bin/sshpass" "/usr/local/bin/sshpass"; do
+        if [ -f "$location" ]; then
+            # Create a symlink in our bin directory if it doesn't exist
+            if [ ! -f "$RESOURCES_DIR/bin/sshpass" ]; then
+                ln -sf "$location" "$RESOURCES_DIR/bin/sshpass"
+            fi
+            break
+        fi
+    done
+fi
+
+# Set PATH explicitly for double-click launches
+# This ensures the app has access to all necessary tools
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+# Add our bin directory to PATH
+export PATH="$RESOURCES_DIR/bin:$PATH"
+
+# Set working directory to resources
+cd "$RESOURCES_DIR"
+
+# Launch the application
+exec "$RESOURCES_DIR/venv/bin/python3" "$RESOURCES_DIR/venv/run.py" "$@"
