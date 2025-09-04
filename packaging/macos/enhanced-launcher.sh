@@ -43,6 +43,10 @@ export GTK_PATH="$RESOURCES_DIR"
 export DYLD_LIBRARY_PATH="$RESOURCES_DIR/lib"
 export DYLD_FALLBACK_LIBRARY_PATH="$RESOURCES_DIR/lib:$RESOURCES_DIR/../Frameworks:${DYLD_FALLBACK_LIBRARY_PATH:-}"
 
+# gdk-pixbuf loader path (critical for image loading)
+export GDK_PIXBUF_MODULEDIR="$RESOURCES_DIR/lib/gdk-pixbuf-2.0/2.10.0/loaders"
+export GDK_PIXBUF_MODULE_FILE="$RESOURCES_DIR/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+
 # Icon and theme settings
 export GTK_ICON_THEME="Adwaita"
 export XDG_ICON_THEME="Adwaita"
@@ -83,6 +87,16 @@ export TMPDIR="${TMPDIR:-/tmp}"
 
 # Clear any potentially problematic environment variables
 unset DBUS_SESSION_BUS_ADDRESS
+
+# Ensure we don't use system GTK/GLib paths
+unset GTK_PATH
+unset GTK_DATA_PREFIX
+unset GTK_EXE_PREFIX
+
+# Override any system GTK settings
+export GTK_PATH="$RESOURCES_DIR"
+export GTK_DATA_PREFIX="$RESOURCES_DIR"
+export GTK_EXE_PREFIX="$RESOURCES_DIR"
 
 # Log final environment
 echo "Final environment:" >> /tmp/sshpilot_debug.log
