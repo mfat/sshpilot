@@ -1,0 +1,5 @@
+[console_scripts]
+sshpilot = sshpilot.main:main
+
+[gui_scripts]
+sshpilot = sshpilot.main:main

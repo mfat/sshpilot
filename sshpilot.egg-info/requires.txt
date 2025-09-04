@@ -1,0 +1,17 @@
+PyGObject>=3.42
+pycairo>=1.20.0
+paramiko>=3.4
+cryptography>=42.0
+keyring>=24.3
+psutil>=5.9.0
+
+[:sys_platform == "linux"]
+secretstorage>=3.3
+
+[dev]
+pytest>=7.0.0
+pytest-cov>=4.0.0
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.0.0
+pre-commit>=3.0.0
