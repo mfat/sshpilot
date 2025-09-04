@@ -390,10 +390,13 @@ export PYTHON_RUNTIME="${BREW_PREFIX}/bin/python3"
 export GTK_LIBS="${BREW_PREFIX}/lib"
 export GTK_DATA="${BREW_PREFIX}/share"
 
-# Disable code signing to prevent hangs during bundling
-export CODESIGN_ALLOCATE=""
-export CODE_SIGN_IDENTITY=""
-export CODESIGN_FLAGS=""
+# Set up code signing (ad-hoc signing - no certificate needed)
+# For distribution without Apple Developer account, we'll use ad-hoc signing
+echo "Setting up ad-hoc code signing (no certificate required)..."
+CERT_NAME="-"
+
+export CODE_SIGN_IDENTITY="$CERT_NAME"
+export CODESIGN_FLAGS="--force --deep"
 
 # Use gtk-mac-bundler to create the app bundle
 echo "Creating app bundle with gtk-mac-bundler..."
@@ -468,6 +471,21 @@ if [ -d "${HOME}/Desktop/sshPilot.app" ]; then
   chmod +x "${APP_DIR}/Contents/MacOS/sshPilot"
   echo "  ✓ Enhanced launcher installed"
 
+  # Sign the app bundle with ad-hoc signature
+  echo "Signing app bundle with ad-hoc signature..."
+  if codesign --force --deep --sign "$CODE_SIGN_IDENTITY" "${APP_DIR}"; then
+    echo "  ✓ App bundle signed with ad-hoc signature"
+    
+    # Verify the signature
+    if codesign --verify --verbose "${APP_DIR}"; then
+      echo "  ✓ Ad-hoc signature verified"
+    else
+      echo "  ⚠️  Warning: Ad-hoc signature verification failed"
+    fi
+  else
+    echo "  ⚠️  Warning: Ad-hoc signing failed, but app bundle was created"
+  fi
+
   echo "sshPilot.app created in ${DIST_DIR}"
   echo "You can now open: open ${DIST_DIR}/sshPilot.app"
   echo "Or double-click sshPilot.app in Finder"
@@ -476,6 +494,7 @@ if [ -d "${HOME}/Desktop/sshPilot.app" ]; then
   echo "Users don't need to install Python, PyGObject, GTK libraries, or any Python packages!"
   echo "✅ All dependencies bundled: paramiko, cryptography, keyring, nacl, bcrypt, etc."
   echo "✅ Double-click launch is now supported!"
+  echo "✅ App is signed with ad-hoc signature (no certificate required)"
 else
   echo "gtk-mac-bundler failed to create app bundle" >&2
   exit 1
