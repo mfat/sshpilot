@@ -352,62 +352,155 @@ if [ -f "${ROOT_DIR}/sshpilot/resources/sshpilot.gresource.xml" ]; then
     "${ROOT_DIR}/sshpilot/resources/sshpilot.gresource.xml"
 fi
 
-# Build the Python application (no PyInstaller, just Python)
-echo "Building Python application..."
+# Build the Python application using modern venv approach (from build-guide.md)
+echo "Building Python application with modern venv approach..."
 
-# Install dependencies inside an isolated virtual environment (PEP 668 safe)
-VENV_DIR="${BUILD_DIR}/.venv-bundle"
-python3 -m venv "${VENV_DIR}"
-source "${VENV_DIR}/bin/activate"
-pip install --upgrade pip
-pip install -r "${ROOT_DIR}/requirements.txt"
+# Create the app bundle structure first
+APP_BUNDLE="${BUILD_DIR}/sshPilot.app"
+mkdir -p "${APP_BUNDLE}/Contents/MacOS"
+mkdir -p "${APP_BUNDLE}/Contents/Resources"
 
-# Copy application files to build directory
-cp -R "${ROOT_DIR}/sshpilot" "${BUILD_DIR}/"
-cp "${ROOT_DIR}/run.py" "${BUILD_DIR}/"
-cp "${ROOT_DIR}/requirements.txt" "${BUILD_DIR}/"
+# Use modern venv approach: create Python environment directly inside the bundle
+echo "Creating self-contained Python environment inside app bundle..."
+PYTHON_VERSION="3.13"
+if [ -f "/opt/homebrew/bin/python3" ]; then
+    echo "Using Homebrew Python 3.13 for building..."
+    /opt/homebrew/bin/python3 -m venv "${APP_BUNDLE}/Contents"
+else
+    echo "Using system Python for building..."
+    python3 -m venv "${APP_BUNDLE}/Contents"
+fi
+
+# Install dependencies directly into the bundle's Python environment
+echo "Installing dependencies into bundle's Python environment..."
+"${APP_BUNDLE}/Contents/bin/pip" install --upgrade pip wheel setuptools
+"${APP_BUNDLE}/Contents/bin/pip" install -r "${ROOT_DIR}/requirements.txt"
+
+# Install the application itself
+echo "Installing sshPilot application into bundle..."
+"${APP_BUNDLE}/Contents/bin/pip" install "${ROOT_DIR}"
+
+# Copy application files to bundle Resources
+echo "Copying application files to bundle..."
+cp -R "${ROOT_DIR}/sshpilot" "${APP_BUNDLE}/Contents/Resources/"
+cp "${ROOT_DIR}/run.py" "${APP_BUNDLE}/Contents/Resources/"
+cp "${ROOT_DIR}/requirements.txt" "${APP_BUNDLE}/Contents/Resources/"
+
+# Create Info.plist for the app bundle
+cat > "${APP_BUNDLE}/Contents/Info.plist" << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>sshPilot</string>
+    <key>CFBundleIdentifier</key>
+    <string>io.github.mfat.sshpilot</string>
+    <key>CFBundleName</key>
+    <string>sshPilot</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.15</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSRequiresAquaSystemAppearance</key>
+    <false/>
+</dict>
+</plist>
+EOF
 
 # Copy the enhanced launcher script
-cp "${SCRIPT_DIR}/enhanced-launcher.sh" "${BUILD_DIR}/sshPilot-launcher.sh"
-chmod +x "${BUILD_DIR}/sshPilot-launcher.sh"
+cp "${SCRIPT_DIR}/enhanced-launcher.sh" "${APP_BUNDLE}/Contents/MacOS/sshPilot"
+chmod +x "${APP_BUNDLE}/Contents/MacOS/sshPilot"
 
 # Copy resources
-cp "${ROOT_DIR}/sshpilot/resources/sshpilot.gresource" "${BUILD_DIR}/"
-cp "${ROOT_DIR}/sshpilot/resources/sshpilot.svg" "${BUILD_DIR}/"
+cp "${ROOT_DIR}/sshpilot/resources/sshpilot.gresource" "${APP_BUNDLE}/Contents/Resources/"
+cp "${ROOT_DIR}/sshpilot/resources/sshpilot.svg" "${APP_BUNDLE}/Contents/Resources/"
 
-# Copy the Info.plist file
-cp "${SCRIPT_DIR}/Info.plist" "${BUILD_DIR}/"
+# Bundle native libraries (GTK, etc.) using the helper functions from build-guide.md
+echo "Bundling native libraries..."
 
-# Copy the app icon
-cp "${SCRIPT_DIR}/sshPilot.icns" "${BUILD_DIR}/"
+# Helper functions from build-guide.md
+resolve_deps() {
+  local lib=$1
+  otool -L "$lib" | grep -e "^/opt/homebrew/" | while read dep _; do
+    echo "$dep"
+  done
+}
 
-# Set up environment variables for gtk-mac-bundler
-export BUILD_DIR="${BUILD_DIR}"
-export BREW_PREFIX="${BREW_PREFIX}"
+fix_paths() {
+  local lib=$1
+  for dep in $(resolve_deps "$lib"); do
+    install_name_tool -change "$dep" "@executable_path/../lib/$(basename "$dep")" "$lib"
+  done
+}
 
-# Set up Python runtime and GTK paths for bundling
-export PYTHON_RUNTIME="${BREW_PREFIX}/bin/python3"
-export GTK_LIBS="${BREW_PREFIX}/lib"
-export GTK_DATA="${BREW_PREFIX}/share"
+# Find and bundle native libraries
+echo "  Finding native libraries..."
+binlibs=$(find "${APP_BUNDLE}/Contents" -type f -name '*.so' -o -name '*.dylib')
 
-# Set up code signing (ad-hoc signing - no certificate needed)
-# For distribution without Apple Developer account, we'll use ad-hoc signing
-echo "Setting up ad-hoc code signing (no certificate required)..."
-CERT_NAME="-"
+for lib in $binlibs; do
+  echo "  Processing: $lib"
+  resolve_deps "$lib"
+  fix_paths "$lib"
+done | sort -u | while read lib; do
+  if [ -f "$lib" ]; then
+    echo "    Copying: $lib"
+    cp "$lib" "${APP_BUNDLE}/Contents/lib/"
+    chmod u+w "${APP_BUNDLE}/Contents/lib/$(basename "$lib")"
+    fix_paths "${APP_BUNDLE}/Contents/lib/$(basename "$lib")"
+  fi
+done
 
-export CODE_SIGN_IDENTITY="$CERT_NAME"
-export CODESIGN_FLAGS="--force --deep"
+# Copy GTK libraries and resources from Homebrew
+echo "  Copying GTK libraries from Homebrew..."
+if [ -d "/opt/homebrew/lib" ]; then
+    mkdir -p "${APP_BUNDLE}/Contents/lib"
+    cp -R /opt/homebrew/lib/*.dylib "${APP_BUNDLE}/Contents/lib/" 2>/dev/null || true
+    cp -R /opt/homebrew/lib/gdk-pixbuf-2.0 "${APP_BUNDLE}/Contents/lib/" 2>/dev/null || true
+    cp -R /opt/homebrew/lib/girepository-1.0 "${APP_BUNDLE}/Contents/lib/" 2>/dev/null || true
+    cp -R /opt/homebrew/share/glib-2.0 "${APP_BUNDLE}/Contents/share/" 2>/dev/null || true
+    cp -R /opt/homebrew/share/icons "${APP_BUNDLE}/Contents/share/" 2>/dev/null || true
+fi
 
-# Use gtk-mac-bundler to create the app bundle
-echo "Creating app bundle with gtk-mac-bundler..."
-export BUILD_DIR="${BUILD_DIR}"
-export BREW_PREFIX="${BREW_PREFIX}"
-export PYTHON_RUNTIME="${PYTHON_RUNTIME}"
-export GTK_LIBS="${GTK_LIBS}"
-export GTK_DATA="${GTK_DATA}"
-pushd "${BUILD_DIR}" >/dev/null
-gtk-mac-bundler "${BUNDLE_XML}"
-popd >/dev/null
+# Generate gdk-pixbuf loaders cache
+echo "  Generating gdk-pixbuf loaders cache..."
+if [ -d "${APP_BUNDLE}/Contents/lib/gdk-pixbuf-2.0" ]; then
+    "${APP_BUNDLE}/Contents/lib/gdk-pixbuf-2.0/2.10.0/gdk-pixbuf-query-loaders" > "${APP_BUNDLE}/Contents/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+fi
+
+# Sign the app bundle
+echo "Signing app bundle..."
+codesign --deep --force --sign - "${APP_BUNDLE}"
+
+# Verify the signature
+echo "Verifying app bundle signature..."
+codesign --verify --verbose "${APP_BUNDLE}"
+
+# Copy the final bundle to dist
+echo "Copying final bundle to dist directory..."
+mkdir -p "${ROOT_DIR}/dist"
+cp -R "${APP_BUNDLE}" "${ROOT_DIR}/dist/"
+
+echo ""
+echo "✅ sshPilot.app created successfully using modern venv approach!"
+echo "📍 Location: ${ROOT_DIR}/dist/sshPilot.app"
+echo ""
+echo "🚀 You can now:"
+echo "   • Double-click the app in Finder"
+echo "   • Run: open ${ROOT_DIR}/dist/sshPilot.app"
+echo "   • Distribute the app to other Macs"
+echo ""
+echo "🔒 The app is signed with an ad-hoc signature (no certificate required)"
+echo "📦 The app is fully self-contained with all dependencies bundled"
+echo "🐍 Uses modern Python venv approach for maximum compatibility"
 
 # Move the created bundle to dist directory (gtk-mac-bundler creates it on Desktop)
 if [ -d "${HOME}/Desktop/sshPilot.app" ]; then
@@ -421,13 +514,19 @@ if [ -d "${HOME}/Desktop/sshPilot.app" ]; then
   RES_DIR="${APP_DIR}/Contents/Resources"
   FRAMEWORKS_DIR="${APP_DIR}/Contents/Frameworks"
   
-  # Post-bundle: Bundle Python packages from virtual environment
-  echo "Bundling Python packages for self-contained distribution..."
+  # Post-bundle: Bundle Python runtime and packages
+  echo "Bundling Python runtime and packages for self-contained distribution..."
+  
+  # Copy Python runtime to bundle
+  echo "  Copying Python runtime..."
+  cp -R "${BUILD_DIR}/python-runtime" "${RES_DIR}/"
+  echo "  ✓ Python runtime bundled"
+  
   # Find the actual site-packages directory (handles different Python versions)
   ACTUAL_SITE_PACKAGES=$(find "${VENV_DIR}/lib" -name "site-packages" -type d | head -1)
   if [ -n "${ACTUAL_SITE_PACKAGES}" ]; then
     # Create the target directory
-    mkdir -p "${RES_DIR}/lib/python3.13/site-packages"
+    mkdir -p "${RES_DIR}/lib/python3.9/site-packages"
     
     # Copy all Python packages (excluding __pycache__ and .dist-info)
     echo "  Copying Python packages from: ${ACTUAL_SITE_PACKAGES}"
@@ -435,7 +534,7 @@ if [ -d "${HOME}/Desktop/sshPilot.app" ]; then
       -not -name "__pycache__" \
       -not -name "*.dist-info" \
       -not -name "*.pyc" \
-      -exec cp -R {} "${RES_DIR}/lib/python3.13/site-packages/" \;
+      -exec cp -R {} "${RES_DIR}/lib/python3.9/site-packages/" \;
     echo "  ✓ Python packages bundled (paramiko, cryptography, keyring, etc.)"
   else
     echo "  ⚠️  Warning: Could not find site-packages directory"

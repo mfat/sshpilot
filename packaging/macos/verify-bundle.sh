@@ -50,6 +50,43 @@ check_file() {
     fi
 }
 
+# Check for system library dependencies
+check_system_dependencies() {
+    local binary_path="$1"
+    local description="$2"
+    
+    TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
+    
+    if [ ! -f "$binary_path" ]; then
+        echo -e "${YELLOW}⚠${NC} $description - Binary not found: $binary_path"
+        WARNING_CHECKS=$((WARNING_CHECKS + 1))
+        return 0
+    fi
+    
+    # Check for system library dependencies
+    local system_deps=()
+    while IFS= read -r line; do
+        # Skip the first line (binary path) and system libraries
+        if [[ "$line" == *"$binary_path"* ]]; then
+            continue
+        fi
+        # Check for system paths
+        if [[ "$line" == *"/opt/homebrew/"* ]] || [[ "$line" == *"/usr/local/"* ]] || [[ "$line" == *"/System/"* ]]; then
+            # Extract library name
+            local lib_name=$(echo "$line" | awk '{print $1}' | xargs basename)
+            system_deps+=("$lib_name")
+        fi
+    done < <(otool -L "$binary_path" 2>/dev/null)
+    
+    if [ ${#system_deps[@]} -eq 0 ]; then
+        echo -e "${GREEN}✓${NC} $description - No system dependencies"
+        PASSED_CHECKS=$((PASSED_CHECKS + 1))
+    else
+        echo -e "${YELLOW}⚠${NC} $description - System dependencies found: ${system_deps[*]}"
+        WARNING_CHECKS=$((WARNING_CHECKS + 1))
+    fi
+}
+
 check_dir() {
     local dir_path="$1"
     local description="$2"
@@ -207,7 +244,6 @@ verify_bundle() {
     echo -e "${BLUE}🎨 GTK4 and libadwaita Libraries${NC}"
     # Core GTK4 libraries (check for actual versioned names)
     check_gtk_library "libgtk-4.dylib"
-    check_gtk_library "libgdk-3.0.dylib"  # GTK4 uses GDK3
     check_gtk_library "libgobject-2.0.dylib"
     check_gtk_library "libglib-2.0.dylib"
     check_gtk_library "libgio-2.0.dylib"
@@ -423,6 +459,75 @@ verify_bundle() {
         fi
         TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
     fi
+    echo ""
+    
+    echo -e "${BLUE}🔍 System Dependency Analysis${NC}"
+    echo "Checking for system library dependencies (should be minimal for self-contained bundle):"
+    echo ""
+    
+    # Check main launcher script
+    check_system_dependencies "$MACOS_DIR/sshPilot" "Main launcher script"
+    
+    # Check bundled Python if it exists
+    if [ -f "$RES_DIR/python-runtime/python3" ]; then
+        check_system_dependencies "$RES_DIR/python-runtime/python3" "Bundled Python runtime"
+    else
+        echo -e "${YELLOW}⚠${NC} Bundled Python runtime not found - using system Python"
+        WARNING_CHECKS=$((WARNING_CHECKS + 1))
+        TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
+    fi
+    
+    # Check key GTK libraries for system dependencies
+    for lib in "libgtk-4" "libadwaita-1" "libvte-2.91-gtk4"; do
+        # Check both Frameworks and Resources/lib directories
+        lib_path=$(find "$FRAMEWORKS_DIR" "$RES_DIR/lib" -name "${lib}*.dylib" 2>/dev/null | head -1)
+        if [ -n "$lib_path" ]; then
+            check_system_dependencies "$lib_path" "GTK library: $(basename "$lib_path")"
+        fi
+    done
+    
+    # Check for critical system dependencies that should NOT be present
+    echo ""
+    echo "Checking for problematic system dependencies:"
+    
+    # Check if any bundled binaries depend on system Python
+    local python_deps=0
+    for binary in "$MACOS_DIR"/* "$FRAMEWORKS_DIR"/*.dylib; do
+        if [ -f "$binary" ] && [ -x "$binary" ]; then
+            if otool -L "$binary" 2>/dev/null | grep -q "/opt/homebrew.*python\|/usr/local.*python\|/System.*python"; then
+                python_deps=$((python_deps + 1))
+                echo -e "${RED}✗${NC} $(basename "$binary") depends on system Python"
+                FAILED_CHECKS=$((FAILED_CHECKS + 1))
+                TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
+            fi
+        fi
+    done
+    
+    if [ $python_deps -eq 0 ]; then
+        echo -e "${GREEN}✓${NC} No system Python dependencies found"
+        PASSED_CHECKS=$((PASSED_CHECKS + 1))
+        TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
+    fi
+    
+    # Check for system GTK dependencies
+    local gtk_deps=0
+    for binary in "$MACOS_DIR"/* "$FRAMEWORKS_DIR"/*.dylib; do
+        if [ -f "$binary" ] && [ -x "$binary" ]; then
+            if otool -L "$binary" 2>/dev/null | grep -q "/opt/homebrew.*gtk\|/usr/local.*gtk\|/System.*gtk"; then
+                gtk_deps=$((gtk_deps + 1))
+                echo -e "${RED}✗${NC} $(basename "$binary") depends on system GTK"
+                FAILED_CHECKS=$((FAILED_CHECKS + 1))
+                TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
+            fi
+        fi
+    done
+    
+    if [ $gtk_deps -eq 0 ]; then
+        echo -e "${GREEN}✓${NC} No system GTK dependencies found"
+        PASSED_CHECKS=$((PASSED_CHECKS + 1))
+        TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
+    fi
+    
     echo ""
     
     # Summary

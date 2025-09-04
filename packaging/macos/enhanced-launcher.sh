@@ -17,8 +17,8 @@ RESOURCES_DIR="$APP_DIR/Resources"
 echo "App directory: $APP_DIR" >> /tmp/sshpilot_debug.log
 echo "Resources directory: $RESOURCES_DIR" >> /tmp/sshpilot_debug.log
 
-# Set explicit PATH with system directories first
-export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+# Set explicit PATH with bundle bin first, then system directories
+export PATH="$APP_DIR/../bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 echo "New PATH: $PATH" >> /tmp/sshpilot_debug.log
 
 # Change to the resources directory (explicit working directory)
@@ -105,12 +105,31 @@ echo "  PYTHONPATH: $PYTHONPATH" >> /tmp/sshpilot_debug.log
 echo "  GI_TYPELIB_PATH: $GI_TYPELIB_PATH" >> /tmp/sshpilot_debug.log
 echo "  Working directory: $(pwd)" >> /tmp/sshpilot_debug.log
 
-# Start the application using system Python with bundled libraries
+# Start the application with proper Python detection
 echo "Launching Python application..." >> /tmp/sshpilot_debug.log
-exec python3 -c "
-import sys
-import os
-sys.path.insert(0, os.path.join(os.getcwd(), 'app'))
-from app.main import main
-main()
-" 2>&1 | tee -a /tmp/sshpilot_debug.log
+
+# Use the bundled Python from the venv (modern approach from build-guide.md)
+BUNDLED_PYTHON="$RESOURCES_DIR/bin/python3"
+
+if [ -f "$BUNDLED_PYTHON" ]; then
+    echo "Using bundled Python from venv: $BUNDLED_PYTHON" >> /tmp/sshpilot_debug.log
+else
+    echo "ERROR: Bundled Python not found at: $BUNDLED_PYTHON" >> /tmp/sshpilot_debug.log
+    echo "ERROR: This bundle is not self-contained!" >> /tmp/sshpilot_debug.log
+    echo "ERROR: Bundled Python not found!"
+    echo "ERROR: This bundle is not self-contained!"
+    exit 1
+fi
+
+# Set up environment paths for GTK etc. (from build-guide.md)
+export DYLD_FALLBACK_LIBRARY_PATH="$RESOURCES_DIR/lib:$DYLD_FALLBACK_LIBRARY_PATH"
+export GI_TYPELIB_PATH="$RESOURCES_DIR/lib/girepository-1.0:$GI_TYPELIB_PATH"
+export XDG_DATA_DIRS="$RESOURCES_DIR/share:/usr/local/share:/usr/share"
+export GSETTINGS_SCHEMA_DIR="$RESOURCES_DIR/share/glib-2.0/schemas"
+
+echo "Using Python: $BUNDLED_PYTHON" >> /tmp/sshpilot_debug.log
+echo "DYLD_FALLBACK_LIBRARY_PATH: $DYLD_FALLBACK_LIBRARY_PATH" >> /tmp/sshpilot_debug.log
+echo "GI_TYPELIB_PATH: $GI_TYPELIB_PATH" >> /tmp/sshpilot_debug.log
+
+# Run the application using the bundled Python
+exec "$BUNDLED_PYTHON" -m sshpilot "$@" 2>&1 | tee -a /tmp/sshpilot_debug.log
