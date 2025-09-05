@@ -37,7 +37,11 @@ gtk_libs_patterns = [
 binaries = []
 for pat in gtk_libs_patterns:
     for src in glob.glob(os.path.join(hb_lib, pat)):
-        binaries.append((src, "Frameworks"))
+        # Special handling for VTE libraries to avoid nested Frameworks structure
+        if "vte" in pat.lower():
+            binaries.append((src, "."))  # Place directly in Frameworks root
+        else:
+            binaries.append((src, "Frameworks"))
 
 # GI typelibs
 datas = []
@@ -45,15 +49,14 @@ for typelib in glob.glob(os.path.join(hb_gir, "*.typelib")):
     datas.append((typelib, "Resources/girepository-1.0"))
 
 # Shared data: schemas, icons, gtk-4.0 assets
-_datas = [
+datas += [
     (os.path.join(hb_share, "glib-2.0", "schemas"), "Resources/share/glib-2.0/schemas"),
     (os.path.join(hb_share, "icons", "Adwaita"),    "Resources/share/icons/Adwaita"),
     (os.path.join(hb_share, "gtk-4.0"),               "Resources/share/gtk-4.0"),
-    ("sshpilot", "venv/lib/python3.13/site-packages/sshpilot"),
+    ("sshpilot", "sshpilot"),
+    ("sshpilot/resources/sshpilot.gresource", "Resources/sshpilot"),
+
 ]
-for src, dest in _datas:
-    if os.path.exists(src):
-        datas.append((src, dest))
 
 # Optional helper binaries
 sshpass = f"{homebrew}/bin/sshpass"
