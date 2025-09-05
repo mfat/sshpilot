@@ -25,6 +25,7 @@ gtk_libs_patterns = [
     "libharfbuzz.*.dylib",
     "libfribidi.*.dylib",
     "libcairo.*.dylib",
+    "libcairo-gobject.*.dylib",
     "libgobject-2.0.*.dylib",
     "libglib-2.0.*.dylib",
     "libgio-2.0.*.dylib",
@@ -37,8 +38,8 @@ gtk_libs_patterns = [
 binaries = []
 for pat in gtk_libs_patterns:
     for src in glob.glob(os.path.join(hb_lib, pat)):
-        # Special handling for VTE libraries to avoid nested Frameworks structure
-        if "vte" in pat.lower():
+        # Special handling for VTE and Adwaita libraries to avoid nested Frameworks structure
+        if "vte" in pat.lower() or "adwaita" in pat.lower():
             binaries.append((src, "."))  # Place directly in Frameworks root
         else:
             binaries.append((src, "Frameworks"))
@@ -63,7 +64,13 @@ sshpass = f"{homebrew}/bin/sshpass"
 if os.path.exists(sshpass):
     binaries.append((sshpass, "Resources/bin"))
 
+# Cairo Python bindings (required for Cairo Context)
+cairo_gi_binding = f"{homebrew}/lib/python3.13/site-packages/gi/_gi_cairo.cpython-313-darwin.so"
+if os.path.exists(cairo_gi_binding):
+    binaries.append((cairo_gi_binding, "gi"))
+
 hiddenimports = collect_submodules("gi")
+hiddenimports += ["gi._gi_cairo", "gi.repository.cairo", "cairo"]
 
 block_cipher = None
 
@@ -74,7 +81,7 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=["."],
-    runtime_hooks=["hook-gtk_runtime.py"],
+                runtime_hooks=["hook-gtk_runtime.py"],
     noarchive=False,
 )
 

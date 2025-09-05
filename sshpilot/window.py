@@ -36,7 +36,7 @@ from .key_manager import KeyManager, SSHKey
 # Port forwarding UI is now integrated into connection_dialog.py
 from .connection_dialog import ConnectionDialog
 from .askpass_utils import ensure_askpass_script
-from .preferences import PreferencesWindow, is_running_in_flatpak
+from .preferences import PreferencesWindow, is_running_in_flatpak, should_hide_external_terminal_options
 from .sshcopyid_window import SshCopyIdWindow
 from .groups import GroupManager
 from .sidebar import GroupRow, ConnectionRow, build_sidebar
@@ -701,8 +701,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         files_row.connect('activated', lambda *_: (self.on_manage_files_action(None, None), pop.popdown()))
                         listbox.append(files_row)
 
-                        # Only show system terminal option when not in Flatpak
-                        if not is_running_in_flatpak():
+                        # Only show system terminal option when not in Flatpak or macOS
+                        if not should_hide_external_terminal_options():
                             terminal_row = Adw.ActionRow(title=_('Open in System Terminal'))
                             terminal_icon = Gtk.Image.new_from_icon_name('utilities-terminal-symbolic')
                             terminal_row.add_prefix(terminal_icon)
@@ -834,8 +834,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
         self.connection_toolbar.append(self.manage_files_button)
         
-        # System terminal button (only when not in Flatpak)
-        if not is_running_in_flatpak():
+        # System terminal button (only when not in Flatpak or macOS)
+        if not should_hide_external_terminal_options():
             self.system_terminal_button = Gtk.Button.new_from_icon_name('utilities-terminal-symbolic')
             self.system_terminal_button.set_tooltip_text('Open connection in system terminal')
             self.system_terminal_button.set_sensitive(False)

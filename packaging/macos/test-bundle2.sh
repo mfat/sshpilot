@@ -70,7 +70,7 @@ else
     echo "❌ Missing GObject Introspection typelibs"
 fi
 
-if [ -f "$RESOURCES_DIR/sshpilot/sshpilot.gresource" ]; then
+if [ -f "$RESOURCES_DIR/sshpilot/resources/sshpilot.gresource" ]; then
     echo "✅ GResource bundle found"
 else
     echo "❌ Missing GResource bundle"

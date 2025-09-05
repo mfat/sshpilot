@@ -15,6 +15,10 @@ def is_running_in_flatpak() -> bool:
     """Check if running inside Flatpak sandbox"""
     return os.path.exists("/.flatpak-info") or os.environ.get("FLATPAK_ID") is not None
 
+def should_hide_external_terminal_options() -> bool:
+    """Check if external terminal options should be hidden (Flatpak or macOS)"""
+    return is_running_in_flatpak() or os.name == 'posix' and hasattr(os, 'uname') and os.uname().sysname == 'Darwin'
+
 class MonospaceFontDialog(Adw.Window):
     def __init__(self, parent=None, current_font="Monospace 12"):
         super().__init__()
@@ -374,8 +378,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
             appearance_group.add(preview_group)
             terminal_page.add(appearance_group)
             
-            # Preferred Terminal group (only show when not in Flatpak)
-            if not is_running_in_flatpak():
+            # Preferred Terminal group (only show when not in Flatpak or macOS)
+            if not should_hide_external_terminal_options():
                 terminal_choice_group = Adw.PreferencesGroup()
                 terminal_choice_group.set_title("Preferred Terminal")
                 

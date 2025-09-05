@@ -5,7 +5,7 @@ from gi.repository import Gio, Gtk, Adw, GLib
 from gettext import gettext as _
 
 from .sftp_utils import open_remote_in_file_manager
-from .preferences import is_running_in_flatpak
+from .preferences import is_running_in_flatpak, should_hide_external_terminal_options
 
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
 
@@ -697,8 +697,8 @@ def register_window_actions(window):
     window.delete_connection_action.connect('activate', window.on_delete_connection_action)
     window.add_action(window.delete_connection_action)
 
-    # Action for opening connections in system terminal (only when not in Flatpak)
-    if not is_running_in_flatpak():
+    # Action for opening connections in system terminal (only when not in Flatpak or macOS)
+    if not should_hide_external_terminal_options():
         window.open_in_system_terminal_action = Gio.SimpleAction.new('open-in-system-terminal', None)
         window.open_in_system_terminal_action.connect('activate', window.on_open_in_system_terminal_action)
         window.add_action(window.open_in_system_terminal_action)
