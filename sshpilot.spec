@@ -1,12 +1,22 @@
 # sshpilot.spec — build with: pyinstaller --clean sshpilot.spec
-import os, glob
+import os, glob, platform
 from PyInstaller.utils.hooks import collect_submodules
 
 app_name = "SSHPilot"
 entry_py = "run.py"
 icon_file = "packaging/macos/sshpilot.icns"
 
-homebrew = "/opt/homebrew"
+# Detect architecture and set Homebrew path
+arch = platform.machine()
+if arch == "arm64":
+    # Apple Silicon Mac
+    homebrew = "/opt/homebrew"
+    print(f"🍎 Detected Apple Silicon Mac (ARM64), using Homebrew at: {homebrew}")
+else:
+    # Intel Mac
+    homebrew = "/usr/local"
+    print(f"💻 Detected Intel Mac (x86_64), using Homebrew at: {homebrew}")
+
 hb_lib = f"{homebrew}/lib"
 hb_share = f"{homebrew}/share"
 hb_gir = f"{hb_lib}/girepository-1.0"
