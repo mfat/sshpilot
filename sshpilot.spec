@@ -1,0 +1,109 @@
+# sshpilot.spec — build with: pyinstaller --clean sshpilot.spec
+import os, glob
+from PyInstaller.utils.hooks import collect_submodules
+
+app_name = "SSHPilot"
+entry_py = "run.py"
+icon_file = "packaging/macos/sshpilot.icns"
+
+homebrew = "/opt/homebrew"
+hb_lib = f"{homebrew}/lib"
+hb_share = f"{homebrew}/share"
+hb_gir = f"{hb_lib}/girepository-1.0"
+
+# Keep list tight; expand if otool shows missing libs
+gtk_libs_patterns = [
+    "libadwaita-1.*.dylib",
+    "libgtk-4.*.dylib",
+    "libgdk-4.*.dylib",
+    "libgdk_pixbuf-2.0.*.dylib",
+    "libvte-2.91.*.dylib",
+    "libvte-2.91-gtk4.*.dylib",
+    "libgraphene-1.0.*.dylib",
+    "libpango-1.*.dylib",
+    "libpangocairo-1.*.dylib",
+    "libharfbuzz.*.dylib",
+    "libfribidi.*.dylib",
+    "libcairo.*.dylib",
+    "libgobject-2.0.*.dylib",
+    "libglib-2.0.*.dylib",
+    "libgio-2.0.*.dylib",
+    "libgmodule-2.0.*.dylib",
+    "libintl.*.dylib",
+    "libffi.*.dylib",
+    "libicu*.dylib",
+]
+
+binaries = []
+for pat in gtk_libs_patterns:
+    for src in glob.glob(os.path.join(hb_lib, pat)):
+        binaries.append((src, "Frameworks"))
+
+# GI typelibs
+datas = []
+for typelib in glob.glob(os.path.join(hb_gir, "*.typelib")):
+    datas.append((typelib, "Resources/girepository-1.0"))
+
+# Shared data: schemas, icons, gtk-4.0 assets
+_datas = [
+    (os.path.join(hb_share, "glib-2.0", "schemas"), "Resources/share/glib-2.0/schemas"),
+    (os.path.join(hb_share, "icons", "Adwaita"),    "Resources/share/icons/Adwaita"),
+    (os.path.join(hb_share, "gtk-4.0"),               "Resources/share/gtk-4.0"),
+    ("sshpilot", "venv/lib/python3.13/site-packages/sshpilot"),
+]
+for src, dest in _datas:
+    if os.path.exists(src):
+        datas.append((src, dest))
+
+# Optional helper binaries
+sshpass = f"{homebrew}/bin/sshpass"
+if os.path.exists(sshpass):
+    binaries.append((sshpass, "Resources/bin"))
+
+hiddenimports = collect_submodules("gi")
+
+block_cipher = None
+
+a = Analysis(
+    [entry_py],
+    pathex=[],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=["."],
+    runtime_hooks=["hook-gtk_runtime.py"],
+    noarchive=False,
+)
+
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name=app_name,
+    icon=icon_file if os.path.exists(icon_file) else None,
+    console=False,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,
+    name=app_name,
+)
+
+app = BUNDLE(
+    coll,
+    name=f"{app_name}.app",
+    icon=icon_file if os.path.exists(icon_file) else None,
+    bundle_identifier="app.sshpilot",
+    info_plist={
+        "NSHighResolutionCapable": True,
+        "LSMinimumSystemVersion": "12.0",
+    },
+)

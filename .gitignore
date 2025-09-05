@@ -8,3 +8,5 @@ release.sh
 /dist
 /build
 /packaging/macos/build
+/.venv-system
+/.venv-system-python
