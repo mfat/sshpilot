@@ -81,6 +81,8 @@ if os.path.exists(cairo_gi_binding):
 
 hiddenimports = collect_submodules("gi")
 hiddenimports += ["gi._gi_cairo", "gi.repository.cairo", "cairo"]
+# Add keyring and secretstorage for askpass functionality
+hiddenimports += ["keyring", "secretstorage"]
 
 block_cipher = None
 
