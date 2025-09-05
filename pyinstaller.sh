@@ -53,7 +53,7 @@ if [ -d "dist/SSHPilot.app" ]; then
     fi
     
     echo "DEBUG: Detected version: $VERSION"
-    DMG_NAME="SSHPilot-${VERSION}.dmg"
+    DMG_NAME="sshPilot-${VERSION}.dmg"
     DMG_PATH="dist/${DMG_NAME}"
     echo "DEBUG: DMG will be created as: $DMG_PATH"
     
