@@ -14,7 +14,7 @@ if arch == "arm64":
     print(f"🍎 Detected Apple Silicon Mac (ARM64), using Homebrew at: {homebrew}")
 else:
     # Intel Mac
-    homebrew = "/usr/local"
+    homebrew = "/usr/local/"
     print(f"💻 Detected Intel Mac (x86_64), using Homebrew at: {homebrew}")
 
 hb_lib = f"{homebrew}/lib"
