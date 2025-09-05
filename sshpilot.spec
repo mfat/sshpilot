@@ -46,7 +46,7 @@ for pat in gtk_libs_patterns:
 # GI typelibs
 datas = []
 for typelib in glob.glob(os.path.join(hb_gir, "*.typelib")):
-    datas.append((typelib, "Resources/girepository-1.0"))
+    datas.append((typelib, "girepository-1.0"))
 
 # Shared data: schemas, icons, gtk-4.0 assets
 datas += [
