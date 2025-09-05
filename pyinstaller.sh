@@ -13,16 +13,58 @@ if [ ! -f "sshpilot.spec" ]; then
     exit 1
 fi
 
-# Check if virtual environment exists
+# Check if virtual environment exists, create if not
 if [ ! -d ".venv-homebrew" ]; then
-    echo "❌ Error: .venv-homebrew virtual environment not found."
-    echo "Please ensure the Homebrew virtual environment is set up."
-    exit 1
+    echo "📦 Creating Homebrew virtual environment..."
+    
+    # Detect architecture and set Homebrew path
+    ARCH=$(uname -m)
+    if [ "$ARCH" = "arm64" ]; then
+        # Apple Silicon Mac
+        HOMEBREW_PREFIX="/opt/homebrew"
+        echo "🍎 Detected Apple Silicon Mac (ARM64)"
+    else
+        # Intel Mac
+        HOMEBREW_PREFIX="/usr/local"
+        echo "💻 Detected Intel Mac (x86_64)"
+    fi
+    
+    # Check if Homebrew Python is available
+    PYTHON_PATH="$HOMEBREW_PREFIX/opt/python@3.13/bin/python3.13"
+    if [ ! -f "$PYTHON_PATH" ]; then
+        echo "❌ Homebrew Python 3.13 not found at $PYTHON_PATH"
+        echo "Please install it with:"
+        echo "   brew install python@3.13"
+        exit 1
+    fi
+    
+    echo "🐍 Using Python from: $PYTHON_PATH"
+    
+    # Create virtual environment using Homebrew Python
+    "$PYTHON_PATH" -m venv .venv-homebrew
+    
+    if [ $? -ne 0 ]; then
+        echo "❌ Failed to create virtual environment"
+        exit 1
+    fi
+    
+    echo "✅ Virtual environment created successfully"
+    
+    # Activate and install PyInstaller
+    echo "📦 Installing PyInstaller..."
+    source .venv-homebrew/bin/activate
+    pip install PyInstaller
+    
+    if [ $? -ne 0 ]; then
+        echo "❌ Failed to install PyInstaller"
+        exit 1
+    fi
+    
+    echo "✅ PyInstaller installed successfully"
+else
+    echo "📦 Activating existing Homebrew virtual environment..."
+    source .venv-homebrew/bin/activate
 fi
-
-# Activate virtual environment and build
-echo "📦 Activating Homebrew virtual environment..."
-source .venv-homebrew/bin/activate
 
 echo "🔨 Running PyInstaller..."
 python -m PyInstaller --clean --noconfirm sshpilot.spec
