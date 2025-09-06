@@ -1410,15 +1410,21 @@ class ConnectionManager(GObject.Object):
             while i < len(lines):
                 raw_line = lines[i]
                 lstripped = raw_line.lstrip()
+                lowered = lstripped.lower()
 
-                if lstripped.startswith('Host '):
-                    full_value = lstripped[len('Host '):].strip()
+                if lowered.startswith('host '):
+                    parts = lstripped.split(None, 1)
+                    full_value = parts[1].strip() if len(parts) > 1 else ''
                     host_names = shlex.split(full_value)
 
-                    logger.debug(f"Found Host line: '{lstripped.strip()}' -> full_value='{full_value}' -> host_names={host_names}")
+                    logger.debug(
+                        f"Found Host line: '{lstripped.strip()}' -> full_value='{full_value}' -> host_names={host_names}"
+                    )
 
                     if any(host_name in candidate_names for host_name in host_names):
-                        logger.debug(f"MATCH FOUND! Host '{host_names}' matches candidate names {candidate_names}")
+                        logger.debug(
+                            f"MATCH FOUND! Host '{host_names}' matches candidate names {candidate_names}"
+                        )
                         host_found = True
                         if not replaced_once:
                             updated_config = self.format_ssh_config_entry(new_data)
@@ -1426,7 +1432,7 @@ class ConnectionManager(GObject.Object):
                             replaced_once = True
                         # Skip this Host line and all subsequent lines until next Host/Match block
                         i += 1
-                        while i < len(lines) and not lines[i].lstrip().startswith(('Host ', 'Match ')):
+                        while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
                             i += 1
                         continue
                     else:
@@ -1435,7 +1441,7 @@ class ConnectionManager(GObject.Object):
                 else:
                     # Not a Host line, keep it
                     updated_lines.append(raw_line)
-                
+
                 i += 1
             
             # If host not found, append the new config
@@ -1486,13 +1492,15 @@ class ConnectionManager(GObject.Object):
             while i < len(lines):
                 raw_line = lines[i]
                 lstripped = raw_line.lstrip()
-                if lstripped.startswith('Host '):
-                    full_value = lstripped[len('Host '):].strip()
+                lowered = lstripped.lower()
+                if lowered.startswith('host '):
+                    parts = lstripped.split(None, 1)
+                    full_value = parts[1].strip() if len(parts) > 1 else ''
                     current_names = shlex.split(full_value)
                     if any(name in candidate_names for name in current_names):
                         removed = True
                         i += 1
-                        while i < len(lines) and not lines[i].lstrip().startswith(('Host ', 'Match ')):
+                        while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
                             i += 1
                         continue
                 # Keep line
