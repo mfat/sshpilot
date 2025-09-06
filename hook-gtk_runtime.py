@@ -23,11 +23,44 @@ if sys.platform == "darwin":
     os.environ["GSETTINGS_SCHEMA_DIR"] = str(resources / "share" / "glib-2.0" / "schemas")
     os.environ["XDG_DATA_DIRS"] = str(resources / "share")
     
+    # Set up keyring environment for macOS (like the working bundle)
+    os.environ["KEYRING_BACKEND"] = "keyring.backends.macOS.Keyring"
+    os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.macOS.Keyring"
+    
+    # Ensure keyring can access the user's keychain
+    if "HOME" not in os.environ:
+        os.environ["HOME"] = os.path.expanduser("~")
+    if "USER" not in os.environ:
+        os.environ["USER"] = os.environ.get("LOGNAME", "unknown")
+    if "LOGNAME" not in os.environ:
+        os.environ["LOGNAME"] = os.environ.get("USER", "unknown")
+    if "SHELL" not in os.environ:
+        os.environ["SHELL"] = "/bin/bash"
+    
+    # Critical for macOS keychain access (from working bundle)
+    os.environ["KEYCHAIN_ACCESS_GROUP"] = "*"
+    
+    # Set up XDG directories for keyring
+    home = os.environ["HOME"]
+    os.environ["XDG_CONFIG_HOME"] = os.path.join(home, ".config")
+    os.environ["XDG_DATA_HOME"] = os.path.join(home, ".local", "share")
+    os.environ["XDG_CACHE_HOME"] = os.path.join(home, ".cache")
+    
+    # Create XDG directories if they don't exist
+    for xdg_dir in ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"]:
+        xdg_path = os.environ[xdg_dir]
+        os.makedirs(xdg_path, exist_ok=True)
+    
+    # Set PATH explicitly for double-click launches (like working bundle)
+    # This ensures the app has access to all necessary tools including system Python
+    system_paths = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+    current_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = ":".join(system_paths + [current_path])
+    
     # Add bundled sshpass to PATH
     bundled_bin = str(frameworks / "Resources" / "bin")
     if Path(bundled_bin).exists():
-        current_path = os.environ.get("PATH", "")
-        os.environ["PATH"] = f"{bundled_bin}:{current_path}"
+        os.environ["PATH"] = f"{bundled_bin}:{os.environ['PATH']}"
         print(f"DEBUG: Added bundled bin to PATH: {bundled_bin}")
     
     # Add GI modules to Python path for Cairo bindings
