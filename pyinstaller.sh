@@ -39,27 +39,15 @@ if [ ! -d ".venv-homebrew" ]; then
     fi
     
     echo "🐍 Using Python from: $PYTHON_PATH"
-    
+
     # Create virtual environment using Homebrew Python
     "$PYTHON_PATH" -m venv .venv-homebrew
-    
-    if [ $? -ne 0 ]; then
-        echo "❌ Failed to create virtual environment"
-        exit 1
-    fi
-    
     echo "✅ Virtual environment created successfully"
-    
+
     # Activate and install PyInstaller
     echo "📦 Installing PyInstaller..."
     source .venv-homebrew/bin/activate
     pip install PyInstaller
-    
-    if [ $? -ne 0 ]; then
-        echo "❌ Failed to install PyInstaller"
-        exit 1
-    fi
-    
     echo "✅ PyInstaller installed successfully"
 else
     echo "📦 Activating existing Homebrew virtual environment..."
@@ -106,7 +94,7 @@ if [ -d "dist/SSHPilot.app" ]; then
 
     # Create DMG using create-dmg
     echo "🎨 Creating DMG with create-dmg..."
-    create-dmg \
+    if create-dmg \
         --volname "sshPilot" \
         --volicon "packaging/macos/sshpilot.icns" \
         --window-pos 200 120 \
@@ -117,29 +105,24 @@ if [ -d "dist/SSHPilot.app" ]; then
         --app-drop-link 600 185 \
         --skip-jenkins \
         "$DMG_PATH" \
-        "dist/SSHPilot.app"
-    
-    if [ $? -eq 0 ]; then
-        echo "✅ DMG created successfully: $DMG_PATH"
+        "dist/SSHPilot.app"; then
+        if [ -f "$DMG_PATH" ]; then
+            echo "✅ DMG created successfully!"
+            echo ""
+            echo "🎉 SSHPilot bundle and DMG are ready!"
+            echo "📍 Bundle: $(pwd)/dist/SSHPilot.app"
+            echo "📍 DMG: $(pwd)/$DMG_PATH"
+            echo "🚀 You can now run: open dist/SSHPilot.app"
+            echo "📁 Or mount the DMG: open $DMG_PATH"
+        else
+            echo "⚠️ DMG command succeeded, but file not found."
+            echo ""
+            echo "🎉 SSHPilot bundle is ready!"
+            echo "📍 Location: $(pwd)/dist/SSHPilot.app"
+            echo "🚀 You can now run: open dist/SSHPilot.app"
+        fi
     else
         echo "❌ Failed to create DMG with create-dmg"
-        echo "⚠️  DMG creation failed, but bundle was created successfully."
-        echo ""
-        echo "🎉 SSHPilot bundle is ready!"
-        echo "📍 Location: $(pwd)/dist/SSHPilot.app"
-        echo "🚀 You can now run: open dist/SSHPilot.app"
-        exit 0
-    fi
-    
-    if [ $? -eq 0 ] && [ -f "$DMG_PATH" ]; then
-        echo "✅ DMG created successfully!"
-        echo ""
-        echo "🎉 SSHPilot bundle and DMG are ready!"
-        echo "📍 Bundle: $(pwd)/dist/SSHPilot.app"
-        echo "📍 DMG: $(pwd)/$DMG_PATH"
-        echo "🚀 You can now run: open dist/SSHPilot.app"
-        echo "📁 Or mount the DMG: open $DMG_PATH"
-    else
         echo "⚠️  DMG creation failed, but bundle was created successfully."
         echo ""
         echo "🎉 SSHPilot bundle is ready!"
