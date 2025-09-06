@@ -574,7 +574,15 @@ class SSHConfigAdvancedTab(Gtk.Box):
             if selected > 0:  # Skip the first item which is "Select SSH option..."
                 model = dropdown.get_model()
                 if model and selected < model.get_n_items():
-                    return model.get_string(selected)
+                    # Gtk.DropDown models provide items as Gtk.StringObject instances in
+                    # newer GTK versions.  Some environments may return plain strings
+                    # (or other objects) instead, so fall back to ``str()`` when the
+                    # "get_string" accessor is not available.
+                    item = model.get_item(selected)
+                    getter = getattr(item, "get_string", None)
+                    if callable(getter):
+                        return getter()
+                    return str(item)
         except Exception as e:
             logger.debug(f"Error getting dropdown selected text: {e}")
         return ""
@@ -586,11 +594,15 @@ class SSHConfigAdvancedTab(Gtk.Box):
             if model:
                 logger.debug(f"Looking for option '{option_name}' in dropdown model")
                 for i in range(1, model.get_n_items()):  # Start from 1 to skip "Select SSH option..."
-                    model_string = model.get_string(i)
+                    item = model.get_item(i)
+                    getter = getattr(item, "get_string", None)
+                    model_string = getter() if callable(getter) else str(item)
                     logger.debug(f"Model item {i}: '{model_string}'")
                     # Case-insensitive comparison for SSH options
-                    if model_string.lower() == option_name.lower():
-                        logger.debug(f"Found option '{option_name}' at index {i} (matched '{model_string}')")
+                    if model_string.lower() == option_name.strip().lower():
+                        logger.debug(
+                            f"Found option '{option_name}' at index {i} (matched '{model_string}')"
+                        )
                         dropdown.set_selected(i)
                         return
                 logger.debug(f"Option '{option_name}' not found in dropdown model")
