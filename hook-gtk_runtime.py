@@ -2,6 +2,9 @@
 import os, sys
 from pathlib import Path
 
+# Only emit debug output when explicitly enabled
+debug = print if os.getenv("SSHPILOT_DEBUG") else lambda *a, **k: None
+
 if sys.platform == "darwin":
     # Find .../Contents robustly from the running executable
     cur = Path(sys.executable).resolve()
@@ -61,7 +64,7 @@ if sys.platform == "darwin":
     bundled_bin = str(frameworks / "Resources" / "bin")
     if Path(bundled_bin).exists():
         os.environ["PATH"] = f"{bundled_bin}:{os.environ['PATH']}"
-        print(f"DEBUG: Added bundled bin to PATH: {bundled_bin}")
+        debug(f"DEBUG: Added bundled bin to PATH: {bundled_bin}")
     
     # Add GI modules to Python path for Cairo bindings
     gi_modules_path = str(frameworks / "gi")
@@ -71,17 +74,17 @@ if sys.platform == "darwin":
             os.environ["PYTHONPATH"] = f"{gi_modules_path}:{current_pythonpath}"
         else:
             os.environ["PYTHONPATH"] = gi_modules_path
-        print(f"DEBUG: Added GI modules to PYTHONPATH: {gi_modules_path}")
+        debug(f"DEBUG: Added GI modules to PYTHONPATH: {gi_modules_path}")
     
     # Include both Frameworks and Frameworks/Frameworks for libraries
     fallback_paths = [str(frameworks), str(frameworks / "Frameworks")]
     os.environ["DYLD_FALLBACK_LIBRARY_PATH"] = ":".join(fallback_paths)
     # Also set DYLD_LIBRARY_PATH for GObject Introspection
     os.environ["DYLD_LIBRARY_PATH"] = ":".join(fallback_paths)
-    print(f"DEBUG: DYLD_FALLBACK_LIBRARY_PATH = {os.environ['DYLD_FALLBACK_LIBRARY_PATH']}")
-    print(f"DEBUG: DYLD_LIBRARY_PATH = {os.environ['DYLD_LIBRARY_PATH']}")
-    print(f"DEBUG: frameworks = {frameworks}")
-    print(f"DEBUG: frameworks/Frameworks = {frameworks / 'Frameworks'}")
-    print(f"DEBUG: resources = {resources}")
-    print(f"DEBUG: GI_TYPELIB_PATH = {os.environ.get('GI_TYPELIB_PATH', 'NOT SET')}")
+    debug(f"DEBUG: DYLD_FALLBACK_LIBRARY_PATH = {os.environ['DYLD_FALLBACK_LIBRARY_PATH']}")
+    debug(f"DEBUG: DYLD_LIBRARY_PATH = {os.environ['DYLD_LIBRARY_PATH']}")
+    debug(f"DEBUG: frameworks = {frameworks}")
+    debug(f"DEBUG: frameworks/Frameworks = {frameworks / 'Frameworks'}")
+    debug(f"DEBUG: resources = {resources}")
+    debug(f"DEBUG: GI_TYPELIB_PATH = {os.environ.get('GI_TYPELIB_PATH', 'NOT SET')}")
     os.environ.pop("LD_LIBRARY_PATH", None)
