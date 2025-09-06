@@ -583,6 +583,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
                     if callable(getter):
                         return getter()
                     return str(item)
+
         except Exception as e:
             logger.debug(f"Error getting dropdown selected text: {e}")
         return ""
@@ -605,6 +606,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
                         )
                         dropdown.set_selected(i)
                         return
+
                 logger.debug(f"Option '{option_name}' not found in dropdown model")
         except Exception as e:
             logger.debug(f"Error setting dropdown to option {option_name}: {e}")
