@@ -66,6 +66,7 @@ class Connection:
         
         self.nickname = data.get('nickname', data.get('host', 'Unknown'))
         self.host = data.get('host', '')
+        self.aliases = data.get('aliases', [])
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         # previously: self.keyfile = data.get('keyfile', '')
@@ -539,6 +540,7 @@ class Connection:
         """Update instance properties from data dictionary"""
         self.nickname = data.get('nickname', data.get('host', 'Unknown'))
         self.host = data.get('host', '')
+        self.aliases = data.get('aliases', [])
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
@@ -681,31 +683,31 @@ class ConnectionManager(GObject.Object):
                     if ' ' in line:
                         key, value = line.split(maxsplit=1)
                         key = key.lower()
-                        # Preserve quotes in value; we'll handle key-specific unquoting later
                         value = value
-                        
+
                         if key == 'host':
+                            tokens = shlex.split(value)
+                            if not tokens:
+                                continue
                             # Save previous host if exists
                             if current_host and current_config:
                                 connection_data = self.parse_host_config(current_config)
                                 if connection_data:
                                     nickname = connection_data.get('nickname', '')
                                     existing = existing_by_nickname.get(nickname)
-                                    
+
                                     if existing:
-                                        # Update existing connection with new data
                                         existing.update_data(connection_data)
                                         self.connections.append(existing)
                                     else:
-                                        # Create new connection only if none exists
                                         conn = Connection(connection_data)
                                         self.connections.append(conn)
-                            
-                            # Start new host
-                            current_host = value
-                            current_config = {'host': value}
+
+                            current_host = tokens[0]
+                            current_config = {'host': tokens[0]}
+                            if len(tokens) > 1:
+                                current_config['aliases'] = tokens[1:]
                         else:
-                            # Handle multiple values for the same key (like multiple LocalForward rules)
                             if key in current_config and key in ['localforward', 'remoteforward', 'dynamicforward']:
                                 if not isinstance(current_config[key], list):
                                     current_config[key] = [current_config[key]]
@@ -751,16 +753,14 @@ class ConnectionManager(GObject.Object):
             if str(host_token).strip() == '*':
                 return None
 
-            # When HostName is missing, treat the Host token as both nickname and hostname
-            nickname = host_token.split()[0]
-            hostname = _unwrap(config.get('hostname', '')).strip()
-            if not hostname:
-                hostname = nickname
+            aliases = [_unwrap(a) for a in (config.get('aliases', []) or [])]
 
             # Extract relevant configuration
             parsed = {
-                'nickname': nickname,
-                'host': hostname,
+                'nickname': host,
+                'aliases': aliases,
+                'host': _unwrap(config.get('hostname', host)),
+
                 'port': int(_unwrap(config.get('port', 22))),
                 'username': _unwrap(config.get('user', getpass.getuser())),
                 # previously: 'private_key': config.get('identityfile'),
@@ -1196,7 +1196,17 @@ class ConnectionManager(GObject.Object):
 
     def format_ssh_config_entry(self, data: Dict[str, Any]) -> str:
         """Format connection data as SSH config entry"""
-        lines = [f"Host {data['nickname']}"]
+        def _quote_token(token: str) -> str:
+            if not token:
+                return '""'
+            if any(c.isspace() for c in token):
+                return f'"{token}"'
+            return token
+
+        nickname = data.get('nickname', '')
+        aliases = data.get('aliases', []) or []
+        host_tokens = [_quote_token(nickname)] + [_quote_token(a) for a in aliases]
+        lines = ["Host " + " ".join(host_tokens)]
         
         # Add basic connection info
         lines.append(f"    HostName {data.get('host', '')}")
@@ -1353,16 +1363,10 @@ class ConnectionManager(GObject.Object):
 
                 if lstripped.startswith('Host '):
                     full_value = lstripped[len('Host '):].strip()
-                    parts = lstripped.split()
-                    current_names = parts[1:] if len(parts) > 1 else []
-                    
-                    # Check if this Host block matches our candidate names
-                    # Split the full_value into individual host names (in case of multiple hosts on one line)
-                    host_names = [name.strip() for name in full_value.split()]
-                    
+                    host_names = shlex.split(full_value)
+
                     logger.debug(f"Found Host line: '{lstripped.strip()}' -> full_value='{full_value}' -> host_names={host_names}")
-                    
-                    # Check if any of the host names in this block match our candidate names
+
                     if any(host_name in candidate_names for host_name in host_names):
                         logger.debug(f"MATCH FOUND! Host '{host_names}' matches candidate names {candidate_names}")
                         host_found = True
@@ -1434,9 +1438,8 @@ class ConnectionManager(GObject.Object):
                 lstripped = raw_line.lstrip()
                 if lstripped.startswith('Host '):
                     full_value = lstripped[len('Host '):].strip()
-                    parts = lstripped.split()
-                    current_names = parts[1:] if len(parts) > 1 else []
-                    if (full_value in candidate_names) or any(name in candidate_names for name in current_names):
+                    current_names = shlex.split(full_value)
+                    if any(name in candidate_names for name in current_names):
                         removed = True
                         i += 1
                         while i < len(lines) and not lines[i].lstrip().startswith('Host '):
