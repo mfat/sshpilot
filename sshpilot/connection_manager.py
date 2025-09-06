@@ -688,55 +688,93 @@ class ConnectionManager(GObject.Object):
             # Simple SSH config parser
             current_host = None
             current_config = {}
-            
+
             with open(self.ssh_config_path, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith('#'):
-                        continue
-                        
-                    if ' ' in line:
-                        key, value = line.split(maxsplit=1)
-                        key = key.lower()
-                        value = value
+                lines = f.readlines()
 
-                        if key == 'host':
-                            tokens = shlex.split(value)
-                            if not tokens:
-                                continue
-                            # Save previous host if exists
-                            if current_host and current_config:
-                                connection_data = self.parse_host_config(current_config)
-                                if connection_data:
-                                    nickname = connection_data.get('nickname', '')
-                                    existing = existing_by_nickname.get(nickname)
+            i = 0
+            while i < len(lines):
+                raw_line = lines[i]
+                line = raw_line.strip()
+                if not line or line.startswith('#'):
+                    i += 1
+                    continue
 
-                                    if existing:
-                                        existing.update_data(connection_data)
-                                        self.connections.append(existing)
-                                    else:
-                                        conn = Connection(connection_data)
-                                        self.connections.append(conn)
+                lowered = line.lower()
 
-                            current_host = tokens[0]
-                            current_config = {'host': tokens[0]}
-                            if len(tokens) > 1:
-                                current_config['aliases'] = tokens[1:]
-                        else:
-                            if key in current_config and key in ['localforward', 'remoteforward', 'dynamicforward']:
-                                if not isinstance(current_config[key], list):
-                                    current_config[key] = [current_config[key]]
-                                current_config[key].append(value)
+                if lowered.startswith('match '):
+                    # Save previous host if exists before processing Match block
+                    if current_host and current_config:
+                        connection_data = self.parse_host_config(current_config)
+                        if connection_data:
+                            nickname = connection_data.get('nickname', '')
+                            existing = existing_by_nickname.get(nickname)
+
+                            if existing:
+                                existing.update_data(connection_data)
+                                self.connections.append(existing)
                             else:
-                                current_config[key] = value
-            
+                                conn = Connection(connection_data)
+                                self.connections.append(conn)
+                    current_host = None
+                    current_config = {}
+
+                    block_lines = [raw_line.rstrip('\n')]
+                    i += 1
+                    while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
+                        block_lines.append(lines[i].rstrip('\n'))
+                        i += 1
+                    while block_lines and block_lines[-1].strip() == '':
+                        block_lines.pop()
+                    self.rules.append({'raw': '\n'.join(block_lines)})
+                    continue
+
+                if lowered.startswith('host '):
+                    tokens = shlex.split(line[len('host '):])
+                    if not tokens:
+                        i += 1
+                        continue
+
+                    # Save previous host if exists
+                    if current_host and current_config:
+                        connection_data = self.parse_host_config(current_config)
+                        if connection_data:
+                            nickname = connection_data.get('nickname', '')
+                            existing = existing_by_nickname.get(nickname)
+
+                            if existing:
+                                existing.update_data(connection_data)
+                                self.connections.append(existing)
+                            else:
+                                conn = Connection(connection_data)
+                                self.connections.append(conn)
+
+                    current_host = tokens[0]
+                    current_config = {'host': tokens[0]}
+                    if len(tokens) > 1:
+                        current_config['aliases'] = tokens[1:]
+                    i += 1
+                    continue
+
+                if ' ' in line:
+                    key, value = line.split(maxsplit=1)
+                    key = key.lower()
+                    if key in current_config and key in ['localforward', 'remoteforward', 'dynamicforward']:
+                        if not isinstance(current_config[key], list):
+                            current_config[key] = [current_config[key]]
+                        current_config[key].append(value)
+                    else:
+                        current_config[key] = value
+
+                i += 1
+
             # Add the last host
             if current_host and current_config:
                 connection_data = self.parse_host_config(current_config)
                 if connection_data:
                     nickname = connection_data.get('nickname', '')
                     existing = existing_by_nickname.get(nickname)
-                    
+
                     if existing:
                         # Update existing connection with new data
                         existing.update_data(connection_data)
@@ -1402,9 +1440,9 @@ class ConnectionManager(GObject.Object):
                             updated_config = self.format_ssh_config_entry(new_data)
                             updated_lines.append(updated_config + '\n')
                             replaced_once = True
-                        # Skip this Host line and all subsequent lines until next Host block
+                        # Skip this Host line and all subsequent lines until next Host/Match block
                         i += 1
-                        while i < len(lines) and not lines[i].lstrip().startswith('Host '):
+                        while i < len(lines) and not lines[i].lstrip().startswith(('Host ', 'Match ')):
                             i += 1
                         continue
                     else:
@@ -1470,7 +1508,7 @@ class ConnectionManager(GObject.Object):
                     if any(name in candidate_names for name in current_names):
                         removed = True
                         i += 1
-                        while i < len(lines) and not lines[i].lstrip().startswith('Host '):
+                        while i < len(lines) and not lines[i].lstrip().startswith(('Host ', 'Match ')):
                             i += 1
                         continue
                 # Keep line
