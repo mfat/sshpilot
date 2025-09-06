@@ -743,18 +743,24 @@ class ConnectionManager(GObject.Object):
                         return val[1:-1]
                 return val
 
-            host = _unwrap(config.get('host', ''))
-            if not host:
+            host_token = _unwrap(config.get('host', ''))
+            if not host_token:
                 return None
 
             # ⬇️ Ignore global defaults (Host *)
-            if str(host).strip() == '*':
+            if str(host_token).strip() == '*':
                 return None
-                
+
+            # When HostName is missing, treat the Host token as both nickname and hostname
+            nickname = host_token.split()[0]
+            hostname = _unwrap(config.get('hostname', '')).strip()
+            if not hostname:
+                hostname = nickname
+
             # Extract relevant configuration
             parsed = {
-                'nickname': host,
-                'host': _unwrap(config.get('hostname', host)),
+                'nickname': nickname,
+                'host': hostname,
                 'port': int(_unwrap(config.get('port', 22))),
                 'username': _unwrap(config.get('user', getpass.getuser())),
                 # previously: 'private_key': config.get('identityfile'),
