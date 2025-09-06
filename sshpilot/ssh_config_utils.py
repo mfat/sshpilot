@@ -1,7 +1,8 @@
 import os
 import glob
 import shlex
-from typing import List, Set
+import subprocess
+from typing import Dict, List, Set, Union
 
 
 def resolve_ssh_config_files(main_path: str) -> List[str]:
@@ -41,3 +42,38 @@ def resolve_ssh_config_files(main_path: str) -> List[str]:
 
     _resolve(main_path)
     return resolved
+
+
+def get_effective_ssh_config(host: str) -> Dict[str, Union[str, List[str]]]:
+    """Return effective SSH options for *host* using ``ssh -G``.
+
+    The output is parsed into a dictionary with lowercased keys. Options that
+    appear multiple times (e.g. ``IdentityFile``) are stored as lists.
+    """
+    try:
+        result = subprocess.run(
+            ['ssh', '-G', host], capture_output=True, text=True, check=True
+        )
+    except Exception:
+        return {}
+
+    config: Dict[str, Union[str, List[str]]] = {}
+    for raw_line in result.stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if ' ' in line:
+            key, value = line.split(None, 1)
+        else:
+            key, value = line, ''
+        key = key.lower()
+        value = value.strip()
+        if key in config:
+            existing = config[key]
+            if isinstance(existing, list):
+                existing.append(value)
+            else:
+                config[key] = [existing, value]
+        else:
+            config[key] = value
+    return config

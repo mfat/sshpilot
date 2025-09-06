@@ -13,7 +13,7 @@ import shlex
 import signal
 from typing import Dict, List, Optional, Any, Tuple, Union
 
-from .ssh_config_utils import resolve_ssh_config_files
+from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
 
 try:
     import secretstorage
@@ -169,34 +169,74 @@ class Connection:
                     ssh_cmd.extend(['-o', 'LogLevel=DEBUG'])
             except Exception:
                 pass
-            
-            # Add key file and certificate only when key-based auth and specific key mode
+
+            # Resolve effective SSH configuration for this nickname/host
+            effective_cfg: Dict[str, Union[str, List[str]]] = {}
+            target_alias = self.nickname or self.host
+            if target_alias:
+                effective_cfg = get_effective_ssh_config(target_alias)
+
+            # Determine final parameters, falling back to resolved config when needed
+            resolved_host = str(effective_cfg.get('hostname', self.host))
+            resolved_user = self.username or str(effective_cfg.get('user', ''))
             try:
-                if int(getattr(self, 'auth_method', 0) or 0) == 0 and int(getattr(self, 'key_select_mode', 0) or 0) == 1:
-                    if self.keyfile and os.path.exists(self.keyfile):
-                        ssh_cmd.extend(['-i', self.keyfile])
+                resolved_port = int(effective_cfg.get('port', self.port))
+            except Exception:
+                resolved_port = self.port
+            self.host = resolved_host
+            self.port = resolved_port
+            if resolved_user:
+                self.username = resolved_user
+
+            # Add key and certificate options
+            try:
+                if int(getattr(self, 'auth_method', 0) or 0) == 0:
+                    identity_files: List[str] = []
+                    if int(getattr(self, 'key_select_mode', 0) or 0) == 1:
+                        if self.keyfile and os.path.exists(self.keyfile):
+                            identity_files.append(self.keyfile)
+                    else:
+                        cfg_ids = effective_cfg.get('identityfile')
+                        if cfg_ids:
+                            if isinstance(cfg_ids, list):
+                                identity_files.extend(cfg_ids)
+                            else:
+                                identity_files.append(cfg_ids)
+                        if self.keyfile and os.path.exists(self.keyfile):
+                            identity_files.append(self.keyfile)
+                    for key_path in identity_files:
+                        ssh_cmd.extend(['-i', key_path])
                         if self.key_passphrase:
                             logger.warning("Passphrase-protected keys may require additional setup")
-                    # Add certificate if specified
-                    if self.certificate and os.path.exists(self.certificate):
-                        ssh_cmd.extend(['-o', f'CertificateFile={self.certificate}'])
+                    cert_files: List[str] = []
+                    if self.certificate:
+                        cert_files.append(self.certificate)
+                    cfg_cert = effective_cfg.get('certificatefile')
+                    if cfg_cert:
+                        if isinstance(cfg_cert, list):
+                            cert_files.extend(cfg_cert)
+                        else:
+                            cert_files.append(cfg_cert)
+                    for cert_path in cert_files:
+                        ssh_cmd.extend(['-o', f'CertificateFile={cert_path}'])
             except Exception:
                 pass
 
-            # Add proxy directives if present
-            if self.proxy_jump:
-                ssh_cmd.extend(['-o', f'ProxyJump={self.proxy_jump}'])
-            if self.proxy_command:
-                ssh_cmd.extend(['-o', f'ProxyCommand={self.proxy_command}'])
+            # Proxy directives
+            proxy_jump = self.proxy_jump or effective_cfg.get('proxyjump', '')
+            if proxy_jump:
+                ssh_cmd.extend(['-o', f'ProxyJump={proxy_jump}'])
+            proxy_command = self.proxy_command or effective_cfg.get('proxycommand', '')
+            if proxy_command:
+                ssh_cmd.extend(['-o', f'ProxyCommand={proxy_command}'])
 
-            # Add host and port
-            if self.port != 22:
-                ssh_cmd.extend(['-p', str(self.port)])
-                
-            # Add username if specified
-            ssh_cmd.append(f"{self.username}@{self.host}" if self.username else self.host)
+            # Port and user/host
+            if resolved_port != 22:
+                ssh_cmd.extend(['-p', str(resolved_port)])
 
-            # No preflight: store command and mark as ready; real errors will come from spawned ssh
+            ssh_cmd.append(f"{resolved_user}@{resolved_host}" if resolved_user else resolved_host)
+
+            # Store command for later use
             self.ssh_cmd = ssh_cmd
             self.is_connected = True
             return True
