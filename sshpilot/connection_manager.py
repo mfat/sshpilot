@@ -74,6 +74,9 @@ class Connection:
         self.certificate = data.get('certificate') or ''
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
+        # Proxy settings
+        self.proxy_command = data.get('proxy_command', '')
+        self.proxy_jump = data.get('proxy_jump', '')
         # Commands
         self.local_command = data.get('local_command', '')
         self.remote_command = data.get('remote_command', '')
@@ -175,7 +178,13 @@ class Connection:
                         ssh_cmd.extend(['-o', f'CertificateFile={self.certificate}'])
             except Exception:
                 pass
-            
+
+            # Add proxy directives if present
+            if self.proxy_jump:
+                ssh_cmd.extend(['-o', f'ProxyJump={self.proxy_jump}'])
+            if self.proxy_command:
+                ssh_cmd.extend(['-o', f'ProxyCommand={self.proxy_command}'])
+
             # Add host and port
             if self.port != 22:
                 ssh_cmd.extend(['-p', str(self.port)])
@@ -551,6 +560,8 @@ class Connection:
         self.key_passphrase = data.get('key_passphrase', '')
         self.local_command = data.get('local_command', '')
         self.remote_command = data.get('remote_command', '')
+        self.proxy_command = data.get('proxy_command', '')
+        self.proxy_jump = data.get('proxy_jump', '')
         # Extra SSH config parameters
         self.extra_ssh_config = data.get('extra_ssh_config', '')
         self.pubkey_auth_no = bool(data.get('pubkey_auth_no', False))
@@ -850,6 +861,8 @@ class ConnectionManager(GObject.Object):
             # Handle proxy settings if any
             if 'proxycommand' in config:
                 parsed['proxy_command'] = config['proxycommand']
+            if 'proxyjump' in config:
+                parsed['proxy_jump'] = config['proxyjump']
             
             # Commands: LocalCommand requires PermitLocalCommand
             try:
@@ -902,7 +915,7 @@ class ConnectionManager(GObject.Object):
             standard_options = {
                 'host', 'hostname', 'port', 'user', 'identityfile', 'certificatefile',
                 'forwardx11', 'localforward', 'remoteforward', 'dynamicforward',
-                'proxycommand', 'localcommand', 'remotecommand', 'requesttty',
+                'proxycommand', 'proxyjump', 'localcommand', 'remotecommand', 'requesttty',
                 'identitiesonly', 'permitlocalcommand',
                 'preferredauthentications', 'pubkeyauthentication'
             }
