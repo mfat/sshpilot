@@ -13,6 +13,8 @@ import shlex
 import signal
 from typing import Dict, List, Optional, Any, Tuple, Union
 
+from .ssh_config_utils import resolve_ssh_config_files
+
 try:
     import secretstorage
 except Exception:
@@ -74,6 +76,8 @@ class Connection:
         self.certificate = data.get('certificate') or ''
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
+        # Source file of this configuration block
+        self.source = data.get('source', '')
         # Proxy settings
         self.proxy_command = data.get('proxy_command', '')
         self.proxy_jump = data.get('proxy_jump', '')
@@ -558,6 +562,7 @@ class Connection:
         self.certificate = data.get('certificate') or ''
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
+        self.source = data.get('source', getattr(self, 'source', ''))
         self.local_command = data.get('local_command', '')
         self.remote_command = data.get('remote_command', '')
         self.proxy_command = data.get('proxy_command', '')
@@ -671,12 +676,8 @@ class ConnectionManager(GObject.Object):
     def load_ssh_config(self):
         """Load connections from SSH config file"""
         try:
-            # Store existing connections by nickname for identity preservation
             existing_by_nickname = {conn.nickname: conn for conn in self.connections}
-
-            # Reset current list to reflect latest config on each load
             self.connections = []
-            # Reset collected rules (wildcard/negated blocks)
             self.rules = []
             if not os.path.exists(self.ssh_config_path):
                 logger.info("SSH config file not found, creating empty one")
@@ -684,112 +685,95 @@ class ConnectionManager(GObject.Object):
                 with open(self.ssh_config_path, 'w') as f:
                     f.write("# SSH configuration file\n")
                 return
-
-            # Simple SSH config parser
-            current_host = None
-            current_config = {}
-
-            with open(self.ssh_config_path, 'r') as f:
-                lines = f.readlines()
-
-            i = 0
-            while i < len(lines):
-                raw_line = lines[i]
-                line = raw_line.strip()
-                if not line or line.startswith('#'):
-                    i += 1
+            config_files = resolve_ssh_config_files(self.ssh_config_path)
+            for cfg_file in config_files:
+                current_host = None
+                current_config: Dict[str, Any] = {}
+                try:
+                    with open(cfg_file, 'r') as f:
+                        lines = f.readlines()
+                except Exception as e:
+                    logger.warning(f"Skipping unreadable config {cfg_file}: {e}")
                     continue
-
-                lowered = line.lower()
-
-                if lowered.startswith('match '):
-                    # Save previous host if exists before processing Match block
-                    if current_host and current_config:
-                        connection_data = self.parse_host_config(current_config)
-                        if connection_data:
-                            nickname = connection_data.get('nickname', '')
-                            existing = existing_by_nickname.get(nickname)
-
-                            if existing:
-                                existing.update_data(connection_data)
-                                self.connections.append(existing)
-                            else:
-                                conn = Connection(connection_data)
-                                self.connections.append(conn)
-                    current_host = None
-                    current_config = {}
-
-                    block_lines = [raw_line.rstrip('\n')]
-                    i += 1
-                    while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
-                        block_lines.append(lines[i].rstrip('\n'))
-                        i += 1
-                    while block_lines and block_lines[-1].strip() == '':
-                        block_lines.pop()
-                    self.rules.append({'raw': '\n'.join(block_lines)})
-                    continue
-
-                if lowered.startswith('host '):
-                    tokens = shlex.split(line[len('host '):])
-                    if not tokens:
+                i = 0
+                while i < len(lines):
+                    raw_line = lines[i]
+                    line = raw_line.strip()
+                    if not line or line.startswith('#'):
                         i += 1
                         continue
-
-                    # Save previous host if exists
-                    if current_host and current_config:
-                        connection_data = self.parse_host_config(current_config)
-                        if connection_data:
-                            nickname = connection_data.get('nickname', '')
-                            existing = existing_by_nickname.get(nickname)
-
-                            if existing:
-                                existing.update_data(connection_data)
-                                self.connections.append(existing)
-                            else:
-                                conn = Connection(connection_data)
-                                self.connections.append(conn)
-
-                    current_host = tokens[0]
-                    current_config = {'host': tokens[0]}
-                    if len(tokens) > 1:
-                        current_config['aliases'] = tokens[1:]
+                    lowered = line.lower()
+                    if lowered.startswith('include '):
+                        i += 1
+                        continue
+                    if lowered.startswith('match '):
+                        if current_host and current_config:
+                            connection_data = self.parse_host_config(current_config, source=cfg_file)
+                            if connection_data:
+                                nickname = connection_data.get('nickname', '')
+                                existing = existing_by_nickname.get(nickname)
+                                if existing:
+                                    existing.update_data(connection_data)
+                                    self.connections.append(existing)
+                                else:
+                                    self.connections.append(Connection(connection_data))
+                        current_host = None
+                        current_config = {}
+                        block_lines = [raw_line.rstrip('\n')]
+                        i += 1
+                        while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ', 'include ')):
+                            block_lines.append(lines[i].rstrip('\n'))
+                            i += 1
+                        while block_lines and block_lines[-1].strip() == '':
+                            block_lines.pop()
+                        self.rules.append({'raw': '\n'.join(block_lines), 'source': cfg_file})
+                        continue
+                    if lowered.startswith('host '):
+                        tokens = shlex.split(line[len('host '):])
+                        if not tokens:
+                            i += 1
+                            continue
+                        if current_host and current_config:
+                            connection_data = self.parse_host_config(current_config, source=cfg_file)
+                            if connection_data:
+                                nickname = connection_data.get('nickname', '')
+                                existing = existing_by_nickname.get(nickname)
+                                if existing:
+                                    existing.update_data(connection_data)
+                                    self.connections.append(existing)
+                                else:
+                                    self.connections.append(Connection(connection_data))
+                        current_host = tokens[0]
+                        current_config = {'host': tokens[0]}
+                        if len(tokens) > 1:
+                            current_config['aliases'] = tokens[1:]
+                        i += 1
+                        continue
+                    if ' ' in line:
+                        key, value = line.split(maxsplit=1)
+                        key = key.lower()
+                        if key in current_config and key in ['localforward', 'remoteforward', 'dynamicforward']:
+                            if not isinstance(current_config[key], list):
+                                current_config[key] = [current_config[key]]
+                            current_config[key].append(value)
+                        else:
+                            current_config[key] = value
                     i += 1
-                    continue
-
-                if ' ' in line:
-                    key, value = line.split(maxsplit=1)
-                    key = key.lower()
-                    if key in current_config and key in ['localforward', 'remoteforward', 'dynamicforward']:
-                        if not isinstance(current_config[key], list):
-                            current_config[key] = [current_config[key]]
-                        current_config[key].append(value)
-                    else:
-                        current_config[key] = value
-
-                i += 1
-
-            # Add the last host
-            if current_host and current_config:
-                connection_data = self.parse_host_config(current_config)
-                if connection_data:
-                    nickname = connection_data.get('nickname', '')
-                    existing = existing_by_nickname.get(nickname)
-
-                    if existing:
-                        # Update existing connection with new data
-                        existing.update_data(connection_data)
-                        self.connections.append(existing)
-                    else:
-                        # Create new connection only if none exists
-                        conn = Connection(connection_data)
-                        self.connections.append(conn)
-            
+                if current_host and current_config:
+                    connection_data = self.parse_host_config(current_config, source=cfg_file)
+                    if connection_data:
+                        nickname = connection_data.get('nickname', '')
+                        existing = existing_by_nickname.get(nickname)
+                        if existing:
+                            existing.update_data(connection_data)
+                            self.connections.append(existing)
+                        else:
+                            self.connections.append(Connection(connection_data))
             logger.info(f"Loaded {len(self.connections)} connections from SSH config")
-            
         except Exception as e:
             logger.error(f"Failed to load SSH config: {e}", exc_info=True)
 
-    def parse_host_config(self, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def parse_host_config(self, config: Dict[str, Any], source: str = None) -> Optional[Dict[str, Any]]:
         """Parse host configuration from SSH config"""
         try:
             def _unwrap(val: Any) -> Any:
@@ -807,13 +791,14 @@ class ConnectionManager(GObject.Object):
             # Detect wildcard or negated host tokens (e.g., '*', '?', '!pattern')
             tokens = [host_token] + aliases
             if any('*' in t or '?' in t or t.startswith('!') for t in tokens):
-                # Ensure rules list exists even if __init__ wasn't run
                 if not hasattr(self, 'rules'):
                     self.rules = []
                 rule_block = dict(config)
                 rule_block['host'] = host_token
                 if aliases:
                     rule_block['aliases'] = aliases
+                if source:
+                    rule_block['source'] = source
                 self.rules.append(rule_block)
                 return None
 
@@ -833,6 +818,8 @@ class ConnectionManager(GObject.Object):
                 'certificate': os.path.expanduser(_unwrap(config.get('certificatefile'))) if config.get('certificatefile') else '',
                 'forwarding_rules': []
             }
+            if source:
+                parsed['source'] = source
             
 
             # Map ForwardX11 yes/no → x11_forwarding boolean
@@ -1385,21 +1372,18 @@ class ConnectionManager(GObject.Object):
     def update_ssh_config_file(self, connection: Connection, new_data: Dict[str, Any], original_nickname: str = None):
         """Update SSH config file with new connection data"""
         try:
-            if not os.path.exists(self.ssh_config_path):
-                # If config file doesn't exist, create it with the new connection
-                os.makedirs(os.path.dirname(self.ssh_config_path), exist_ok=True)
-                with open(self.ssh_config_path, 'w') as f:
+            target_path = new_data.get('source') or getattr(connection, 'source', None) or self.ssh_config_path
+            if not os.path.exists(target_path):
+                os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                with open(target_path, 'w') as f:
                     f.write("# SSH configuration file\n")
-                
-                # Add the new connection
-                with open(self.ssh_config_path, 'a') as f:
+                with open(target_path, 'a') as f:
                     updated_config = self.format_ssh_config_entry(new_data)
                     f.write('\n' + updated_config + '\n')
                 return
-            
-            # Read current config
+
             try:
-                with open(self.ssh_config_path, 'r') as f:
+                with open(target_path, 'r') as f:
                     lines = f.readlines()
             except IOError as e:
                 logger.error(f"Failed to read SSH config: {e}")
@@ -1459,16 +1443,15 @@ class ConnectionManager(GObject.Object):
                 updated_config = self.format_ssh_config_entry(new_data)
                 updated_lines.append('\n' + updated_config + '\n')
             
-            # Write the updated config back to file
             try:
-                with open(self.ssh_config_path, 'w') as f:
+                with open(target_path, 'w') as f:
                     f.writelines(updated_lines)
                 logger.info(
                     "Wrote SSH config for host %s (found=%s, rules=%d) to %s",
                     new_name,
                     host_found,
                     len(new_data.get('forwarding_rules', []) or []),
-                    self.ssh_config_path,
+                    target_path,
                 )
             except IOError as e:
                 logger.error(f"Failed to write SSH config: {e}")
@@ -1477,16 +1460,17 @@ class ConnectionManager(GObject.Object):
             logger.error(f"Error updating SSH config: {e}", exc_info=True)
             raise
 
-    def remove_ssh_config_entry(self, host_nickname: str) -> bool:
-        """Remove a Host block from ~/.ssh/config by nickname.
+    def remove_ssh_config_entry(self, host_nickname: str, source: Optional[str] = None) -> bool:
+        """Remove a Host block from SSH config by nickname.
 
         Returns True if a block was removed, False if not found or on error.
         """
         try:
-            if not os.path.exists(self.ssh_config_path):
+            target_path = source or self.ssh_config_path
+            if not os.path.exists(target_path):
                 return False
             try:
-                with open(self.ssh_config_path, 'r') as f:
+                with open(target_path, 'r') as f:
                     lines = f.readlines()
             except IOError as e:
                 logger.error(f"Failed to read SSH config for delete: {e}")
@@ -1517,7 +1501,7 @@ class ConnectionManager(GObject.Object):
 
             if removed:
                 try:
-                    with open(self.ssh_config_path, 'w') as f:
+                    with open(target_path, 'w') as f:
                         f.writelines(updated_lines)
                 except IOError as e:
                     logger.error(f"Failed to write SSH config after delete: {e}")
@@ -1530,10 +1514,11 @@ class ConnectionManager(GObject.Object):
     def update_connection(self, connection: Connection, new_data: Dict[str, Any]) -> bool:
         """Update an existing connection"""
         try:
+            target_path = new_data.get('source') or getattr(connection, 'source', self.ssh_config_path)
             logger.info(
                 "Updating connection '%s' → writing to %s (rules=%d)",
                 connection.nickname,
-                self.ssh_config_path,
+                target_path,
                 len(new_data.get('forwarding_rules', []) or [])
             )
             # Capture previous identifiers for credential cleanup
@@ -1595,7 +1580,7 @@ class ConnectionManager(GObject.Object):
             
             # Remove from SSH config file
             try:
-                removed = self.remove_ssh_config_entry(connection.nickname)
+                removed = self.remove_ssh_config_entry(connection.nickname, getattr(connection, 'source', None))
                 logger.debug(f"SSH config entry removed={removed} for {connection.nickname}")
             except Exception as e:
                 logger.warning(f"Failed to remove SSH config entry for {connection.nickname}: {e}")
