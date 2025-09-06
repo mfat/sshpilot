@@ -745,12 +745,12 @@ class ConnectionManager(GObject.Object):
                         return val[1:-1]
                 return val
 
-            host = _unwrap(config.get('host', ''))
-            if not host:
+            host_token = _unwrap(config.get('host', ''))
+            if not host_token:
                 return None
 
             # ⬇️ Ignore global defaults (Host *)
-            if str(host).strip() == '*':
+            if str(host_token).strip() == '*':
                 return None
 
             aliases = [_unwrap(a) for a in (config.get('aliases', []) or [])]
@@ -760,6 +760,7 @@ class ConnectionManager(GObject.Object):
                 'nickname': host,
                 'aliases': aliases,
                 'host': _unwrap(config.get('hostname', host)),
+
                 'port': int(_unwrap(config.get('port', 22))),
                 'username': _unwrap(config.get('user', getpass.getuser())),
                 # previously: 'private_key': config.get('identityfile'),
