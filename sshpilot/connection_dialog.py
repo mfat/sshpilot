@@ -574,7 +574,12 @@ class SSHConfigAdvancedTab(Gtk.Box):
             if selected > 0:  # Skip the first item which is "Select SSH option..."
                 model = dropdown.get_model()
                 if model and selected < model.get_n_items():
-                    return model.get_string(selected)
+                    # Gtk.DropDown models provide items as Gtk.StringObject instances.
+                    # Use the object's getter rather than Gtk.StringList.get_string,
+                    # which may not be available in some GTK versions.
+                    item = model.get_item(selected)
+                    if isinstance(item, Gtk.StringObject):
+                        return item.get_string()
         except Exception as e:
             logger.debug(f"Error getting dropdown selected text: {e}")
         return ""
@@ -586,13 +591,15 @@ class SSHConfigAdvancedTab(Gtk.Box):
             if model:
                 logger.debug(f"Looking for option '{option_name}' in dropdown model")
                 for i in range(1, model.get_n_items()):  # Start from 1 to skip "Select SSH option..."
-                    model_string = model.get_string(i)
-                    logger.debug(f"Model item {i}: '{model_string}'")
-                    # Case-insensitive comparison for SSH options
-                    if model_string.lower() == option_name.lower():
-                        logger.debug(f"Found option '{option_name}' at index {i} (matched '{model_string}')")
-                        dropdown.set_selected(i)
-                        return
+                    item = model.get_item(i)
+                    if isinstance(item, Gtk.StringObject):
+                        model_string = item.get_string()
+                        logger.debug(f"Model item {i}: '{model_string}'")
+                        # Case-insensitive comparison for SSH options
+                        if model_string.lower() == option_name.strip().lower():
+                            logger.debug(f"Found option '{option_name}' at index {i} (matched '{model_string}')")
+                            dropdown.set_selected(i)
+                            return
                 logger.debug(f"Option '{option_name}' not found in dropdown model")
         except Exception as e:
             logger.debug(f"Error setting dropdown to option {option_name}: {e}")
