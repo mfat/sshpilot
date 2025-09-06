@@ -194,7 +194,9 @@ class SSHConfigEntry(GObject.Object):
 
 class SSHConfigAdvancedTab(Gtk.Box):
     """Advanced SSH Configuration Tab for GTK 4"""
-    
+
+    PLACEHOLDER_OPTION = "Select SSH option..."
+
     def __init__(self, connection_manager):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self.set_margin_top(12)
@@ -369,7 +371,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
         
         # Create string list for dropdown
         string_list = Gtk.StringList()
-        string_list.append("Select SSH option...")
+        string_list.append(self.PLACEHOLDER_OPTION)
         for option in self.ssh_options:
             string_list.append(option)
         
@@ -379,7 +381,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
         expr = Gtk.PropertyExpression.new(Gtk.StringObject, None, "string")
         key_dropdown.set_expression(expr)
         
-        key_dropdown.set_selected(0)  # Default to "Select SSH option..."
+        key_dropdown.set_selected(0)  # Default to placeholder
         
         # Enable search functionality
         key_dropdown.set_enable_search(True)
@@ -507,17 +509,10 @@ class SSHConfigAdvancedTab(Gtk.Box):
                 logger.error(f"Error updating SSH config preview: {e}")
         
         # Fallback: show only the extra config parameters
-        config_lines = []
-        
-        for row_grid in self.config_entries:
-            key = self._get_dropdown_selected_text(row_grid.key_dropdown)
-            value = row_grid.value_entry.get_text().strip()
-            
-            if key and value and key != "Select SSH option...":
-                config_lines.append(f"    {key} {value}")
-                
+        entries = self.get_config_entries()
+        config_lines = [f"    {k} {v}" for k, v in entries]
         config_text = "Host your-host-name\n" + "\n".join(config_lines)
-        
+
         buffer = self.config_text_view.get_buffer()
         buffer.set_text(config_text)
             
@@ -527,10 +522,10 @@ class SSHConfigAdvancedTab(Gtk.Box):
         for row_grid in self.config_entries:
             key = self._get_dropdown_selected_text(row_grid.key_dropdown)
             value = row_grid.value_entry.get_text().strip()
-            
-            if key and value and key != "Select SSH option...":
+
+            if key and value and key != self.PLACEHOLDER_OPTION:
                 entries.append((key, value))
-                
+
         return entries
         
     def set_config_entries(self, entries):
@@ -570,11 +565,10 @@ class SSHConfigAdvancedTab(Gtk.Box):
     def _get_dropdown_selected_text(self, dropdown):
         """Get the selected text from a dropdown"""
         try:
-            selected = dropdown.get_selected()
-            if selected > 0:  # Skip the first item which is "Select SSH option..."
-                model = dropdown.get_model()
-                if model and selected < model.get_n_items():
-                    return model.get_string(selected)
+            item = dropdown.get_selected_item()
+            if item:
+                text = self._get_item_string(item)
+                return "" if text == self.PLACEHOLDER_OPTION else text
         except Exception as e:
             logger.debug(f"Error getting dropdown selected text: {e}")
         return ""
@@ -582,20 +576,21 @@ class SSHConfigAdvancedTab(Gtk.Box):
     def _set_dropdown_to_option(self, dropdown, option_name):
         """Set dropdown to a specific SSH option"""
         try:
-            model = dropdown.get_model()
-            if model:
-                logger.debug(f"Looking for option '{option_name}' in dropdown model")
-                for i in range(1, model.get_n_items()):  # Start from 1 to skip "Select SSH option..."
-                    model_string = model.get_string(i)
-                    logger.debug(f"Model item {i}: '{model_string}'")
-                    # Case-insensitive comparison for SSH options
-                    if model_string.lower() == option_name.lower():
-                        logger.debug(f"Found option '{option_name}' at index {i} (matched '{model_string}')")
-                        dropdown.set_selected(i)
-                        return
-                logger.debug(f"Option '{option_name}' not found in dropdown model")
+            option_lower = option_name.strip().lower()
+            for idx, opt in enumerate(self.ssh_options, start=1):
+                if opt.lower() == option_lower:
+                    dropdown.set_selected(idx)
+                    return
+            logger.debug(f"Option '{option_name}' not found in SSH options list")
         except Exception as e:
             logger.debug(f"Error setting dropdown to option {option_name}: {e}")
+
+    def _get_item_string(self, item):
+        """Return string for Gtk.DropDown model item"""
+        getter = getattr(item, "get_string", None)
+        if callable(getter):
+            return getter()
+        return str(item)
 
 
 
