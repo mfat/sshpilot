@@ -599,6 +599,8 @@ class ConnectionManager(GObject.Object):
     def __init__(self):
         super().__init__()
         self.connections: List[Connection] = []
+        # Store wildcard/negated host blocks (rules) separately
+        self.rules: List[Dict[str, Any]] = []
         self.ssh_config = {}
         self.ssh_config_path = os.path.expanduser('~/.ssh/config')
         self.known_hosts_path = os.path.expanduser('~/.ssh/known_hosts')
@@ -671,9 +673,11 @@ class ConnectionManager(GObject.Object):
         try:
             # Store existing connections by nickname for identity preservation
             existing_by_nickname = {conn.nickname: conn for conn in self.connections}
-            
+
             # Reset current list to reflect latest config on each load
             self.connections = []
+            # Reset collected rules (wildcard/negated blocks)
+            self.rules = []
             if not os.path.exists(self.ssh_config_path):
                 logger.info("SSH config file not found, creating empty one")
                 os.makedirs(os.path.dirname(self.ssh_config_path), exist_ok=True)
@@ -760,11 +764,22 @@ class ConnectionManager(GObject.Object):
             if not host_token:
                 return None
 
-            # ⬇️ Ignore global defaults (Host *)
-            if str(host_token).strip() == '*':
+            aliases = [_unwrap(a) for a in (config.get('aliases', []) or [])]
+
+            # Detect wildcard or negated host tokens (e.g., '*', '?', '!pattern')
+            tokens = [host_token] + aliases
+            if any('*' in t or '?' in t or t.startswith('!') for t in tokens):
+                # Ensure rules list exists even if __init__ wasn't run
+                if not hasattr(self, 'rules'):
+                    self.rules = []
+                rule_block = dict(config)
+                rule_block['host'] = host_token
+                if aliases:
+                    rule_block['aliases'] = aliases
+                self.rules.append(rule_block)
                 return None
 
-            aliases = [_unwrap(a) for a in (config.get('aliases', []) or [])]
+            host = host_token
 
             # Extract relevant configuration
             parsed = {
