@@ -58,7 +58,7 @@ if sys.platform == "darwin":
     os.environ["PATH"] = ":".join(system_paths + [current_path])
     
     # Add bundled sshpass to PATH
-    bundled_bin = str(frameworks / "Resources" / "bin")
+    bundled_bin = str(resources / "bin")
     if Path(bundled_bin).exists():
         os.environ["PATH"] = f"{bundled_bin}:{os.environ['PATH']}"
         print(f"DEBUG: Added bundled bin to PATH: {bundled_bin}")
