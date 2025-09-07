@@ -908,6 +908,7 @@ class MountProgressDialog(Adw.Window):
         self.is_cancelled = True
         if self.progress_timer:
             GLib.source_remove(self.progress_timer)
+            self.progress_timer = None
         self.close()
 
     def start_progress_updates(self):
@@ -944,6 +945,7 @@ class MountProgressDialog(Adw.Window):
         """Close the dialog"""
         if self.progress_timer:
             GLib.source_remove(self.progress_timer)
+            self.progress_timer = None
         self.destroy()
 
 
