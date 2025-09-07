@@ -3423,12 +3423,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         dialog.set_close_response('cancel')
         
         dialog.connect('response', self.on_quit_confirmation_response)
+        app = self.get_application()
+        if app is not None:
+            app.hold()
+            dialog.connect('closed', lambda d: app.release())
         dialog.present(self)
     
     def on_quit_confirmation_response(self, dialog, response):
         """Handle quit confirmation dialog response"""
-        dialog.close()
-        
         if response == 'quit':
             # Start cleanup process
             shutdown.cleanup_and_quit(self)
