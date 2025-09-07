@@ -28,13 +28,18 @@ class SshCopyIdWindow(Adw.Window):
         logger.debug(f"SshCopyIdWindow: Connection object type: {type(connection)}")
         logger.debug(f"SshCopyIdWindow: Key manager type: {type(key_manager)}")
         logger.debug(f"SshCopyIdWindow: Connection manager type: {type(connection_manager)}")
-        
+
+        # Title for the window and header bar
+        title = _("Copy key to Server")
+
         try:
             super().__init__()
             self.set_transient_for(parent)
             self.set_modal(True)
             self.set_resizable(False)
             self.set_default_size(500, 400)
+            # Set window title so desktop environments show it
+            self.set_title(title)
             logger.debug("SshCopyIdWindow: Base window initialized")
 
             self._parent = parent
@@ -59,6 +64,8 @@ class SshCopyIdWindow(Adw.Window):
             logger.info("SshCopyIdWindow: Creating header bar")
             hb = Adw.HeaderBar()
             tv.add_top_bar(hb)
+            # Show title in the header bar
+            hb.set_title_widget(Gtk.Label(label=title))
 
             # Cancel button
             btn_cancel = Gtk.Button(label="Cancel")
