@@ -3427,6 +3427,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if app is not None:
             app.hold()
             dialog.connect('closed', lambda d: app.release())
+
         dialog.present(self)
     
     def on_quit_confirmation_response(self, dialog, response):
@@ -3434,6 +3435,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if response == 'quit':
             # Start cleanup process
             shutdown.cleanup_and_quit(self)
+        try:
+            dialog.close()
+        finally:
+            app = self.get_application()
+            if app is not None:
+                app.release()
+
+
+        app = self.get_application()
+        if app is not None:
+            app.release()
 
 
     def on_open_new_connection_action(self, action, param=None):
