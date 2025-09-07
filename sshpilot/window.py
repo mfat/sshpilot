@@ -3441,6 +3441,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 app.release()
 
 
+        app = self.get_application()
+        if app is not None:
+            app.release()
+
 
     def on_open_new_connection_action(self, action, param=None):
         """Open a new tab for the selected connection via context menu."""

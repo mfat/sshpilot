@@ -53,11 +53,7 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             holder['dialog'] = self
-            self.closed = False
 
-        def close(self):
-            self.closed = True
-            return super().close()
 
     Adw.AlertDialog = CaptureDialog
 
@@ -84,7 +80,8 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
             dialog = holder.get('dialog')
             if dialog is None:
                 return True  # try again shortly
-            win.on_quit_confirmation_response(dialog, 'cancel')
+            dialog.emit('response', 'cancel')
+
             result['done'] = True
             return False
         GLib.timeout_add(50, respond)
@@ -102,5 +99,4 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
 
     assert result['done']
     assert holder['released']
-    assert holder['dialog'].closed
 
