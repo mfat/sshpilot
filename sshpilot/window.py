@@ -3433,6 +3433,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if response == 'quit':
             # Start cleanup process
             shutdown.cleanup_and_quit(self)
+        try:
+            dialog.close()
+        finally:
+            app = self.get_application()
+            if app is not None:
+                app.release()
+
 
         app = self.get_application()
         if app is not None:

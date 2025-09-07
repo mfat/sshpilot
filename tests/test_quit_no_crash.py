@@ -46,12 +46,14 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
 
     app = Gtk.Application()
     holder = {'released': False}
+
     original_alert = Adw.AlertDialog
 
     class CaptureDialog(original_alert):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             holder['dialog'] = self
+
 
     Adw.AlertDialog = CaptureDialog
 
@@ -62,6 +64,7 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
         return original_release()
 
     app.release = capture_release
+
 
     result = {'done': False}
 
@@ -78,6 +81,7 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
             if dialog is None:
                 return True  # try again shortly
             dialog.emit('response', 'cancel')
+
             result['done'] = True
             return False
         GLib.timeout_add(50, respond)
@@ -95,3 +99,4 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
 
     assert result['done']
     assert holder['released']
+
