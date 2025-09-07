@@ -1662,7 +1662,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             paths = []
             for k in keys:
                 try:
-                    names.append(os.path.basename(k.private_path))
+                    rel = os.path.relpath(
+                        k.private_path,
+                        str(parent.key_manager.ssh_dir) if parent else None,
+                    )
+                    names.append(rel)
                     paths.append(k.private_path)
                 except Exception:
                     pass

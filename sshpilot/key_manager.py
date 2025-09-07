@@ -51,7 +51,8 @@ class KeyManager(GObject.Object):
         try:
             if not self.ssh_dir.exists():
                 return keys
-            for file_path in self.ssh_dir.iterdir():
+            # Recursively walk ~/.ssh for private keys that have a matching .pub
+            for file_path in self.ssh_dir.rglob("*"):
                 if not file_path.is_file():
                     continue
                 name = file_path.name
