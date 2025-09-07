@@ -2712,13 +2712,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     def _open_rule_editor(self, existing_rule=None):
         """Open an Adw.Window to add/edit a forwarding rule."""
         # Create Adw.Window
-        parent_win = self.get_transient_for() if hasattr(self, 'get_transient_for') else None
         dialog = Adw.Window()
         dialog.set_title(_("Port Forwarding Rule Editor"))
         dialog.set_default_size(500, -1)  # 500px width, auto height
         dialog.set_modal(True)
-        if parent_win:
-            dialog.set_transient_for(parent_win)
+        dialog.set_transient_for(self)
 
         # Create content box
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
