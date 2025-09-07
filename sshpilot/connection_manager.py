@@ -979,13 +979,27 @@ class ConnectionManager(GObject.Object):
 
             # Determine authentication method
             try:
-                prefer_auth = str(config.get('preferredauthentications', '')).strip().lower()
+                prefer_auth_raw = str(config.get('preferredauthentications', '')).strip()
+                # Split into an ordered list while normalizing case
+                prefer_auth_list = [p.strip().lower() for p in prefer_auth_raw.split(',') if p.strip()]
+                parsed['preferred_authentications'] = prefer_auth_list
+
                 pubkey_auth = str(config.get('pubkeyauthentication', '')).strip().lower()
                 parsed['pubkey_auth_no'] = (pubkey_auth == 'no')
-                if 'password' in prefer_auth or pubkey_auth == 'no':
+
+                if pubkey_auth == 'no':
                     parsed['auth_method'] = 1
                 else:
-                    parsed['auth_method'] = 0
+                    # Determine based on first occurrence of publickey or password
+                    idx_pubkey = prefer_auth_list.index('publickey') if 'publickey' in prefer_auth_list else None
+                    idx_password = prefer_auth_list.index('password') if 'password' in prefer_auth_list else None
+
+                    if idx_pubkey is not None and (idx_password is None or idx_pubkey < idx_password):
+                        parsed['auth_method'] = 0
+                    elif idx_password is not None and (idx_pubkey is None or idx_password < idx_pubkey):
+                        parsed['auth_method'] = 1
+                    else:
+                        parsed['auth_method'] = 0
             except Exception:
                 parsed['auth_method'] = 0
             
