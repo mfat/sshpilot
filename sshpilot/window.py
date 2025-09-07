@@ -3426,6 +3426,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         app = self.get_application()
         if app is not None:
             app.hold()
+            dialog.connect('closed', lambda d: app.release())
+
         dialog.present(self)
     
     def on_quit_confirmation_response(self, dialog, response):

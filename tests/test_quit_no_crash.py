@@ -1,6 +1,16 @@
 import sys
 import types
 import importlib
+import pytest
+
+try:  # Skip test if Gtk/Adw bindings aren't available
+    import gi
+    gi.require_version('Gtk', '4.0')
+    gi.require_version('Adw', '1')
+    from gi.repository import Gtk, Adw, GLib
+except Exception:  # pragma: no cover - environment without GI bindings
+    pytest.skip("GTK or Adw not available", allow_module_level=True)
+
 
 
 def test_application_quit_with_confirmation_dialog_does_not_crash():
@@ -29,14 +39,6 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
         old_modules[name] = sys.modules.get(name)
         sys.modules[name] = mod
 
-    # Ensure real GTK bindings are loaded
-    for name in list(sys.modules):
-        if name == 'gi' or name.startswith('gi.'):
-            sys.modules.pop(name, None)
-    gi = importlib.import_module('gi')
-    gi.require_version('Gtk', '4.0')
-    gi.require_version('Adw', '1')
-    from gi.repository import Gtk, Adw, GLib
 
     import sshpilot.window as window
 
