@@ -46,6 +46,7 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
 
     app = Gtk.Application()
     holder = {'released': False}
+
     original_alert = Adw.AlertDialog
 
     class CaptureDialog(original_alert):
@@ -67,6 +68,7 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
         return original_release()
 
     app.release = capture_release
+
 
     result = {'done': False}
 
@@ -101,3 +103,4 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
     assert result['done']
     assert holder['released']
     assert holder['dialog'].closed
+
