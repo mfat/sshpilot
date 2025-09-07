@@ -3433,9 +3433,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if response == 'quit':
             # Start cleanup process
             shutdown.cleanup_and_quit(self)
-        app = self.get_application()
-        if app is not None:
-            app.release()
+        try:
+            dialog.close()
+        finally:
+            app = self.get_application()
+            if app is not None:
+                app.release()
+
 
 
     def on_open_new_connection_action(self, action, param=None):
