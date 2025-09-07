@@ -1291,7 +1291,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def show_connection_dialog(self, connection: Connection = None):
         """Show connection dialog for adding/editing connections"""
         logger.info(f"Show connection dialog for: {connection}")
-        
+
+        # Refresh connection from disk to ensure latest auth method
+        if connection is not None:
+            try:
+                self.connection_manager.load_ssh_config()
+                refreshed = self.connection_manager.find_connection_by_nickname(connection.nickname)
+                if refreshed:
+                    connection = refreshed
+            except Exception:
+                pass
+
         # Create connection dialog
         dialog = ConnectionDialog(self, connection, self.connection_manager)
         dialog.connect('connection-saved', self.on_connection_saved)
@@ -4540,12 +4550,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 logger.info("Editing connection '%s' - forcing update to ensure forwarding rules are synced", existing['nickname'])
 
                 logger.debug(f"Updating connection '{old_connection.nickname}'")
-                
+
+                # Ensure auth_method always present and normalized
+                try:
+                    connection_data['auth_method'] = int(connection_data.get('auth_method', getattr(old_connection, 'auth_method', 0)) or 0)
+                except Exception:
+                    connection_data['auth_method'] = 0
+
                 # Update connection in manager first
                 if not self.connection_manager.update_connection(old_connection, connection_data):
                     logger.error("Failed to update connection in SSH config")
                     return
-                
+
                 # Update connection attributes in memory (ensure forwarding rules kept)
                 old_connection.nickname = connection_data['nickname']
                 old_connection.host = connection_data['host']

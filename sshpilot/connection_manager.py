@@ -1389,18 +1389,18 @@ class ConnectionManager(GObject.Object):
                     lines.append(line)
 
         # Remove duplicate or unwanted auth lines
-        cleaned_lines = []
+        cleaned_lines: List[str] = []
         seen_auth_lines = set()
         auth_keys = {
-            'preferredauthentications password',
-            'pubkeyauthentication no',
+            "preferredauthentications password",
+            "pubkeyauthentication no",
         }
         for line in lines:
             key = line.strip().lower()
-            if key in auth_keys:
-                if auth_method == 0:
-                    # Skip entirely for key-based auth
-                    continue
+            if auth_method == 0 and key in auth_keys:
+                # Strip password-only directives when using key-based auth
+                continue
+            if auth_method != 0 and key in auth_keys:
                 if key in seen_auth_lines:
                     # Avoid duplicates for password auth
                     continue
