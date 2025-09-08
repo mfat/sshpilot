@@ -58,6 +58,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connections = []
         self._is_quitting = False  # Flag to prevent multiple quit attempts
         self._is_controlled_reconnect = False  # Flag to track controlled reconnection
+        self._quit_confirmation_dialog: Optional[Adw.AlertDialog] = None
         
         # Initialize managers
         self.connection_manager = ConnectionManager()
@@ -3390,12 +3391,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def show_quit_confirmation_dialog(self):
         """Show confirmation dialog when quitting with active connections"""
+        # If the dialog already exists, just present it again
+        if self._quit_confirmation_dialog is not None:
+            try:
+                self._quit_confirmation_dialog.present(self)
+            except Exception as e:
+                logger.debug(f"Failed to re-present quit dialog: {e}")
+            return
+
         # Bring the main window to the foreground first
         try:
             self.present()
         except Exception as e:
             logger.debug(f"Failed to bring window to foreground: {e}")
-        
+
         # Only count terminals that are actually connected across all tabs
         connected_items = []
         for conn, terms in self.connection_to_terminals.items():
@@ -3404,25 +3413,28 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     connected_items.append((conn, term))
         active_count = len(connected_items)
         connection_names = [conn.nickname for conn, _ in connected_items]
-        
+
         if active_count == 1:
             message = f"You have 1 active SSH connection to '{connection_names[0]}'."
             detail = "Closing the application will disconnect this connection."
         else:
             message = f"You have {active_count} active SSH connections."
             detail = f"Closing the application will disconnect all connections:\n• " + "\n• ".join(connection_names)
-        
+
         dialog = Adw.AlertDialog()
         dialog.set_heading("Active SSH Connections")
         dialog.set_body(f"{message}\n\n{detail}")
-        
+
         dialog.add_response('cancel', 'Cancel')
         dialog.add_response('quit', 'Quit Anyway')
         dialog.set_response_appearance('quit', Adw.ResponseAppearance.DESTRUCTIVE)
         dialog.set_default_response('quit')
         dialog.set_close_response('cancel')
-        
+
         dialog.connect('response', self.on_quit_confirmation_response)
+        dialog.connect('closed', self.on_quit_confirmation_closed)
+        self._quit_confirmation_dialog = dialog
+
         app = self.get_application()
         if app is not None:
             app.hold()
@@ -3431,17 +3443,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def on_quit_confirmation_response(self, dialog, response):
         """Handle quit confirmation dialog response"""
-        app = self.get_application()
-        try:
-            if response == 'quit':
-                # Start cleanup process
-                shutdown.cleanup_and_quit(self)
-        finally:
-            if app is not None:
-                app.release()
+        if response == 'quit':
+            # Start cleanup process
+            shutdown.cleanup_and_quit(self)
+
+        # Close the dialog (cleanup happens on 'closed' signal)
+        if dialog.get_parent() is not None:
             dialog.close()
 
-
+    def on_quit_confirmation_closed(self, dialog):
+        """Ensure we release application hold and clear dialog reference"""
+        app = self.get_application()
+        if app is not None:
+            app.release()
+        if self._quit_confirmation_dialog is dialog:
+            self._quit_confirmation_dialog = None
 
     def on_open_new_connection_action(self, action, param=None):
         """Open a new tab for the selected connection via context menu."""
