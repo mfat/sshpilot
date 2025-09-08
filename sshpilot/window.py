@@ -3426,6 +3426,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         app = self.get_application()
         if app is not None:
             app.hold()
+
         dialog.present(self)
 
     def on_quit_confirmation_response(self, dialog, response):
@@ -3439,6 +3440,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if app is not None:
                 app.release()
             dialog.close()
+
 
 
     def on_open_new_connection_action(self, action, param=None):

@@ -12,6 +12,7 @@ except Exception:  # pragma: no cover - environment without GI bindings
     pytest.skip("GTK or Adw not available", allow_module_level=True)
 
 
+
 def test_application_quit_with_confirmation_dialog_does_not_crash():
     # Stub heavy application modules before importing window
     stub_modules = {
@@ -38,6 +39,7 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
         old_modules[name] = sys.modules.get(name)
         sys.modules[name] = mod
 
+
     import sshpilot.window as window
 
     class DummyWindow(Gtk.ApplicationWindow):
@@ -54,12 +56,14 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
 
     app = DummyApp()
     holder = {'released': False, 'visible': False}
+
     original_alert = Adw.AlertDialog
 
     class CaptureDialog(original_alert):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             holder['dialog'] = self
+
 
     Adw.AlertDialog = CaptureDialog
 
@@ -71,6 +75,7 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
 
     app.release = capture_release
 
+
     result = {'done': False}
 
     def on_activate(app):
@@ -79,6 +84,7 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
         class Term: is_connected = True
         win.connection_to_terminals = {Conn(): [Term()]}
         win.present()
+
         def respond():
             dialog = holder.get('dialog')
             if dialog is None:
@@ -93,6 +99,7 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
                 return False
             GLib.timeout_add(10, exit_app)
             return False
+
 
         GLib.timeout_add(50, respond)
         GLib.timeout_add(10, lambda: (app.quit(), False))
@@ -110,3 +117,4 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
     assert result['done']
     assert holder['released']
     assert holder['visible']
+
