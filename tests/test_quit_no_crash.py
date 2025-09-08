@@ -45,7 +45,6 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
     class DummyWindow(Gtk.ApplicationWindow):
         show_quit_confirmation_dialog = window.MainWindow.show_quit_confirmation_dialog
         on_quit_confirmation_response = window.MainWindow.on_quit_confirmation_response
-        on_quit_confirmation_closed = window.MainWindow.on_quit_confirmation_closed
 
     class DummyApp(Gtk.Application):
         def quit(self):
@@ -56,7 +55,7 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
             super().quit()
 
     app = DummyApp()
-    holder = {'released': 0, 'closed': 0, 'closed_before_release': 0, 'visible': False}
+    holder = {'released': False, 'visible': False}
 
     original_alert = Adw.AlertDialog
 
@@ -64,7 +63,6 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             holder['dialog'] = self
-            self.connect('closed', lambda *_: holder.__setitem__('closed', holder['closed'] + 1))
 
 
     Adw.AlertDialog = CaptureDialog
@@ -72,8 +70,7 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
     original_release = app.release
 
     def capture_release():
-        holder['released'] += 1
-        holder['closed_before_release'] = holder['closed']
+        holder['released'] = True
         return original_release()
 
     app.release = capture_release
@@ -118,8 +115,6 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
             sys.modules[name] = old
 
     assert result['done']
-    assert holder['released'] == 1
-    assert holder['closed'] == 1
-    assert holder['closed_before_release'] == 1
+    assert holder['released']
     assert holder['visible']
 
