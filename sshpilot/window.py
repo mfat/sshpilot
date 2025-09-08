@@ -3439,6 +3439,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         finally:
             if app is not None:
                 app.release()
+            dialog.close()
 
 
 
