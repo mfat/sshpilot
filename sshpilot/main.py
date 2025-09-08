@@ -208,16 +208,17 @@ class SshPilotApplication(Adw.Application):
         if shortcuts:
             self.set_accels_for_action(f"app.{name}", shortcuts)
 
-    def on_quit_action(self, action=None, param=None):
-        """Handle Ctrl+Q by closing the active window so the exact close flow runs."""
+    def quit(self):
+        """Request application shutdown, showing confirmation if needed."""
         win = self.props.active_window
-        if win:
-            try:
-                win.close()
-                return
-            except Exception:
-                pass
+        if win and not getattr(win, "_is_quitting", False):
+            if win.on_close_request(win):
+                return  # dialog will handle quitting or cancellation
         super().quit()
+
+    def on_quit_action(self, action=None, param=None):
+        """Handle Ctrl+Q by routing through the application quit path."""
+        self.quit()
 
     def do_activate(self):
         """Called when the application is activated"""

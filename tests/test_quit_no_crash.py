@@ -46,8 +46,16 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
         show_quit_confirmation_dialog = window.MainWindow.show_quit_confirmation_dialog
         on_quit_confirmation_response = window.MainWindow.on_quit_confirmation_response
 
-    app = Gtk.Application()
-    holder = {'released': False}
+    class DummyApp(Gtk.Application):
+        def quit(self):
+            win = self.props.active_window
+            if win and not getattr(win, '_is_quitting', False):
+                if win.on_close_request(win):
+                    return
+            super().quit()
+
+    app = DummyApp()
+    holder = {'released': False, 'visible': False}
 
     original_alert = Adw.AlertDialog
 
@@ -76,16 +84,23 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
         class Term: is_connected = True
         win.connection_to_terminals = {Conn(): [Term()]}
         win.present()
-        win.show_quit_confirmation_dialog()
 
         def respond():
             dialog = holder.get('dialog')
             if dialog is None:
                 return True  # try again shortly
             dialog.emit('response', 'cancel')
-
+            holder['visible'] = win.get_visible()
             result['done'] = True
+
+            def exit_app():
+                win._is_quitting = True
+                app.quit()
+                return False
+            GLib.timeout_add(10, exit_app)
             return False
+
+
         GLib.timeout_add(50, respond)
         GLib.timeout_add(10, lambda: (app.quit(), False))
 
@@ -101,4 +116,5 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
 
     assert result['done']
     assert holder['released']
+    assert holder['visible']
 
