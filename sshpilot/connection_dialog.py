@@ -3489,7 +3489,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self.connection_manager.load_ssh_config()
                 
                 # Find the updated connection by nickname
-                updated_connection = self.connection_manager.get_connection_by_nickname(self.connection.nickname)
+                updated_connection = self.connection_manager.find_connection_by_nickname(self.connection.nickname)
                 if updated_connection:
                     self.connection = updated_connection
                     self.load_connection_data(self.connection) # Reload UI with new data
