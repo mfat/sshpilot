@@ -132,6 +132,7 @@ class Config(GObject.Object):
                 'auto_add_host_keys': True,
                 'verbosity': 0,
                 'debug_enabled': False,
+                'use_isolated_config': False,
             },
             'security': {
                 'store_passwords': True,
