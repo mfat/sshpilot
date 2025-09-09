@@ -14,6 +14,7 @@ import signal
 from typing import Dict, List, Optional, Any, Tuple, Union
 
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
+from .platform_utils import is_macos
 
 try:
     import secretstorage
@@ -51,10 +52,6 @@ if os.name == 'posix':
 
 logger = logging.getLogger(__name__)
 _SERVICE_NAME = "sshPilot"
-
-def _is_macos():
-    """Check if running on macOS"""
-    return os.name == 'posix' and hasattr(os, 'uname') and os.uname().sysname == 'Darwin'
 
 class Connection:
     """Represents an SSH connection"""
@@ -1172,7 +1169,7 @@ class ConnectionManager(GObject.Object):
         """Store key passphrase securely in system keyring"""
         try:
             # Use keyring on macOS, secretstorage on Linux
-            if keyring and _is_macos():
+            if keyring and is_macos():
                 # macOS: use keyring
                 keyring.set_password('sshPilot', key_path, passphrase)
                 logger.debug(f"Stored key passphrase for {key_path} using keyring")
@@ -1208,7 +1205,7 @@ class ConnectionManager(GObject.Object):
         """Retrieve key passphrase from system keyring"""
         try:
             # Use keyring on macOS, secretstorage on Linux
-            if keyring and _is_macos():
+            if keyring and is_macos():
                 # macOS: use keyring
                 passphrase = keyring.get_password('sshPilot', key_path)
                 if passphrase:
@@ -1236,7 +1233,7 @@ class ConnectionManager(GObject.Object):
         """Delete stored key passphrase from system keyring"""
         try:
             # Use keyring on macOS, secretstorage on Linux
-            if keyring and _is_macos():
+            if keyring and is_macos():
                 # macOS: use keyring
                 try:
                     keyring.delete_password('sshPilot', key_path)

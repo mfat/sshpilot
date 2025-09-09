@@ -31,7 +31,7 @@ def ensure_passphrase_askpass() -> str:
     logger.debug(f"Generating askpass script at {path}")
 
     script_body = r'''#!/usr/bin/env python3
-import sys, re, os
+import sys, re, os, platform
 try:
     import secretstorage
 except Exception:
@@ -51,7 +51,7 @@ except Exception:
 def get_passphrase(key_path: str) -> str:
     """Retrieve passphrase from keyring or secretstorage"""
     # Try keyring first (macOS)
-    if keyring and os.name == 'posix' and hasattr(os, 'uname') and os.uname().sysname == 'Darwin':
+    if keyring and platform.system() == 'Darwin':
         try:
             with open("/tmp/sshpilot-askpass.log", "a") as f:
                 f.write(f"ASKPASS: Trying keyring for {key_path}\n")

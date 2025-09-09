@@ -20,6 +20,7 @@ import pwd
 from datetime import datetime
 from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
 from .port_utils import get_port_checker
+from .platform_utils import is_macos
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
@@ -1322,10 +1323,8 @@ class TerminalWidget(Gtk.Box):
 
             # Menu model with keyboard shortcuts
             self._menu_model = Gio.Menu()
-            import platform
-            is_macos = platform.system() == 'Darwin'
-            
-            if is_macos:
+
+            if is_macos():
                 self._menu_model.append(_("Copy\t⌘C"), "term.copy")
                 self._menu_model.append(_("Paste\t⌘V"), "term.paste")
                 self._menu_model.append(_("Select All\t⌘A"), "term.select_all")
@@ -1416,9 +1415,7 @@ class TerminalWidget(Gtk.Box):
                     pass
                 return True
             
-            import platform
-            is_macos = platform.system() == 'Darwin'
-            if is_macos:
+            if is_macos():
                 # macOS: Use standard Cmd+C/V for copy/paste, Cmd+Shift+C/V for terminal-specific operations
                 copy_trigger = "<Meta>c"
                 paste_trigger = "<Meta>v"
@@ -1502,17 +1499,16 @@ class TerminalWidget(Gtk.Box):
     def _setup_mouse_wheel_zoom(self):
         """Set up mouse wheel zoom functionality with Cmd+MouseWheel"""
         try:
-            import platform
-            is_macos = platform.system() == 'Darwin'
-            
+            mac = is_macos()
+
             scroll_controller = Gtk.EventControllerScroll()
             scroll_controller.set_flags(Gtk.EventControllerScrollFlags.VERTICAL)
-            
+
             def _on_scroll(controller, dx, dy):
                 try:
                     # Check if Command key (macOS) or Ctrl key (Linux/Windows) is pressed
                     modifiers = controller.get_current_event_state()
-                    if is_macos:
+                    if mac:
                         # Check for Command key (Meta modifier)
                         if modifiers & Gdk.ModifierType.META_MASK:
                             if dy > 0:

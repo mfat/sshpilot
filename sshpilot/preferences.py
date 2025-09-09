@@ -4,6 +4,8 @@ import os
 import logging
 import subprocess
 
+from .platform_utils import is_macos
+
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
@@ -17,7 +19,12 @@ def is_running_in_flatpak() -> bool:
 
 def should_hide_external_terminal_options() -> bool:
     """Check if external terminal options should be hidden (Flatpak or macOS)"""
-    return is_running_in_flatpak() or os.name == 'posix' and hasattr(os, 'uname') and os.uname().sysname == 'Darwin'
+    return is_running_in_flatpak() or is_macos()
+
+
+def should_hide_file_manager_options() -> bool:
+    """Check if file manager options should be hidden (macOS)"""
+    return is_macos()
 
 class MonospaceFontDialog(Adw.Window):
     def __init__(self, parent=None, current_font="Monospace 12"):
