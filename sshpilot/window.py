@@ -824,7 +824,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Copy key to server button (ssh-copy-id)
         self.copy_key_button = Gtk.Button.new_from_icon_name('dialog-password-symbolic')
-        self.copy_key_button.set_tooltip_text('Copy public key to server for passwordless login')
+        self.copy_key_button.set_tooltip_text(
+            f'Copy public key to server for passwordless login ({get_primary_modifier_label()}+Shift+K)'
+        )
         self.copy_key_button.set_sensitive(False)
         self.copy_key_button.connect('clicked', self.on_copy_key_to_server_clicked)
         self.connection_toolbar.append(self.copy_key_button)
