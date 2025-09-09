@@ -553,17 +553,20 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.default_mode_row = Adw.ActionRow()
             self.default_mode_row.set_title("Default Mode")
             self.default_mode_row.set_subtitle("sshPilot loads and modifies ~/.ssh/config")
-            self.default_mode_toggle = Gtk.CheckButton()
-
-            self.default_mode_row.add_suffix(self.default_mode_toggle)
-            self.default_mode_row.set_activatable_widget(self.default_mode_toggle)
-            operation_group.add(self.default_mode_row)
+            self.default_mode_toggle = Gtk.ToggleButton()
 
             # Isolated mode row
             self.isolated_mode_row = Adw.ActionRow()
             self.isolated_mode_row.set_title("Isolated Mode")
             self.isolated_mode_row.set_subtitle("sshPilot stores its own configuration file in ~/.config/sshpilot/")
-            self.isolated_mode_toggle = Gtk.CheckButton()
+            self.isolated_mode_toggle = Gtk.ToggleButton()
+
+            # Group the toggles for radio-style behavior
+            self.isolated_mode_toggle.set_group(self.default_mode_toggle)
+
+            self.default_mode_row.add_suffix(self.default_mode_toggle)
+            self.default_mode_row.set_activatable_widget(self.default_mode_toggle)
+            operation_group.add(self.default_mode_row)
 
             self.isolated_mode_row.add_suffix(self.isolated_mode_toggle)
             self.isolated_mode_row.set_activatable_widget(self.isolated_mode_toggle)
@@ -847,7 +850,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             if not button.get_active():
                 return
 
-            use_isolated = button is getattr(self, 'isolated_mode_toggle', None)
+            use_isolated = self.isolated_mode_toggle.get_active()
             self.config.set_setting('ssh.use_isolated_config', bool(use_isolated))
 
             parent_window = self.get_transient_for()
