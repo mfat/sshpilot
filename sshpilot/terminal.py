@@ -1292,6 +1292,7 @@ class TerminalWidget(Gtk.Box):
     def _setup_context_menu(self):
         """Set up a robust per-terminal context menu and actions."""
         try:
+            logger.debug("Setting up terminal context menu...")
             # Per-widget action group
             self._menu_actions = Gio.SimpleActionGroup()
             act_copy = Gio.SimpleAction.new("copy", None)
@@ -1328,22 +1329,27 @@ class TerminalWidget(Gtk.Box):
                 self._menu_model.append(_("Copy\t⌘C"), "term.copy")
                 self._menu_model.append(_("Paste\t⌘V"), "term.paste")
                 self._menu_model.append(_("Select All\t⌘A"), "term.select_all")
-                self._menu_model.append_separator()
-                self._menu_model.append(_("Zoom In\t⌘="), "term.zoom_in")
-                self._menu_model.append(_("Zoom Out\t⌘-"), "term.zoom_out")
-                self._menu_model.append(_("Reset Zoom\t⌘0"), "term.reset_zoom")
+                # Create a separator section for zoom options
+                zoom_section = Gio.Menu()
+                zoom_section.append(_("Zoom In\t⌘="), "term.zoom_in")
+                zoom_section.append(_("Zoom Out\t⌘-"), "term.zoom_out")
+                zoom_section.append(_("Reset Zoom\t⌘0"), "term.reset_zoom")
+                self._menu_model.append_section(None, zoom_section)
             else:
                 self._menu_model.append(_("Copy\tCtrl+Shift+C"), "term.copy")
                 self._menu_model.append(_("Paste\tCtrl+Shift+V"), "term.paste")
                 self._menu_model.append(_("Select All\tCtrl+Shift+A"), "term.select_all")
-                self._menu_model.append_separator()
-                self._menu_model.append(_("Zoom In\tCtrl++"), "term.zoom_in")
-                self._menu_model.append(_("Zoom Out\tCtrl+-"), "term.zoom_out")
-                self._menu_model.append(_("Reset Zoom\tCtrl+0"), "term.reset_zoom")
+                # Create a separator section for zoom options
+                zoom_section = Gio.Menu()
+                zoom_section.append(_("Zoom In\tCtrl++"), "term.zoom_in")
+                zoom_section.append(_("Zoom Out\tCtrl+-"), "term.zoom_out")
+                zoom_section.append(_("Reset Zoom\tCtrl+0"), "term.reset_zoom")
+                self._menu_model.append_section(None, zoom_section)
 
-            # Popover
+            # Popover - set parent to the terminal widget
             self._menu_popover = Gtk.PopoverMenu.new_from_model(self._menu_model)
             self._menu_popover.set_has_arrow(True)
+            # Set parent to the terminal widget
             self._menu_popover.set_parent(self.vte)
 
             # Right-click gesture to open popover
@@ -1356,7 +1362,9 @@ class TerminalWidget(Gtk.Box):
                         btn = gest.get_current_button()
                     except Exception:
                         pass
+                    logger.debug(f"Context menu gesture: button={btn}, x={x}, y={y}")
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
+                        logger.debug(f"Not a right-click button: {btn}")
                         return
                     # Focus terminal first for reliable copy/paste
                     try:
@@ -1371,15 +1379,17 @@ class TerminalWidget(Gtk.Box):
                         rect.width = 1
                         rect.height = 1
                         self._menu_popover.set_pointing_to(rect)
-                    except Exception:
-                        pass
+                        logger.debug("Context menu positioned, showing popup")
+                    except Exception as e:
+                        logger.error(f"Failed to position context menu: {e}")
                     self._menu_popover.popup()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"Context menu popup failed: {e}")
             gesture.connect('pressed', _on_pressed)
             self.vte.add_controller(gesture)
+            logger.debug("Terminal context menu setup completed successfully")
         except Exception as e:
-            logger.debug(f"Context menu setup skipped/failed: {e}")
+            logger.error(f"Context menu setup failed: {e}")
 
     def _install_shortcuts(self):
         """Install local shortcuts on the VTE widget for copy/paste/select-all"""
