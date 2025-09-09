@@ -5,7 +5,11 @@ from gi.repository import Gio, Gtk, Adw, GLib
 from gettext import gettext as _
 
 from .sftp_utils import open_remote_in_file_manager
-from .preferences import is_running_in_flatpak, should_hide_external_terminal_options
+from .preferences import (
+    is_running_in_flatpak,
+    should_hide_external_terminal_options,
+    should_hide_file_manager_options,
+)
 from .shortcut_utils import get_primary_modifier_label
 
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
@@ -690,10 +694,11 @@ def register_window_actions(window):
     window.open_new_connection_tab_action.connect('activate', window.on_open_new_connection_tab_action)
     window.add_action(window.open_new_connection_tab_action)
 
-    # Action for managing files on remote server
-    window.manage_files_action = Gio.SimpleAction.new('manage-files', None)
-    window.manage_files_action.connect('activate', window.on_manage_files_action)
-    window.add_action(window.manage_files_action)
+    # Action for managing files on remote server (skip on macOS)
+    if not should_hide_file_manager_options():
+        window.manage_files_action = Gio.SimpleAction.new('manage-files', None)
+        window.manage_files_action.connect('activate', window.on_manage_files_action)
+        window.add_action(window.manage_files_action)
 
     # Action for editing connections via context menu
     window.edit_connection_action = Gio.SimpleAction.new('edit-connection', None)
