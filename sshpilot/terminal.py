@@ -1305,11 +1305,19 @@ class TerminalWidget(Gtk.Box):
             self._menu_actions.add_action(act_selall)
             self.insert_action_group('term', self._menu_actions)
 
-            # Menu model
+            # Menu model with keyboard shortcuts
             self._menu_model = Gio.Menu()
-            self._menu_model.append(_("Copy"), "term.copy")
-            self._menu_model.append(_("Paste"), "term.paste")
-            self._menu_model.append(_("Select All"), "term.select_all")
+            import platform
+            is_macos = platform.system() == 'Darwin'
+            
+            if is_macos:
+                self._menu_model.append(_("Copy\t⌘C"), "term.copy")
+                self._menu_model.append(_("Paste\t⌘V"), "term.paste")
+                self._menu_model.append(_("Select All\t⌘A"), "term.select_all")
+            else:
+                self._menu_model.append(_("Copy\tCtrl+Shift+C"), "term.copy")
+                self._menu_model.append(_("Paste\tCtrl+Shift+V"), "term.paste")
+                self._menu_model.append(_("Select All\tCtrl+Shift+A"), "term.select_all")
 
             # Popover
             self._menu_popover = Gtk.PopoverMenu.new_from_model(self._menu_model)
@@ -1378,9 +1386,16 @@ class TerminalWidget(Gtk.Box):
             
             import platform
             is_macos = platform.system() == 'Darwin'
-            copy_trigger = "<Meta><Shift>c" if is_macos else "<Primary><Shift>c"
-            paste_trigger = "<Meta><Shift>v" if is_macos else "<Primary><Shift>v"
-            select_trigger = "<Meta><Shift>a" if is_macos else "<Primary><Shift>a"
+            if is_macos:
+                # macOS: Use standard Cmd+C/V for copy/paste, Cmd+Shift+C/V for terminal-specific operations
+                copy_trigger = "<Meta>c"
+                paste_trigger = "<Meta>v"
+                select_trigger = "<Meta>a"
+            else:
+                # Linux/Windows: Use Ctrl+Shift+C/V for terminal copy/paste (standard for terminals)
+                copy_trigger = "<Primary><Shift>c"
+                paste_trigger = "<Primary><Shift>v"
+                select_trigger = "<Primary><Shift>a"
             
             controller.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string(copy_trigger),
