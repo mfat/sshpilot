@@ -858,8 +858,12 @@ class ConnectionDialog(Adw.Window):
         shortcut_controller = Gtk.ShortcutController()
         
         # Ctrl/Command+S to save
+        import platform
+        is_macos = platform.system() == 'Darwin'
+        save_trigger = "<Meta>s" if is_macos else "<Primary>s"
+        
         save_shortcut = Gtk.Shortcut()
-        save_shortcut.set_trigger(Gtk.ShortcutTrigger.parse_string("<Primary>s"))
+        save_shortcut.set_trigger(Gtk.ShortcutTrigger.parse_string(save_trigger))
         save_shortcut.set_action(Gtk.CallbackAction.new(
             lambda widget, args: self.on_save_clicked(None)
         ))

@@ -1376,16 +1376,22 @@ class TerminalWidget(Gtk.Box):
                     pass
                 return True
             
+            import platform
+            is_macos = platform.system() == 'Darwin'
+            copy_trigger = "<Meta><Shift>c" if is_macos else "<Primary><Shift>c"
+            paste_trigger = "<Meta><Shift>v" if is_macos else "<Primary><Shift>v"
+            select_trigger = "<Meta><Shift>a" if is_macos else "<Primary><Shift>a"
+            
             controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string("<Primary><Shift>c"),
+                Gtk.ShortcutTrigger.parse_string(copy_trigger),
                 Gtk.CallbackAction.new(_cb_copy)
             ))
             controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string("<Primary><Shift>v"),
+                Gtk.ShortcutTrigger.parse_string(paste_trigger),
                 Gtk.CallbackAction.new(_cb_paste)
             ))
             controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string("<Primary><Shift>a"),
+                Gtk.ShortcutTrigger.parse_string(select_trigger),
                 Gtk.CallbackAction.new(_cb_select_all)
             ))
             

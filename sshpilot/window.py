@@ -777,8 +777,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     )
                 return True
             
+            import platform
+            is_macos = platform.system() == 'Darwin'
+            trigger = '<Meta>Return' if is_macos else '<Primary>Return'
+            
             key_controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string('<Primary>Return'),
+                Gtk.ShortcutTrigger.parse_string(trigger),
                 Gtk.CallbackAction.new(_on_ctrl_enter)
             ))
             
@@ -1316,6 +1320,83 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Create connection dialog
         dialog = ConnectionDialog(self, connection, self.connection_manager)
         dialog.connect('connection-saved', self.on_connection_saved)
+        dialog.present()
+
+    def show_connection_selection_for_ssh_copy(self):
+        """Show a dialog to select a connection for SSH key copy"""
+        logger.info("Showing connection selection dialog for SSH key copy")
+        
+        # Get all connections
+        connections = self.connection_manager.get_connections()
+        if not connections:
+            # No connections available, show new connection dialog instead
+            logger.info("No connections available, showing new connection dialog")
+            self.show_connection_dialog()
+            return
+        
+        # Create a simple selection dialog
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            modal=True,
+            heading=_("Select Server for SSH Key Copy"),
+            body=_("Choose a server to copy your SSH key to:")
+        )
+        
+        # Add a list box with connections
+        list_box = Gtk.ListBox()
+        list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        
+        for connection in connections:
+            row = Gtk.ListBoxRow()
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            
+            # Connection info
+            info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            name_label = Gtk.Label(label=connection.nickname)
+            name_label.set_halign(Gtk.Align.START)
+            name_label.set_css_classes(['title-4'])
+            
+            host_label = Gtk.Label(label=f"{connection.username}@{connection.host}:{connection.port}")
+            host_label.set_halign(Gtk.Align.START)
+            host_label.set_css_classes(['dim-label'])
+            
+            info_box.append(name_label)
+            info_box.append(host_label)
+            box.append(info_box)
+            
+            row.set_child(box)
+            row.connection = connection
+            list_box.append(row)
+        
+        # Add the list box to the dialog
+        dialog.set_extra_child(list_box)
+        
+        # Add response buttons
+        dialog.add_response('cancel', _('Cancel'))
+        dialog.add_response('new', _('New Connection'))
+        dialog.add_response('select', _('Select'))
+        dialog.set_response_appearance('new', Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_response_appearance('select', Adw.ResponseAppearance.DEFAULT)
+        
+        def on_response(dialog, response):
+            if response == 'new':
+                # Show new connection dialog
+                self.show_connection_dialog()
+            elif response == 'select':
+                # Get selected connection and proceed with SSH key copy
+                selected_row = list_box.get_selected_row()
+                if selected_row and hasattr(selected_row, 'connection'):
+                    connection = selected_row.connection
+                    logger.info(f"Selected connection for SSH key copy: {connection.nickname}")
+                    try:
+                        from .sshcopyid_window import SshCopyIdWindow
+                        win = SshCopyIdWindow(self, connection, self.key_manager, self.connection_manager)
+                        win.present()
+                    except Exception as e:
+                        logger.error(f"Failed to show SSH key copy dialog: {e}")
+            dialog.destroy()
+        
+        dialog.connect('response', on_response)
         dialog.present()
 
     # --- Helpers (use your existing ones if already present) ---------------------
