@@ -864,6 +864,14 @@ class PreferencesWindow(Adw.PreferencesWindow):
             if parent_window and hasattr(parent_window, 'connection_manager'):
                 parent_window.connection_manager.set_isolated_mode(bool(use_isolated))
 
+            # Inform user that restart is required for changes
+            if parent_window and hasattr(parent_window, 'toast_overlay'):
+                toast = Adw.Toast.new(
+                    "Restart sshPilot to apply the new operation mode"
+                )
+                toast.set_timeout(5)
+                parent_window.toast_overlay.add_toast(toast)
+
         except Exception as e:
             logger.error(f"Failed to toggle isolated SSH mode: {e}")
 
