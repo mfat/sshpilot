@@ -1310,13 +1310,15 @@ class ConnectionManager(GObject.Object):
                 return f'"{token}"'
             return token
 
+        host = data.get('host', '')
         nickname = data.get('nickname', '')
         aliases = data.get('aliases', []) or []
         host_tokens = [_quote_token(nickname)] + [_quote_token(a) for a in aliases]
         lines = ["Host " + " ".join(host_tokens)]
-        
+
         # Add basic connection info
-        lines.append(f"    HostName {data.get('host', '')}")
+        if host and host != nickname:
+            lines.append(f"    HostName {host}")
         lines.append(f"    User {data.get('username', '')}")
         
         # Add port if specified and not default
