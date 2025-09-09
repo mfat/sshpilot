@@ -548,11 +548,13 @@ class PreferencesWindow(Adw.PreferencesWindow):
             operation_group = Adw.PreferencesGroup()
             operation_group.set_title("Operation Mode")
 
+
             # Default mode row
             self.default_mode_row = Adw.ActionRow()
             self.default_mode_row.set_title("Default Mode")
             self.default_mode_row.set_subtitle("sshPilot loads and modifies ~/.ssh/config")
             self.default_mode_toggle = Gtk.CheckButton()
+
             self.default_mode_row.add_suffix(self.default_mode_toggle)
             self.default_mode_row.set_activatable_widget(self.default_mode_toggle)
             operation_group.add(self.default_mode_row)
@@ -562,7 +564,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.isolated_mode_row.set_title("Isolated Mode")
             self.isolated_mode_row.set_subtitle("sshPilot stores its own configuration file in ~/.config/sshpilot/")
             self.isolated_mode_toggle = Gtk.CheckButton()
-            self.isolated_mode_toggle.set_group(self.default_mode_toggle)
+
             self.isolated_mode_row.add_suffix(self.isolated_mode_toggle)
             self.isolated_mode_row.set_activatable_widget(self.isolated_mode_toggle)
             operation_group.add(self.isolated_mode_row)
@@ -578,6 +580,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
 
             advanced_group = Adw.PreferencesGroup()
             advanced_group.set_title("SSH Settings")
+
 
             # Use custom options toggle
             self.apply_advanced_row = Adw.SwitchRow()
@@ -850,6 +853,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             parent_window = self.get_transient_for()
             if parent_window and hasattr(parent_window, 'connection_manager'):
                 parent_window.connection_manager.set_isolated_mode(bool(use_isolated))
+
         except Exception as e:
             logger.error(f"Failed to toggle isolated SSH mode: {e}")
 

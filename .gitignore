@@ -10,3 +10,6 @@ release.sh
 /packaging/macos/build
 /.venv-system
 /.venv-system-python
+/.flatpak-builder
+/repo
+/__pycache__
