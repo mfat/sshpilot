@@ -11,7 +11,7 @@ gi_repo.GObject = types.SimpleNamespace(
     SignalFlags=types.SimpleNamespace(RUN_FIRST=0),
     Object=type('GObject', (object,), {})
 )
-gi_repo.GLib = types.SimpleNamespace(idle_add=lambda *args, **kwargs: None)
+gi_repo.GLib = types.SimpleNamespace(idle_add=lambda func, *args, **kwargs: func())
 gi_repo.Gtk = types.SimpleNamespace(
     Box=type('Box', (object,), {}),
     Orientation=types.SimpleNamespace(VERTICAL=0, HORIZONTAL=1),
@@ -63,8 +63,15 @@ def test_host_aliases_added_via_advanced_tab():
 
     parent_dialog = types.SimpleNamespace(connection=connection, aliases_row=alias_row)
 
+    row_grid = types.SimpleNamespace()
+    row_grid.key_dropdown = 'Host'
+    row_grid.value_entry = DummyEntryRow('foo bar')
+
     tab = SSHConfigAdvancedTab.__new__(SSHConfigAdvancedTab)
-    tab.get_config_entries = lambda: [('Host', 'foo bar')]
+    tab.config_entries = [row_grid]
+    tab._get_dropdown_selected_text = lambda dropdown: dropdown
+    tab.on_remove_option = lambda _b, r: tab.config_entries.remove(r)
+    tab.update_config_preview = lambda: None
     tab.get_ancestor = lambda _cls: parent_dialog
 
     extra = tab.get_extra_ssh_config()
@@ -72,6 +79,7 @@ def test_host_aliases_added_via_advanced_tab():
     assert alias_row.get_text() == 'foo bar'
     assert connection.aliases == ['foo', 'bar']
     assert connection.data['aliases'] == ['foo', 'bar']
+    assert tab.config_entries == []
 
     connection.data['extra_ssh_config'] = extra
     cm = ConnectionManager.__new__(ConnectionManager)

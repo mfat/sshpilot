@@ -640,20 +640,28 @@ class SSHConfigAdvancedTab(Gtk.Box):
 
     def get_extra_ssh_config(self):
         """Get extra SSH config as a string for saving"""
-        entries = self.get_config_entries()
-        if not entries:
-            return ""
-
         config_lines: list[str] = []
         alias_tokens: list[str] = []
+        host_rows = []
 
-        for key, value in entries:
-            if key and key.lower() == "host":
+        for row_grid in self.config_entries.copy():
+            try:
+                key = self._get_dropdown_selected_text(row_grid.key_dropdown)
+                value = row_grid.value_entry.get_text().strip()
+            except Exception:
+                continue
+
+            if not key or not value or key == "Select SSH option...":
+                continue
+
+            if key.lower() == "host":
                 try:
                     alias_tokens.extend(shlex.split(value))
                 except ValueError:
                     alias_tokens.extend(value.split())
+                host_rows.append(row_grid)
                 continue
+
             config_lines.append(f"{key} {value}")
 
         if alias_tokens:
@@ -672,6 +680,18 @@ class SSHConfigAdvancedTab(Gtk.Box):
                             parent_dialog.connection.data['aliases'] = merged
             except Exception as e:
                 logger.error(f"Error merging Host aliases: {e}")
+
+            if host_rows:
+                def _remove_rows():
+                    for row in host_rows:
+                        try:
+                            self.on_remove_option(None, row)
+                        except Exception:
+                            pass
+                    self.update_config_preview()
+                    return False
+
+                GLib.idle_add(_remove_rows)
 
         return "\n".join(config_lines)
 
