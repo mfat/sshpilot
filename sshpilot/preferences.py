@@ -868,7 +868,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             if parent_window:
                 dialog = Adw.MessageDialog.new(
                     parent_window,
-                    "Restart Required",
+                    "Operation Mode Changed",
                     "Restart sshPilot to apply the new operation mode"
                 )
                 dialog.add_response("ok", "OK")
