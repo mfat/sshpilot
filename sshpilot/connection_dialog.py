@@ -485,6 +485,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
                         
                         config_data = {
                             'nickname': getattr(connection, 'nickname', 'your-host-name'),
+                            'aliases': getattr(connection, 'aliases', []),
                             'host': getattr(connection, 'host', ''),
                             'username': getattr(connection, 'username', ''),
                             'port': getattr(connection, 'port', 22),
