@@ -582,6 +582,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             advanced_group = Adw.PreferencesGroup()
             advanced_group.set_title("SSH Settings")
 
+
             # Use custom options toggle
             self.apply_advanced_row = Adw.SwitchRow()
             self.apply_advanced_row.set_title("Use custom connection options")
@@ -853,6 +854,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             parent_window = self.get_transient_for()
             if parent_window and hasattr(parent_window, 'connection_manager'):
                 parent_window.connection_manager.set_isolated_mode(bool(use_isolated))
+
         except Exception as e:
             logger.error(f"Failed to toggle isolated SSH mode: {e}")
 
