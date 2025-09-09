@@ -633,7 +633,7 @@ class Connection:
 
 class ConnectionManager(GObject.Object):
     """Manages SSH connections and configuration"""
-    
+
     __gsignals__ = {
         'connection-added': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
         'connection-removed': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
@@ -641,22 +641,41 @@ class ConnectionManager(GObject.Object):
         'connection-status-changed': (GObject.SignalFlags.RUN_FIRST, None, (object, bool)),
     }
 
-    def __init__(self):
+    def __init__(self, config, isolated_mode: bool = False):
         super().__init__()
+        self.config = config
         self.connections: List[Connection] = []
         # Store wildcard/negated host blocks (rules) separately
         self.rules: List[Dict[str, Any]] = []
         self.ssh_config = {}
-        self.ssh_config_path = os.path.expanduser('~/.ssh/config')
-        self.known_hosts_path = os.path.expanduser('~/.ssh/known_hosts')
         self.loop = asyncio.get_event_loop()
         self.active_connections: Dict[str, asyncio.Task] = {}
-        
-        # Load SSH config immediately for fast UI
-        self.load_ssh_config()
+        self.ssh_config_path = ''
+        self.known_hosts_path = ''
+
+        # Initialize SSH config paths
+        self.set_isolated_mode(isolated_mode)
 
         # Defer slower operations to idle to avoid blocking startup
         GLib.idle_add(self._post_init_slow_path)
+
+    def set_isolated_mode(self, isolated: bool):
+        """Switch between standard and isolated SSH configuration"""
+        self.isolated_mode = bool(isolated)
+        if self.isolated_mode:
+            base = os.path.expanduser('~/.config/sshpilot')
+            self.ssh_config_path = os.path.join(base, 'ssh_config')
+            self.known_hosts_path = os.path.join(base, 'known_hosts')
+            os.makedirs(base, exist_ok=True)
+            for path in (self.ssh_config_path, self.known_hosts_path):
+                if not os.path.exists(path):
+                    open(path, 'a').close()
+        else:
+            self.ssh_config_path = os.path.expanduser('~/.ssh/config')
+            self.known_hosts_path = os.path.expanduser('~/.ssh/known_hosts')
+
+        # Reload SSH config to reflect new paths
+        self.load_ssh_config()
 
     def _post_init_slow_path(self):
         """Run slower initialization steps after UI is responsive."""
