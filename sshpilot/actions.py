@@ -738,6 +738,6 @@ def register_window_actions(window):
         window.add_action(sidebar_action)
         app = window.get_application()
         if app:
-            app.set_accels_for_action('win.toggle_sidebar', ['F9', '<Control>b'])
+            app.set_accels_for_action('win.toggle_sidebar', ['F9', '<Primary>b'])
     except Exception as e:
         logger.error(f"Failed to register sidebar toggle action: {e}")
