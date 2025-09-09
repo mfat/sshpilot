@@ -10,6 +10,7 @@ import re
 import ipaddress
 import socket
 import subprocess
+import shlex
 from typing import Optional, Dict, Any
 
 from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
@@ -642,11 +643,36 @@ class SSHConfigAdvancedTab(Gtk.Box):
         entries = self.get_config_entries()
         if not entries:
             return ""
-            
-        config_lines = []
+
+        config_lines: list[str] = []
+        alias_tokens: list[str] = []
+
         for key, value in entries:
+            if key and key.lower() == "host":
+                try:
+                    alias_tokens.extend(shlex.split(value))
+                except ValueError:
+                    alias_tokens.extend(value.split())
+                continue
             config_lines.append(f"{key} {value}")
-            
+
+        if alias_tokens:
+            try:
+                parent_dialog = self.get_ancestor(Adw.Window)
+                if parent_dialog:
+                    existing = []
+                    if hasattr(parent_dialog, 'aliases_row'):
+                        existing = parent_dialog.aliases_row.get_text().split()
+                    merged = existing + [a for a in alias_tokens if a not in existing]
+                    if hasattr(parent_dialog, 'aliases_row'):
+                        parent_dialog.aliases_row.set_text(" ".join(merged))
+                    if hasattr(parent_dialog, 'connection') and parent_dialog.connection:
+                        parent_dialog.connection.aliases = merged
+                        if hasattr(parent_dialog.connection, 'data'):
+                            parent_dialog.connection.data['aliases'] = merged
+            except Exception as e:
+                logger.error(f"Error merging Host aliases: {e}")
+
         return "\n".join(config_lines)
 
     def _update_parent_connection(self):
@@ -656,31 +682,60 @@ class SSHConfigAdvancedTab(Gtk.Box):
             if parent_dialog and hasattr(parent_dialog, 'connection') and parent_dialog.connection:
                 extra_config = self.get_extra_ssh_config()
                 parent_dialog.connection.extra_ssh_config = extra_config
-                # Also update the data dictionary
                 if hasattr(parent_dialog.connection, 'data'):
                     parent_dialog.connection.data['extra_ssh_config'] = extra_config
-                logger.debug(f"Updated parent connection with extra SSH config: {extra_config}")
+                if hasattr(parent_dialog, 'aliases_row'):
+                    aliases = parent_dialog.aliases_row.get_text().split()
+                    parent_dialog.connection.aliases = aliases
+                    if hasattr(parent_dialog.connection, 'data'):
+                        parent_dialog.connection.data['aliases'] = aliases
+                logger.debug(
+                    f"Updated parent connection with extra SSH config: {extra_config} and aliases: {parent_dialog.connection.aliases}"
+                )
         except Exception as e:
             logger.error(f"Error updating parent connection: {e}")
 
     def set_extra_ssh_config(self, config_string):
         """Set extra SSH config from a string"""
         logger.debug(f"set_extra_ssh_config called with: '{config_string}'")
-        
+
         if not config_string.strip():
             logger.debug("Config string is empty, returning")
             return
-            
+
         entries = []
+        alias_tokens: list[str] = []
         for line in config_string.split('\n'):
             line = line.strip()
             if line and not line.startswith('#'):
                 parts = line.split(' ', 1)
-                if len(parts) == 2:
-                    entries.append((parts[0].strip(), parts[1].strip()))
-                elif len(parts) == 1:
-                    entries.append((parts[0].strip(), "yes"))
-        
+                key = parts[0].strip()
+                value = parts[1].strip() if len(parts) == 2 else "yes"
+                if key.lower() == 'host':
+                    try:
+                        alias_tokens.extend(shlex.split(value))
+                    except ValueError:
+                        alias_tokens.extend(value.split())
+                else:
+                    entries.append((key, value))
+
+        if alias_tokens:
+            try:
+                parent_dialog = self.get_ancestor(Adw.Window)
+                if parent_dialog:
+                    existing = []
+                    if hasattr(parent_dialog, 'aliases_row'):
+                        existing = parent_dialog.aliases_row.get_text().split()
+                    merged = existing + [a for a in alias_tokens if a not in existing]
+                    if hasattr(parent_dialog, 'aliases_row'):
+                        parent_dialog.aliases_row.set_text(" ".join(merged))
+                    if hasattr(parent_dialog, 'connection') and parent_dialog.connection:
+                        parent_dialog.connection.aliases = merged
+                        if hasattr(parent_dialog.connection, 'data'):
+                            parent_dialog.connection.data['aliases'] = merged
+            except Exception as e:
+                logger.error(f"Error setting Host aliases: {e}")
+
         logger.debug(f"Parsed entries: {entries}")
         self.set_config_entries(entries)
         # Update preview after loading data
