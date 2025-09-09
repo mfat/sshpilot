@@ -9,8 +9,11 @@ _ASKPASS_SCRIPT = None
 def ensure_passphrase_askpass() -> str:
     """Ensure the askpass script exists and return its path"""
     global _ASKPASS_DIR, _ASKPASS_SCRIPT
-    
+
+    logger.debug("Ensuring askpass script is available")
+
     if _ASKPASS_SCRIPT and os.path.exists(_ASKPASS_SCRIPT):
+        logger.debug(f"Using cached askpass script at {_ASKPASS_SCRIPT}")
         return _ASKPASS_SCRIPT
     
     # Clear cache to force regeneration of the script
@@ -25,6 +28,7 @@ def ensure_passphrase_askpass() -> str:
     _ASKPASS_DIR = tempfile.mkdtemp(prefix="sshpilot-askpass-")
     os.chmod(_ASKPASS_DIR, 0o700)
     path = os.path.join(_ASKPASS_DIR, "askpass.py")
+    logger.debug(f"Generating askpass script at {path}")
 
     script_body = r'''#!/usr/bin/env python3
 import sys, re, os
@@ -37,34 +41,107 @@ try:
 except Exception:
     keyring = None
 
+# Log availability of keyring and secretstorage
+try:
+    with open("/tmp/sshpilot-askpass.log", "a") as f:
+        f.write(f"ASKPASS: keyring {'available' if keyring else 'unavailable'}, secretstorage {'available' if secretstorage else 'unavailable'}\n")
+except Exception:
+    pass
+
 def get_passphrase(key_path: str) -> str:
     """Retrieve passphrase from keyring or secretstorage"""
     # Try keyring first (macOS)
     if keyring and os.name == 'posix' and hasattr(os, 'uname') and os.uname().sysname == 'Darwin':
         try:
+            with open("/tmp/sshpilot-askpass.log", "a") as f:
+                f.write(f"ASKPASS: Trying keyring for {key_path}\n")
             passphrase = keyring.get_password('sshPilot', key_path)
             if passphrase:
+                try:
+                    with open("/tmp/sshpilot-askpass.log", "a") as f:
+                        f.write("ASKPASS: Retrieved passphrase from keyring\n")
+                except Exception:
+                    pass
                 return passphrase
-        except Exception:
-            pass
-    
+            else:
+                try:
+                    with open("/tmp/sshpilot-askpass.log", "a") as f:
+                        f.write("ASKPASS: No passphrase in keyring\n")
+                except Exception:
+                    pass
+        except Exception as e:
+            try:
+                with open("/tmp/sshpilot-askpass.log", "a") as f:
+                    f.write(f"ASKPASS: keyring error: {e}\n")
+            except Exception:
+                pass
+
     # Fall back to secretstorage (Linux)
     if secretstorage is None:
+        try:
+            with open("/tmp/sshpilot-askpass.log", "a") as f:
+                f.write("ASKPASS: secretstorage module not available\n")
+        except Exception:
+            pass
         return ""
     try:
+        with open("/tmp/sshpilot-askpass.log", "a") as f:
+            f.write("ASKPASS: Trying secretstorage\n")
         bus = secretstorage.dbus_init()
+        try:
+            with open("/tmp/sshpilot-askpass.log", "a") as f:
+                f.write("ASKPASS: Initialized D-Bus for secretstorage\n")
+        except Exception:
+            pass
         collection = secretstorage.get_default_collection(bus)
-        if collection and collection.is_locked():
+        if not collection:
+            try:
+                with open("/tmp/sshpilot-askpass.log", "a") as f:
+                    f.write("ASKPASS: No default secretstorage collection\n")
+            except Exception:
+                pass
+            return ""
+        if collection.is_locked():
+            try:
+                with open("/tmp/sshpilot-askpass.log", "a") as f:
+                    f.write("ASKPASS: Secretstorage collection locked, unlocking\n")
+            except Exception:
+                pass
             collection.unlock()
         items = list(collection.search_items({
             "application": "sshPilot",
             "type": "key_passphrase",
             "key_path": key_path
         }))
+        try:
+            with open("/tmp/sshpilot-askpass.log", "a") as f:
+                f.write(f"ASKPASS: secretstorage search found {len(items)} items\n")
+        except Exception:
+            pass
         if items:
-            return items[0].get_secret().decode("utf-8")
-    except Exception:
-        pass
+            try:
+                secret = items[0].get_secret().decode("utf-8")
+                with open("/tmp/sshpilot-askpass.log", "a") as f:
+                    f.write("ASKPASS: Retrieved passphrase from secretstorage\n")
+                return secret
+            except Exception as e:
+                try:
+                    with open("/tmp/sshpilot-askpass.log", "a") as f:
+                        f.write(f"ASKPASS: Error retrieving secret: {e}\n")
+                except Exception:
+                    pass
+        else:
+            try:
+                with open("/tmp/sshpilot-askpass.log", "a") as f:
+                    f.write("ASKPASS: No matching secretstorage item found\n")
+            except Exception:
+                pass
+    except Exception as e:
+        try:
+            with open("/tmp/sshpilot-askpass.log", "a") as f:
+                f.write(f"ASKPASS: secretstorage error: {e}\n")
+        except Exception:
+            pass
     return ""
 
 def extract_key_path(prompt: str) -> str:
@@ -145,6 +222,11 @@ if __name__ == "__main__":
                     except Exception:
                         pass
                     print(passphrase)
+                    try:
+                        with open("/tmp/sshpilot-askpass.log", "a") as f:
+                            f.write("ASKPASS: Returning passphrase and exiting with code 0\n")
+                    except Exception:
+                        pass
                     sys.exit(0)
                 else:
                     try:

@@ -1,0 +1,2 @@
+The askpass helper doesn’t log through the main logger.
+It writes debug information directly to /tmp/sshpilot-askpass.log, so nothing appears in the normal console or application log unless you inspect that file.

@@ -1,0 +1,41 @@
+# jhbuild configuration for sshPilot macOS build
+# Based on gtk-osx setup
+
+# Use the gtk-osx moduleset
+moduleset = 'gtk-osx'
+
+# Build directory
+checkoutroot = os.path.expanduser('~/gtk/inst')
+tarballdir = os.path.expanduser('~/gtk/sources')
+buildroot = os.path.expanduser('~/gtk/build')
+
+# Use system Python but with our own modules
+use_local_python = False
+python_cmd = '/usr/bin/python3'
+
+# Skip modules that are already available via Homebrew
+skip = ['meta-gtk-osx-bootstrap', 'meta-gtk-osx-core', 'meta-gtk-osx-python']
+
+# Additional modules we need
+modules = [
+    'meta-gtk-osx-bootstrap',
+    'meta-gtk-osx-core', 
+    'meta-gtk-osx-python',
+    'pygobject',
+    'pycairo',
+    'vte',
+    'adwaita-icon-theme'
+]
+
+# Build options
+makeargs = '-j4'
+
+# Use Homebrew for some dependencies
+use_system_cairo = True
+use_system_pkgconfig = True
+use_system_glib = True
+
+# Custom environment variables
+os.environ['PKG_CONFIG_PATH'] = '/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig'
+os.environ['LD_LIBRARY_PATH'] = '/opt/homebrew/lib:/usr/local/lib'
+os.environ['GI_TYPELIB_PATH'] = '/opt/homebrew/lib/girepository-1.0:/usr/local/lib/girepository-1.0'

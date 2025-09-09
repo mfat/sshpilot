@@ -46,7 +46,7 @@ from .window import MainWindow
 class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
 
-    def __init__(self, verbose: bool = False):
+    def __init__(self, verbose: bool = False, isolated: bool = False):
         super().__init__(
             application_id='io.github.mfat.sshpilot',
             flags=Gio.ApplicationFlags.FLAGS_NONE
@@ -70,33 +70,60 @@ class SshPilotApplication(Adw.Application):
                 style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
             else:
                 style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+            self.isolated_mode = isolated or bool(cfg.get_setting('ssh.use_isolated_config', False))
         except Exception:
-            pass
+            self.isolated_mode = isolated
         
         # Create actions with keyboard shortcuts
-        self.create_action('quit', self.on_quit_action, ['<primary>q'])
-        self.create_action('new-connection', self.on_new_connection, ['<primary>n'])
-        self.create_action('open-new-connection-tab', self.on_open_new_connection_tab, ['<primary><alt>n'])
-        self.create_action('toggle-list', self.on_toggle_list, ['<primary>l'])
-        self.create_action('search', self.on_search, ['<primary>f'])
-        self.create_action('new-key', self.on_new_key, ['<primary><shift>k'])
-        self.create_action('local-terminal', self.on_local_terminal, ['<primary><shift>t'])
-        self.create_action('preferences', self.on_preferences, ['<primary>comma'])
+        # Use platform-specific shortcuts for better macOS compatibility
+        import platform
+        is_macos = platform.system() == 'Darwin'
+        
+        if is_macos:
+            # macOS-specific shortcuts using Meta key (Command key)
+            self.create_action('quit', self.on_quit_action, ['<Meta>q'])
+            self.create_action('new-connection', self.on_new_connection, ['<Meta>n'])
+            self.create_action('open-new-connection-tab', self.on_open_new_connection_tab, ['<Meta><Alt>n'])
+            self.create_action('toggle-list', self.on_toggle_list, ['<Meta>l'])
+            self.create_action('search', self.on_search, ['<Meta>f'])
+            self.create_action('new-key', self.on_new_key, ['<Meta><Shift>k'])
+            logging.info("Using macOS-specific shortcuts (Meta key = Command key)")
+        else:
+            # Linux/Windows shortcuts using Primary key
+            self.create_action('quit', self.on_quit_action, ['<primary>q'])
+            self.create_action('new-connection', self.on_new_connection, ['<primary>n'])
+            self.create_action('open-new-connection-tab', self.on_open_new_connection_tab, ['<primary><alt>n'])
+            self.create_action('toggle-list', self.on_toggle_list, ['<primary>l'])
+            self.create_action('search', self.on_search, ['<primary>f'])
+            self.create_action('new-key', self.on_new_key, ['<primary><shift>k'])
+            logging.info("Using Linux/Windows shortcuts (Primary key = Ctrl key)")
+        
+        # Debug: Log registered shortcuts
+        logging.info("Registered keyboard shortcuts:")
+        logging.info("  Cmd+N: new-connection")
+        logging.info("  Cmd+Shift+K: new-key")
+        if is_macos:
+            self.create_action('local-terminal', self.on_local_terminal, ['<Meta><Shift>t'])
+            self.create_action('preferences', self.on_preferences, ['<Meta>comma'])
+            self.create_action('tab-close', self.on_tab_close, ['<Meta>F4'])
+            self.create_action('broadcast-command', self.on_broadcast_command, ['<Meta><Shift>b'])
+        else:
+            self.create_action('local-terminal', self.on_local_terminal, ['<primary><shift>t'])
+            self.create_action('preferences', self.on_preferences, ['<primary>comma'])
+            self.create_action('tab-close', self.on_tab_close, ['<primary>F4'])
+            self.create_action('broadcast-command', self.on_broadcast_command, ['<primary><shift>b'])
+        
         self.create_action('about', self.on_about)
         self.create_action('help', self.on_help, ['F1'])
         # Tab navigation accelerators
-        self.create_action('tab-next', self.on_tab_next, ['<alt>Right'])
-        self.create_action('tab-prev', self.on_tab_prev, ['<alt>Left'])
-        # Close tab accelerator (use Ctrl+F4 to avoid conflicts with TUI editors like nano/vim)
-        self.create_action('tab-close', self.on_tab_close, ['<primary>F4'])
-        # Broadcast command to all SSH terminals
-        self.create_action('broadcast-command', self.on_broadcast_command, ['<primary><shift>b'])
+        self.create_action('tab-next', self.on_tab_next, ['<Alt>Right'])
+        self.create_action('tab-prev', self.on_tab_prev, ['<Alt>Left'])
         
         # Connect to signals
         self.connect('shutdown', self.on_shutdown)
         self.connect('activate', self.on_activate)
 
-        # Ensure Ctrl+C (SIGINT) follows the SAME path as clicking the window close button
+        # Ensure Ctrl (⌘ on macOS)+C (SIGINT) follows the SAME path as clicking the window close button
         try:
             import signal
 
@@ -129,7 +156,7 @@ class SshPilotApplication(Adw.Application):
         # Create a new window if one doesn't exist
         if not self.window or not self.window.get_visible():
             from .window import MainWindow
-            self.window = MainWindow(application=app)
+            self.window = MainWindow(application=app, isolated=self.isolated_mode)
             self.window.present()
         
     def on_shutdown(self, app):
@@ -207,33 +234,43 @@ class SshPilotApplication(Adw.Application):
         self.add_action(action)
         if shortcuts:
             self.set_accels_for_action(f"app.{name}", shortcuts)
+            logging.debug(f"Registered action '{name}' with shortcuts: {shortcuts}")
+        else:
+            logging.debug(f"Registered action '{name}' without shortcuts")
+
+    def quit(self):
+        """Request application shutdown, showing confirmation if needed."""
+        win = self.props.active_window
+        if win and not getattr(win, "_is_quitting", False):
+            if win.on_close_request(win):
+                return  # dialog will handle quitting or cancellation
+        super().quit()
 
     def on_quit_action(self, action=None, param=None):
-        """Handle Ctrl+Q by closing the active window so the exact close flow runs."""
-        win = self.props.active_window
-        if win:
-            try:
-                win.close()
-                return
-            except Exception:
-                pass
-        super().quit()
+        """Handle Ctrl (⌘ on macOS)+Q by routing through the application quit path."""
+        self.quit()
 
     def do_activate(self):
         """Called when the application is activated"""
         win = self.props.active_window
         if not win:
-            win = MainWindow(application=self)
+            win = MainWindow(application=self, isolated=self.isolated_mode)
         win.present()
 
     def on_new_connection(self, action, param):
         """Handle new connection action"""
-        logging.debug("New connection action triggered")
+        logging.info("New connection action triggered (Cmd+N)")
         if self.props.active_window:
-            self.props.active_window.show_connection_dialog()
+            try:
+                self.props.active_window.show_connection_dialog()
+                logging.debug("Connection dialog shown successfully")
+            except Exception as e:
+                logging.error(f"Failed to show connection dialog: {e}")
+        else:
+            logging.warning("No active window found for new connection action")
 
     def on_open_new_connection_tab(self, action, param):
-        """Handle open new connection tab action (Ctrl+Alt+N)"""
+        """Handle open new connection tab action (Ctrl/⌘+Alt+N)"""
         logging.debug("Open new connection tab action triggered")
         if self.props.active_window:
             # Forward to the window's action
@@ -253,9 +290,23 @@ class SshPilotApplication(Adw.Application):
 
     def on_new_key(self, action, param):
         """Handle new SSH key action"""
-        logging.debug("New SSH key action triggered")
+        logging.info("New SSH key action triggered (Cmd+Shift+K)")
         if self.props.active_window:
-            self.props.active_window.on_copy_key_to_server_clicked(None)
+            try:
+                # Check if there's a selected connection
+                selected_row = self.props.active_window.connection_list.get_selected_row()
+                if not selected_row or not getattr(selected_row, "connection", None):
+                    # No connection selected, show a dialog to select one
+                    logging.info("No connection selected, showing connection selection dialog")
+                    self.props.active_window.show_connection_selection_for_ssh_copy()
+                else:
+                    # Use the selected connection
+                    self.props.active_window.on_copy_key_to_server_clicked(None)
+                logging.debug("SSH key copy dialog shown successfully")
+            except Exception as e:
+                logging.error(f"Failed to show SSH key copy dialog: {e}")
+        else:
+            logging.warning("No active window found for new SSH key action")
 
     def on_local_terminal(self, action, param):
         """Handle local terminal action"""
@@ -307,7 +358,7 @@ class SshPilotApplication(Adw.Application):
             pass
 
     def on_broadcast_command(self, action, param):
-        """Handle broadcast command action (Ctrl+Shift+B)"""
+        """Handle broadcast command action (Ctrl/⌘+Shift+B)"""
         logging.debug("Broadcast command action triggered")
         if self.props.active_window:
             # Forward to the window's action
@@ -317,8 +368,9 @@ def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description="sshPilot SSH connection manager")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose debug logging")
+    parser.add_argument("--isolated", action="store_true", help="Use isolated SSH configuration")
     args = parser.parse_args()
-    app = SshPilotApplication(verbose=args.verbose)
+    app = SshPilotApplication(verbose=args.verbose, isolated=args.isolated)
     return app.run(None)  # Pass None to use default command line arguments
 
 if __name__ == '__main__':

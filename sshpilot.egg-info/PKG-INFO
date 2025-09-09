@@ -1,3 +1,51 @@
+Metadata-Version: 2.4
+Name: sshpilot
+Version: 3.5.4
+Summary: A user-friendly, modern and lightweight SSH connection manager for Linux, with an integrated terminal
+Author-email: mFat <newmfat@gmail.com>
+Maintainer-email: mFat <newmfat@gmail.com>
+License: GPL-3.0
+Project-URL: Homepage, https://github.com/mfat/sshpilot
+Project-URL: Documentation, https://github.com/mfat/sshpilot#readme
+Project-URL: Repository, https://github.com/mfat/sshpilot.git
+Project-URL: Bug Tracker, https://github.com/mfat/sshpilot/issues
+Project-URL: Release Notes, https://github.com/mfat/sshpilot/releases
+Keywords: ssh,terminal,connection-manager,gtk,linux
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: System Administrators
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: GNU General Public License v3 (GPLv3)
+Classifier: Operating System :: POSIX :: Linux
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Topic :: System :: Networking
+Classifier: Topic :: System :: Systems Administration
+Classifier: Topic :: Terminals
+Classifier: Topic :: Desktop Environment :: GNOME
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: PyGObject>=3.42
+Requires-Dist: pycairo>=1.20.0
+Requires-Dist: paramiko>=3.4
+Requires-Dist: cryptography>=42.0
+Requires-Dist: keyring>=24.3
+Requires-Dist: psutil>=5.9.0
+Requires-Dist: secretstorage>=3.3; sys_platform == "linux"
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Requires-Dist: flake8>=6.0.0; extra == "dev"
+Requires-Dist: mypy>=1.0.0; extra == "dev"
+Requires-Dist: pre-commit>=3.0.0; extra == "dev"
+Dynamic: license-file
+
 <p align="center">
 <img width="154" height="154" alt="logo" src="https://github.com/user-attachments/assets/42b73dbf-778c-45ff-9361-22a52988f1b3" />
 </p>

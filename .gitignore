@@ -7,3 +7,9 @@ release.sh
 .DS_Store
 /dist
 /build
+/packaging/macos/build
+/.venv-system
+/.venv-system-python
+/.flatpak-builder
+/repo
+/__pycache__

@@ -5,7 +5,7 @@ from gi.repository import Gio, GLib, Adw, Gdk
 from gettext import gettext as _
 
 from .terminal import TerminalWidget
-from .preferences import is_running_in_flatpak
+from .preferences import is_running_in_flatpak, should_hide_external_terminal_options
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class TerminalManager:
                     return
 
         use_external = window.config.get_setting('use-external-terminal', False)
-        if use_external and not is_running_in_flatpak():
+        if use_external and not should_hide_external_terminal_options():
             window._open_connection_in_external_terminal(connection)
             return
         else:

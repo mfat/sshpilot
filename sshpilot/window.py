@@ -36,7 +36,7 @@ from .key_manager import KeyManager, SSHKey
 # Port forwarding UI is now integrated into connection_dialog.py
 from .connection_dialog import ConnectionDialog
 from .askpass_utils import ensure_askpass_script
-from .preferences import PreferencesWindow, is_running_in_flatpak
+from .preferences import PreferencesWindow, is_running_in_flatpak, should_hide_external_terminal_options
 from .sshcopyid_window import SshCopyIdWindow
 from .groups import GroupManager
 from .sidebar import GroupRow, ConnectionRow, build_sidebar
@@ -46,22 +46,24 @@ from .welcome_page import WelcomePage
 from .actions import WindowActions, register_window_actions
 from . import shutdown
 from .search_utils import connection_matches
+from .shortcut_utils import get_primary_modifier_label
 
 logger = logging.getLogger(__name__)
 
 class MainWindow(Adw.ApplicationWindow, WindowActions):
     """Main application window"""
-    
-    def __init__(self, *args, **kwargs):
+
+    def __init__(self, *args, isolated: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
         self.active_terminals = {}
         self.connections = []
         self._is_quitting = False  # Flag to prevent multiple quit attempts
         self._is_controlled_reconnect = False  # Flag to track controlled reconnection
-        
+
         # Initialize managers
-        self.connection_manager = ConnectionManager()
         self.config = Config()
+        effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
+        self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
         self.key_manager = KeyManager()
         self.group_manager = GroupManager(self.config)
         
@@ -309,7 +311,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Track if this is the initial startup focus
         self._is_initial_focus = True
         
-        # When list gains keyboard focus (e.g., after Ctrl+L)
+        # When list gains keyboard focus (e.g., after Ctrl/⌘+L)
         focus_ctl = Gtk.EventControllerFocus()
         def on_focus_enter(*args):
             # Don't pulse on initial startup focus
@@ -407,7 +409,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         sidebar_visible = True
         
         self.sidebar_toggle_button.set_icon_name('sidebar-show-symbolic')
-        self.sidebar_toggle_button.set_tooltip_text('Hide Sidebar (F9, Ctrl+B)')
+        self.sidebar_toggle_button.set_tooltip_text(
+            f'Hide Sidebar (F9, {get_primary_modifier_label()}+B)'
+        )
         self.sidebar_toggle_button.set_active(sidebar_visible)
         self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
         self.header_bar.pack_start(self.sidebar_toggle_button)
@@ -514,7 +518,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Add connection button
         add_button = Gtk.Button.new_from_icon_name('list-add-symbolic')
-        add_button.set_tooltip_text('Add Connection (Ctrl+N)')
+        add_button.set_tooltip_text(
+            f'Add Connection ({get_primary_modifier_label()}+N)'
+        )
         add_button.connect('clicked', self.on_add_connection_clicked)
         try:
             add_button.set_can_focus(False)
@@ -701,8 +707,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         files_row.connect('activated', lambda *_: (self.on_manage_files_action(None, None), pop.popdown()))
                         listbox.append(files_row)
 
-                        # Only show system terminal option when not in Flatpak
-                        if not is_running_in_flatpak():
+                        # Only show system terminal option when not in Flatpak or macOS
+                        if not should_hide_external_terminal_options():
                             terminal_row = Adw.ActionRow(title=_('Open in System Terminal'))
                             terminal_icon = Gtk.Image.new_from_icon_name('utilities-terminal-symbolic')
                             terminal_row.add_prefix(terminal_icon)
@@ -755,7 +761,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
         
-        # Add keyboard controller for Ctrl+Enter to open new connection
+        # Add keyboard controller for Ctrl/⌘+Enter to open new connection
         try:
             key_controller = Gtk.ShortcutController()
             key_controller.set_scope(Gtk.ShortcutScope.LOCAL)
@@ -767,17 +773,25 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         connection = selected_row.connection
                         self.terminal_manager.connect_to_host(connection, force_new=True)
                 except Exception as e:
-                    logger.error(f"Failed to open new connection with Ctrl+Enter: {e}")
+                    logger.error(
+                        f"Failed to open new connection with {get_primary_modifier_label()}+Enter: {e}"
+                    )
                 return True
             
+            import platform
+            is_macos = platform.system() == 'Darwin'
+            trigger = '<Meta>Return' if is_macos else '<Primary>Return'
+            
             key_controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string('<Control>Return'),
+                Gtk.ShortcutTrigger.parse_string(trigger),
                 Gtk.CallbackAction.new(_on_ctrl_enter)
             ))
             
             self.connection_list.add_controller(key_controller)
         except Exception as e:
-            logger.debug(f"Failed to add Ctrl+Enter shortcut: {e}")
+            logger.debug(
+                f"Failed to add {get_primary_modifier_label()}+Enter shortcut: {e}"
+            )
         
         scrolled.set_child(self.connection_list)
         sidebar_box.append(scrolled)
@@ -815,7 +829,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Copy key to server button (ssh-copy-id)
         self.copy_key_button = Gtk.Button.new_from_icon_name('dialog-password-symbolic')
-        self.copy_key_button.set_tooltip_text('Copy public key to server for passwordless login')
+        self.copy_key_button.set_tooltip_text(
+            f'Copy public key to server for passwordless login ({get_primary_modifier_label()}+Shift+K)'
+        )
         self.copy_key_button.set_sensitive(False)
         self.copy_key_button.connect('clicked', self.on_copy_key_to_server_clicked)
         self.connection_toolbar.append(self.copy_key_button)
@@ -834,8 +850,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
         self.connection_toolbar.append(self.manage_files_button)
         
-        # System terminal button (only when not in Flatpak)
-        if not is_running_in_flatpak():
+        # System terminal button (only when not in Flatpak or macOS)
+        if not should_hide_external_terminal_options():
             self.system_terminal_button = Gtk.Button.new_from_icon_name('utilities-terminal-symbolic')
             self.system_terminal_button.set_tooltip_text('Open connection in system terminal')
             self.system_terminal_button.set_sensitive(False)
@@ -1218,7 +1234,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 
                 # Show toast notification
                 toast = Adw.Toast.new(
-                    "Switched to connection list — ↑/↓ navigate, Enter open, Ctrl+Enter new tab"
+                    f"Switched to connection list — ↑/↓ navigate, Enter open, {get_primary_modifier_label()}+Enter new tab"
                 )
                 toast.set_timeout(3)  # seconds
                 if hasattr(self, 'toast_overlay'):
@@ -1269,7 +1285,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         
                         # Show toast notification
                         toast = Adw.Toast.new(
-                            "Search hidden — Ctrl+F to search again"
+                            f"Search hidden — {get_primary_modifier_label()}+F to search again"
                         )
                         toast.set_timeout(2)  # seconds
                         if hasattr(self, 'toast_overlay'):
@@ -1291,10 +1307,97 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def show_connection_dialog(self, connection: Connection = None):
         """Show connection dialog for adding/editing connections"""
         logger.info(f"Show connection dialog for: {connection}")
-        
+
+        # Refresh connection from disk to ensure latest auth method
+        if connection is not None:
+            try:
+                self.connection_manager.load_ssh_config()
+                refreshed = self.connection_manager.find_connection_by_nickname(connection.nickname)
+                if refreshed:
+                    connection = refreshed
+            except Exception:
+                pass
+
         # Create connection dialog
         dialog = ConnectionDialog(self, connection, self.connection_manager)
         dialog.connect('connection-saved', self.on_connection_saved)
+        dialog.present()
+
+    def show_connection_selection_for_ssh_copy(self):
+        """Show a dialog to select a connection for SSH key copy"""
+        logger.info("Showing connection selection dialog for SSH key copy")
+        
+        # Get all connections
+        connections = self.connection_manager.get_connections()
+        if not connections:
+            # No connections available, show new connection dialog instead
+            logger.info("No connections available, showing new connection dialog")
+            self.show_connection_dialog()
+            return
+        
+        # Create a simple selection dialog
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            modal=True,
+            heading=_("Select Server for SSH Key Copy"),
+            body=_("Choose a server to copy your SSH key to:")
+        )
+        
+        # Add a list box with connections
+        list_box = Gtk.ListBox()
+        list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        
+        for connection in connections:
+            row = Gtk.ListBoxRow()
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            
+            # Connection info
+            info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            name_label = Gtk.Label(label=connection.nickname)
+            name_label.set_halign(Gtk.Align.START)
+            name_label.set_css_classes(['title-4'])
+            
+            host_label = Gtk.Label(label=f"{connection.username}@{connection.host}:{connection.port}")
+            host_label.set_halign(Gtk.Align.START)
+            host_label.set_css_classes(['dim-label'])
+            
+            info_box.append(name_label)
+            info_box.append(host_label)
+            box.append(info_box)
+            
+            row.set_child(box)
+            row.connection = connection
+            list_box.append(row)
+        
+        # Add the list box to the dialog
+        dialog.set_extra_child(list_box)
+        
+        # Add response buttons
+        dialog.add_response('cancel', _('Cancel'))
+        dialog.add_response('new', _('New Connection'))
+        dialog.add_response('select', _('Select'))
+        dialog.set_response_appearance('new', Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_response_appearance('select', Adw.ResponseAppearance.DEFAULT)
+        
+        def on_response(dialog, response):
+            if response == 'new':
+                # Show new connection dialog
+                self.show_connection_dialog()
+            elif response == 'select':
+                # Get selected connection and proceed with SSH key copy
+                selected_row = list_box.get_selected_row()
+                if selected_row and hasattr(selected_row, 'connection'):
+                    connection = selected_row.connection
+                    logger.info(f"Selected connection for SSH key copy: {connection.nickname}")
+                    try:
+                        from .sshcopyid_window import SshCopyIdWindow
+                        win = SshCopyIdWindow(self, connection, self.key_manager, self.connection_manager)
+                        win.present()
+                    except Exception as e:
+                        logger.error(f"Failed to show SSH key copy dialog: {e}")
+            dialog.destroy()
+        
+        dialog.connect('response', on_response)
         dialog.present()
 
     # --- Helpers (use your existing ones if already present) ---------------------
@@ -1890,10 +1993,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Update button icon and tooltip
             if is_visible:
                 button.set_icon_name('sidebar-show-symbolic')
-                button.set_tooltip_text('Hide Sidebar (F9, Ctrl+B)')
+                button.set_tooltip_text(
+                    f'Hide Sidebar (F9, {get_primary_modifier_label()}+B)'
+                )
             else:
                 button.set_icon_name('sidebar-show-symbolic')
-                button.set_tooltip_text('Show Sidebar (F9, Ctrl+B)')
+                button.set_tooltip_text(
+                    f'Show Sidebar (F9, {get_primary_modifier_label()}+B)'
+                )
             
             # No need to save state - sidebar always starts visible
                 
@@ -3413,15 +3520,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         dialog.set_close_response('cancel')
         
         dialog.connect('response', self.on_quit_confirmation_response)
+        app = self.get_application()
+        if app is not None:
+            app.hold()
+
         dialog.present(self)
-    
+
     def on_quit_confirmation_response(self, dialog, response):
         """Handle quit confirmation dialog response"""
-        dialog.close()
-        
-        if response == 'quit':
-            # Start cleanup process
-            shutdown.cleanup_and_quit(self)
+        app = self.get_application()
+        try:
+            if response == 'quit':
+                # Start cleanup process
+                shutdown.cleanup_and_quit(self)
+        finally:
+            if app is not None:
+                app.release()
+            dialog.close()
+
 
 
     def on_open_new_connection_action(self, action, param=None):
@@ -3439,7 +3555,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.error(f"Failed to open new connection tab: {e}")
 
     def on_open_new_connection_tab_action(self, action, param=None):
-        """Open a new tab for the selected connection via global shortcut (Ctrl+Alt+N)."""
+        """Open a new tab for the selected connection via global shortcut (Ctrl/⌘+Alt+N)."""
         try:
             # Get the currently selected connection
             row = self.connection_list.get_selected_row()
@@ -3448,10 +3564,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.terminal_manager.connect_to_host(connection, force_new=True)
             else:
                 # If no connection is selected, show a message or fall back to new connection dialog
-                logger.debug("No connection selected for Ctrl+Alt+N, opening new connection dialog")
+                logger.debug(
+                    f"No connection selected for {get_primary_modifier_label()}+Alt+N, opening new connection dialog"
+                )
                 self.show_connection_dialog()
         except Exception as e:
-            logger.error(f"Failed to open new connection tab with Ctrl+Alt+N: {e}")
+            logger.error(
+                f"Failed to open new connection tab with {get_primary_modifier_label()}+Alt+N: {e}"
+            )
 
     def on_manage_files_action(self, action, param=None):
         """Handle manage files action from context menu"""
@@ -4540,12 +4660,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 logger.info("Editing connection '%s' - forcing update to ensure forwarding rules are synced", existing['nickname'])
 
                 logger.debug(f"Updating connection '{old_connection.nickname}'")
-                
+
+                # Ensure auth_method always present and normalized
+                try:
+                    connection_data['auth_method'] = int(connection_data.get('auth_method', getattr(old_connection, 'auth_method', 0)) or 0)
+                except Exception:
+                    connection_data['auth_method'] = 0
+
                 # Update connection in manager first
                 if not self.connection_manager.update_connection(old_connection, connection_data):
                     logger.error("Failed to update connection in SSH config")
                     return
-                
+
                 # Update connection attributes in memory (ensure forwarding rules kept)
                 old_connection.nickname = connection_data['nickname']
                 old_connection.host = connection_data['host']

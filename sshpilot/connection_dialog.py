@@ -10,6 +10,7 @@ import re
 import ipaddress
 import socket
 import subprocess
+import shlex
 from typing import Optional, Dict, Any
 
 from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
@@ -194,15 +195,16 @@ class SSHConfigEntry(GObject.Object):
 
 class SSHConfigAdvancedTab(Gtk.Box):
     """Advanced SSH Configuration Tab for GTK 4"""
-    
-    def __init__(self, connection_manager):
+
+    def __init__(self, connection_manager, parent_dialog=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self.set_margin_top(12)
         self.set_margin_bottom(12)
         self.set_margin_start(12)
         self.set_margin_end(12)
-        
+
         self.connection_manager = connection_manager
+        self.parent_dialog = parent_dialog
         
         # SSH config options list
         self.ssh_options = [
@@ -345,11 +347,16 @@ class SSHConfigAdvancedTab(Gtk.Box):
         preview_desc.add_css_class("dim-label")
         preview_desc.set_halign(Gtk.Align.START)
         preview_desc.set_wrap(True)
-        
+
         self.preview_box.append(preview_title)
         self.preview_box.append(preview_scrolled)
         self.preview_box.append(preview_desc)
-        
+
+        edit_btn = Gtk.Button(label=_("Edit SSH Config"))
+        edit_btn.set_halign(Gtk.Align.START)
+        edit_btn.connect("clicked", self.on_edit_ssh_config_clicked)
+        self.preview_box.append(edit_btn)
+
         # Always show preview
         self.append(self.preview_box)
         
@@ -479,6 +486,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
                         
                         config_data = {
                             'nickname': getattr(connection, 'nickname', 'your-host-name'),
+                            'aliases': getattr(connection, 'aliases', []),
                             'host': getattr(connection, 'host', ''),
                             'username': getattr(connection, 'username', ''),
                             'port': getattr(connection, 'port', 22),
@@ -520,7 +528,26 @@ class SSHConfigAdvancedTab(Gtk.Box):
         
         buffer = self.config_text_view.get_buffer()
         buffer.set_text(config_text)
-            
+
+    def on_edit_ssh_config_clicked(self, button):
+        """Open raw editor for the SSH config file."""
+        try:
+            from .ssh_config_editor import SSHConfigEditorWindow
+            parent = self.get_ancestor(Adw.Window)
+            editor = SSHConfigEditorWindow(parent, self.connection_manager, on_saved=self._on_editor_saved)
+            editor.present()
+        except Exception as e:
+            logger.error(f"Failed to open SSH config editor: {e}")
+
+    def _on_editor_saved(self):
+        """Refresh preview and parent dialog after editor saves."""
+        try:
+            self.update_config_preview()
+            if self.parent_dialog and hasattr(self.parent_dialog, '_refresh_connection_data_from_ssh_config'):
+                self.parent_dialog._refresh_connection_data_from_ssh_config()
+        except Exception as e:
+            logger.error(f"Error refreshing after SSH config save: {e}")
+
     def get_config_entries(self):
         """Get all valid config entries"""
         entries = []
@@ -574,7 +601,15 @@ class SSHConfigAdvancedTab(Gtk.Box):
             if selected > 0:  # Skip the first item which is "Select SSH option..."
                 model = dropdown.get_model()
                 if model and selected < model.get_n_items():
-                    return model.get_string(selected)
+                    # Gtk.DropDown models provide items as Gtk.StringObject instances in
+                    # newer GTK versions.  Some environments may return plain strings
+                    # (or other objects) instead, so fall back to ``str()`` when the
+                    # "get_string" accessor is not available.
+                    item = model.get_item(selected)
+                    getter = getattr(item, "get_string", None)
+                    if callable(getter):
+                        return getter()
+                    return str(item)
         except Exception as e:
             logger.debug(f"Error getting dropdown selected text: {e}")
         return ""
@@ -586,11 +621,15 @@ class SSHConfigAdvancedTab(Gtk.Box):
             if model:
                 logger.debug(f"Looking for option '{option_name}' in dropdown model")
                 for i in range(1, model.get_n_items()):  # Start from 1 to skip "Select SSH option..."
-                    model_string = model.get_string(i)
+                    item = model.get_item(i)
+                    getter = getattr(item, "get_string", None)
+                    model_string = getter() if callable(getter) else str(item)
                     logger.debug(f"Model item {i}: '{model_string}'")
                     # Case-insensitive comparison for SSH options
-                    if model_string.lower() == option_name.lower():
-                        logger.debug(f"Found option '{option_name}' at index {i} (matched '{model_string}')")
+                    if model_string.lower() == option_name.strip().lower():
+                        logger.debug(
+                            f"Found option '{option_name}' at index {i} (matched '{model_string}')"
+                        )
                         dropdown.set_selected(i)
                         return
                 logger.debug(f"Option '{option_name}' not found in dropdown model")
@@ -601,14 +640,59 @@ class SSHConfigAdvancedTab(Gtk.Box):
 
     def get_extra_ssh_config(self):
         """Get extra SSH config as a string for saving"""
-        entries = self.get_config_entries()
-        if not entries:
-            return ""
-            
-        config_lines = []
-        for key, value in entries:
+        config_lines: list[str] = []
+        alias_tokens: list[str] = []
+        host_rows = []
+
+        for row_grid in self.config_entries.copy():
+            try:
+                key = self._get_dropdown_selected_text(row_grid.key_dropdown)
+                value = row_grid.value_entry.get_text().strip()
+            except Exception:
+                continue
+
+            if not key or not value or key == "Select SSH option...":
+                continue
+
+            if key.lower() == "host":
+                try:
+                    alias_tokens.extend(shlex.split(value))
+                except ValueError:
+                    alias_tokens.extend(value.split())
+                host_rows.append(row_grid)
+                continue
+
             config_lines.append(f"{key} {value}")
-            
+
+        if alias_tokens:
+            try:
+                parent_dialog = self.get_ancestor(Adw.Window)
+                if parent_dialog:
+                    existing = []
+                    if hasattr(parent_dialog, 'aliases_row'):
+                        existing = parent_dialog.aliases_row.get_text().split()
+                    merged = existing + [a for a in alias_tokens if a not in existing]
+                    if hasattr(parent_dialog, 'aliases_row'):
+                        parent_dialog.aliases_row.set_text(" ".join(merged))
+                    if hasattr(parent_dialog, 'connection') and parent_dialog.connection:
+                        parent_dialog.connection.aliases = merged
+                        if hasattr(parent_dialog.connection, 'data'):
+                            parent_dialog.connection.data['aliases'] = merged
+            except Exception as e:
+                logger.error(f"Error merging Host aliases: {e}")
+
+            if host_rows:
+                def _remove_rows():
+                    for row in host_rows:
+                        try:
+                            self.on_remove_option(None, row)
+                        except Exception:
+                            pass
+                    self.update_config_preview()
+                    return False
+
+                GLib.idle_add(_remove_rows)
+
         return "\n".join(config_lines)
 
     def _update_parent_connection(self):
@@ -618,31 +702,60 @@ class SSHConfigAdvancedTab(Gtk.Box):
             if parent_dialog and hasattr(parent_dialog, 'connection') and parent_dialog.connection:
                 extra_config = self.get_extra_ssh_config()
                 parent_dialog.connection.extra_ssh_config = extra_config
-                # Also update the data dictionary
                 if hasattr(parent_dialog.connection, 'data'):
                     parent_dialog.connection.data['extra_ssh_config'] = extra_config
-                logger.debug(f"Updated parent connection with extra SSH config: {extra_config}")
+                if hasattr(parent_dialog, 'aliases_row'):
+                    aliases = parent_dialog.aliases_row.get_text().split()
+                    parent_dialog.connection.aliases = aliases
+                    if hasattr(parent_dialog.connection, 'data'):
+                        parent_dialog.connection.data['aliases'] = aliases
+                logger.debug(
+                    f"Updated parent connection with extra SSH config: {extra_config} and aliases: {parent_dialog.connection.aliases}"
+                )
         except Exception as e:
             logger.error(f"Error updating parent connection: {e}")
 
     def set_extra_ssh_config(self, config_string):
         """Set extra SSH config from a string"""
         logger.debug(f"set_extra_ssh_config called with: '{config_string}'")
-        
+
         if not config_string.strip():
             logger.debug("Config string is empty, returning")
             return
-            
+
         entries = []
+        alias_tokens: list[str] = []
         for line in config_string.split('\n'):
             line = line.strip()
             if line and not line.startswith('#'):
                 parts = line.split(' ', 1)
-                if len(parts) == 2:
-                    entries.append((parts[0].strip(), parts[1].strip()))
-                elif len(parts) == 1:
-                    entries.append((parts[0].strip(), "yes"))
-        
+                key = parts[0].strip()
+                value = parts[1].strip() if len(parts) == 2 else "yes"
+                if key.lower() == 'host':
+                    try:
+                        alias_tokens.extend(shlex.split(value))
+                    except ValueError:
+                        alias_tokens.extend(value.split())
+                else:
+                    entries.append((key, value))
+
+        if alias_tokens:
+            try:
+                parent_dialog = self.get_ancestor(Adw.Window)
+                if parent_dialog:
+                    existing = []
+                    if hasattr(parent_dialog, 'aliases_row'):
+                        existing = parent_dialog.aliases_row.get_text().split()
+                    merged = existing + [a for a in alias_tokens if a not in existing]
+                    if hasattr(parent_dialog, 'aliases_row'):
+                        parent_dialog.aliases_row.set_text(" ".join(merged))
+                    if hasattr(parent_dialog, 'connection') and parent_dialog.connection:
+                        parent_dialog.connection.aliases = merged
+                        if hasattr(parent_dialog.connection, 'data'):
+                            parent_dialog.connection.data['aliases'] = merged
+            except Exception as e:
+                logger.error(f"Error setting Host aliases: {e}")
+
         logger.debug(f"Parsed entries: {entries}")
         self.set_config_entries(entries)
         # Update preview after loading data
@@ -767,7 +880,7 @@ class ConnectionDialog(Adw.Window):
         advanced_page.set_margin_end(12)
         
         # Create the advanced tab and wrap it in a preferences group
-        self.advanced_tab = SSHConfigAdvancedTab(self.connection_manager)
+        self.advanced_tab = SSHConfigAdvancedTab(self.connection_manager, parent_dialog=self)
         advanced_group = Adw.PreferencesGroup()
         advanced_group.add(self.advanced_tab)
         advanced_page.append(advanced_group)
@@ -820,9 +933,13 @@ class ConnectionDialog(Adw.Window):
         
         shortcut_controller = Gtk.ShortcutController()
         
-        # Ctrl+S to save
+        # Ctrl/Command+S to save
+        import platform
+        is_macos = platform.system() == 'Darwin'
+        save_trigger = "<Meta>s" if is_macos else "<Primary>s"
+        
         save_shortcut = Gtk.Shortcut()
-        save_shortcut.set_trigger(Gtk.ShortcutTrigger.parse_string("<Control>s"))
+        save_shortcut.set_trigger(Gtk.ShortcutTrigger.parse_string(save_trigger))
         save_shortcut.set_action(Gtk.CallbackAction.new(
             lambda widget, args: self.on_save_clicked(None)
         ))
@@ -1088,7 +1205,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         try:
             # Ensure UI controls exist
             required_attrs = [
-                'nickname_row', 'host_row', 'username_row', 'port_row',
+                'nickname_row', 'host_row', 'aliases_row', 'username_row', 'port_row',
                 'auth_method_row', 'keyfile_row', 'password_row', 'key_passphrase_row',
                 'pubkey_auth_row'
             ]
@@ -1100,6 +1217,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self.nickname_row.set_text(self.connection.nickname or "")
             if hasattr(self.connection, 'host'):
                 self.host_row.set_text(self.connection.host or "")
+            if hasattr(self.connection, 'aliases'):
+                self.aliases_row.set_text(" ".join(self.connection.aliases or []))
             if hasattr(self.connection, 'username'):
                 self.username_row.set_text(self.connection.username or "")
             if hasattr(self.connection, 'port'):
@@ -1650,7 +1769,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             paths = []
             for k in keys:
                 try:
-                    names.append(os.path.basename(k.private_path))
+                    rel = os.path.relpath(
+                        k.private_path,
+                        str(parent.key_manager.ssh_dir) if parent else None,
+                    )
+                    names.append(rel)
                     paths.append(k.private_path)
                 except Exception:
                     pass
@@ -1914,7 +2037,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Host
         self.host_row = Adw.EntryRow(title=_("Host"))
         basic_group.add(self.host_row)
-        
+
+        # Aliases
+        self.aliases_row = Adw.EntryRow(title=_("Aliases"))
+        basic_group.add(self.aliases_row)
+
         # Username
         self.username_row = Adw.EntryRow(title=_("Username"))
         basic_group.add(self.username_row)
@@ -2696,13 +2823,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     def _open_rule_editor(self, existing_rule=None):
         """Open an Adw.Window to add/edit a forwarding rule."""
         # Create Adw.Window
-        parent_win = self.get_transient_for() if hasattr(self, 'get_transient_for') else None
         dialog = Adw.Window()
         dialog.set_title(_("Port Forwarding Rule Editor"))
         dialog.set_default_size(500, -1)  # 500px width, auto height
         dialog.set_modal(True)
-        if parent_win:
-            dialog.set_transient_for(parent_win)
+        dialog.set_transient_for(self)
 
         # Create content box
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
@@ -3229,6 +3354,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         connection_data = {
             'nickname': self.nickname_row.get_text().strip(),
             'host': self.host_row.get_text().strip(),
+            'aliases': self.aliases_row.get_text().split(),
             'username': self.username_row.get_text().strip(),
             'port': int(self.port_row.get_text().strip() or '22'),
             'auth_method': self.auth_method_row.get_selected(),
@@ -3253,6 +3379,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self.connection.data.update(connection_data)
             except Exception:
                 pass
+            self.connection.aliases = connection_data.get('aliases', [])
             # Explicitly update forwarding rules to ensure they're fresh
             self.connection.forwarding_rules = forwarding_rules
             
@@ -3450,7 +3577,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self.connection_manager.load_ssh_config()
                 
                 # Find the updated connection by nickname
-                updated_connection = self.connection_manager.get_connection_by_nickname(self.connection.nickname)
+                updated_connection = self.connection_manager.find_connection_by_nickname(self.connection.nickname)
                 if updated_connection:
                     self.connection = updated_connection
                     self.load_connection_data(self.connection) # Reload UI with new data

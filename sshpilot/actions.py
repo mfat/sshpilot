@@ -5,7 +5,8 @@ from gi.repository import Gio, Gtk, Adw, GLib
 from gettext import gettext as _
 
 from .sftp_utils import open_remote_in_file_manager
-from .preferences import is_running_in_flatpak
+from .preferences import is_running_in_flatpak, should_hide_external_terminal_options
+from .shortcut_utils import get_primary_modifier_label
 
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
 
@@ -53,7 +54,7 @@ class WindowActions:
             logger.error(f"Failed to open new connection tab: {e}")
 
     def on_open_new_connection_tab_action(self, action, param=None):
-        """Open a new tab for the selected connection via global shortcut (Ctrl+Alt+N)."""
+        """Open a new tab for the selected connection via global shortcut (Ctrl/⌘+Alt+N)."""
         try:
             # Get the currently selected connection
             row = self.connection_list.get_selected_row()
@@ -62,10 +63,17 @@ class WindowActions:
                 self.terminal_manager.connect_to_host(connection, force_new=True)
             else:
                 # If no connection is selected, show a message or fall back to new connection dialog
-                logger.debug("No connection selected for Ctrl+Alt+N, opening new connection dialog")
+                logger.debug(
+                    "No connection selected for %s+Alt+N, opening new connection dialog",
+                    get_primary_modifier_label(),
+                )
                 self.show_connection_dialog()
         except Exception as e:
-            logger.error(f"Failed to open new connection tab with Ctrl+Alt+N: {e}")
+            logger.error(
+                "Failed to open new connection tab with %s+Alt+N: %s",
+                get_primary_modifier_label(),
+                e,
+            )
 
     def on_manage_files_action(self, action, param=None):
         """Handle manage files action from context menu"""
@@ -677,7 +685,7 @@ def register_window_actions(window):
     window.open_new_connection_action.connect('activate', window.on_open_new_connection_action)
     window.add_action(window.open_new_connection_action)
 
-    # Global action for opening new connection tab (Ctrl+Alt+N)
+    # Global action for opening new connection tab (Ctrl/⌘+Alt+N)
     window.open_new_connection_tab_action = Gio.SimpleAction.new('open-new-connection-tab', None)
     window.open_new_connection_tab_action.connect('activate', window.on_open_new_connection_tab_action)
     window.add_action(window.open_new_connection_tab_action)
@@ -697,8 +705,8 @@ def register_window_actions(window):
     window.delete_connection_action.connect('activate', window.on_delete_connection_action)
     window.add_action(window.delete_connection_action)
 
-    # Action for opening connections in system terminal (only when not in Flatpak)
-    if not is_running_in_flatpak():
+    # Action for opening connections in system terminal (only when not in Flatpak or macOS)
+    if not should_hide_external_terminal_options():
         window.open_in_system_terminal_action = Gio.SimpleAction.new('open-in-system-terminal', None)
         window.open_in_system_terminal_action.connect('activate', window.on_open_in_system_terminal_action)
         window.add_action(window.open_in_system_terminal_action)
@@ -738,6 +746,9 @@ def register_window_actions(window):
         window.add_action(sidebar_action)
         app = window.get_application()
         if app:
-            app.set_accels_for_action('win.toggle_sidebar', ['F9', '<Control>b'])
+            import platform
+            is_macos = platform.system() == 'Darwin'
+            sidebar_shortcut = '<Meta>b' if is_macos else '<Primary>b'
+            app.set_accels_for_action('win.toggle_sidebar', ['F9', sidebar_shortcut])
     except Exception as e:
         logger.error(f"Failed to register sidebar toggle action: {e}")

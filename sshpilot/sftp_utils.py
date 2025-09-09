@@ -36,6 +36,19 @@ def open_remote_in_file_manager(
     progress_dialog = MountProgressDialog(user, host, parent_window)
     progress_dialog.present()
     progress_dialog.start_progress_updates()
+
+    # Skip verification for localhost
+    if host in ("localhost", "127.0.0.1"):
+        logger.info("Localhost detected, skipping SSH verification")
+        progress_dialog.update_progress(0.3, "Mounting...")
+        if is_running_in_flatpak():
+            _open_sftp_flatpak_compatible(
+                uri, user, host, port, error_callback, progress_dialog
+            )
+        else:
+            _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog)
+        return True, None
+
     progress_dialog.update_progress(0.05, "Verifying SSH connection...")
 
     def _on_verify_complete(success: bool):
@@ -197,15 +210,22 @@ def _mount_and_open_sftp(
 
 def _verify_ssh_connection(user: str, host: str, port: Optional[int]) -> bool:
     """Verify SSH connection without full mount"""
+    # Local connections are considered valid without verification
+    if host in ("localhost", "127.0.0.1"):
+        return True
+
     ssh_cmd = [
         "ssh",
         "-o",
         "ConnectTimeout=10",
         "-o",
-        "BatchMode=yes",
-        "-o",
         "StrictHostKeyChecking=accept-new",
     ]
+
+    # Only disable interactive prompts if no askpass is available
+    if not os.environ.get("SSH_ASKPASS"):
+        ssh_cmd.extend(["-o", "BatchMode=yes"])
+
     if port:
         ssh_cmd.extend(["-p", str(port)])
     ssh_cmd.extend([f"{user}@{host}", "echo", "READY"])
@@ -908,6 +928,7 @@ class MountProgressDialog(Adw.Window):
         self.is_cancelled = True
         if self.progress_timer:
             GLib.source_remove(self.progress_timer)
+            self.progress_timer = None
         self.close()
 
     def start_progress_updates(self):
@@ -944,6 +965,7 @@ class MountProgressDialog(Adw.Window):
         """Close the dialog"""
         if self.progress_timer:
             GLib.source_remove(self.progress_timer)
+            self.progress_timer = None
         self.destroy()
 
 

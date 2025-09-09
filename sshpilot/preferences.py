@@ -15,6 +15,10 @@ def is_running_in_flatpak() -> bool:
     """Check if running inside Flatpak sandbox"""
     return os.path.exists("/.flatpak-info") or os.environ.get("FLATPAK_ID") is not None
 
+def should_hide_external_terminal_options() -> bool:
+    """Check if external terminal options should be hidden (Flatpak or macOS)"""
+    return is_running_in_flatpak() or os.name == 'posix' and hasattr(os, 'uname') and os.uname().sysname == 'Darwin'
+
 class MonospaceFontDialog(Adw.Window):
     def __init__(self, parent=None, current_font="Monospace 12"):
         super().__init__()
@@ -374,8 +378,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
             appearance_group.add(preview_group)
             terminal_page.add(appearance_group)
             
-            # Preferred Terminal group (only show when not in Flatpak)
-            if not is_running_in_flatpak():
+            # Preferred Terminal group (only show when not in Flatpak or macOS)
+            if not should_hide_external_terminal_options():
                 terminal_choice_group = Adw.PreferencesGroup()
                 terminal_choice_group.set_title("Preferred Terminal")
                 
@@ -540,8 +544,51 @@ class PreferencesWindow(Adw.PreferencesWindow):
             advanced_page.set_title("Advanced")
             advanced_page.set_icon_name("applications-system-symbolic")
 
+            # Operation mode selection
+            operation_group = Adw.PreferencesGroup()
+            operation_group.set_title("Operation Mode")
+
+
+            # Default mode row
+            self.default_mode_row = Adw.ActionRow()
+            self.default_mode_row.set_title("Default Mode")
+            self.default_mode_row.set_subtitle("sshPilot loads and modifies ~/.ssh/config")
+            self.default_mode_radio = Gtk.CheckButton()
+
+
+            # Isolated mode row
+            self.isolated_mode_row = Adw.ActionRow()
+            self.isolated_mode_row.set_title("Isolated Mode")
+            self.isolated_mode_row.set_subtitle("sshPilot stores its own configuration file in ~/.config/sshpilot/")
+            self.isolated_mode_radio = Gtk.CheckButton()
+
+            # Group the radios for exclusive selection
+            self.isolated_mode_radio.set_group(self.default_mode_radio)
+
+            self.default_mode_row.add_prefix(self.default_mode_radio)
+            self.default_mode_row.set_activatable_widget(self.default_mode_radio)
+
+            operation_group.add(self.default_mode_row)
+
+            self.isolated_mode_row.add_prefix(self.isolated_mode_radio)
+            self.isolated_mode_row.set_activatable_widget(self.isolated_mode_radio)
+            operation_group.add(self.isolated_mode_row)
+
+            use_isolated = bool(self.config.get_setting('ssh.use_isolated_config', False))
+            self.isolated_mode_radio.set_active(use_isolated)
+            self.default_mode_radio.set_active(not use_isolated)
+
+            self.default_mode_radio.connect('toggled', self.on_operation_mode_toggled)
+            self.isolated_mode_radio.connect('toggled', self.on_operation_mode_toggled)
+
+            self._update_operation_mode_styles()
+
+            advanced_page.add(operation_group)
+
             advanced_group = Adw.PreferencesGroup()
             advanced_group.set_title("SSH Settings")
+
+
             # Use custom options toggle
             self.apply_advanced_row = Adw.SwitchRow()
             self.apply_advanced_row.set_title("Use custom connection options")
@@ -800,7 +847,48 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 self.debug_enabled_row.set_active(bool(defaults.get('debug_enabled', False)))
         except Exception as e:
             logger.error(f"Failed to reset advanced SSH settings: {e}")
-    
+
+    def on_operation_mode_toggled(self, button):
+        """Handle switching between default and isolated SSH modes"""
+        try:
+            if not button.get_active():
+                return
+
+            use_isolated = self.isolated_mode_radio.get_active()
+
+            self.config.set_setting('ssh.use_isolated_config', bool(use_isolated))
+
+            self._update_operation_mode_styles()
+
+            parent_window = self.get_transient_for()
+            if parent_window and hasattr(parent_window, 'connection_manager'):
+                parent_window.connection_manager.set_isolated_mode(bool(use_isolated))
+
+            # Inform user that restart is required for changes
+            if parent_window:
+                dialog = Adw.MessageDialog.new(
+                    parent_window,
+                    "Operation Mode Changed",
+                    "Restart sshPilot to apply the new operation mode"
+                )
+                dialog.add_response("ok", "OK")
+                dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+                dialog.set_modal(True)
+                dialog.set_transient_for(parent_window)
+                dialog.present()
+
+        except Exception as e:
+            logger.error(f"Failed to toggle isolated SSH mode: {e}")
+
+    def _update_operation_mode_styles(self):
+        """Visually de-emphasize the inactive operation mode"""
+        if self.isolated_mode_radio.get_active():
+            self.default_mode_row.add_css_class('dim-label')
+            self.isolated_mode_row.remove_css_class('dim-label')
+        else:
+            self.isolated_mode_row.add_css_class('dim-label')
+            self.default_mode_row.remove_css_class('dim-label')
+
     def get_theme_name_mapping(self):
         """Get mapping between display names and config keys"""
         return {
