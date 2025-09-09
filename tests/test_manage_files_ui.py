@@ -99,7 +99,7 @@ def test_manage_files_action_visible_on_other_platforms(monkeypatch):
 def test_should_hide_file_manager_options(monkeypatch):
     setup_gi(monkeypatch)
     prefs = reload_module("sshpilot.preferences")
-    monkeypatch.setattr(prefs.os, "uname", lambda: types.SimpleNamespace(sysname="Darwin"))
+    monkeypatch.setattr(prefs, "is_macos", lambda: True)
     assert prefs.should_hide_file_manager_options()
-    monkeypatch.setattr(prefs.os, "uname", lambda: types.SimpleNamespace(sysname="Linux"))
+    monkeypatch.setattr(prefs, "is_macos", lambda: False)
     assert not prefs.should_hide_file_manager_options()
