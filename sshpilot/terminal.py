@@ -16,6 +16,7 @@ import asyncio
 import threading
 import weakref
 import subprocess
+import pwd
 from datetime import datetime
 from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
 from .port_utils import get_port_checker
@@ -1248,28 +1249,27 @@ class TerminalWidget(Gtk.Box):
             # Start a simple local shell - just like GNOME Terminal
             env = os.environ.copy()
 
+            # Determine the user's preferred shell
+            shell = env.get('SHELL') or pwd.getpwuid(os.getuid()).pw_shell or '/bin/bash'
+
             # Ensure we have a proper environment
-            if 'SHELL' not in env:
-                env['SHELL'] = '/bin/bash'
+            env['SHELL'] = shell
             if 'TERM' not in env:
                 env['TERM'] = 'xterm-256color'
 
-            # Explicitly set history file to ensure persistence
-            env['HISTFILE'] = os.path.join(os.environ['HOME'], '.bash_history')
-            
             # Set initial title for local terminal
             self.emit('title-changed', 'Local Terminal')
-            
+
             # Convert environment dict to list for VTE compatibility
             env_list = []
             for key, value in env.items():
                 env_list.append(f"{key}={value}")
-            
-            # Start bash shell with login and interactive flags to load profile and history
+
+            # Start the user's shell as a login shell
             self.vte.spawn_async(
                 Vte.PtyFlags.DEFAULT,
                 os.path.expanduser('~') or '/',
-                ['/bin/bash', '--login', '-i'],
+                [shell, '-l'],
                 env_list,
                 GLib.SpawnFlags.DEFAULT,
                 None,
