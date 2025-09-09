@@ -544,8 +544,41 @@ class PreferencesWindow(Adw.PreferencesWindow):
             advanced_page.set_title("Advanced")
             advanced_page.set_icon_name("applications-system-symbolic")
 
+            # Operation mode selection
+            operation_group = Adw.PreferencesGroup()
+            operation_group.set_title("Operation Mode")
+
+            # Default mode row
+            self.default_mode_row = Adw.ActionRow()
+            self.default_mode_row.set_title("Default Mode")
+            self.default_mode_row.set_subtitle("sshPilot loads and modifies ~/.ssh/config")
+            self.default_mode_toggle = Gtk.CheckButton()
+            self.default_mode_row.add_suffix(self.default_mode_toggle)
+            self.default_mode_row.set_activatable_widget(self.default_mode_toggle)
+            operation_group.add(self.default_mode_row)
+
+            # Isolated mode row
+            self.isolated_mode_row = Adw.ActionRow()
+            self.isolated_mode_row.set_title("Isolated Mode")
+            self.isolated_mode_row.set_subtitle("sshPilot stores its own configuration file in ~/.config/sshpilot/")
+            self.isolated_mode_toggle = Gtk.CheckButton()
+            self.isolated_mode_toggle.set_group(self.default_mode_toggle)
+            self.isolated_mode_row.add_suffix(self.isolated_mode_toggle)
+            self.isolated_mode_row.set_activatable_widget(self.isolated_mode_toggle)
+            operation_group.add(self.isolated_mode_row)
+
+            use_isolated = bool(self.config.get_setting('ssh.use_isolated_config', False))
+            self.isolated_mode_toggle.set_active(use_isolated)
+            self.default_mode_toggle.set_active(not use_isolated)
+
+            self.default_mode_toggle.connect('toggled', self.on_operation_mode_toggled)
+            self.isolated_mode_toggle.connect('toggled', self.on_operation_mode_toggled)
+
+            advanced_page.add(operation_group)
+
             advanced_group = Adw.PreferencesGroup()
             advanced_group.set_title("SSH Settings")
+
             # Use custom options toggle
             self.apply_advanced_row = Adw.SwitchRow()
             self.apply_advanced_row.set_title("Use custom connection options")
@@ -804,7 +837,22 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 self.debug_enabled_row.set_active(bool(defaults.get('debug_enabled', False)))
         except Exception as e:
             logger.error(f"Failed to reset advanced SSH settings: {e}")
-    
+
+    def on_operation_mode_toggled(self, button):
+        """Handle switching between default and isolated SSH modes"""
+        try:
+            if not button.get_active():
+                return
+
+            use_isolated = button is getattr(self, 'isolated_mode_toggle', None)
+            self.config.set_setting('ssh.use_isolated_config', bool(use_isolated))
+
+            parent_window = self.get_transient_for()
+            if parent_window and hasattr(parent_window, 'connection_manager'):
+                parent_window.connection_manager.set_isolated_mode(bool(use_isolated))
+        except Exception as e:
+            logger.error(f"Failed to toggle isolated SSH mode: {e}")
+
     def get_theme_name_mapping(self):
         """Get mapping between display names and config keys"""
         return {

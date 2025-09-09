@@ -52,17 +52,18 @@ logger = logging.getLogger(__name__)
 
 class MainWindow(Adw.ApplicationWindow, WindowActions):
     """Main application window"""
-    
-    def __init__(self, *args, **kwargs):
+
+    def __init__(self, *args, isolated: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
         self.active_terminals = {}
         self.connections = []
         self._is_quitting = False  # Flag to prevent multiple quit attempts
         self._is_controlled_reconnect = False  # Flag to track controlled reconnection
-        
+
         # Initialize managers
-        self.connection_manager = ConnectionManager()
         self.config = Config()
+        effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
+        self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
         self.key_manager = KeyManager()
         self.group_manager = GroupManager(self.config)
         

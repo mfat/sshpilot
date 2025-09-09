@@ -46,7 +46,7 @@ from .window import MainWindow
 class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
 
-    def __init__(self, verbose: bool = False):
+    def __init__(self, verbose: bool = False, isolated: bool = False):
         super().__init__(
             application_id='io.github.mfat.sshpilot',
             flags=Gio.ApplicationFlags.FLAGS_NONE
@@ -70,8 +70,9 @@ class SshPilotApplication(Adw.Application):
                 style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
             else:
                 style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+            self.isolated_mode = isolated or bool(cfg.get_setting('ssh.use_isolated_config', False))
         except Exception:
-            pass
+            self.isolated_mode = isolated
         
         # Create actions with keyboard shortcuts
         # Use platform-specific shortcuts for better macOS compatibility
@@ -155,7 +156,7 @@ class SshPilotApplication(Adw.Application):
         # Create a new window if one doesn't exist
         if not self.window or not self.window.get_visible():
             from .window import MainWindow
-            self.window = MainWindow(application=app)
+            self.window = MainWindow(application=app, isolated=self.isolated_mode)
             self.window.present()
         
     def on_shutdown(self, app):
@@ -253,7 +254,7 @@ class SshPilotApplication(Adw.Application):
         """Called when the application is activated"""
         win = self.props.active_window
         if not win:
-            win = MainWindow(application=self)
+            win = MainWindow(application=self, isolated=self.isolated_mode)
         win.present()
 
     def on_new_connection(self, action, param):
@@ -367,8 +368,9 @@ def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description="sshPilot SSH connection manager")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose debug logging")
+    parser.add_argument("--isolated", action="store_true", help="Use isolated SSH configuration")
     args = parser.parse_args()
-    app = SshPilotApplication(verbose=args.verbose)
+    app = SshPilotApplication(verbose=args.verbose, isolated=args.isolated)
     return app.run(None)  # Pass None to use default command line arguments
 
 if __name__ == '__main__':
