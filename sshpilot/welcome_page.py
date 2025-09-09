@@ -6,6 +6,8 @@ gi.require_version('Gtk', '4.0')
 
 from gi.repository import Gtk, Gdk
 
+from .shortcut_utils import get_primary_modifier_label
+
 
 class WelcomePage(Gtk.Box):
     """Welcome page shown when no tabs are open."""
@@ -45,17 +47,18 @@ class WelcomePage(Gtk.Box):
         shortcuts_title.set_markup('<b>Keyboard Shortcuts</b>')
         shortcuts_box.append(shortcuts_title)
 
+        primary = get_primary_modifier_label()
         shortcuts = [
-            ('Ctrl+N', 'New Connection'),
-            ('Ctrl+Alt+N', 'Open  Selected Host in a New Tab'),
+            (f'{primary}+N', 'New Connection'),
+            (f'{primary}+Alt+N', 'Open  Selected Host in a New Tab'),
             ('F9', 'Toggle Sidebar'),
-            ('Ctrl+L', 'Focus connection list to select server'),
-            ('Ctrl+Shift+K', 'Copy SSH Key to Server'),
+            (f'{primary}+L', 'Focus connection list to select server'),
+            (f'{primary}+Shift+K', 'Copy SSH Key to Server'),
             ('Alt+Right', 'Next Tab'),
             ('Alt+Left', 'Previous Tab'),
-            ('Ctrl+F4', 'Close Tab'),
-            ('Ctrl+Shift+T', 'New Local Terminal'),
-            ('Ctrl+,', 'Preferences'),
+            (f'{primary}+F4', 'Close Tab'),
+            (f'{primary}+Shift+T', 'New Local Terminal'),
+            (f'{primary}+,', 'Preferences'),
         ]
 
         for shortcut, description in shortcuts:

@@ -46,6 +46,7 @@ from .welcome_page import WelcomePage
 from .actions import WindowActions, register_window_actions
 from . import shutdown
 from .search_utils import connection_matches
+from .shortcut_utils import get_primary_modifier_label
 
 logger = logging.getLogger(__name__)
 
@@ -309,7 +310,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Track if this is the initial startup focus
         self._is_initial_focus = True
         
-        # When list gains keyboard focus (e.g., after Ctrl+L)
+        # When list gains keyboard focus (e.g., after Ctrl/⌘+L)
         focus_ctl = Gtk.EventControllerFocus()
         def on_focus_enter(*args):
             # Don't pulse on initial startup focus
@@ -407,7 +408,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         sidebar_visible = True
         
         self.sidebar_toggle_button.set_icon_name('sidebar-show-symbolic')
-        self.sidebar_toggle_button.set_tooltip_text('Hide Sidebar (F9, Ctrl/Command+B)')
+        self.sidebar_toggle_button.set_tooltip_text(
+            f'Hide Sidebar (F9, {get_primary_modifier_label()}+B)'
+        )
         self.sidebar_toggle_button.set_active(sidebar_visible)
         self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
         self.header_bar.pack_start(self.sidebar_toggle_button)
@@ -514,7 +517,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Add connection button
         add_button = Gtk.Button.new_from_icon_name('list-add-symbolic')
-        add_button.set_tooltip_text('Add Connection (Ctrl+N)')
+        add_button.set_tooltip_text(
+            f'Add Connection ({get_primary_modifier_label()}+N)'
+        )
         add_button.connect('clicked', self.on_add_connection_clicked)
         try:
             add_button.set_can_focus(False)
@@ -755,7 +760,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
         
-        # Add keyboard controller for Ctrl/Command+Enter to open new connection
+        # Add keyboard controller for Ctrl/⌘+Enter to open new connection
         try:
             key_controller = Gtk.ShortcutController()
             key_controller.set_scope(Gtk.ShortcutScope.LOCAL)
@@ -767,7 +772,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         connection = selected_row.connection
                         self.terminal_manager.connect_to_host(connection, force_new=True)
                 except Exception as e:
-                    logger.error(f"Failed to open new connection with Ctrl/Command+Enter: {e}")
+                    logger.error(
+                        f"Failed to open new connection with {get_primary_modifier_label()}+Enter: {e}"
+                    )
                 return True
             
             key_controller.add_shortcut(Gtk.Shortcut.new(
@@ -777,7 +784,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             self.connection_list.add_controller(key_controller)
         except Exception as e:
-            logger.debug(f"Failed to add Ctrl/Command+Enter shortcut: {e}")
+            logger.debug(
+                f"Failed to add {get_primary_modifier_label()}+Enter shortcut: {e}"
+            )
         
         scrolled.set_child(self.connection_list)
         sidebar_box.append(scrolled)
@@ -1218,7 +1227,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 
                 # Show toast notification
                 toast = Adw.Toast.new(
-                    "Switched to connection list — ↑/↓ navigate, Enter open, Ctrl/Command+Enter new tab"
+                    f"Switched to connection list — ↑/↓ navigate, Enter open, {get_primary_modifier_label()}+Enter new tab"
                 )
                 toast.set_timeout(3)  # seconds
                 if hasattr(self, 'toast_overlay'):
@@ -1269,7 +1278,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         
                         # Show toast notification
                         toast = Adw.Toast.new(
-                            "Search hidden — Ctrl+F to search again"
+                            f"Search hidden — {get_primary_modifier_label()}+F to search again"
                         )
                         toast.set_timeout(2)  # seconds
                         if hasattr(self, 'toast_overlay'):
@@ -1900,10 +1909,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Update button icon and tooltip
             if is_visible:
                 button.set_icon_name('sidebar-show-symbolic')
-                button.set_tooltip_text('Hide Sidebar (F9, Ctrl/Command+B)')
+                button.set_tooltip_text(
+                    f'Hide Sidebar (F9, {get_primary_modifier_label()}+B)'
+                )
             else:
                 button.set_icon_name('sidebar-show-symbolic')
-                button.set_tooltip_text('Show Sidebar (F9, Ctrl/Command+B)')
+                button.set_tooltip_text(
+                    f'Show Sidebar (F9, {get_primary_modifier_label()}+B)'
+                )
             
             # No need to save state - sidebar always starts visible
                 
@@ -3458,7 +3471,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.error(f"Failed to open new connection tab: {e}")
 
     def on_open_new_connection_tab_action(self, action, param=None):
-        """Open a new tab for the selected connection via global shortcut (Ctrl+Alt+N)."""
+        """Open a new tab for the selected connection via global shortcut (Ctrl/⌘+Alt+N)."""
         try:
             # Get the currently selected connection
             row = self.connection_list.get_selected_row()
@@ -3467,10 +3480,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.terminal_manager.connect_to_host(connection, force_new=True)
             else:
                 # If no connection is selected, show a message or fall back to new connection dialog
-                logger.debug("No connection selected for Ctrl+Alt+N, opening new connection dialog")
+                logger.debug(
+                    f"No connection selected for {get_primary_modifier_label()}+Alt+N, opening new connection dialog"
+                )
                 self.show_connection_dialog()
         except Exception as e:
-            logger.error(f"Failed to open new connection tab with Ctrl+Alt+N: {e}")
+            logger.error(
+                f"Failed to open new connection tab with {get_primary_modifier_label()}+Alt+N: {e}"
+            )
 
     def on_manage_files_action(self, action, param=None):
         """Handle manage files action from context menu"""
