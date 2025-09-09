@@ -407,7 +407,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         sidebar_visible = True
         
         self.sidebar_toggle_button.set_icon_name('sidebar-show-symbolic')
-        self.sidebar_toggle_button.set_tooltip_text('Hide Sidebar (F9, Ctrl+B)')
+        self.sidebar_toggle_button.set_tooltip_text('Hide Sidebar (F9, Ctrl/Command+B)')
         self.sidebar_toggle_button.set_active(sidebar_visible)
         self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
         self.header_bar.pack_start(self.sidebar_toggle_button)
@@ -755,7 +755,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
         
-        # Add keyboard controller for Ctrl+Enter to open new connection
+        # Add keyboard controller for Ctrl/Command+Enter to open new connection
         try:
             key_controller = Gtk.ShortcutController()
             key_controller.set_scope(Gtk.ShortcutScope.LOCAL)
@@ -767,17 +767,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         connection = selected_row.connection
                         self.terminal_manager.connect_to_host(connection, force_new=True)
                 except Exception as e:
-                    logger.error(f"Failed to open new connection with Ctrl+Enter: {e}")
+                    logger.error(f"Failed to open new connection with Ctrl/Command+Enter: {e}")
                 return True
             
             key_controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string('<Control>Return'),
+                Gtk.ShortcutTrigger.parse_string('<Primary>Return'),
                 Gtk.CallbackAction.new(_on_ctrl_enter)
             ))
             
             self.connection_list.add_controller(key_controller)
         except Exception as e:
-            logger.debug(f"Failed to add Ctrl+Enter shortcut: {e}")
+            logger.debug(f"Failed to add Ctrl/Command+Enter shortcut: {e}")
         
         scrolled.set_child(self.connection_list)
         sidebar_box.append(scrolled)
@@ -1218,7 +1218,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 
                 # Show toast notification
                 toast = Adw.Toast.new(
-                    "Switched to connection list — ↑/↓ navigate, Enter open, Ctrl+Enter new tab"
+                    "Switched to connection list — ↑/↓ navigate, Enter open, Ctrl/Command+Enter new tab"
                 )
                 toast.set_timeout(3)  # seconds
                 if hasattr(self, 'toast_overlay'):
@@ -1900,10 +1900,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Update button icon and tooltip
             if is_visible:
                 button.set_icon_name('sidebar-show-symbolic')
-                button.set_tooltip_text('Hide Sidebar (F9, Ctrl+B)')
+                button.set_tooltip_text('Hide Sidebar (F9, Ctrl/Command+B)')
             else:
                 button.set_icon_name('sidebar-show-symbolic')
-                button.set_tooltip_text('Show Sidebar (F9, Ctrl+B)')
+                button.set_tooltip_text('Show Sidebar (F9, Ctrl/Command+B)')
             
             # No need to save state - sidebar always starts visible
                 
