@@ -1303,6 +1303,20 @@ class TerminalWidget(Gtk.Box):
             act_selall = Gio.SimpleAction.new("select_all", None)
             act_selall.connect("activate", lambda a, p: self.select_all())
             self._menu_actions.add_action(act_selall)
+            
+            # Add zoom actions
+            act_zoom_in = Gio.SimpleAction.new("zoom_in", None)
+            act_zoom_in.connect("activate", lambda a, p: self.zoom_in())
+            self._menu_actions.add_action(act_zoom_in)
+            
+            act_zoom_out = Gio.SimpleAction.new("zoom_out", None)
+            act_zoom_out.connect("activate", lambda a, p: self.zoom_out())
+            self._menu_actions.add_action(act_zoom_out)
+            
+            act_reset_zoom = Gio.SimpleAction.new("reset_zoom", None)
+            act_reset_zoom.connect("activate", lambda a, p: self.reset_zoom())
+            self._menu_actions.add_action(act_reset_zoom)
+            
             self.insert_action_group('term', self._menu_actions)
 
             # Menu model with keyboard shortcuts
@@ -1314,10 +1328,18 @@ class TerminalWidget(Gtk.Box):
                 self._menu_model.append(_("Copy\t⌘C"), "term.copy")
                 self._menu_model.append(_("Paste\t⌘V"), "term.paste")
                 self._menu_model.append(_("Select All\t⌘A"), "term.select_all")
+                self._menu_model.append_separator()
+                self._menu_model.append(_("Zoom In\t⌘="), "term.zoom_in")
+                self._menu_model.append(_("Zoom Out\t⌘-"), "term.zoom_out")
+                self._menu_model.append(_("Reset Zoom\t⌘0"), "term.reset_zoom")
             else:
                 self._menu_model.append(_("Copy\tCtrl+Shift+C"), "term.copy")
                 self._menu_model.append(_("Paste\tCtrl+Shift+V"), "term.paste")
                 self._menu_model.append(_("Select All\tCtrl+Shift+A"), "term.select_all")
+                self._menu_model.append_separator()
+                self._menu_model.append(_("Zoom In\tCtrl++"), "term.zoom_in")
+                self._menu_model.append(_("Zoom Out\tCtrl+-"), "term.zoom_out")
+                self._menu_model.append(_("Reset Zoom\tCtrl+0"), "term.reset_zoom")
 
             # Popover
             self._menu_popover = Gtk.PopoverMenu.new_from_model(self._menu_model)
@@ -1410,9 +1432,102 @@ class TerminalWidget(Gtk.Box):
                 Gtk.CallbackAction.new(_cb_select_all)
             ))
             
+            # Add zoom shortcuts
+            if is_macos:
+                # macOS: Use Cmd+= (equals key), Cmd+-, and Cmd+0 for zoom
+                # Note: On macOS, Cmd+Shift+= is the same as Cmd+=
+                zoom_in_trigger = "<Meta>equal"
+                zoom_out_trigger = "<Meta>minus"
+                zoom_reset_trigger = "<Meta>0"
+            else:
+                # Linux/Windows: Use Ctrl++, Ctrl+-, and Ctrl+0 for zoom
+                zoom_in_trigger = "<Primary>plus"
+                zoom_out_trigger = "<Primary>minus"
+                zoom_reset_trigger = "<Primary>0"
+            
+            def _cb_zoom_in(widget, *args):
+                try:
+                    self.zoom_in()
+                except Exception:
+                    pass
+                return True
+            
+            def _cb_zoom_out(widget, *args):
+                try:
+                    self.zoom_out()
+                except Exception:
+                    pass
+                return True
+            
+            def _cb_reset_zoom(widget, *args):
+                try:
+                    self.reset_zoom()
+                except Exception:
+                    pass
+                return True
+            
+            controller.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string(zoom_in_trigger),
+                Gtk.CallbackAction.new(_cb_zoom_in)
+            ))
+            
+            controller.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string(zoom_out_trigger),
+                Gtk.CallbackAction.new(_cb_zoom_out)
+            ))
+            
+            controller.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string(zoom_reset_trigger),
+                Gtk.CallbackAction.new(_cb_reset_zoom)
+            ))
+            
             self.vte.add_controller(controller)
+            
+            # Add mouse wheel zoom functionality
+            self._setup_mouse_wheel_zoom()
+            
         except Exception as e:
             logger.debug(f"Failed to install shortcuts: {e}")
+    
+    def _setup_mouse_wheel_zoom(self):
+        """Set up mouse wheel zoom functionality with Cmd+MouseWheel"""
+        try:
+            import platform
+            is_macos = platform.system() == 'Darwin'
+            
+            scroll_controller = Gtk.EventControllerScroll()
+            scroll_controller.set_flags(Gtk.EventControllerScrollFlags.VERTICAL)
+            
+            def _on_scroll(controller, dx, dy):
+                try:
+                    # Check if Command key (macOS) or Ctrl key (Linux/Windows) is pressed
+                    modifiers = controller.get_current_event_state()
+                    if is_macos:
+                        # Check for Command key (Meta modifier)
+                        if modifiers & Gdk.ModifierType.META_MASK:
+                            if dy > 0:
+                                self.zoom_out()
+                            elif dy < 0:
+                                self.zoom_in()
+                            return True  # Consume the event
+                    else:
+                        # Check for Ctrl key
+                        if modifiers & Gdk.ModifierType.CONTROL_MASK:
+                            if dy > 0:
+                                self.zoom_out()
+                            elif dy < 0:
+                                self.zoom_in()
+                            return True  # Consume the event
+                except Exception as e:
+                    logger.debug(f"Error in mouse wheel zoom: {e}")
+                return False  # Don't consume the event if modifier not pressed
+            
+            scroll_controller.connect('scroll', _on_scroll)
+            self.vte.add_controller(scroll_controller)
+            logger.debug("Mouse wheel zoom functionality installed")
+            
+        except Exception as e:
+            logger.debug(f"Failed to setup mouse wheel zoom: {e}")
             
     # PTY forwarding is now handled automatically by VTE
     # No need for manual PTY management in this implementation
@@ -1979,6 +2094,34 @@ class TerminalWidget(Gtk.Box):
     def select_all(self):
         """Select all text in terminal"""
         self.vte.select_all()
+
+    def zoom_in(self):
+        """Zoom in the terminal font"""
+        try:
+            current_scale = self.vte.get_font_scale()
+            new_scale = min(current_scale + 0.1, 5.0)  # Max zoom 5x
+            self.vte.set_font_scale(new_scale)
+            logger.debug(f"Terminal zoomed in to {new_scale:.1f}x")
+        except Exception as e:
+            logger.error(f"Failed to zoom in terminal: {e}")
+
+    def zoom_out(self):
+        """Zoom out the terminal font"""
+        try:
+            current_scale = self.vte.get_font_scale()
+            new_scale = max(current_scale - 0.1, 0.5)  # Min zoom 0.5x
+            self.vte.set_font_scale(new_scale)
+            logger.debug(f"Terminal zoomed out to {new_scale:.1f}x")
+        except Exception as e:
+            logger.error(f"Failed to zoom out terminal: {e}")
+
+    def reset_zoom(self):
+        """Reset terminal zoom to default (1.0x)"""
+        try:
+            self.vte.set_font_scale(1.0)
+            logger.debug("Terminal zoom reset to 1.0x")
+        except Exception as e:
+            logger.error(f"Failed to reset terminal zoom: {e}")
 
     def reset_terminal(self):
         """Reset terminal"""
