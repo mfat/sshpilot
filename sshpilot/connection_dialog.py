@@ -194,15 +194,16 @@ class SSHConfigEntry(GObject.Object):
 
 class SSHConfigAdvancedTab(Gtk.Box):
     """Advanced SSH Configuration Tab for GTK 4"""
-    
-    def __init__(self, connection_manager):
+
+    def __init__(self, connection_manager, parent_dialog=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self.set_margin_top(12)
         self.set_margin_bottom(12)
         self.set_margin_start(12)
         self.set_margin_end(12)
-        
+
         self.connection_manager = connection_manager
+        self.parent_dialog = parent_dialog
         
         # SSH config options list
         self.ssh_options = [
@@ -345,11 +346,16 @@ class SSHConfigAdvancedTab(Gtk.Box):
         preview_desc.add_css_class("dim-label")
         preview_desc.set_halign(Gtk.Align.START)
         preview_desc.set_wrap(True)
-        
+
         self.preview_box.append(preview_title)
         self.preview_box.append(preview_scrolled)
         self.preview_box.append(preview_desc)
-        
+
+        edit_btn = Gtk.Button(label=_("Edit SSH Config"))
+        edit_btn.set_halign(Gtk.Align.START)
+        edit_btn.connect("clicked", self.on_edit_ssh_config_clicked)
+        self.preview_box.append(edit_btn)
+
         # Always show preview
         self.append(self.preview_box)
         
@@ -520,7 +526,26 @@ class SSHConfigAdvancedTab(Gtk.Box):
         
         buffer = self.config_text_view.get_buffer()
         buffer.set_text(config_text)
-            
+
+    def on_edit_ssh_config_clicked(self, button):
+        """Open raw editor for the SSH config file."""
+        try:
+            from .ssh_config_editor import SSHConfigEditorWindow
+            parent = self.get_ancestor(Adw.Window)
+            editor = SSHConfigEditorWindow(parent, self.connection_manager, on_saved=self._on_editor_saved)
+            editor.present()
+        except Exception as e:
+            logger.error(f"Failed to open SSH config editor: {e}")
+
+    def _on_editor_saved(self):
+        """Refresh preview and parent dialog after editor saves."""
+        try:
+            self.update_config_preview()
+            if self.parent_dialog and hasattr(self.parent_dialog, '_refresh_connection_data_from_ssh_config'):
+                self.parent_dialog._refresh_connection_data_from_ssh_config()
+        except Exception as e:
+            logger.error(f"Error refreshing after SSH config save: {e}")
+
     def get_config_entries(self):
         """Get all valid config entries"""
         entries = []
@@ -779,7 +804,7 @@ class ConnectionDialog(Adw.Window):
         advanced_page.set_margin_end(12)
         
         # Create the advanced tab and wrap it in a preferences group
-        self.advanced_tab = SSHConfigAdvancedTab(self.connection_manager)
+        self.advanced_tab = SSHConfigAdvancedTab(self.connection_manager, parent_dialog=self)
         advanced_group = Adw.PreferencesGroup()
         advanced_group.add(self.advanced_tab)
         advanced_page.append(advanced_group)
