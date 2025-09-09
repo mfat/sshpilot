@@ -1247,12 +1247,15 @@ class TerminalWidget(Gtk.Box):
             
             # Start a simple local shell - just like GNOME Terminal
             env = os.environ.copy()
-            
+
             # Ensure we have a proper environment
             if 'SHELL' not in env:
                 env['SHELL'] = '/bin/bash'
             if 'TERM' not in env:
                 env['TERM'] = 'xterm-256color'
+
+            # Explicitly set history file to ensure persistence
+            env['HISTFILE'] = os.path.join(os.environ['HOME'], '.bash_history')
             
             # Set initial title for local terminal
             self.emit('title-changed', 'Local Terminal')
@@ -1262,11 +1265,11 @@ class TerminalWidget(Gtk.Box):
             for key, value in env.items():
                 env_list.append(f"{key}={value}")
             
-            # Start bash shell
+            # Start bash shell with login and interactive flags to load profile and history
             self.vte.spawn_async(
                 Vte.PtyFlags.DEFAULT,
                 os.path.expanduser('~') or '/',
-                ['bash'],
+                ['/bin/bash', '--login', '-i'],
                 env_list,
                 GLib.SpawnFlags.DEFAULT,
                 None,
