@@ -114,7 +114,7 @@ python3 run.py --verbose
 ## Keyboard/mouse navigation and shortcuts
 
 sshPilot is easy to navigate with keyboard. When the app starts up, just press enter to connect to the first host in the list. You can do the same thing by double-clicking the host.
-Press ctrl+L to quickly switch between hosts, close tabs with ctrl+F4 and switch tabs with alt+right/left arrow.
+Press Ctrl (⌘ on macOS)+L to quickly switch between hosts, close tabs with Ctrl (⌘)+F4 and switch tabs with Alt+Right/Left arrow.
 If you have multiple connections to a single host, doble-clicking the host will cycle through all its open tabs.
 
 ## Special Thanks
