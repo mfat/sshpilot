@@ -87,7 +87,7 @@ class SshPilotApplication(Adw.Application):
         # Tab navigation accelerators
         self.create_action('tab-next', self.on_tab_next, ['<alt>Right'])
         self.create_action('tab-prev', self.on_tab_prev, ['<alt>Left'])
-        # Close tab accelerator (use Ctrl+F4 to avoid conflicts with TUI editors like nano/vim)
+        # Close tab accelerator (use Ctrl or ⌘+F4 to avoid conflicts with TUI editors like nano/vim)
         self.create_action('tab-close', self.on_tab_close, ['<primary>F4'])
         # Broadcast command to all SSH terminals
         self.create_action('broadcast-command', self.on_broadcast_command, ['<primary><shift>b'])
@@ -96,7 +96,7 @@ class SshPilotApplication(Adw.Application):
         self.connect('shutdown', self.on_shutdown)
         self.connect('activate', self.on_activate)
 
-        # Ensure Ctrl+C (SIGINT) follows the SAME path as clicking the window close button
+        # Ensure Ctrl (⌘ on macOS)+C (SIGINT) follows the SAME path as clicking the window close button
         try:
             import signal
 
@@ -217,7 +217,7 @@ class SshPilotApplication(Adw.Application):
         super().quit()
 
     def on_quit_action(self, action=None, param=None):
-        """Handle Ctrl+Q by routing through the application quit path."""
+        """Handle Ctrl (⌘ on macOS)+Q by routing through the application quit path."""
         self.quit()
 
     def do_activate(self):
@@ -234,7 +234,7 @@ class SshPilotApplication(Adw.Application):
             self.props.active_window.show_connection_dialog()
 
     def on_open_new_connection_tab(self, action, param):
-        """Handle open new connection tab action (Ctrl+Alt+N)"""
+        """Handle open new connection tab action (Ctrl/⌘+Alt+N)"""
         logging.debug("Open new connection tab action triggered")
         if self.props.active_window:
             # Forward to the window's action
@@ -308,7 +308,7 @@ class SshPilotApplication(Adw.Application):
             pass
 
     def on_broadcast_command(self, action, param):
-        """Handle broadcast command action (Ctrl+Shift+B)"""
+        """Handle broadcast command action (Ctrl/⌘+Shift+B)"""
         logging.debug("Broadcast command action triggered")
         if self.props.active_window:
             # Forward to the window's action
