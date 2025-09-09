@@ -42,6 +42,7 @@ if not load_resources():
     sys.exit(1)
 
 from .window import MainWindow
+from .platform_utils import is_macos
 
 class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
@@ -76,10 +77,9 @@ class SshPilotApplication(Adw.Application):
         
         # Create actions with keyboard shortcuts
         # Use platform-specific shortcuts for better macOS compatibility
-        import platform
-        is_macos = platform.system() == 'Darwin'
-        
-        if is_macos:
+        mac = is_macos()
+
+        if mac:
             # macOS-specific shortcuts using Meta key (Command key)
             self.create_action('quit', self.on_quit_action, ['<Meta>q'])
             self.create_action('new-connection', self.on_new_connection, ['<Meta>n'])
@@ -102,7 +102,7 @@ class SshPilotApplication(Adw.Application):
         logging.info("Registered keyboard shortcuts:")
         logging.info("  Cmd+N: new-connection")
         logging.info("  Cmd+Shift+K: new-key")
-        if is_macos:
+        if mac:
             self.create_action('local-terminal', self.on_local_terminal, ['<Meta><Shift>t'])
             self.create_action('preferences', self.on_preferences, ['<Meta>comma'])
             self.create_action('tab-close', self.on_tab_close, ['<Meta>F4'])

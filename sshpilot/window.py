@@ -52,6 +52,7 @@ from .actions import WindowActions, register_window_actions
 from . import shutdown
 from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
+from .platform_utils import is_macos
 
 logger = logging.getLogger(__name__)
 
@@ -784,9 +785,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     )
                 return True
             
-            import platform
-            is_macos = platform.system() == 'Darwin'
-            trigger = '<Meta>Return' if is_macos else '<Primary>Return'
+            trigger = '<Meta>Return' if is_macos() else '<Primary>Return'
             
             key_controller.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string(trigger),
