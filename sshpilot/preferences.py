@@ -555,6 +555,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.default_mode_row.set_subtitle("sshPilot loads and modifies ~/.ssh/config")
             self.default_mode_radio = Gtk.CheckButton()
 
+
             # Isolated mode row
             self.isolated_mode_row = Adw.ActionRow()
             self.isolated_mode_row.set_title("Isolated Mode")
@@ -566,6 +567,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
 
             self.default_mode_row.add_prefix(self.default_mode_radio)
             self.default_mode_row.set_activatable_widget(self.default_mode_radio)
+
             operation_group.add(self.default_mode_row)
 
             self.isolated_mode_row.add_prefix(self.isolated_mode_radio)
@@ -853,6 +855,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 return
 
             use_isolated = self.isolated_mode_radio.get_active()
+
             self.config.set_setting('ssh.use_isolated_config', bool(use_isolated))
 
             self._update_operation_mode_styles()
