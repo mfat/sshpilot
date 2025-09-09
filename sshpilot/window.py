@@ -1320,6 +1320,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Create connection dialog
         dialog = ConnectionDialog(self, connection, self.connection_manager)
         dialog.connect("close-request", lambda *a: (self.present(), False)[1])
+
         dialog.connect('connection-saved', self.on_connection_saved)
         dialog.present()
 
