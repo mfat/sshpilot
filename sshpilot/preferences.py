@@ -19,6 +19,11 @@ def should_hide_external_terminal_options() -> bool:
     """Check if external terminal options should be hidden (Flatpak or macOS)"""
     return is_running_in_flatpak() or os.name == 'posix' and hasattr(os, 'uname') and os.uname().sysname == 'Darwin'
 
+
+def should_hide_file_manager_options() -> bool:
+    """Check if file manager options should be hidden (macOS)"""
+    return os.name == 'posix' and hasattr(os, 'uname') and os.uname().sysname == 'Darwin'
+
 class MonospaceFontDialog(Adw.Window):
     def __init__(self, parent=None, current_font="Monospace 12"):
         super().__init__()

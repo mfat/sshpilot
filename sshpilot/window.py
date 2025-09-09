@@ -36,7 +36,12 @@ from .key_manager import KeyManager, SSHKey
 # Port forwarding UI is now integrated into connection_dialog.py
 from .connection_dialog import ConnectionDialog
 from .askpass_utils import ensure_askpass_script
-from .preferences import PreferencesWindow, is_running_in_flatpak, should_hide_external_terminal_options
+from .preferences import (
+    PreferencesWindow,
+    is_running_in_flatpak,
+    should_hide_external_terminal_options,
+    should_hide_file_manager_options,
+)
 from .sshcopyid_window import SshCopyIdWindow
 from .groups import GroupManager
 from .sidebar import GroupRow, ConnectionRow, build_sidebar
@@ -700,12 +705,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         listbox.append(edit_row)
 
                         # Manage Files row
-                        files_row = Adw.ActionRow(title=_('Manage Files'))
-                        files_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
-                        files_row.add_prefix(files_icon)
-                        files_row.set_activatable(True)
-                        files_row.connect('activated', lambda *_: (self.on_manage_files_action(None, None), pop.popdown()))
-                        listbox.append(files_row)
+                        if not should_hide_file_manager_options():
+                            files_row = Adw.ActionRow(title=_('Manage Files'))
+                            files_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+                            files_row.add_prefix(files_icon)
+                            files_row.set_activatable(True)
+                            files_row.connect('activated', lambda *_: (self.on_manage_files_action(None, None), pop.popdown()))
+                            listbox.append(files_row)
 
                         # Only show system terminal option when not in Flatpak or macOS
                         if not should_hide_external_terminal_options():
@@ -844,11 +850,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_toolbar.append(self.upload_button)
 
         # Manage files button
-        self.manage_files_button = Gtk.Button.new_from_icon_name('folder-symbolic')
-        self.manage_files_button.set_tooltip_text('Open file manager for remote server')
-        self.manage_files_button.set_sensitive(False)
-        self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
-        self.connection_toolbar.append(self.manage_files_button)
+        if not should_hide_file_manager_options():
+            self.manage_files_button = Gtk.Button.new_from_icon_name('folder-symbolic')
+            self.manage_files_button.set_tooltip_text('Open file manager for remote server')
+            self.manage_files_button.set_sensitive(False)
+            self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
+            self.connection_toolbar.append(self.manage_files_button)
         
         # System terminal button (only when not in Flatpak or macOS)
         if not should_hide_external_terminal_options():
