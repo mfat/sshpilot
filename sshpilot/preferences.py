@@ -546,6 +546,12 @@ class PreferencesWindow(Adw.PreferencesWindow):
 
             advanced_group = Adw.PreferencesGroup()
             advanced_group.set_title("SSH Settings")
+
+            self.isolated_config_row = Adw.SwitchRow()
+            self.isolated_config_row.set_title("Use isolated SSH configuration")
+            self.isolated_config_row.set_active(bool(self.config.get_setting('ssh.use_isolated_config', False)))
+            self.isolated_config_row.connect('notify::active', self.on_isolated_mode_changed)
+            advanced_group.add(self.isolated_config_row)
             # Use custom options toggle
             self.apply_advanced_row = Adw.SwitchRow()
             self.apply_advanced_row.set_title("Use custom connection options")
@@ -804,7 +810,18 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 self.debug_enabled_row.set_active(bool(defaults.get('debug_enabled', False)))
         except Exception as e:
             logger.error(f"Failed to reset advanced SSH settings: {e}")
-    
+
+    def on_isolated_mode_changed(self, row, _param):
+        """Handle toggling of isolated SSH configuration"""
+        try:
+            active = bool(row.get_active())
+            self.config.set_setting('ssh.use_isolated_config', active)
+            parent_window = self.get_transient_for()
+            if parent_window and hasattr(parent_window, 'connection_manager'):
+                parent_window.connection_manager.set_isolated_mode(active)
+        except Exception as e:
+            logger.error(f"Failed to toggle isolated SSH mode: {e}")
+
     def get_theme_name_mapping(self):
         """Get mapping between display names and config keys"""
         return {
