@@ -1129,7 +1129,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         try:
             # Ensure UI controls exist
             required_attrs = [
-                'nickname_row', 'host_row', 'username_row', 'port_row',
+                'nickname_row', 'host_row', 'aliases_row', 'username_row', 'port_row',
                 'auth_method_row', 'keyfile_row', 'password_row', 'key_passphrase_row',
                 'pubkey_auth_row'
             ]
@@ -1141,6 +1141,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self.nickname_row.set_text(self.connection.nickname or "")
             if hasattr(self.connection, 'host'):
                 self.host_row.set_text(self.connection.host or "")
+            if hasattr(self.connection, 'aliases'):
+                self.aliases_row.set_text(" ".join(self.connection.aliases or []))
             if hasattr(self.connection, 'username'):
                 self.username_row.set_text(self.connection.username or "")
             if hasattr(self.connection, 'port'):
@@ -1959,7 +1961,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Host
         self.host_row = Adw.EntryRow(title=_("Host"))
         basic_group.add(self.host_row)
-        
+
+        # Aliases
+        self.aliases_row = Adw.EntryRow(title=_("Aliases"))
+        basic_group.add(self.aliases_row)
+
         # Username
         self.username_row = Adw.EntryRow(title=_("Username"))
         basic_group.add(self.username_row)
@@ -3272,6 +3278,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         connection_data = {
             'nickname': self.nickname_row.get_text().strip(),
             'host': self.host_row.get_text().strip(),
+            'aliases': self.aliases_row.get_text().split(),
             'username': self.username_row.get_text().strip(),
             'port': int(self.port_row.get_text().strip() or '22'),
             'auth_method': self.auth_method_row.get_selected(),
@@ -3296,6 +3303,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self.connection.data.update(connection_data)
             except Exception:
                 pass
+            self.connection.aliases = connection_data.get('aliases', [])
             # Explicitly update forwarding rules to ensure they're fresh
             self.connection.forwarding_rules = forwarding_rules
             
