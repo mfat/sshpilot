@@ -44,3 +44,30 @@ def test_host_token_used_when_hostname_missing(tmp_path):
     assert conn.nickname == 'example.com'
     assert conn.host == 'example.com'
 
+
+def test_alias_list_without_hostname(tmp_path):
+    """Alias groups without HostName should not gain HostName when formatted."""
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+    manager = ConnectionManager.__new__(ConnectionManager)
+    manager.connections = []
+
+    cfg = """Host primary alias1 alias2
+    User testuser
+"""
+    config_path = tmp_path / 'config'
+    config_path.write_text(cfg)
+    manager.ssh_config_path = str(config_path)
+
+    manager.load_ssh_config()
+
+    assert len(manager.connections) == 1
+    conn = manager.connections[0]
+    assert conn.nickname == 'primary'
+    assert conn.aliases == ['alias1', 'alias2']
+    assert conn.host == 'primary'
+
+    entry = manager.format_ssh_config_entry(conn.data)
+    assert 'HostName' not in entry
+    assert entry.splitlines()[0] == 'Host primary alias1 alias2'
+
