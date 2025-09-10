@@ -4318,8 +4318,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         cmd = ['osascript', '-e', script]
                     elif app_lower == 'warp':
                         cmd = ['open', f'warp://{ssh_command}']
-                    elif app_lower in ['alacritty', 'kitty', 'ghostty']:
+                    elif app_lower in ['alacritty', 'kitty']:
                         cmd = ['open', '-a', app, '--args', '-e', 'bash', '-lc', f'{ssh_command}; exec bash']
+                    elif app_lower == 'ghostty':
+                        cmd = ['open', '-a', app, '--args', ssh_command]
                     else:
                         cmd = ['open', '-a', app, '--args', 'bash', '-lc', f'{ssh_command}; exec bash']
                 else:
@@ -4373,7 +4375,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 # Map bundle identifiers to display names in preference order.
                 mac_terms = {
                     'com.apple.Terminal': 'Terminal',
-                    'com.googlecode.iterm2': 'iTerm2',
+                    'com.googlecode.iterm2': 'iTerm',
+
                     'dev.warp.Warp': 'Warp',
                     'io.alacritty': 'Alacritty',
                     'net.kovidgoyal.kitty': 'Kitty',
