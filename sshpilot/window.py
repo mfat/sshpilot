@@ -1842,10 +1842,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         win = Gtk.ShortcutsWindow(transient_for=self, modal=True)
 
         section = Gtk.ShortcutsSection()
+        section.set_property('title', _('Keyboard Shortcuts'))
 
         # General shortcuts
         group_general = Gtk.ShortcutsGroup()
-        group_general.set_title(_('General'))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Toggle Sidebar'), accelerator='F9'))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
@@ -1862,7 +1862,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Connection management shortcuts
         group_connections = Gtk.ShortcutsGroup()
-        group_connections.set_title(_('Connections'))
         group_connections.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('New Connection'), accelerator=f"{primary}n"))
         group_connections.add_shortcut(Gtk.ShortcutsShortcut(
@@ -1879,7 +1878,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Tab navigation shortcuts
         group_tabs = Gtk.ShortcutsGroup()
-        group_tabs.set_title(_('Tabs'))
 
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Open New Tab'), accelerator=f"{primary}<Alt>n"))

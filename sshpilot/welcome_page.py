@@ -86,7 +86,9 @@ class WelcomePage(Gtk.Box):
         # Local terminal button
         local_button = Gtk.Button()
         local_button.set_icon_name('utilities-terminal-symbolic')
-        local_button.set_tooltip_text(_('Local Terminal'))
+        # Platform-aware shortcut in tooltip
+        shortcut = 'Cmd+Shift+T' if is_macos() else 'Ctrl+Shift+T'
+        local_button.set_tooltip_text(_('Local Terminal') + f' ({shortcut})')
         local_button.connect('clicked', lambda *_: window.terminal_manager.show_local_terminal())
 
         # Known hosts editor button
@@ -98,13 +100,24 @@ class WelcomePage(Gtk.Box):
         # Preferences button
         prefs_button = Gtk.Button()
         prefs_button.set_icon_name('preferences-system-symbolic')
-        prefs_button.set_tooltip_text(_('Preferences'))
+        # Platform-aware shortcut in tooltip
+        shortcut = 'Cmd+,' if is_macos() else 'Ctrl+,'
+        prefs_button.set_tooltip_text(_('Preferences') + f' ({shortcut})')
         prefs_button.connect('clicked', lambda *_: window.show_preferences())
+
+        # Keyboard shortcuts button
+        shortcuts_button = Gtk.Button()
+        shortcuts_button.set_icon_name('preferences-desktop-keyboard-symbolic')
+        # Platform-aware shortcut in tooltip
+        shortcut = 'Cmd+Shift+/' if is_macos() else 'Ctrl+Shift+/'
+        shortcuts_button.set_tooltip_text(_('Keyboard Shortcuts') + f' ({shortcut})')
+        shortcuts_button.connect('clicked', lambda *_: window.show_shortcuts_window())
 
         buttons_box.append(search_button)
         buttons_box.append(local_button)
         buttons_box.append(known_hosts_button)
         buttons_box.append(prefs_button)
+        buttons_box.append(shortcuts_button)
         self.append(buttons_box)
 
 
