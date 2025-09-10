@@ -88,15 +88,22 @@ class WelcomePage(Gtk.Box):
         local_button.set_icon_name('utilities-terminal-symbolic')
         local_button.set_tooltip_text(_('Local Terminal'))
         local_button.connect('clicked', lambda *_: window.terminal_manager.show_local_terminal())
-        
+
+        # Known hosts editor button
+        known_hosts_button = Gtk.Button()
+        known_hosts_button.set_icon_name('view-list-symbolic')
+        known_hosts_button.set_tooltip_text(_('Known Hosts Editor'))
+        known_hosts_button.connect('clicked', lambda *_: window.show_known_hosts_editor())
+
         # Preferences button
         prefs_button = Gtk.Button()
         prefs_button.set_icon_name('preferences-system-symbolic')
         prefs_button.set_tooltip_text(_('Preferences'))
         prefs_button.connect('clicked', lambda *_: window.show_preferences())
-        
+
         buttons_box.append(search_button)
         buttons_box.append(local_button)
+        buttons_box.append(known_hosts_button)
         buttons_box.append(prefs_button)
         self.append(buttons_box)
 
