@@ -28,9 +28,6 @@ class WelcomePage(Gtk.Box):
         self.set_margin_end(24)
         self.set_margin_top(24)
         self.set_margin_bottom(24)
-        
-        # Make the welcome page non-focusable so it doesn't interfere with connection list focus
-        self.set_can_focus(False)
 
 
 

@@ -1211,9 +1211,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 pass
         self.content_stack.set_visible_child_name("welcome")
         
-        # Ensure connection list gets focus when showing welcome view
-        GLib.idle_add(self._focus_connection_list_first_row)
-        
         # Update view toggle button
         if hasattr(self, 'view_toggle_button'):
             # Check if there are any active tabs
@@ -1232,32 +1229,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         try:
             if not hasattr(self, 'connection_list') or self.connection_list is None:
                 return False
-            
-            # Ensure the list has content before trying to focus
-            first_row = self.connection_list.get_row_at_index(0)
-            if not first_row:
-                return False
-                
             # If the list has no selection, select the first row
             selected = self.connection_list.get_selected_row() if hasattr(self.connection_list, 'get_selected_row') else None
-            if not selected:
+            first_row = self.connection_list.get_row_at_index(0)
+            if not selected and first_row:
                 self.connection_list.select_row(first_row)
             
-            # Force the list to be focusable and ready for keyboard navigation
-            self.connection_list.set_can_focus(True)
-            self.connection_list.set_focusable(True)
-            
-            # Focus the connection list and ensure it can receive keyboard events
-            self.connection_list.grab_focus()
-            
-            # Ensure the list is the focus child of its parent
-            if hasattr(self, 'sidebar_box') and self.sidebar_box:
-                self.sidebar_box.set_focus_child(self.connection_list)
-            
-            logger.debug("Focused connection list successfully")
-            
-        except Exception as e:
-            logger.error(f"Error focusing connection list: {e}")
+            # Always focus the connection list on startup, regardless of current focus
+            # This ensures the connection list gets focus instead of the search entry
+            if first_row:
+                self.connection_list.grab_focus()
+        except Exception:
+            pass
         return False
 
     def focus_connection_list(self):
