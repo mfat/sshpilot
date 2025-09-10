@@ -1007,10 +1007,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         menu.append('Copy Key to Server', 'app.new-key')
         menu.append('Broadcast Command', 'app.broadcast-command')
         menu.append('Preferences', 'app.preferences')
-        menu.append('Help', 'app.help')
+
+        # Help submenu with platform-aware keyboard shortcuts overlay
+        help_menu = Gio.Menu()
+        help_menu.append('Keyboard Shortcuts', 'app.shortcuts')
+        help_menu.append('Documentation', 'app.help')
+        menu.append_submenu('Help', help_menu)
+
         menu.append('About', 'app.about')
         menu.append('Quit', 'app.quit')
-        
+
         return menu
 
     def setup_connections(self):
@@ -1807,6 +1813,75 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 dialog.present()
             except Exception:
                 pass
+
+    def show_shortcuts_window(self):
+        """Display keyboard shortcuts using Gtk.ShortcutsWindow"""
+        if not hasattr(self, '_shortcuts_window') or self._shortcuts_window is None:
+            self._shortcuts_window = self._build_shortcuts_window()
+            try:
+                self.set_help_overlay(self._shortcuts_window)
+            except Exception:
+                pass
+        self._shortcuts_window.present()
+
+    def _build_shortcuts_window(self):
+        mac = is_macos()
+        primary = '<Meta>' if mac else '<primary>'
+
+        win = Gtk.ShortcutsWindow(transient_for=self, modal=True)
+
+        section = Gtk.ShortcutsSection()
+
+        # General shortcuts
+        group_general = Gtk.ShortcutsGroup()
+        group_general.set_title(_('General'))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Toggle Sidebar'), accelerator='F9'))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Toggle Sidebar'), accelerator=f"{primary}b"))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Preferences'), accelerator=f"{primary}comma"))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Documentation'), accelerator='F1'))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Keyboard Shortcuts'), accelerator=f"{primary}<Shift>slash"))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Quit'), accelerator=f"{primary}q"))
+        section.add_group(group_general)
+
+        # Connection management shortcuts
+        group_connections = Gtk.ShortcutsGroup()
+        group_connections.set_title(_('Connections'))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('New Connection'), accelerator=f"{primary}n"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Local Terminal'), accelerator=f"{primary}<Shift>t"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Copy Key to Server'), accelerator=f"{primary}<Shift>k"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Broadcast Command'), accelerator=f"{primary}<Shift>b"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Search Connections'), accelerator=f"{primary}f"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus Connection List'), accelerator=f"{primary}l"))
+        section.add_group(group_connections)
+
+        # Tab navigation shortcuts
+        group_tabs = Gtk.ShortcutsGroup()
+        group_tabs.set_title(_('Tabs'))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Open New Tab'), accelerator=f"{primary}<Alt>n"))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Next Tab'), accelerator='<Alt>Right'))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Previous Tab'), accelerator='<Alt>Left'))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Close Tab'), accelerator=f"{primary}F4"))
+        section.add_group(group_tabs)
+
+        win.add_section(section)
+
+        return win
 
     def toggle_list_focus(self):
         """Toggle focus between connection list and terminal"""

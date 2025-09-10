@@ -115,6 +115,8 @@ class SshPilotApplication(Adw.Application):
         
         self.create_action('about', self.on_about)
         self.create_action('help', self.on_help, ['F1'])
+        shortcuts_accel = ['<Meta><Shift>slash'] if mac else ['<primary><Shift>slash']
+        self.create_action('shortcuts', self.on_shortcuts, shortcuts_accel)
         # Tab navigation accelerators
         self.create_action('tab-next', self.on_tab_next, ['<Alt>Right'])
         self.create_action('tab-prev', self.on_tab_prev, ['<Alt>Left'])
@@ -331,6 +333,12 @@ class SshPilotApplication(Adw.Application):
         logging.debug("Help action triggered")
         if self.props.active_window:
             self.props.active_window.open_help_url()
+
+    def on_shortcuts(self, action, param):
+        """Handle keyboard shortcuts overlay action"""
+        logging.debug("Shortcuts action triggered")
+        if self.props.active_window:
+            self.props.active_window.show_shortcuts_window()
 
     def on_tab_next(self, action, param):
         """Switch to next tab"""
