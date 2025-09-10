@@ -160,6 +160,7 @@ class TerminalManager:
                     self.host = "localhost"
                     self.username = os.getenv('USER', 'user')
                     self.port = 22
+                    self.is_connected = True
             local_connection = LocalConnection()
             terminal_widget = TerminalWidget(local_connection, self.window.config, self.window.connection_manager)
             terminal_widget.setup_local_shell()
