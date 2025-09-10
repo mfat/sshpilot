@@ -1241,7 +1241,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 common_terminals.extend(
                     [
                         ("Terminal", "open -a Terminal"),
-                        ("iTerm2", "open -a iTerm2"),
+                        ("iTerm2", "open -a iTerm"),
+                        ("Alacritty", "open -a Alacritty"),
                         ("Ghostty", "open -a Ghostty"),
                         ("Warp", "open -a Warp"),
                     ]

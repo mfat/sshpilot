@@ -4308,7 +4308,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         cmd = ['osascript', '-e', script]
                     elif app_lower in ['iterm', 'iterm2', 'iterm.app']:
                         script = (
-                            'tell application "iTerm2"\n'
+                            'tell application "iTerm"\n'
+                            '    if (count of windows) = 0 then\n'
+                            '        create window with default profile\n'
+                            '    end if\n'
                             '    tell current window\n'
                             '        create tab with default profile\n'
                             f'        tell current session to write text "{ssh_command}"\n'
