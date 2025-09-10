@@ -425,6 +425,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
         self.header_bar.pack_start(self.sidebar_toggle_button)
         
+        # Add view toggle button to switch between welcome and tabs
+        self.view_toggle_button = Gtk.Button()
+        self.view_toggle_button.set_icon_name('go-home-symbolic')
+        self.view_toggle_button.set_tooltip_text('Show Start Page')
+        self.view_toggle_button.connect('clicked', self.on_view_toggle_clicked)
+        self.view_toggle_button.set_visible(False)  # Hidden by default
+        self.header_bar.pack_start(self.view_toggle_button)
+        
         # Add header bar to main container
         main_box.append(self.header_bar)
         
@@ -1195,6 +1203,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 pass
         self.content_stack.set_visible_child_name("welcome")
+        
+        # Update view toggle button
+        if hasattr(self, 'view_toggle_button'):
+            # Check if there are any active tabs
+            has_tabs = len(self.tab_view.get_pages()) > 0
+            if has_tabs:
+                self.view_toggle_button.set_icon_name('utilities-terminal-symbolic')
+                self.view_toggle_button.set_tooltip_text('Show Terminal Tabs')
+                self.view_toggle_button.set_visible(True)
+            else:
+                self.view_toggle_button.set_visible(False)  # Hide button when no tabs
+        
         logger.info("Showing welcome view")
 
     def _focus_connection_list_first_row(self):
@@ -1311,6 +1331,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 pass
         self.content_stack.set_visible_child_name("tabs")
+        
+        # Update view toggle button
+        if hasattr(self, 'view_toggle_button'):
+            self.view_toggle_button.set_icon_name('go-home-symbolic')
+            self.view_toggle_button.set_tooltip_text('Show Start Page')
+            self.view_toggle_button.set_visible(True)  # Show button when tabs are active
+        
         logger.info("Showing tab view")
 
     def show_connection_dialog(self, connection: Connection = None):
@@ -2015,6 +2042,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 
         except Exception as e:
             logger.error(f"Failed to toggle sidebar: {e}")
+
+    def on_view_toggle_clicked(self, button):
+        """Handle view toggle button click to switch between welcome and tabs"""
+        try:
+            # Check which view is currently visible
+            current_view = self.content_stack.get_visible_child_name()
+            
+            if current_view == "welcome":
+                # Switch to tab view
+                self.show_tab_view()
+            else:
+                # Switch to welcome view
+                self.show_welcome_view()
+                
+        except Exception as e:
+            logger.error(f"Failed to toggle view: {e}")
 
     def _toggle_sidebar_visibility(self, is_visible):
         """Helper method to toggle sidebar visibility"""
@@ -3295,6 +3338,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Show welcome view if no more tabs are left
         if tab_view.get_n_pages() == 0:
             self.show_welcome_view()
+        else:
+            # Update button visibility when tabs remain
+            if hasattr(self, 'view_toggle_button'):
+                self.view_toggle_button.set_visible(True)
 
             
     def on_connection_added(self, manager, connection):

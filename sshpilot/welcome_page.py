@@ -34,13 +34,18 @@ class WelcomePage(Gtk.Box):
         try:
             texture = Gdk.Texture.new_from_resource('/io/github/mfat/sshpilot/sshpilot.svg')
             icon = Gtk.Image.new_from_paintable(texture)
-            icon.set_pixel_size(128)
+            icon.set_pixel_size(64)
         except Exception:
             icon = Gtk.Image.new_from_icon_name('network-workgroup-symbolic')
             icon.set_icon_size(Gtk.IconSize.LARGE)
             icon.set_pixel_size(128)
         icon.set_halign(Gtk.Align.CENTER)
         self.append(icon)
+
+        # Add some vertical spacing after the icon
+        spacer = Gtk.Box()
+        spacer.set_size_request(-1, 16)  # 16px vertical spacing
+        self.append(spacer)
 
         # Quick connect box
         quick_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
