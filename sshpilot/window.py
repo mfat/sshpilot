@@ -1841,27 +1841,46 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         win = Gtk.ShortcutsWindow(transient_for=self, modal=True)
 
-        # General section
-        section_general = Gtk.ShortcutsSection()
-        section_general.set_title(_('General'))
+        section = Gtk.ShortcutsSection()
+
+        # General shortcuts
         group_general = Gtk.ShortcutsGroup()
-        group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('New Connection'), accelerator=f"{primary}n"))
-        group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Search Connections'), accelerator=f"{primary}f"))
+        group_general.set_title(_('General'))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Toggle Sidebar'), accelerator='F9'))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Toggle Sidebar'), accelerator=f"{primary}b"))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Preferences'), accelerator=f"{primary}comma"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Documentation'), accelerator='F1'))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Keyboard Shortcuts'), accelerator=f"{primary}<Shift>slash"))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Quit'), accelerator=f"{primary}q"))
-        section_general.add_group(group_general)
-        win.add_section(section_general)
+        section.add_group(group_general)
 
-        # Tab management section
-        section_tabs = Gtk.ShortcutsSection()
-        section_tabs.set_title(_('Tabs'))
+        # Connection management shortcuts
+        group_connections = Gtk.ShortcutsGroup()
+        group_connections.set_title(_('Connections'))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('New Connection'), accelerator=f"{primary}n"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Local Terminal'), accelerator=f"{primary}<Shift>t"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Copy Key to Server'), accelerator=f"{primary}<Shift>k"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Broadcast Command'), accelerator=f"{primary}<Shift>b"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Search Connections'), accelerator=f"{primary}f"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus Connection List'), accelerator=f"{primary}l"))
+        section.add_group(group_connections)
+
+        # Tab navigation shortcuts
         group_tabs = Gtk.ShortcutsGroup()
+        group_tabs.set_title(_('Tabs'))
+
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Open New Tab'), accelerator=f"{primary}<Alt>n"))
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
@@ -1870,8 +1889,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             title=_('Previous Tab'), accelerator='<Alt>Left'))
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Close Tab'), accelerator=f"{primary}F4"))
-        section_tabs.add_group(group_tabs)
-        win.add_section(section_tabs)
+        section.add_group(group_tabs)
+
+        win.add_section(section)
+
 
         return win
 
