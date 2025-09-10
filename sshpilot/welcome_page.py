@@ -142,8 +142,12 @@ class WelcomePage(Gtk.Box):
         """Update search results as text changes."""
         text = entry.get_text().strip().lower()
         # Clear previous results
-        for child in list(self.search_list.get_children()):
+        child = self.search_list.get_first_child()
+        while child is not None:
+            next_child = child.get_next_sibling()
             self.search_list.remove(child)
+            child = next_child
+
         if not text:
             self.search_list.set_visible(False)
             return
