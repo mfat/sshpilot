@@ -68,6 +68,7 @@ class WelcomePage(Gtk.Box):
         self.search_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self.search_list.add_css_class("boxed-list")
         self.search_list.add_css_class("rich-list")
+
         self.search_list.connect('row-activated', self.on_search_row_activated)
         list_key = Gtk.EventControllerKey()
         list_key.connect('key-pressed', self.on_search_results_key_pressed)
@@ -78,6 +79,7 @@ class WelcomePage(Gtk.Box):
         self.search_popover.set_autohide(True)
         self.search_popover.set_child(self.search_list)
         self.search_popover.set_parent(self.quick_entry)
+
 
 
         # Action buttons
@@ -161,6 +163,7 @@ class WelcomePage(Gtk.Box):
         text = entry.get_text().strip().lower()
         # Clear previous results
         self.search_list.unselect_all()
+
         child = self.search_list.get_first_child()
         while child is not None:
             next_child = child.get_next_sibling()
@@ -176,6 +179,7 @@ class WelcomePage(Gtk.Box):
         for conn in matches:
             row = Adw.ActionRow()
             row.set_activatable(True)
+
             row.set_title(conn.nickname)
             subtitle = f"{conn.username+'@' if conn.username else ''}{conn.host}"
             row.set_subtitle(subtitle)
@@ -185,16 +189,19 @@ class WelcomePage(Gtk.Box):
         self.search_popover.set_size_request(width, -1)
         self.search_popover.popup()
 
+
     def on_search_row_activated(self, listbox, row):
         """Connect to the selected connection from search results."""
         connection = getattr(row, 'connection', None)
         if connection:
             self.search_popover.popdown()
+
             self.window.terminal_manager.connect_to_host(connection, force_new=False)
 
     def on_quick_entry_key_pressed(self, controller, keyval, keycode, state):
         """Handle navigation from entry to results with arrow keys."""
         if keyval == Gdk.KEY_Down and self.search_popover.get_visible():
+
             first = self.search_list.get_row_at_index(0)
             if first:
                 self.search_list.select_row(first)
@@ -214,6 +221,7 @@ class WelcomePage(Gtk.Box):
             if selected:
                 self.on_search_row_activated(self.search_list, selected)
                 return True
+
         return False
     
     def _parse_ssh_command(self, command_text):
