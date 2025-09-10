@@ -4411,6 +4411,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 # for the specified app.
                 if preferred_terminal.startswith('open'):
                     return shlex.split(preferred_terminal)
+
                 return ['open', '-a', preferred_terminal]
 
             try:

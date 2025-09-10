@@ -116,6 +116,7 @@ def test_get_user_preferred_terminal_macos_with_command(monkeypatch):
     assert win._get_user_preferred_terminal() == ["open", "-a", "Ghostty"]
 
 
+
 def test_get_default_terminal_command_macos(monkeypatch):
     monkeypatch.setattr(window_mod, "is_macos", lambda: True)
 
@@ -174,3 +175,4 @@ def test_open_connection_in_external_terminal_macos_with_command(monkeypatch):
     assert captured["cmd"][0:3] == ["open", "-a", "iTerm"]
     assert "--args" in captured["cmd"]
     assert "ssh user@example.com; exec bash" in captured["cmd"][-1]
+
