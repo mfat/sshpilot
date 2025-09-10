@@ -39,6 +39,8 @@ class TerminalManager:
                     window.tab_view.set_selected_page(page)
                     return
 
+        # The user's "use external terminal" preference is only applied when
+        # external terminal options are not hidden by policy or environment.
         use_external = window.config.get_setting('use-external-terminal', False)
         if use_external and not should_hide_external_terminal_options():
             window._open_connection_in_external_terminal(connection)

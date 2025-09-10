@@ -124,8 +124,16 @@ def test_get_default_terminal_command_macos(monkeypatch):
         class R:
             pass
         r = R()
-        # simulate only Terminal being present
-        r.returncode = 0 if cmd[-1] == "Terminal" else 1
+        if cmd[0] == "osascript":
+            # simulate only Terminal being installed
+            r.stdout = "com.apple.Terminal" if "Terminal" in cmd[-1] else ""
+            r.returncode = 0 if "Terminal" in cmd[-1] else 1
+        elif cmd[0] == "mdfind":
+            r.stdout = ""  # mdfind not used in this test
+            r.returncode = 1
+        else:
+            r.returncode = 1
+            r.stdout = ""
         return r
 
     monkeypatch.setattr(subprocess, "run", fake_run)
