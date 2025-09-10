@@ -711,7 +711,7 @@ def register_window_actions(window):
     window.delete_connection_action.connect('activate', window.on_delete_connection_action)
     window.add_action(window.delete_connection_action)
 
-    # Action for opening connections in system terminal (only when not in Flatpak or macOS)
+    # Action for opening connections in system terminal (only when external terminals are available)
     if not should_hide_external_terminal_options():
         window.open_in_system_terminal_action = Gio.SimpleAction.new('open-in-system-terminal', None)
         window.open_in_system_terminal_action.connect('activate', window.on_open_in_system_terminal_action)

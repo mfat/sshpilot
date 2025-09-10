@@ -714,7 +714,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             files_row.connect('activated', lambda *_: (self.on_manage_files_action(None, None), pop.popdown()))
                             listbox.append(files_row)
 
-                        # Only show system terminal option when not in Flatpak or macOS
+                        # Only show system terminal option when external terminals are available
                         if not should_hide_external_terminal_options():
                             terminal_row = Adw.ActionRow(title=_('Open in System Terminal'))
                             terminal_icon = Gtk.Image.new_from_icon_name('utilities-terminal-symbolic')
@@ -856,7 +856,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
             self.connection_toolbar.append(self.manage_files_button)
         
-        # System terminal button (only when not in Flatpak or macOS)
+        # System terminal button (only when external terminals are available)
         if not should_hide_external_terminal_options():
             self.system_terminal_button = Gtk.Button.new_from_icon_name('utilities-terminal-symbolic')
             self.system_terminal_button.set_tooltip_text('Open connection in system terminal')

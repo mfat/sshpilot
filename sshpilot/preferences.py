@@ -3,6 +3,7 @@
 import os
 import logging
 import subprocess
+import shutil
 
 from .platform_utils import is_macos
 
@@ -17,9 +18,47 @@ def is_running_in_flatpak() -> bool:
     """Check if running inside Flatpak sandbox"""
     return os.path.exists("/.flatpak-info") or os.environ.get("FLATPAK_ID") is not None
 
+def macos_third_party_terminal_available() -> bool:
+    """Check if a third-party terminal is available on macOS."""
+    if not is_macos():
+        return False
+
+    terminals = [
+        "iterm2",
+        "ghostty",
+        "alacritty",
+        "iterm",
+        "terminator",
+        "kitty",
+        "tmux",
+        "warp",
+    ]
+
+    applications_dir = "/Applications"
+    try:
+        for entry in os.listdir(applications_dir):
+            lower = entry.lower()
+            if any(lower.startswith(t) and entry.endswith(".app") for t in terminals):
+                return True
+    except Exception:
+        pass
+
+    for terminal in terminals:
+        if shutil.which(terminal):
+            return True
+
+    return False
+
+
 def should_hide_external_terminal_options() -> bool:
-    """Check if external terminal options should be hidden (Flatpak or macOS)"""
-    return is_running_in_flatpak() or is_macos()
+    """Check if external terminal options should be hidden.
+
+    Returns True when running in Flatpak or when on macOS without a supported
+    third-party terminal.
+    """
+    return is_running_in_flatpak() or (
+        is_macos() and not macos_third_party_terminal_available()
+    )
 
 
 def should_hide_file_manager_options() -> bool:
@@ -385,7 +424,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             appearance_group.add(preview_group)
             terminal_page.add(appearance_group)
             
-            # Preferred Terminal group (only show when not in Flatpak or macOS)
+            # Preferred Terminal group (shown when external terminals are available)
             if not should_hide_external_terminal_options():
                 terminal_choice_group = Adw.PreferencesGroup()
                 terminal_choice_group.set_title("Preferred Terminal")
