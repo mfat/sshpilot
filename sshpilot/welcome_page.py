@@ -5,13 +5,15 @@ import shlex
 import re
 
 gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
 
-from gi.repository import Gtk, Gdk
+from gi.repository import Gtk, Gdk, Adw
 from gettext import gettext as _
 
 
 from .connection_manager import Connection
 from .platform_utils import is_macos
+from .search_utils import connection_matches
 
 
 class WelcomePage(Gtk.Box):
@@ -43,6 +45,12 @@ class WelcomePage(Gtk.Box):
 
         self.quick_entry.set_placeholder_text(_('ssh -p 2222 user@host'))
         self.quick_entry.connect('activate', self.on_quick_connect)
+        self.quick_entry.connect('changed', self.on_quick_entry_changed)
+
+        # Key controller for navigation to search results
+        entry_key = Gtk.EventControllerKey()
+        entry_key.connect('key-pressed', self.on_quick_entry_key_pressed)
+        self.quick_entry.add_controller(entry_key)
         
         # Add focus controller for auto-expansion
         focus_controller = Gtk.EventControllerFocus()
@@ -54,6 +62,22 @@ class WelcomePage(Gtk.Box):
         self.quick_box.append(self.quick_entry)
         self.quick_box.append(connect_button)
         self.append(self.quick_box)
+
+        # Search results popover (omni box)
+        self.search_list = Gtk.ListBox()
+        self.search_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.search_list.add_css_class("boxed-list")
+        self.search_list.add_css_class("rich-list")
+        self.search_list.connect('row-activated', self.on_search_row_activated)
+        list_key = Gtk.EventControllerKey()
+        list_key.connect('key-pressed', self.on_search_results_key_pressed)
+        self.search_list.add_controller(list_key)
+
+        self.search_popover = Gtk.Popover()
+        self.search_popover.set_has_arrow(False)
+        self.search_popover.set_autohide(True)
+        self.search_popover.set_child(self.search_list)
+        self.search_popover.set_parent(self.quick_entry)
 
 
         # Action buttons
@@ -110,15 +134,87 @@ class WelcomePage(Gtk.Box):
 
     # Quick connect handlers
     def on_quick_connect(self, *_args):
+        """Connect using selected search result or typed command."""
+        selected = None
+        if self.search_popover.get_visible():
+            selected = self.search_list.get_selected_row()
+        if selected:
+            connection = getattr(selected, 'connection', None)
+            if connection:
+                self.search_popover.popdown()
+                self.window.terminal_manager.connect_to_host(connection, force_new=False)
+            return
+
         text = self.quick_entry.get_text().strip()
         if not text:
             return
-        
+
         # Parse the SSH command
         connection_data = self._parse_ssh_command(text)
         if connection_data:
             connection = Connection(connection_data)
+            self.search_popover.popdown()
             self.window.terminal_manager.connect_to_host(connection, force_new=False)
+
+    def on_quick_entry_changed(self, entry):
+        """Update search results as text changes."""
+        text = entry.get_text().strip().lower()
+        # Clear previous results
+        self.search_list.unselect_all()
+        child = self.search_list.get_first_child()
+        while child is not None:
+            next_child = child.get_next_sibling()
+            self.search_list.remove(child)
+            child = next_child
+        if not text:
+            self.search_popover.popdown()
+            return
+        matches = [c for c in self.connection_manager.connections if connection_matches(c, text)]
+        if not matches:
+            self.search_popover.popdown()
+            return
+        for conn in matches:
+            row = Adw.ActionRow()
+            row.set_activatable(True)
+            row.set_title(conn.nickname)
+            subtitle = f"{conn.username+'@' if conn.username else ''}{conn.host}"
+            row.set_subtitle(subtitle)
+            row.connection = conn
+            self.search_list.append(row)
+        width = self.quick_entry.get_allocated_width()
+        self.search_popover.set_size_request(width, -1)
+        self.search_popover.popup()
+
+    def on_search_row_activated(self, listbox, row):
+        """Connect to the selected connection from search results."""
+        connection = getattr(row, 'connection', None)
+        if connection:
+            self.search_popover.popdown()
+            self.window.terminal_manager.connect_to_host(connection, force_new=False)
+
+    def on_quick_entry_key_pressed(self, controller, keyval, keycode, state):
+        """Handle navigation from entry to results with arrow keys."""
+        if keyval == Gdk.KEY_Down and self.search_popover.get_visible():
+            first = self.search_list.get_row_at_index(0)
+            if first:
+                self.search_list.select_row(first)
+                self.search_list.grab_focus()
+                return True
+        return False
+
+    def on_search_results_key_pressed(self, controller, keyval, keycode, state):
+        """Allow returning to entry when navigating results."""
+        if keyval == Gdk.KEY_Up:
+            selected = self.search_list.get_selected_row()
+            if selected and self.search_list.get_row_at_index(0) == selected:
+                self.quick_entry.grab_focus()
+                return True
+        elif keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            selected = self.search_list.get_selected_row()
+            if selected:
+                self.on_search_row_activated(self.search_list, selected)
+                return True
+        return False
     
     def _parse_ssh_command(self, command_text):
         """Parse SSH command text and extract connection parameters"""
@@ -287,6 +383,9 @@ class WelcomePage(Gtk.Box):
     
     def on_quick_entry_focus_out(self, controller):
         """Handle focus out event - contract the quick connect box"""
-        # Contract the entry field width when focus is lost
-        self.quick_entry.set_size_request(200, -1)  # Contract back to 200 pixels
+        if self.search_popover.get_visible():
+            self.search_popover.set_size_request(self.quick_entry.get_allocated_width(), -1)
+        else:
+            # Contract the entry field width when focus is lost
+            self.quick_entry.set_size_request(200, -1)  # Contract back to 200 pixels
     
