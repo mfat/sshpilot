@@ -15,24 +15,45 @@ from .connection_manager import Connection
 from .platform_utils import is_macos
 
 
-class WelcomePage(Gtk.Box):
+class WelcomePage(Gtk.Overlay):
     """Welcome page shown when no tabs are open."""
 
+    BG_OPTIONS = [
+        (_("Default"), None),
+        (_("Blue"), "#4A90E2"),
+        (_("Green"), "#27AE60"),
+        (_("Red"), "#FF4757"),
+        (_("Warm"), "linear-gradient(to bottom right, #ff7e5f, #feb47b)"),
+        (_("Cool"), "linear-gradient(to bottom right, #6a11cb, #2575fc)"),
+    ]
+
     def __init__(self, window) -> None:
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=24)
+        super().__init__()
         self.window = window
         self.connection_manager = window.connection_manager
-        self.set_valign(Gtk.Align.CENTER)
-        self.set_halign(Gtk.Align.FILL)
         self.set_hexpand(True)
-        self.set_margin_start(24)
-        self.set_margin_end(24)
-        self.set_margin_top(24)
-        self.set_margin_bottom(24)
-        # Prevent the welcome page container from grabbing keyboard focus
-        self.set_can_focus(False)
-        self.set_focus_on_click(False)
+        self.set_vexpand(True)
 
+        # Main container replicating previous layout
+        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
+        container.set_valign(Gtk.Align.CENTER)
+        container.set_halign(Gtk.Align.FILL)
+        container.set_hexpand(True)
+        container.set_margin_start(24)
+        container.set_margin_end(24)
+        container.set_margin_top(24)
+        container.set_margin_bottom(24)
+        container.set_can_focus(False)
+        container.set_focus_on_click(False)
+        self.set_child(container)
+
+        # CSS provider for dynamic background
+        self._bg_provider = Gtk.CssProvider()
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(),
+            self._bg_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
 
         # Create grid layout for large tiles
         grid = Gtk.Grid()
@@ -41,6 +62,45 @@ class WelcomePage(Gtk.Box):
         grid.set_halign(Gtk.Align.CENTER)
         grid.set_hexpand(False)
         grid.set_vexpand(False)
+        container.append(grid)
+
+        # Background selection button (top-right overlay)
+        self.bg_button = Gtk.Button.new_from_icon_name("color-select-symbolic")
+        self.bg_button.add_css_class("flat")
+        self.bg_button.set_tooltip_text(_("Change background"))
+        self.bg_button.set_halign(Gtk.Align.END)
+        self.bg_button.set_valign(Gtk.Align.START)
+        self.bg_button.set_margin_top(6)
+        self.bg_button.set_margin_end(6)
+        self.bg_button.connect("clicked", self._show_bg_menu)
+        self.add_overlay(self.bg_button)
+
+        # Popover with color tiles
+        self.bg_popover = Gtk.Popover.new()
+        self.bg_popover.set_has_arrow(True)
+        self.bg_popover.set_parent(self.bg_button)
+        menu_grid = Gtk.Grid(margin_top=6, margin_bottom=6,
+                              margin_start=6, margin_end=6,
+                              column_spacing=6, row_spacing=6)
+        self.bg_popover.set_child(menu_grid)
+        for idx, (name, css) in enumerate(self.BG_OPTIONS):
+            btn = Gtk.Button()
+            btn.set_size_request(32, 32)
+            btn.add_css_class("flat")
+            btn.set_tooltip_text(name)
+            if css:
+                provider = Gtk.CssProvider()
+                provider.load_from_data(
+                    f"* {{ background: {css}; border-radius:4px; }}".encode()
+                )
+                btn.get_style_context().add_provider(
+                    provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                )
+            else:
+                img = Gtk.Image.new_from_icon_name("window-close-symbolic")
+                btn.set_child(img)
+            btn.connect("clicked", self._on_bg_selected, css)
+            menu_grid.attach(btn, idx % 3, idx // 3, 1, 1)
         
         # Create large tile buttons
         def create_tile(title, tooltip_text, icon_name, callback):
@@ -132,8 +192,32 @@ class WelcomePage(Gtk.Box):
         grid.attach(preferences_tile, 1, 1, 1, 1)
         grid.attach(shortcuts_tile, 0, 2, 1, 1)
         grid.attach(help_tile, 1, 2, 1, 1)
-        
-        self.append(grid)
+
+    def _show_bg_menu(self, button):
+        """Display background selection popover."""
+        self.bg_popover.popup()
+
+    def _on_bg_selected(self, button, css):
+        """Handle selection of background option."""
+        self.bg_popover.popdown()
+        self._apply_background(css)
+
+    def _apply_background(self, css):
+        """Apply CSS background or reset to default."""
+        if not css:
+            if self.has_css_class("welcome-bg"):
+                self.remove_css_class("welcome-bg")
+            self._bg_provider.load_from_data(b"")
+            return
+        if "gradient" in css:
+            style = f"background-image: {css};"
+        else:
+            style = f"background: {css};"
+        self._bg_provider.load_from_data(
+            f".welcome-bg {{ {style} }}".encode()
+        )
+        if not self.has_css_class("welcome-bg"):
+            self.add_css_class("welcome-bg")
 
 
 
