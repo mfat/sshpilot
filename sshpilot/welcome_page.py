@@ -7,7 +7,7 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Gdk
 from gettext import gettext as _
 
-from .shortcut_utils import get_primary_modifier_label
+
 from .connection_manager import Connection
 from .search_utils import connection_matches
 
@@ -19,12 +19,14 @@ class WelcomePage(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=24)
         self.window = window
         self.connection_manager = window.connection_manager
-        self.set_valign(Gtk.Align.CENTER)
-        self.set_halign(Gtk.Align.CENTER)
-        self.set_margin_start(48)
-        self.set_margin_end(48)
-        self.set_margin_top(48)
-        self.set_margin_bottom(48)
+        self.set_valign(Gtk.Align.START)
+        self.set_halign(Gtk.Align.FILL)
+        self.set_hexpand(True)
+        self.set_margin_start(24)
+        self.set_margin_end(24)
+        self.set_margin_top(24)
+        self.set_margin_bottom(24)
+
 
         # Welcome icon
         try:
@@ -35,11 +37,16 @@ class WelcomePage(Gtk.Box):
             icon = Gtk.Image.new_from_icon_name('network-workgroup-symbolic')
             icon.set_icon_size(Gtk.IconSize.LARGE)
             icon.set_pixel_size(128)
+        icon.set_halign(Gtk.Align.CENTER)
         self.append(icon)
 
         # Quick connect box
         quick_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        quick_box.set_halign(Gtk.Align.FILL)
+        quick_box.set_hexpand(True)
         self.quick_entry = Gtk.Entry()
+        self.quick_entry.set_hexpand(True)
+
         self.quick_entry.set_placeholder_text(_('user@host'))
         self.quick_entry.connect('activate', self.on_quick_connect)
         connect_button = Gtk.Button(label=_('Connect'))
@@ -50,7 +57,11 @@ class WelcomePage(Gtk.Box):
 
         # Search box and results
         search_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        search_container.set_halign(Gtk.Align.FILL)
+        search_container.set_hexpand(True)
         self.search_entry = Gtk.SearchEntry()
+        self.search_entry.set_hexpand(True)
+
         self.search_entry.set_placeholder_text(_('Search connections'))
         self.search_entry.connect('activate', self.on_search_activate)
         self.search_entry.connect('search-changed', self.on_search_changed)
@@ -58,12 +69,16 @@ class WelcomePage(Gtk.Box):
 
         self.results_list = Gtk.ListBox()
         self.results_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.results_list.set_hexpand(True)
+
         self.results_list.connect('row-activated', self.on_result_activated)
         search_container.append(self.results_list)
         self.append(search_container)
 
         # Action buttons
         buttons_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        buttons_box.set_halign(Gtk.Align.START)
+
         local_button = Gtk.Button(label=_('Local Terminal'))
         local_button.connect('clicked', lambda *_: window.terminal_manager.show_local_terminal())
         prefs_button = Gtk.Button(label=_('Preferences'))
@@ -74,25 +89,26 @@ class WelcomePage(Gtk.Box):
 
         # Shortcuts box
         shortcuts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        shortcuts_box.set_halign(Gtk.Align.CENTER)
+        shortcuts_box.set_halign(Gtk.Align.FILL)
+
         shortcuts_title = Gtk.Label(label=_('Keyboard Shortcuts'))
         shortcuts_box.append(shortcuts_title)
 
-        primary = get_primary_modifier_label()
         shortcuts = [
-            (f'{primary}+N', _('New Connection')),
-            (f'{primary}+Alt+N', _('Open Selected Host in a New Tab')),
-            ('F9', _('Toggle Sidebar')),
-            (f'{primary}+L', _('Focus connection list to select server')),
-            (f'{primary}+Shift+K', _('Copy SSH Key to Server')),
-            ('Alt+Right', _('Next Tab')),
-            ('Alt+Left', _('Previous Tab')),
-            (f'{primary}+F4', _('Close Tab')),
-            (f'{primary}+Shift+T', _('New Local Terminal')),
-            (f'{primary}+Shift+=', _('Zoom In')),
-            (f'{primary}+-', _('Zoom Out')),
-            (f'{primary}+0', _('Reset Zoom')),
-            (f'{primary}+,', _('Preferences')),
+            ("<Primary>N", _('New Connection')),
+            ("<Primary><Alt>N", _('Open Selected Host in a New Tab')),
+            ("F9", _('Toggle Sidebar')),
+            ("<Primary>L", _('Focus connection list to select server')),
+            ("<Primary><Shift>K", _('Copy SSH Key to Server')),
+            ("<Alt>Right", _('Next Tab')),
+            ("<Alt>Left", _('Previous Tab')),
+            ("<Primary>F4", _('Close Tab')),
+            ("<Primary><Shift>T", _('New Local Terminal')),
+            ("<Primary>plus", _('Zoom In')),
+            ("<Primary>minus", _('Zoom Out')),
+            ("<Primary>0", _('Reset Zoom')),
+            ("<Primary>comma", _('Preferences')),
+
         ]
 
         for shortcut, description in shortcuts:
