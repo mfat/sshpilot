@@ -911,7 +911,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.content_stack.set_vexpand(True)
         
         # Create welcome/help view
-        self.welcome_view = WelcomePage()
+        self.welcome_view = WelcomePage(self)
         self.content_stack.add_named(self.welcome_view, "welcome")
         
         # Create tab view
