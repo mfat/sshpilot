@@ -150,9 +150,8 @@ def test_open_connection_terminal_app(monkeypatch):
     connection = types.SimpleNamespace(username="user", host="example.com", port=22)
     win._open_connection_in_external_terminal(connection)
 
-    assert captured["cmd"][0] == "osascript"
-    assert "Terminal" in captured["cmd"][-1]
-    assert "ssh user@example.com" in captured["cmd"][-1]
+    expected_script = 'tell app "Terminal" to do script "ssh user@example.com"'
+    assert captured["cmd"] == ["osascript", "-e", expected_script]
 
 
 def test_open_connection_iterm_app(monkeypatch):
@@ -172,9 +171,15 @@ def test_open_connection_iterm_app(monkeypatch):
     connection = types.SimpleNamespace(username="user", host="example.com", port=22)
     win._open_connection_in_external_terminal(connection)
 
-    assert captured["cmd"][0] == "osascript"
-    assert "iTerm2" in captured["cmd"][-1]
-    assert "ssh user@example.com" in captured["cmd"][-1]
+    expected_script = (
+        'tell application "iTerm2"\n'
+        '    tell current window\n'
+        '        create tab with default profile\n'
+        '        tell current session to write text "ssh user@example.com"\n'
+        '    end tell\n'
+        'end tell'
+    )
+    assert captured["cmd"] == ["osascript", "-e", expected_script]
 
 
 def test_open_connection_alacritty(monkeypatch):
@@ -194,7 +199,15 @@ def test_open_connection_alacritty(monkeypatch):
     connection = types.SimpleNamespace(username="user", host="example.com", port=22)
     win._open_connection_in_external_terminal(connection)
 
-    assert captured["cmd"][0:3] == ["open", "-a", "Alacritty"]
-    assert "--args" in captured["cmd"]
-    assert "ssh user@example.com" in captured["cmd"][-1]
+    expected_cmd = [
+        "open",
+        "-a",
+        "Alacritty",
+        "--args",
+        "-e",
+        "bash",
+        "-lc",
+        "ssh user@example.com; exec bash",
+    ]
+    assert captured["cmd"] == expected_cmd
 
