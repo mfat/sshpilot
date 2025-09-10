@@ -7,6 +7,7 @@ import os
 import logging
 import math
 import shlex
+import time
 from typing import Optional, Dict, Any, List, Tuple, Callable
 
 import gi
@@ -4304,7 +4305,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if app:
                     app_lower = app.lower()
                     if app_lower in ['terminal', 'terminal.app']:
-                        script = f'tell app "Terminal" to do script "{ssh_command}"'
+                        script = f'tell app "Terminal" to do script "{ssh_command}"\ntell app "Terminal" to activate'
                         cmd = ['osascript', '-e', script]
                     elif app_lower in ['iterm', 'iterm2', 'iterm.app']:
                         script = (
@@ -4316,17 +4317,37 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             '        create tab with default profile\n'
                             f'        tell current session to write text "{ssh_command}"\n'
                             '    end tell\n'
+                            '    activate\n'
                             'end tell'
                         )
                         cmd = ['osascript', '-e', script]
                     elif app_lower == 'warp':
                         cmd = ['open', f'warp://{ssh_command}']
+                        # Warp handles focus automatically via URL scheme
                     elif app_lower in ['alacritty', 'kitty']:
                         cmd = ['open', '-a', app, '--args', '-e', 'bash', '-lc', f'{ssh_command}; exec bash']
+                        # Launch terminal and then activate it
+                        subprocess.Popen(cmd, start_new_session=True)
+                        time.sleep(0.5)  # Give the app time to launch
+                        activate_script = f'tell application "{app}" to activate'
+                        subprocess.Popen(['osascript', '-e', activate_script])
+                        return
                     elif app_lower == 'ghostty':
                         cmd = ['open', '-na', app, '--args', '-e', ssh_command]
+                        # Launch terminal and then activate it
+                        subprocess.Popen(cmd, start_new_session=True)
+                        time.sleep(0.5)  # Give the app time to launch
+                        activate_script = f'tell application "{app}" to activate'
+                        subprocess.Popen(['osascript', '-e', activate_script])
+                        return
                     else:
                         cmd = ['open', '-a', app, '--args', 'bash', '-lc', f'{ssh_command}; exec bash']
+                        # Launch terminal and then activate it
+                        subprocess.Popen(cmd, start_new_session=True)
+                        time.sleep(0.5)  # Give the app time to launch
+                        activate_script = f'tell application "{app}" to activate'
+                        subprocess.Popen(['osascript', '-e', activate_script])
+                        return
                 else:
                     cmd = terminal_command + ['--args', 'bash', '-lc', f'{ssh_command}; exec bash']
             else:
@@ -4346,6 +4367,28 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             logger.info(f"Launching system terminal: {' '.join(cmd)}")
             subprocess.Popen(cmd, start_new_session=True)
+            
+            # Try to bring the terminal to front on Linux
+            if not is_macos():
+                try:
+                    # Try wmctrl first (more reliable)
+                    result = subprocess.run(['which', 'wmctrl'], capture_output=True, timeout=1)
+                    if result.returncode == 0:
+                        time.sleep(0.5)  # Give the terminal time to launch
+                        terminal_basename = os.path.basename(terminal_command[0])
+                        subprocess.Popen(['wmctrl', '-a', terminal_basename], 
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    else:
+                        # Fallback to xdotool
+                        result = subprocess.run(['which', 'xdotool'], capture_output=True, timeout=1)
+                        if result.returncode == 0:
+                            time.sleep(0.5)  # Give the terminal time to launch
+                            terminal_basename = os.path.basename(terminal_command[0])
+                            subprocess.Popen(['xdotool', 'search', '--name', terminal_basename, 'windowactivate'], 
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    # Ignore focus errors - terminal launching is more important
+                    pass
 
         except Exception as e:
             logger.error(f"Failed to open system terminal: {e}")
