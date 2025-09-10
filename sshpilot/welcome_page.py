@@ -48,20 +48,26 @@ class WelcomePage(Gtk.Box):
         self.append(spacer)
 
         # Quick connect box
-        quick_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        quick_box.set_halign(Gtk.Align.CENTER)
-        quick_box.set_hexpand(False)
+        self.quick_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.quick_box.set_halign(Gtk.Align.CENTER)
+        self.quick_box.set_hexpand(False)
         self.quick_entry = Gtk.Entry()
         self.quick_entry.set_hexpand(False)
         self.quick_entry.set_size_request(200, -1)
 
         self.quick_entry.set_placeholder_text(_('ssh user@host or ssh -p 2222 user@host'))
         self.quick_entry.connect('activate', self.on_quick_connect)
+        
+        # Add focus controller for auto-expansion
+        focus_controller = Gtk.EventControllerFocus()
+        focus_controller.connect('enter', self.on_quick_entry_focus_in)
+        focus_controller.connect('leave', self.on_quick_entry_focus_out)
+        self.quick_entry.add_controller(focus_controller)
         connect_button = Gtk.Button(label=_('Connect'))
         connect_button.connect('clicked', self.on_quick_connect)
-        quick_box.append(self.quick_entry)
-        quick_box.append(connect_button)
-        self.append(quick_box)
+        self.quick_box.append(self.quick_entry)
+        self.quick_box.append(connect_button)
+        self.append(self.quick_box)
 
 
         # Action buttons
@@ -266,4 +272,15 @@ class WelcomePage(Gtk.Box):
     def on_search_clicked(self, button):
         """Handle search button click - activate sidebar search"""
         self.window.focus_search_entry()
+    
+    # Quick connect box focus handlers
+    def on_quick_entry_focus_in(self, controller):
+        """Handle focus in event - expand the quick connect box"""
+        # Expand the entry field width when focused
+        self.quick_entry.set_size_request(300, -1)  # Expand from 200 to 300 pixels
+    
+    def on_quick_entry_focus_out(self, controller):
+        """Handle focus out event - contract the quick connect box"""
+        # Contract the entry field width when focus is lost
+        self.quick_entry.set_size_request(200, -1)  # Contract back to 200 pixels
     
