@@ -34,68 +34,106 @@ class WelcomePage(Gtk.Box):
         self.set_focus_on_click(False)
 
 
-        # Create preferences group for proper Adwaita styling
-        preferences_group = Adw.PreferencesGroup()
-        preferences_group.set_title(_(''))
-        preferences_group.set_halign(Gtk.Align.CENTER)
-        preferences_group.set_hexpand(False)
-        preferences_group.set_size_request(400, -1)
+        # Create grid layout for large tiles
+        grid = Gtk.Grid()
+        grid.set_column_spacing(12)
+        grid.set_row_spacing(12)
+        grid.set_halign(Gtk.Align.CENTER)
+        grid.set_hexpand(False)
+        grid.set_vexpand(False)
         
-        # Quick Connect action row
-        quick_connect_row = Adw.ActionRow()
-        quick_connect_row.set_title(_('Quick Connect'))
-        quick_connect_row.set_subtitle(_('Connect to a server using SSH command'))
-        quick_connect_row.set_icon_name('network-server-symbolic')
-        quick_connect_row.set_activatable(True)
-        quick_connect_row.connect('activated', self.on_quick_connect_clicked)
-        preferences_group.add(quick_connect_row)
+        # Create large tile buttons
+        def create_tile(title, tooltip_text, icon_name, callback):
+            """Create a large tile button with icon and title"""
+            tile = Gtk.Button()
+            tile.set_css_classes(['card', 'flat'])
+            tile.set_size_request(180, 140)
+            tile.set_hexpand(False)
+            tile.set_vexpand(False)
+            tile.set_tooltip_text(tooltip_text)
+            
+            # Main container
+            container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            container.set_margin_top(24)
+            container.set_margin_bottom(24)
+            container.set_margin_start(16)
+            container.set_margin_end(16)
+            container.set_halign(Gtk.Align.CENTER)
+            container.set_valign(Gtk.Align.CENTER)
+            
+            # Icon
+            icon = Gtk.Image()
+            icon.set_from_icon_name(icon_name)
+            icon.set_icon_size(Gtk.IconSize.LARGE)
+            icon.set_pixel_size(48)
+            container.append(icon)
+            
+            # Title
+            title_label = Gtk.Label()
+            title_label.set_text(title)
+            title_label.set_halign(Gtk.Align.CENTER)
+            title_label.set_wrap(True)
+            title_label.set_max_width_chars(15)
+            container.append(title_label)
+            
+            tile.set_child(container)
+            tile.connect('clicked', callback)
+            tile.set_can_focus(False)
+            
+            return tile
         
-        # Local Terminal action row
-        local_terminal_row = Adw.ActionRow()
-        local_terminal_row.set_title(_('Local Terminal'))
-        local_terminal_row.set_subtitle(_('Open a local terminal session'))
-        local_terminal_row.set_icon_name('utilities-terminal-symbolic')
-        # Platform-aware shortcut
-        shortcut = 'Cmd+Shift+T' if is_macos() else 'Ctrl+Shift+T'
-        local_terminal_row.set_subtitle(_('Open a local terminal session') + f' ({shortcut})')
-        local_terminal_row.set_activatable(True)
-        local_terminal_row.connect('activated', lambda *_: window.terminal_manager.show_local_terminal())
-        preferences_group.add(local_terminal_row)
+        # Create tiles
+        quick_connect_tile = create_tile(
+            _('Quick Connect'),
+            _('Connect to a server using SSH command'),
+            'network-server-symbolic',
+            self.on_quick_connect_clicked
+        )
         
-        # Known Hosts Editor action row
-        known_hosts_row = Adw.ActionRow()
-        known_hosts_row.set_title(_('Known Hosts Editor'))
-        known_hosts_row.set_subtitle(_('Manage trusted SSH host keys'))
-        known_hosts_row.set_icon_name('view-list-symbolic')
-        known_hosts_row.set_activatable(True)
-        known_hosts_row.connect('activated', lambda *_: window.show_known_hosts_editor())
-        preferences_group.add(known_hosts_row)
+        local_terminal_tile = create_tile(
+            _('Local Terminal'),
+            _('Open a local terminal session'),
+            'utilities-terminal-symbolic',
+            lambda *_: window.terminal_manager.show_local_terminal()
+        )
         
-        # Preferences action row
-        prefs_row = Adw.ActionRow()
-        prefs_row.set_title(_('Preferences'))
-        prefs_row.set_subtitle(_('Configure application settings'))
-        prefs_row.set_icon_name('preferences-system-symbolic')
-        # Platform-aware shortcut
-        shortcut = 'Cmd+,' if is_macos() else 'Ctrl+,'
-        prefs_row.set_subtitle(_('Configure application settings') + f' ({shortcut})')
-        prefs_row.set_activatable(True)
-        prefs_row.connect('activated', lambda *_: window.show_preferences())
-        preferences_group.add(prefs_row)
+        known_hosts_tile = create_tile(
+            _('Known Hosts'),
+            _('Manage trusted SSH host keys'),
+            'view-list-symbolic',
+            lambda *_: window.show_known_hosts_editor()
+        )
         
-        # Keyboard Shortcuts action row
-        shortcuts_row = Adw.ActionRow()
-        shortcuts_row.set_title(_('Keyboard Shortcuts'))
-        shortcuts_row.set_subtitle(_('View and learn keyboard shortcuts'))
-        shortcuts_row.set_icon_name('preferences-desktop-keyboard-symbolic')
-        # Platform-aware shortcut
-        shortcut = 'Cmd+Shift+/' if is_macos() else 'Ctrl+Shift+/'
-        shortcuts_row.set_subtitle(_('View and learn keyboard shortcuts') + f' ({shortcut})')
-        shortcuts_row.set_activatable(True)
-        shortcuts_row.connect('activated', lambda *_: window.show_shortcuts_window())
-        preferences_group.add(shortcuts_row)
+        preferences_tile = create_tile(
+            _('Preferences'),
+            _('Configure application settings'),
+            'preferences-system-symbolic',
+            lambda *_: window.show_preferences()
+        )
         
-        self.append(preferences_group)
+        shortcuts_tile = create_tile(
+            _('Shortcuts'),
+            _('View and learn keyboard shortcuts'),
+            'preferences-desktop-keyboard-symbolic',
+            lambda *_: window.show_shortcuts_window()
+        )
+        
+        help_tile = create_tile(
+            _('Online Help'),
+            _('View online documentation and help'),
+            'help-contents-symbolic',
+            lambda *_: self.open_online_help()
+        )
+        
+        # Add tiles to grid (2 columns)
+        grid.attach(quick_connect_tile, 0, 0, 1, 1)
+        grid.attach(local_terminal_tile, 1, 0, 1, 1)
+        grid.attach(known_hosts_tile, 0, 1, 1, 1)
+        grid.attach(preferences_tile, 1, 1, 1, 1)
+        grid.attach(shortcuts_tile, 0, 2, 1, 1)
+        grid.attach(help_tile, 1, 2, 1, 1)
+        
+        self.append(grid)
 
 
 
@@ -104,6 +142,24 @@ class WelcomePage(Gtk.Box):
         """Open quick connect dialog"""
         dialog = QuickConnectDialog(self.window)
         dialog.present()
+    
+    def open_online_help(self):
+        """Open online help documentation"""
+        import webbrowser
+        try:
+            webbrowser.open('https://github.com/mfat/sshpilot/wiki')
+        except Exception as e:
+            # Fallback: show a dialog with the URL
+            dialog = Adw.MessageDialog.new(
+                self.window,
+                "Online Help",
+                "Visit the sshPilot documentation at:\nhttps://github.com/mfat/sshpilot/wiki"
+            )
+            dialog.add_response("ok", "OK")
+            dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_modal(True)
+            dialog.set_transient_for(self.window)
+            dialog.present()
     
     def _parse_ssh_command(self, command_text):
         """Parse SSH command text and extract connection parameters"""
