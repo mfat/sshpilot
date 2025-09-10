@@ -21,7 +21,7 @@ class WelcomePage(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=24)
         self.window = window
         self.connection_manager = window.connection_manager
-        self.set_valign(Gtk.Align.START)
+        self.set_valign(Gtk.Align.CENTER)
         self.set_halign(Gtk.Align.FILL)
         self.set_hexpand(True)
         self.set_margin_start(24)
@@ -30,22 +30,8 @@ class WelcomePage(Gtk.Box):
         self.set_margin_bottom(24)
 
 
-        # Welcome icon
-        try:
-            texture = Gdk.Texture.new_from_resource('/io/github/mfat/sshpilot/sshpilot.svg')
-            icon = Gtk.Image.new_from_paintable(texture)
-            icon.set_pixel_size(64)
-        except Exception:
-            icon = Gtk.Image.new_from_icon_name('network-workgroup-symbolic')
-            icon.set_icon_size(Gtk.IconSize.LARGE)
-            icon.set_pixel_size(128)
-        icon.set_halign(Gtk.Align.CENTER)
-        self.append(icon)
 
-        # Add some vertical spacing after the icon
-        spacer = Gtk.Box()
-        spacer.set_size_request(-1, 16)  # 16px vertical spacing
-        self.append(spacer)
+       
 
         # Quick connect box
         self.quick_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -55,7 +41,7 @@ class WelcomePage(Gtk.Box):
         self.quick_entry.set_hexpand(False)
         self.quick_entry.set_size_request(200, -1)
 
-        self.quick_entry.set_placeholder_text(_('ssh user@host or ssh -p 2222 user@host'))
+        self.quick_entry.set_placeholder_text(_('ssh -p 2222 user@host'))
         self.quick_entry.connect('activate', self.on_quick_connect)
         
         # Add focus controller for auto-expansion
