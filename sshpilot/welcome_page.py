@@ -147,6 +147,7 @@ class WelcomePage(Gtk.Box):
             next_child = child.get_next_sibling()
             self.search_list.remove(child)
             child = next_child
+
         if not text:
             self.search_list.set_visible(False)
             return
