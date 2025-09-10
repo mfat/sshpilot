@@ -15,6 +15,7 @@ from typing import Optional, Dict, Any
 
 from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
 from .port_utils import get_port_checker
+from .platform_utils import is_macos
 
 # Initialize gettext
 try:
@@ -934,9 +935,7 @@ class ConnectionDialog(Adw.Window):
         shortcut_controller = Gtk.ShortcutController()
         
         # Ctrl/Command+S to save
-        import platform
-        is_macos = platform.system() == 'Darwin'
-        save_trigger = "<Meta>s" if is_macos else "<Primary>s"
+        save_trigger = "<Meta>s" if is_macos() else "<Primary>s"
         
         save_shortcut = Gtk.Shortcut()
         save_shortcut.set_trigger(Gtk.ShortcutTrigger.parse_string(save_trigger))

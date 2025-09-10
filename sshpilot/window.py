@@ -6,6 +6,8 @@ Primary UI with connection list, tabs, and terminal management
 import os
 import logging
 import math
+import shlex
+import time
 from typing import Optional, Dict, Any, List, Tuple, Callable
 
 import gi
@@ -36,7 +38,12 @@ from .key_manager import KeyManager, SSHKey
 # Port forwarding UI is now integrated into connection_dialog.py
 from .connection_dialog import ConnectionDialog
 from .askpass_utils import ensure_askpass_script
-from .preferences import PreferencesWindow, is_running_in_flatpak, should_hide_external_terminal_options
+from .preferences import (
+    PreferencesWindow,
+    is_running_in_flatpak,
+    should_hide_external_terminal_options,
+    should_hide_file_manager_options,
+)
 from .sshcopyid_window import SshCopyIdWindow
 from .groups import GroupManager
 from .sidebar import GroupRow, ConnectionRow, build_sidebar
@@ -47,6 +54,7 @@ from .actions import WindowActions, register_window_actions
 from . import shutdown
 from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
+from .platform_utils import is_macos
 
 logger = logging.getLogger(__name__)
 
@@ -700,14 +708,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         listbox.append(edit_row)
 
                         # Manage Files row
-                        files_row = Adw.ActionRow(title=_('Manage Files'))
-                        files_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
-                        files_row.add_prefix(files_icon)
-                        files_row.set_activatable(True)
-                        files_row.connect('activated', lambda *_: (self.on_manage_files_action(None, None), pop.popdown()))
-                        listbox.append(files_row)
+                        if not should_hide_file_manager_options():
+                            files_row = Adw.ActionRow(title=_('Manage Files'))
+                            files_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+                            files_row.add_prefix(files_icon)
+                            files_row.set_activatable(True)
+                            files_row.connect('activated', lambda *_: (self.on_manage_files_action(None, None), pop.popdown()))
+                            listbox.append(files_row)
 
-                        # Only show system terminal option when not in Flatpak or macOS
+                        # Only show system terminal option when external terminals are available
                         if not should_hide_external_terminal_options():
                             terminal_row = Adw.ActionRow(title=_('Open in System Terminal'))
                             terminal_icon = Gtk.Image.new_from_icon_name('utilities-terminal-symbolic')
@@ -778,9 +787,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     )
                 return True
             
-            import platform
-            is_macos = platform.system() == 'Darwin'
-            trigger = '<Meta>Return' if is_macos else '<Primary>Return'
+            trigger = '<Meta>Return' if is_macos() else '<Primary>Return'
             
             key_controller.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string(trigger),
@@ -844,13 +851,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_toolbar.append(self.upload_button)
 
         # Manage files button
-        self.manage_files_button = Gtk.Button.new_from_icon_name('folder-symbolic')
-        self.manage_files_button.set_tooltip_text('Open file manager for remote server')
-        self.manage_files_button.set_sensitive(False)
-        self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
-        self.connection_toolbar.append(self.manage_files_button)
+        if not should_hide_file_manager_options():
+            self.manage_files_button = Gtk.Button.new_from_icon_name('folder-symbolic')
+            self.manage_files_button.set_tooltip_text('Open file manager for remote server')
+            self.manage_files_button.set_sensitive(False)
+            self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
+            self.connection_toolbar.append(self.manage_files_button)
         
-        # System terminal button (only when not in Flatpak or macOS)
+        # System terminal button (only when external terminals are available)
         if not should_hide_external_terminal_options():
             self.system_terminal_button = Gtk.Button.new_from_icon_name('utilities-terminal-symbolic')
             self.system_terminal_button.set_tooltip_text('Open connection in system terminal')
@@ -4244,77 +4252,144 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def open_in_system_terminal(self, connection):
         """Open the connection in the system's default terminal"""
         try:
-            # Build the SSH command
             port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
             ssh_command = f"ssh{port_text} {connection.username}@{connection.host}"
-            
-            # Check if user prefers external terminal
+
             use_external = self.config.get_setting('use-external-terminal', False)
-            
             if use_external:
-                # Use user's preferred external terminal
                 terminal_command = self._get_user_preferred_terminal()
             else:
-                # Use built-in terminal (fallback to system default)
                 terminal_command = self._get_default_terminal_command()
-            
+
             if not terminal_command:
-                # Fallback to common terminals
                 common_terminals = [
-                    'gnome-terminal', 'konsole', 'xterm', 'alacritty', 
+                    'gnome-terminal', 'konsole', 'xterm', 'alacritty',
                     'kitty', 'terminator', 'tilix', 'xfce4-terminal'
                 ]
-                
                 for term in common_terminals:
                     try:
                         result = subprocess.run(['which', term], capture_output=True, text=True, timeout=2)
                         if result.returncode == 0:
-                            terminal_command = term
+                            terminal_command = [term]
                             break
                     except Exception:
                         continue
-            
+
             if not terminal_command:
-                # Last resort: try xdg-terminal
                 try:
                     result = subprocess.run(['which', 'xdg-terminal'], capture_output=True, text=True, timeout=2)
                     if result.returncode == 0:
-                        terminal_command = 'xdg-terminal'
+                        terminal_command = ['xdg-terminal']
                 except Exception:
                     pass
-            
+
             if not terminal_command:
-                # Show error dialog
                 self._show_terminal_error_dialog()
                 return
-            
-            # Get the basename for terminal type detection
-            import os
-            terminal_basename = os.path.basename(terminal_command)
-            
-            # Launch the terminal with SSH command
-            if terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
-                # These terminals use -- to separate options from command
-                cmd = [terminal_command, '--', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_basename in ['konsole', 'terminator', 'guake']:
-                # These terminals use -e for command execution
-                cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
-            elif terminal_basename in ['alacritty', 'kitty']:
-                # These terminals use -e for command execution
-                cmd = [terminal_command, '-e', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_basename == 'xterm':
-                # xterm uses -e for command execution
-                cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
-            elif terminal_basename == 'xdg-terminal':
-                # xdg-terminal opens the default terminal
-                cmd = [terminal_command, ssh_command]
+
+            self._open_system_terminal(terminal_command, ssh_command)
+
+        except Exception as e:
+            logger.error(f"Failed to open system terminal: {e}")
+            self._show_terminal_error_dialog()
+
+    def _open_system_terminal(self, terminal_command: List[str], ssh_command: str):
+        """Launch a terminal command with an SSH command."""
+        try:
+            if is_macos():
+                app = None
+                if terminal_command and terminal_command[0] == 'open':
+                    # handle commands like ['open', '-a', 'App']
+                    if len(terminal_command) >= 3 and terminal_command[1] == '-a':
+                        app = os.path.basename(terminal_command[2])
+                if app:
+                    app_lower = app.lower()
+                    if app_lower in ['terminal', 'terminal.app']:
+                        script = f'tell app "Terminal" to do script "{ssh_command}"\ntell app "Terminal" to activate'
+                        cmd = ['osascript', '-e', script]
+                    elif app_lower in ['iterm', 'iterm2', 'iterm.app']:
+                        script = (
+                            'tell application "iTerm"\n'
+                            '    if (count of windows) = 0 then\n'
+                            '        create window with default profile\n'
+                            '    end if\n'
+                            '    tell current window\n'
+                            '        create tab with default profile\n'
+                            f'        tell current session to write text "{ssh_command}"\n'
+                            '    end tell\n'
+                            '    activate\n'
+                            'end tell'
+                        )
+                        cmd = ['osascript', '-e', script]
+                    elif app_lower == 'warp':
+                        cmd = ['open', f'warp://{ssh_command}']
+                        # Warp handles focus automatically via URL scheme
+                    elif app_lower in ['alacritty', 'kitty']:
+                        cmd = ['open', '-a', app, '--args', '-e', 'bash', '-lc', f'{ssh_command}; exec bash']
+                        # Launch terminal and then activate it
+                        subprocess.Popen(cmd, start_new_session=True)
+                        time.sleep(0.5)  # Give the app time to launch
+                        activate_script = f'tell application "{app}" to activate'
+                        subprocess.Popen(['osascript', '-e', activate_script])
+                        return
+                    elif app_lower == 'ghostty':
+                        cmd = ['open', '-na', app, '--args', '-e', ssh_command]
+                        # Launch terminal and then activate it
+                        subprocess.Popen(cmd, start_new_session=True)
+                        time.sleep(0.5)  # Give the app time to launch
+                        activate_script = f'tell application "{app}" to activate'
+                        subprocess.Popen(['osascript', '-e', activate_script])
+                        return
+                    else:
+                        cmd = ['open', '-a', app, '--args', 'bash', '-lc', f'{ssh_command}; exec bash']
+                        # Launch terminal and then activate it
+                        subprocess.Popen(cmd, start_new_session=True)
+                        time.sleep(0.5)  # Give the app time to launch
+                        activate_script = f'tell application "{app}" to activate'
+                        subprocess.Popen(['osascript', '-e', activate_script])
+                        return
+                else:
+                    cmd = terminal_command + ['--args', 'bash', '-lc', f'{ssh_command}; exec bash']
             else:
-                # Generic fallback
-                cmd = [terminal_command, ssh_command]
-            
+                terminal_basename = os.path.basename(terminal_command[0])
+                if terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
+                    cmd = terminal_command + ['--', 'bash', '-c', f'{ssh_command}; exec bash']
+                elif terminal_basename in ['konsole', 'terminator', 'guake']:
+                    cmd = terminal_command + ['-e', f'bash -c "{ssh_command}; exec bash"']
+                elif terminal_basename in ['alacritty', 'kitty']:
+                    cmd = terminal_command + ['-e', 'bash', '-c', f'{ssh_command}; exec bash']
+                elif terminal_basename == 'xterm':
+                    cmd = terminal_command + ['-e', f'bash -c "{ssh_command}; exec bash"']
+                elif terminal_basename == 'xdg-terminal':
+                    cmd = terminal_command + [ssh_command]
+                else:
+                    cmd = terminal_command + [ssh_command]
+
             logger.info(f"Launching system terminal: {' '.join(cmd)}")
             subprocess.Popen(cmd, start_new_session=True)
             
+            # Try to bring the terminal to front on Linux
+            if not is_macos():
+                try:
+                    # Try wmctrl first (more reliable)
+                    result = subprocess.run(['which', 'wmctrl'], capture_output=True, timeout=1)
+                    if result.returncode == 0:
+                        time.sleep(0.5)  # Give the terminal time to launch
+                        terminal_basename = os.path.basename(terminal_command[0])
+                        subprocess.Popen(['wmctrl', '-a', terminal_basename], 
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    else:
+                        # Fallback to xdotool
+                        result = subprocess.run(['which', 'xdotool'], capture_output=True, timeout=1)
+                        if result.returncode == 0:
+                            time.sleep(0.5)  # Give the terminal time to launch
+                            terminal_basename = os.path.basename(terminal_command[0])
+                            subprocess.Popen(['xdotool', 'search', '--name', terminal_basename, 'windowactivate'], 
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    # Ignore focus errors - terminal launching is more important
+                    pass
+
         except Exception as e:
             logger.error(f"Failed to open system terminal: {e}")
             self._show_terminal_error_dialog()
@@ -4322,121 +4397,139 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def _open_connection_in_external_terminal(self, connection):
         """Open the connection in the user's preferred external terminal"""
         try:
-            # Build the SSH command
             port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
             ssh_command = f"ssh{port_text} {connection.username}@{connection.host}"
-            
-            # Get user's preferred terminal
-            terminal_command = self._get_user_preferred_terminal()
-            
-            if not terminal_command:
-                # Fallback to default terminal
-                terminal_command = self._get_default_terminal_command()
-            
-            if not terminal_command:
-                # Show error dialog
+
+            terminal = self._get_user_preferred_terminal()
+            if not terminal:
+                terminal = self._get_default_terminal_command()
+
+            if not terminal:
                 self._show_terminal_error_dialog()
                 return
-            
-            # Get the basename for terminal type detection
-            import os
-            terminal_basename = os.path.basename(terminal_command)
-            
-            # Launch the terminal with SSH command
-            if terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
-                # These terminals use -- to separate options from command
-                cmd = [terminal_command, '--', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_basename in ['konsole', 'terminator', 'guake']:
-                # These terminals use -e for command execution
-                cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
-            elif terminal_basename in ['alacritty', 'kitty']:
-                # These terminals use -e for command execution
-                cmd = [terminal_command, '-e', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_basename == 'xterm':
-                # xterm uses -e for command execution
-                cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
-            elif terminal_basename == 'xdg-terminal':
-                # xdg-terminal opens the default terminal
-                cmd = [terminal_command, ssh_command]
-            else:
-                # Generic fallback
-                cmd = [terminal_command, ssh_command]
-            
-            logger.info(f"Opening connection in external terminal: {' '.join(cmd)}")
-            subprocess.Popen(cmd, start_new_session=True)
-            
+
+            self._open_system_terminal(terminal, ssh_command)
+
         except Exception as e:
             logger.error(f"Failed to open connection in external terminal: {e}")
             self._show_terminal_error_dialog()
 
-    def _get_default_terminal_command(self):
+    def _get_default_terminal_command(self) -> Optional[List[str]]:
         """Get the default terminal command from desktop environment"""
         try:
-            # Check for desktop-specific terminals
+            if is_macos():
+                # Map bundle identifiers to display names in preference order.
+                mac_terms = {
+                    'com.apple.Terminal': 'Terminal',
+                    'com.googlecode.iterm2': 'iTerm',
+
+                    'dev.warp.Warp': 'Warp',
+                    'io.alacritty': 'Alacritty',
+                    'net.kovidgoyal.kitty': 'Kitty',
+                    'com.mitmaro.ghostty': 'Ghostty',
+                }
+
+                for bundle_id, name in mac_terms.items():
+                    # First try AppleScript lookup by app name
+                    try:
+                        result = subprocess.run(
+                            ['osascript', '-e', f'id of app "{name}"'],
+                            capture_output=True,
+                            text=True,
+                            timeout=2,
+                        )
+                        if result.returncode == 0 and bundle_id in result.stdout:
+                            return ['open', '-a', name]
+                    except Exception:
+                        pass
+
+                    # Fallback to Spotlight metadata search by bundle identifier
+                    try:
+                        result = subprocess.run(
+                            ['mdfind', f'kMDItemCFBundleIdentifier=={bundle_id}'],
+                            capture_output=True,
+                            text=True,
+                            timeout=2,
+                        )
+                        if result.returncode == 0 and result.stdout.strip():
+                            return ['open', '-a', name]
+                    except Exception:
+                        pass
+
+                return None
+
             desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
-            
+
             if 'gnome' in desktop:
-                return 'gnome-terminal'
+                return ['gnome-terminal']
             elif 'kde' in desktop or 'plasma' in desktop:
-                return 'konsole'
+                return ['konsole']
             elif 'xfce' in desktop:
-                return 'xfce4-terminal'
+                return ['xfce4-terminal']
             elif 'cinnamon' in desktop:
-                return 'gnome-terminal'  # Cinnamon uses gnome-terminal
+                return ['gnome-terminal']
             elif 'mate' in desktop:
-                return 'mate-terminal'
+                return ['mate-terminal']
             elif 'lxqt' in desktop:
-                return 'qterminal'
+                return ['qterminal']
             elif 'lxde' in desktop:
-                return 'lxterminal'
-            
-            # Check for common terminals in PATH
+                return ['lxterminal']
+
             common_terminals = [
-                'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty', 
+                'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty',
                 'kitty', 'terminator', 'tilix', 'guake'
             ]
-            
+
             for term in common_terminals:
                 try:
                     result = subprocess.run(['which', term], capture_output=True, text=True, timeout=2)
                     if result.returncode == 0:
-                        return term
+                        return [term]
                 except Exception:
                     continue
-            
+
             return None
-            
+
         except Exception as e:
             logger.error(f"Failed to get default terminal: {e}")
             return None
     
-    def _get_user_preferred_terminal(self):
+    def _get_user_preferred_terminal(self) -> Optional[List[str]]:
         """Get the user's preferred terminal from settings"""
         try:
-            # Get the user's preferred terminal
             preferred_terminal = self.config.get_setting('external-terminal', 'gnome-terminal')
-            
+
             if preferred_terminal == 'custom':
-                # Use custom path
                 custom_path = self.config.get_setting('custom-terminal-path', '')
                 if custom_path:
-                    return custom_path
+                    if is_macos():
+                        return ['open', '-a', custom_path]
+                    return [custom_path]
                 else:
                     logger.warning("Custom terminal path is not set, falling back to built-in terminal")
                     return None
-            
-            # Check if the preferred terminal is available
+
+            if is_macos():
+                # Preferences may store either an app name ("iTerm") or a full
+                # command ("open -a iTerm").  If the value already starts with
+                # "open" use it verbatim, otherwise build an "open -a" command
+                # for the specified app.
+                if preferred_terminal.startswith('open'):
+                    return shlex.split(preferred_terminal)
+
+                return ['open', '-a', preferred_terminal]
+
             try:
                 result = subprocess.run(['which', preferred_terminal], capture_output=True, text=True, timeout=2)
                 if result.returncode == 0:
-                    return preferred_terminal
+                    return [preferred_terminal]
                 else:
                     logger.warning(f"Preferred terminal '{preferred_terminal}' not found, falling back to built-in terminal")
                     return None
             except Exception as e:
                 logger.error(f"Failed to check preferred terminal '{preferred_terminal}': {e}")
                 return None
-                
+
         except Exception as e:
             logger.error(f"Failed to get user preferred terminal: {e}")
             return None
