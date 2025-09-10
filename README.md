@@ -120,7 +120,7 @@ If you have multiple connections to a single host, doble-clicking the host will 
 ## Special Thanks
 
 - [Elibugy](https://www.linkedin.com/in/elham-hesaraki) as the primary sponsor of the project
-- Behnam Tavakkoli, Chalist and Kalpase for testing
+- Behnam Tavakkoli, Chalist and Kalpase, Ramin Najjarbashi, Farid and Narbeh for testing
 - Icon designed by [Blisterexe](https://github.com/Blisterexe)
 
 ## Support development

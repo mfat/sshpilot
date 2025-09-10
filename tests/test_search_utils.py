@@ -25,3 +25,10 @@ def test_matches_host():
 def test_matches_alias():
     conn = make_connection("alias", "host", hname="myalias")
     assert connection_matches(conn, "myalias")
+
+
+def test_matches_alias_list():
+    conn = Connection({"nickname": "srv", "host": "host", "username": "user", "aliases": ["alias1", "alias2"]})
+    assert connection_matches(conn, "alias1")
+    assert connection_matches(conn, "alias2")
+    assert not connection_matches(conn, "alias3")

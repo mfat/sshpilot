@@ -175,10 +175,10 @@ def test_open_connection_terminal_app(monkeypatch):
     monkeypatch.setattr(window_mod, "is_macos", lambda: True)
     win = DummyWindow({"external-terminal": "Terminal"})
 
-    captured = {}
+    captured = {"cmds": []}
 
     def fake_popen(cmd, start_new_session=False):
-        captured["cmd"] = cmd
+        captured["cmds"].append(cmd)
         class P:
             pass
         return P()
@@ -188,18 +188,18 @@ def test_open_connection_terminal_app(monkeypatch):
     connection = types.SimpleNamespace(username="user", host="example.com", port=22)
     win._open_connection_in_external_terminal(connection)
 
-    expected_script = 'tell app "Terminal" to do script "ssh user@example.com"'
-    assert captured["cmd"] == ["osascript", "-e", expected_script]
+    expected_script = 'tell app "Terminal" to do script "ssh user@example.com"\ntell app "Terminal" to activate'
+    assert captured["cmds"][0] == ["osascript", "-e", expected_script]
 
 
 def test_open_connection_iterm_app(monkeypatch):
     monkeypatch.setattr(window_mod, "is_macos", lambda: True)
     win = DummyWindow({"external-terminal": "iTerm"})
 
-    captured = {}
+    captured = {"cmds": []}
 
     def fake_popen(cmd, start_new_session=False):
-        captured["cmd"] = cmd
+        captured["cmds"].append(cmd)
         class P:
             pass
         return P()
@@ -210,24 +210,28 @@ def test_open_connection_iterm_app(monkeypatch):
     win._open_connection_in_external_terminal(connection)
 
     expected_script = (
-        'tell application "iTerm2"\n'
+        'tell application "iTerm"\n'
+        '    if (count of windows) = 0 then\n'
+        '        create window with default profile\n'
+        '    end if\n'
         '    tell current window\n'
         '        create tab with default profile\n'
-        '        tell current session to write text "ssh user@example.com"\n'
+        f'        tell current session to write text "ssh user@example.com"\n'
         '    end tell\n'
+        '    activate\n'
         'end tell'
     )
-    assert captured["cmd"] == ["osascript", "-e", expected_script]
+    assert captured["cmds"][0] == ["osascript", "-e", expected_script]
 
 
 def test_open_connection_alacritty(monkeypatch):
     monkeypatch.setattr(window_mod, "is_macos", lambda: True)
     win = DummyWindow({"external-terminal": "Alacritty"})
 
-    captured = {}
+    captured = {"cmds": []}
 
     def fake_popen(cmd, start_new_session=False):
-        captured["cmd"] = cmd
+        captured["cmds"].append(cmd)
         class P:
             pass
         return P()
@@ -247,17 +251,17 @@ def test_open_connection_alacritty(monkeypatch):
         "-lc",
         "ssh user@example.com; exec bash",
     ]
-    assert captured["cmd"] == expected_cmd
+    assert captured["cmds"][0] == expected_cmd
 
 
 def test_open_connection_ghostty(monkeypatch):
     monkeypatch.setattr(window_mod, "is_macos", lambda: True)
     win = DummyWindow({"external-terminal": "Ghostty"})
 
-    captured = {}
+    captured = {"cmds": []}
 
     def fake_popen(cmd, start_new_session=False):
-        captured["cmd"] = cmd
+        captured["cmds"].append(cmd)
         class P:
             pass
         return P()
@@ -269,10 +273,11 @@ def test_open_connection_ghostty(monkeypatch):
 
     expected_cmd = [
         "open",
-        "-a",
+        "-na",
         "Ghostty",
         "--args",
+        "-e",
         "ssh user@example.com",
     ]
-    assert captured["cmd"] == expected_cmd
+    assert captured["cmds"][0] == expected_cmd
 

@@ -517,7 +517,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             # Radio buttons for startup behavior
             self.terminal_startup_radio = Gtk.CheckButton(label="Show Terminal")
             self.terminal_startup_radio.set_can_focus(True)
-            self.welcome_startup_radio = Gtk.CheckButton(label="Show Welcome Page")
+            self.welcome_startup_radio = Gtk.CheckButton(label="Show Start Page")
             self.welcome_startup_radio.set_can_focus(True)
             
             # Make them behave like radio buttons
