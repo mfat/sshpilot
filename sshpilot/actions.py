@@ -278,6 +278,14 @@ class WindowActions:
             except Exception:
                 pass
 
+    def on_edit_known_hosts_action(self, action, param=None):
+        """Open the known hosts editor window."""
+        try:
+            if hasattr(self, 'show_known_hosts_editor'):
+                self.show_known_hosts_editor()
+        except Exception as e:
+            logger.error(f"Failed to open known hosts editor: {e}")
+
     def on_create_group_action(self, action, param=None):
         """Handle create group action"""
         try:
@@ -722,6 +730,12 @@ def register_window_actions(window):
     window.broadcast_command_action = Gio.SimpleAction.new('broadcast-command', None)
     window.broadcast_command_action.connect('activate', window.on_broadcast_command_action)
     window.add_action(window.broadcast_command_action)
+
+    # Action for editing known hosts
+    if hasattr(window, 'on_edit_known_hosts_action'):
+        window.edit_known_hosts_action = Gio.SimpleAction.new('edit-known-hosts', None)
+        window.edit_known_hosts_action.connect('activate', window.on_edit_known_hosts_action)
+        window.add_action(window.edit_known_hosts_action)
 
     # Group management actions
     window.create_group_action = Gio.SimpleAction.new('create-group', None)

@@ -1005,6 +1005,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         menu.append('Create Group', 'win.create-group')
         menu.append('Local Terminal', 'app.local-terminal')
         menu.append('Copy Key to Server', 'app.new-key')
+        menu.append('Known Hosts Editor', 'win.edit-known-hosts')
         menu.append('Broadcast Command', 'app.broadcast-command')
         menu.append('Preferences', 'app.preferences')
 
@@ -1705,6 +1706,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 pass
 
+    def show_known_hosts_editor(self):
+        """Show known hosts editor window"""
+        logger.info("Show known hosts editor window")
+        try:
+            from .known_hosts_editor import KnownHostsEditorWindow
+            editor = KnownHostsEditorWindow(self, self.connection_manager)
+            editor.present()
+        except Exception as e:
+            logger.error(f"Failed to open known hosts editor: {e}")
+
     def show_preferences(self):
         """Show preferences dialog"""
         logger.info("Show preferences dialog")
@@ -1869,6 +1880,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Tab navigation shortcuts
         group_tabs = Gtk.ShortcutsGroup()
         group_tabs.set_title(_('Tabs'))
+
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Open New Tab'), accelerator=f"{primary}<Alt>n"))
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
@@ -1880,6 +1892,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         section.add_group(group_tabs)
 
         win.add_section(section)
+
 
         return win
 
