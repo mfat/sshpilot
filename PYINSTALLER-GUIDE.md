@@ -80,4 +80,4 @@ open dist/SSHPilot.app
 
 - The bundle is built with ad-hoc code signing (`-`) for development
 - For distribution, you may want to use a proper Apple Developer certificate
-- The application hides external terminal options on macOS (similar to Flatpak behavior)
+- The application hides external terminal options on macOS unless a third-party terminal is available
