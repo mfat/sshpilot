@@ -1023,7 +1023,7 @@ class ConnectionManager(GObject.Object):
             extra_config_lines = []
             # Only include options that are explicitly handled by the main UI fields
             standard_options = {
-                'host', 'hostname', 'port', 'user', 'identityfile', 'certificatefile',
+                'host', 'hostname', 'aliases', 'port', 'user', 'identityfile', 'certificatefile',
                 'forwardx11', 'localforward', 'remoteforward', 'dynamicforward',
                 'proxycommand', 'proxyjump', 'localcommand', 'remotecommand', 'requesttty',
                 'identitiesonly', 'permitlocalcommand',

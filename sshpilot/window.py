@@ -343,6 +343,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Load window geometry
         geometry = self.config.get_window_geometry()
         self.set_default_size(geometry['width'], geometry['height'])
+        self.set_resizable(True)
         
         # Connect window state signals
         self.connect('notify::default-width', self.on_window_size_changed)
@@ -423,6 +424,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.sidebar_toggle_button.set_active(sidebar_visible)
         self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
         self.header_bar.pack_start(self.sidebar_toggle_button)
+        
+        # Add view toggle button to switch between welcome and tabs
+        self.view_toggle_button = Gtk.Button()
+        self.view_toggle_button.set_icon_name('go-home-symbolic')
+        self.view_toggle_button.set_tooltip_text('Show Start Page')
+        self.view_toggle_button.connect('clicked', self.on_view_toggle_clicked)
+        self.view_toggle_button.set_visible(False)  # Hidden by default
+        self.header_bar.pack_start(self.view_toggle_button)
         
         # Add header bar to main container
         main_box.append(self.header_bar)
@@ -911,7 +920,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.content_stack.set_vexpand(True)
         
         # Create welcome/help view
-        self.welcome_view = WelcomePage()
+        self.welcome_view = WelcomePage(self)
         self.content_stack.add_named(self.welcome_view, "welcome")
         
         # Create tab view
@@ -996,12 +1005,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         menu.append('Create Group', 'win.create-group')
         menu.append('Local Terminal', 'app.local-terminal')
         menu.append('Copy Key to Server', 'app.new-key')
+        menu.append('Known Hosts Editor', 'win.edit-known-hosts')
         menu.append('Broadcast Command', 'app.broadcast-command')
         menu.append('Preferences', 'app.preferences')
-        menu.append('Help', 'app.help')
+
+        # Help submenu with platform-aware keyboard shortcuts overlay
+        help_menu = Gio.Menu()
+        help_menu.append('Keyboard Shortcuts', 'app.shortcuts')
+        help_menu.append('Documentation', 'app.help')
+        menu.append_submenu('Help', help_menu)
+
         menu.append('About', 'app.about')
         menu.append('Quit', 'app.quit')
-        
+
         return menu
 
     def setup_connections(self):
@@ -1194,6 +1210,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 pass
         self.content_stack.set_visible_child_name("welcome")
+        
+        # Update view toggle button
+        if hasattr(self, 'view_toggle_button'):
+            # Check if there are any active tabs
+            has_tabs = len(self.tab_view.get_pages()) > 0
+            if has_tabs:
+                self.view_toggle_button.set_icon_name('utilities-terminal-symbolic')
+                self.view_toggle_button.set_tooltip_text('Show Terminal Tabs')
+                self.view_toggle_button.set_visible(True)
+            else:
+                self.view_toggle_button.set_visible(False)  # Hide button when no tabs
+        
         logger.info("Showing welcome view")
 
     def _focus_connection_list_first_row(self):
@@ -1310,6 +1338,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 pass
         self.content_stack.set_visible_child_name("tabs")
+        
+        # Update view toggle button
+        if hasattr(self, 'view_toggle_button'):
+            self.view_toggle_button.set_icon_name('go-home-symbolic')
+            self.view_toggle_button.set_tooltip_text('Show Start Page')
+            self.view_toggle_button.set_visible(True)  # Show button when tabs are active
+        
         logger.info("Showing tab view")
 
     def show_connection_dialog(self, connection: Connection = None):
@@ -1671,6 +1706,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 pass
 
+    def show_known_hosts_editor(self):
+        """Show known hosts editor window"""
+        logger.info("Show known hosts editor window")
+        try:
+            from .known_hosts_editor import KnownHostsEditorWindow
+            editor = KnownHostsEditorWindow(self, self.connection_manager)
+            editor.present()
+        except Exception as e:
+            logger.error(f"Failed to open known hosts editor: {e}")
+
     def show_preferences(self):
         """Show preferences dialog"""
         logger.info("Show preferences dialog")
@@ -1779,6 +1824,77 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 dialog.present()
             except Exception:
                 pass
+
+    def show_shortcuts_window(self):
+        """Display keyboard shortcuts using Gtk.ShortcutsWindow"""
+        if not hasattr(self, '_shortcuts_window') or self._shortcuts_window is None:
+            self._shortcuts_window = self._build_shortcuts_window()
+            try:
+                self.set_help_overlay(self._shortcuts_window)
+            except Exception:
+                pass
+        self._shortcuts_window.present()
+
+    def _build_shortcuts_window(self):
+        mac = is_macos()
+        primary = '<Meta>' if mac else '<primary>'
+
+        win = Gtk.ShortcutsWindow(transient_for=self, modal=True)
+
+        section = Gtk.ShortcutsSection()
+
+        # General shortcuts
+        group_general = Gtk.ShortcutsGroup()
+        group_general.set_title(_('General'))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Toggle Sidebar'), accelerator='F9'))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Toggle Sidebar'), accelerator=f"{primary}b"))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Preferences'), accelerator=f"{primary}comma"))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Documentation'), accelerator='F1'))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Keyboard Shortcuts'), accelerator=f"{primary}<Shift>slash"))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Quit'), accelerator=f"{primary}q"))
+        section.add_group(group_general)
+
+        # Connection management shortcuts
+        group_connections = Gtk.ShortcutsGroup()
+        group_connections.set_title(_('Connections'))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('New Connection'), accelerator=f"{primary}n"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Local Terminal'), accelerator=f"{primary}<Shift>t"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Copy Key to Server'), accelerator=f"{primary}<Shift>k"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Broadcast Command'), accelerator=f"{primary}<Shift>b"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Search Connections'), accelerator=f"{primary}f"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Focus Connection List'), accelerator=f"{primary}l"))
+        section.add_group(group_connections)
+
+        # Tab navigation shortcuts
+        group_tabs = Gtk.ShortcutsGroup()
+        group_tabs.set_title(_('Tabs'))
+
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Open New Tab'), accelerator=f"{primary}<Alt>n"))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Next Tab'), accelerator='<Alt>Right'))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Previous Tab'), accelerator='<Alt>Left'))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Close Tab'), accelerator=f"{primary}F4"))
+        section.add_group(group_tabs)
+
+        win.add_section(section)
+
+
+        return win
 
     def toggle_list_focus(self):
         """Toggle focus between connection list and terminal"""
@@ -2014,6 +2130,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 
         except Exception as e:
             logger.error(f"Failed to toggle sidebar: {e}")
+
+    def on_view_toggle_clicked(self, button):
+        """Handle view toggle button click to switch between welcome and tabs"""
+        try:
+            # Check which view is currently visible
+            current_view = self.content_stack.get_visible_child_name()
+            
+            if current_view == "welcome":
+                # Switch to tab view
+                self.show_tab_view()
+            else:
+                # Switch to welcome view
+                self.show_welcome_view()
+                
+        except Exception as e:
+            logger.error(f"Failed to toggle view: {e}")
 
     def _toggle_sidebar_visibility(self, is_visible):
         """Helper method to toggle sidebar visibility"""
@@ -3294,6 +3426,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Show welcome view if no more tabs are left
         if tab_view.get_n_pages() == 0:
             self.show_welcome_view()
+        else:
+            # Update button visibility when tabs remain
+            if hasattr(self, 'view_toggle_button'):
+                self.view_toggle_button.set_visible(True)
 
             
     def on_connection_added(self, manager, connection):

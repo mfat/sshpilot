@@ -48,8 +48,8 @@ Latest release can be downloaded from here: https://github.com/mfat/sshpilot/rel
 - ### Arch linux
 Arch linux package via AUR: https://aur.archlinux.org/packages/sshpilot
 
-- ### macOS (not extensively tested)
-(WIP) On the [Mac branch](https://github.com/mfat/sshpilot/tree/mac) there are [instructions](https://github.com/mfat/sshpilot/blob/mac/INSTALL-macos.md) for running sshPilot on macOS
+- ### macOS (aarch64)
+Download the dmg file from the releases section https://github.com/mfat/sshpilot/releases/
 
 - ### Run from source
 You can also run the app from source. Install the modules listed in requirements.txt and a fairly recent version of GNOME and it should run.
@@ -120,7 +120,7 @@ If you have multiple connections to a single host, doble-clicking the host will 
 ## Special Thanks
 
 - [Elibugy](https://www.linkedin.com/in/elham-hesaraki) as the primary sponsor of the project
-- Behnam Tavakkoli, Chalist and Kalpase for testing
+- Behnam Tavakkoli, Chalist and Kalpase, Ramin Najjarbashi, Farid and Narbeh for testing
 - Icon designed by [Blisterexe](https://github.com/Blisterexe)
 
 ## Support development
