@@ -4321,7 +4321,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     elif app_lower in ['alacritty', 'kitty']:
                         cmd = ['open', '-a', app, '--args', '-e', 'bash', '-lc', f'{ssh_command}; exec bash']
                     elif app_lower == 'ghostty':
-                        cmd = ['open', '-a', app, '--args', ssh_command]
+                        cmd = ['open', '-na', app, '--args', '-e', ssh_command]
                     else:
                         cmd = ['open', '-a', app, '--args', 'bash', '-lc', f'{ssh_command}; exec bash']
                 else:
