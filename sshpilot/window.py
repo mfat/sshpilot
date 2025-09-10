@@ -4376,6 +4376,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 mac_terms = {
                     'com.apple.Terminal': 'Terminal',
                     'com.googlecode.iterm2': 'iTerm',
+
                     'dev.warp.Warp': 'Warp',
                     'io.alacritty': 'Alacritty',
                     'net.kovidgoyal.kitty': 'Kitty',
