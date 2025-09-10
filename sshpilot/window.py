@@ -1832,7 +1832,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # General section
         section_general = Gtk.ShortcutsSection()
-        section_general.set_title(_('General'))
+        section_general.set_property('title', _('General'))
         group_general = Gtk.ShortcutsGroup()
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('New Connection'), accelerator=f"{primary}n"))
@@ -1849,7 +1849,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Tab management section
         section_tabs = Gtk.ShortcutsSection()
-        section_tabs.set_title(_('Tabs'))
+        section_tabs.set_property('title', _('Tabs'))
         group_tabs = Gtk.ShortcutsGroup()
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Open New Tab'), accelerator=f"{primary}<Alt>n"))
