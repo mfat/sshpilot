@@ -34,65 +34,80 @@ class WelcomePage(Gtk.Box):
         self.set_focus_on_click(False)
 
 
-        # Quick connect button
-        quick_connect_button = Gtk.Button()
-        quick_connect_button.set_icon_name('network-server-symbolic')
-        quick_connect_button.set_tooltip_text(_('Quick Connect'))
-        quick_connect_button.connect('clicked', self.on_quick_connect_clicked)
-        quick_connect_button.set_halign(Gtk.Align.CENTER)
-        quick_connect_button.set_hexpand(False)
-        self.append(quick_connect_button)
-
-
-        # Action buttons
-        buttons_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        buttons_box.set_halign(Gtk.Align.CENTER)
-        buttons_box.set_hexpand(False)
-
-        # Search button
-        search_button = Gtk.Button()
-        search_button.set_icon_name('system-search-symbolic')
-        # Platform-aware shortcut in tooltip
-        shortcut = 'Cmd+F' if is_macos() else 'Ctrl+F'
-        search_button.set_tooltip_text(_('Search Connections') + f' ({shortcut})')
-        search_button.connect('clicked', self.on_search_clicked)
+        # Create preferences group for proper Adwaita styling
+        preferences_group = Adw.PreferencesGroup()
+        preferences_group.set_title(_(''))
+        preferences_group.set_halign(Gtk.Align.CENTER)
+        preferences_group.set_hexpand(False)
+        preferences_group.set_size_request(400, -1)
         
-        # Local terminal button
-        local_button = Gtk.Button()
-        local_button.set_icon_name('utilities-terminal-symbolic')
-        # Platform-aware shortcut in tooltip
+        # Quick Connect action row
+        quick_connect_row = Adw.ActionRow()
+        quick_connect_row.set_title(_('Quick Connect'))
+        quick_connect_row.set_subtitle(_('Connect to a server using SSH command'))
+        quick_connect_row.set_icon_name('network-server-symbolic')
+        quick_connect_row.set_activatable(True)
+        quick_connect_row.connect('activated', self.on_quick_connect_clicked)
+        preferences_group.add(quick_connect_row)
+        
+        # Search Connections action row
+        search_row = Adw.ActionRow()
+        search_row.set_title(_('Search Connections'))
+        search_row.set_subtitle(_('Find and filter your saved connections'))
+        search_row.set_icon_name('system-search-symbolic')
+        # Platform-aware shortcut
+        shortcut = 'Cmd+F' if is_macos() else 'Ctrl+F'
+        search_row.set_subtitle(_('Find and filter your saved connections') + f' ({shortcut})')
+        search_row.set_activatable(True)
+        search_row.connect('activated', self.on_search_clicked)
+        preferences_group.add(search_row)
+        
+        # Local Terminal action row
+        local_terminal_row = Adw.ActionRow()
+        local_terminal_row.set_title(_('Local Terminal'))
+        local_terminal_row.set_subtitle(_('Open a local terminal session'))
+        local_terminal_row.set_icon_name('utilities-terminal-symbolic')
+        # Platform-aware shortcut
         shortcut = 'Cmd+Shift+T' if is_macos() else 'Ctrl+Shift+T'
-        local_button.set_tooltip_text(_('Local Terminal') + f' ({shortcut})')
-        local_button.connect('clicked', lambda *_: window.terminal_manager.show_local_terminal())
-
-        # Known hosts editor button
-        known_hosts_button = Gtk.Button()
-        known_hosts_button.set_icon_name('view-list-symbolic')
-        known_hosts_button.set_tooltip_text(_('Known Hosts Editor'))
-        known_hosts_button.connect('clicked', lambda *_: window.show_known_hosts_editor())
-
-        # Preferences button
-        prefs_button = Gtk.Button()
-        prefs_button.set_icon_name('preferences-system-symbolic')
-        # Platform-aware shortcut in tooltip
+        local_terminal_row.set_subtitle(_('Open a local terminal session') + f' ({shortcut})')
+        local_terminal_row.set_activatable(True)
+        local_terminal_row.connect('activated', lambda *_: window.terminal_manager.show_local_terminal())
+        preferences_group.add(local_terminal_row)
+        
+        # Known Hosts Editor action row
+        known_hosts_row = Adw.ActionRow()
+        known_hosts_row.set_title(_('Known Hosts Editor'))
+        known_hosts_row.set_subtitle(_('Manage trusted SSH host keys'))
+        known_hosts_row.set_icon_name('view-list-symbolic')
+        known_hosts_row.set_activatable(True)
+        known_hosts_row.connect('activated', lambda *_: window.show_known_hosts_editor())
+        preferences_group.add(known_hosts_row)
+        
+        # Preferences action row
+        prefs_row = Adw.ActionRow()
+        prefs_row.set_title(_('Preferences'))
+        prefs_row.set_subtitle(_('Configure application settings'))
+        prefs_row.set_icon_name('preferences-system-symbolic')
+        # Platform-aware shortcut
         shortcut = 'Cmd+,' if is_macos() else 'Ctrl+,'
-        prefs_button.set_tooltip_text(_('Preferences') + f' ({shortcut})')
-        prefs_button.connect('clicked', lambda *_: window.show_preferences())
-
-        # Keyboard shortcuts button
-        shortcuts_button = Gtk.Button()
-        shortcuts_button.set_icon_name('preferences-desktop-keyboard-symbolic')
-        # Platform-aware shortcut in tooltip
+        prefs_row.set_subtitle(_('Configure application settings') + f' ({shortcut})')
+        prefs_row.set_activatable(True)
+        prefs_row.connect('activated', lambda *_: window.show_preferences())
+        preferences_group.add(prefs_row)
+        
+        # Keyboard Shortcuts action row
+        shortcuts_row = Adw.ActionRow()
+        shortcuts_row.set_title(_('Keyboard Shortcuts'))
+        shortcuts_row.set_subtitle(_('View and learn keyboard shortcuts'))
+        shortcuts_row.set_icon_name('preferences-desktop-keyboard-symbolic')
+        # Platform-aware shortcut
         shortcut = 'Cmd+Shift+/' if is_macos() else 'Ctrl+Shift+/'
-        shortcuts_button.set_tooltip_text(_('Keyboard Shortcuts') + f' ({shortcut})')
-        shortcuts_button.connect('clicked', lambda *_: window.show_shortcuts_window())
-
-        buttons_box.append(search_button)
-        buttons_box.append(local_button)
-        buttons_box.append(known_hosts_button)
-        buttons_box.append(prefs_button)
-        buttons_box.append(shortcuts_button)
-        self.append(buttons_box)
+        shortcuts_row.set_subtitle(_('View and learn keyboard shortcuts') + f' ({shortcut})')
+        shortcuts_row.set_activatable(True)
+        shortcuts_row.connect('activated', lambda *_: window.show_shortcuts_window())
+        preferences_group.add(shortcuts_row)
+        
+        self.append(preferences_group)
 
 
 
