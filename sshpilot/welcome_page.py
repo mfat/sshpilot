@@ -1,6 +1,8 @@
 """Welcome page widget for sshPilot."""
 
 import gi
+import shlex
+import re
 
 gi.require_version('Gtk', '4.0')
 
@@ -48,7 +50,7 @@ class WelcomePage(Gtk.Box):
         self.quick_entry.set_hexpand(False)
         self.quick_entry.set_size_request(200, -1)
 
-        self.quick_entry.set_placeholder_text(_('user@host'))
+        self.quick_entry.set_placeholder_text(_('ssh user@host or ssh -p 2222 user@host'))
         self.quick_entry.connect('activate', self.on_quick_connect)
         connect_button = Gtk.Button(label=_('Connect'))
         connect_button.connect('clicked', self.on_quick_connect)
@@ -95,94 +97,6 @@ class WelcomePage(Gtk.Box):
         buttons_box.append(prefs_button)
         self.append(buttons_box)
 
-        # Shortcuts box
-        shortcuts_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        shortcuts_container.set_halign(Gtk.Align.FILL)
-        shortcuts_title = Gtk.Label(label=_('Keyboard Shortcuts'))
-        shortcuts_title.set_halign(Gtk.Align.START)
-        shortcuts_container.append(shortcuts_title)
-
-        shortcuts_scroller = Gtk.ScrolledWindow()
-        shortcuts_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        shortcuts_scroller.set_min_content_height(200)
-        shortcuts_scroller.set_max_content_height(500)
-        shortcuts_scroller.set_hexpand(True)
-        shortcuts_scroller.set_vexpand(False)
-
-        grid = Gtk.Grid(column_spacing=12, row_spacing=6)
-        grid.set_halign(Gtk.Align.FILL)
-        grid.set_hexpand(True)
-        
-        # Set column properties to push right column to the right
-        grid.set_column_homogeneous(False)
-        # Make the middle column (index 1) expand to push right column to the right
-        grid.set_column_spacing(12)
-        
-        # Add a spacer in the middle column to push right column to the right
-        spacer = Gtk.Box()
-        spacer.set_hexpand(True)
-        grid.attach(spacer, 1, 0, 1, 1)
-
-        # Platform-aware shortcuts
-        from .platform_utils import is_macos
-        if is_macos():
-            shortcuts = [
-                ("⌘N", _('New Connection')),
-                ("⌘⌥N", _('Open Selected Host in a New Tab')),
-                ("F9", _('Toggle Sidebar')),
-                ("⌘L", _('Focus connection list to select server')),
-                ("⌘⇧K", _('Copy SSH Key to Server')),
-                ("⌥→", _('Next Tab')),
-                ("⌥←", _('Previous Tab')),
-                ("⌘F4", _('Close Tab')),
-                ("⌘⇧T", _('New Local Terminal')),
-                ("⌘+", _('Zoom In')),
-                ("⌘-", _('Zoom Out')),
-                ("⌘0", _('Reset Zoom')),
-                ("⌘,", _('Preferences')),
-            ]
-        else:
-            shortcuts = [
-                ("Ctrl+N", _('New Connection')),
-                ("Ctrl+Alt+N", _('Open Selected Host in a New Tab')),
-                ("F9", _('Toggle Sidebar')),
-                ("Ctrl+L", _('Focus connection list to select server')),
-                ("Ctrl+Shift+K", _('Copy SSH Key to Server')),
-                ("Alt+Right", _('Next Tab')),
-                ("Alt+Left", _('Previous Tab')),
-                ("Ctrl+F4", _('Close Tab')),
-                ("Ctrl+Shift+T", _('New Local Terminal')),
-                ("Ctrl++", _('Zoom In')),
-                ("Ctrl+-", _('Zoom Out')),
-                ("Ctrl+0", _('Reset Zoom')),
-                ("Ctrl+,", _('Preferences')),
-            ]
-
-        # Display shortcuts in 2 columns
-        for i, (shortcut, description) in enumerate(shortcuts):
-            # Create a styled key label that looks like a keyboard key
-            key_label = Gtk.Label(label=shortcut)
-            key_label.set_halign(Gtk.Align.START)
-            key_label.set_hexpand(False)
-            key_label.add_css_class('shortcut-key')  # Add styling for keyboard keys
-            desc_label = Gtk.Label(label=description)
-            desc_label.set_hexpand(False)
-            desc_label.set_halign(Gtk.Align.START)  # Always left-align text
-            desc_label.set_xalign(0.0)  # Always left-align text
-            
-            # Calculate row and column for 2-column layout
-            row = i // 2
-            col = (i % 2) * 2  # 0 or 2 for left/right column
-            
-            grid.attach(key_label, col, row, 1, 1)
-            grid.attach(desc_label, col + 1, row, 1, 1)
-
-        shortcuts_scroller.set_child(grid)
-        shortcuts_container.append(shortcuts_scroller)
-        self.append(shortcuts_container)
-        
-        # Add CSS styling for shortcut keys
-        self._add_shortcut_key_styling()
 
 
     # Quick connect handlers
@@ -190,13 +104,166 @@ class WelcomePage(Gtk.Box):
         text = self.quick_entry.get_text().strip()
         if not text:
             return
-        username = ''
-        host = text
-        if '@' in text:
-            username, host = text.split('@', 1)
-        data = {"nickname": host, "host": host, "username": username}
-        connection = Connection(data)
-        self.window.terminal_manager.connect_to_host(connection, force_new=False)
+        
+        # Parse the SSH command
+        connection_data = self._parse_ssh_command(text)
+        if connection_data:
+            connection = Connection(connection_data)
+            self.window.terminal_manager.connect_to_host(connection, force_new=False)
+    
+    def _parse_ssh_command(self, command_text):
+        """Parse SSH command text and extract connection parameters"""
+        try:
+            # Handle simple user@host format (backward compatibility)
+            if not command_text.startswith('ssh') and '@' in command_text and ' ' not in command_text:
+                username, host = command_text.split('@', 1)
+                return {
+                    "nickname": host,
+                    "host": host,
+                    "username": username,
+                    "port": 22,
+                    "auth_method": 0,  # Default to key-based auth
+                    "key_select_mode": 0  # Try all keys
+                }
+            
+            # Parse full SSH command
+            # Remove 'ssh' prefix if present
+            if command_text.startswith('ssh '):
+                command_text = command_text[4:]
+            elif command_text.startswith('ssh'):
+                command_text = command_text[3:]
+            
+            # Use shlex to properly parse the command with quoted arguments
+            try:
+                args = shlex.split(command_text)
+            except ValueError:
+                # If shlex fails, fall back to simple split
+                args = command_text.split()
+            
+            # Initialize connection data with defaults
+            connection_data = {
+                "nickname": "",
+                "host": "",
+                "username": "",
+                "port": 22,
+                "auth_method": 0,  # Key-based auth
+                "key_select_mode": 0,  # Try all keys
+                "keyfile": "",
+                "certificate": "",
+                "x11_forwarding": False,
+                "local_port_forwards": [],
+                "remote_port_forwards": [],
+                "dynamic_forwards": []
+            }
+            
+            i = 0
+            while i < len(args):
+                arg = args[i]
+                
+                # Handle options with values
+                if arg == '-p' and i + 1 < len(args):
+                    try:
+                        connection_data["port"] = int(args[i + 1])
+                        i += 2
+                        continue
+                    except ValueError:
+                        pass
+                elif arg == '-i' and i + 1 < len(args):
+                    connection_data["keyfile"] = args[i + 1]
+                    connection_data["key_select_mode"] = 1  # Use specific key
+                    i += 2
+                    continue
+                elif arg == '-o' and i + 1 < len(args):
+                    # Handle SSH options like -o "UserKnownHostsFile=/dev/null"
+                    option = args[i + 1]
+                    if '=' in option:
+                        key, value = option.split('=', 1)
+                        if key == 'User':
+                            connection_data["username"] = value
+                        elif key == 'Port':
+                            try:
+                                connection_data["port"] = int(value)
+                            except ValueError:
+                                pass
+                        elif key == 'IdentityFile':
+                            connection_data["keyfile"] = value
+                            connection_data["key_select_mode"] = 1
+                    i += 2
+                    continue
+                elif arg == '-X':
+                    connection_data["x11_forwarding"] = True
+                    i += 1
+                    continue
+                elif arg == '-L' and i + 1 < len(args):
+                    # Local port forwarding: -L [bind_address:]port:host:hostport
+                    forward_spec = args[i + 1]
+                    connection_data["local_port_forwards"].append(forward_spec)
+                    i += 2
+                    continue
+                elif arg == '-R' and i + 1 < len(args):
+                    # Remote port forwarding: -R [bind_address:]port:host:hostport
+                    forward_spec = args[i + 1]
+                    connection_data["remote_port_forwards"].append(forward_spec)
+                    i += 2
+                    continue
+                elif arg == '-D' and i + 1 < len(args):
+                    # Dynamic port forwarding: -D [bind_address:]port
+                    forward_spec = args[i + 1]
+                    connection_data["dynamic_forwards"].append(forward_spec)
+                    i += 2
+                    continue
+                elif arg.startswith('-p'):
+                    # Handle -p2222 format (no space)
+                    try:
+                        connection_data["port"] = int(arg[2:])
+                        i += 1
+                        continue
+                    except ValueError:
+                        pass
+                elif arg.startswith('-i'):
+                    # Handle -i/path/to/key format (no space)
+                    connection_data["keyfile"] = arg[2:]
+                    connection_data["key_select_mode"] = 1
+                    i += 1
+                    continue
+                elif not arg.startswith('-'):
+                    # This should be the host specification (user@host)
+                    if '@' in arg:
+                        username, host = arg.split('@', 1)
+                        connection_data["username"] = username
+                        connection_data["host"] = host
+                        connection_data["nickname"] = host
+                    else:
+                        # Just hostname, no username
+                        connection_data["host"] = arg
+                        connection_data["nickname"] = arg
+                    i += 1
+                else:
+                    # Unknown option, skip it
+                    i += 1
+            
+            # Validate that we have at least a host
+            if not connection_data["host"]:
+                return None
+            
+            return connection_data
+            
+        except Exception as e:
+            # If parsing fails, try simple fallback
+            if '@' in command_text:
+                try:
+                    username, host = command_text.split('@', 1)
+                    return {
+                        "nickname": host,
+                        "host": host,
+                        "username": username,
+                        "port": 22,
+                        "auth_method": 0,
+                        "key_select_mode": 0
+                    }
+                except:
+                    pass
+            return None
 
     # Search handlers
     def _search_results(self, query: str):
@@ -230,32 +297,3 @@ class WelcomePage(Gtk.Box):
         if hasattr(row, 'connection'):
             self.window.terminal_manager.connect_to_host(row.connection, force_new=False)
     
-    def _add_shortcut_key_styling(self):
-        """Add CSS styling to make shortcut keys look like keyboard keys"""
-        css_provider = Gtk.CssProvider()
-        css = """
-        .shortcut-key {
-            background-color: #f6f5f4;
-            border: 1px solid #c0bfbc;
-            border-radius: 4px;
-            padding: 4px 8px;
-            font-family: monospace;
-            font-weight: bold;
-            font-size: 11px;
-            color: #2e3436;
-            margin: 2px;
-            min-width: 20px;
-        }
-        .shortcut-key:dir(ltr) {
-            margin-right: 4px;
-        }
-        .shortcut-key:dir(rtl) {
-            margin-left: 4px;
-        }
-        """
-        css_provider.load_from_data(css.encode())
-        Gtk.StyleContext.add_provider_for_display(
-            Gdk.Display.get_default(),
-            css_provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
