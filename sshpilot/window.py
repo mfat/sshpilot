@@ -6,6 +6,7 @@ Primary UI with connection list, tabs, and terminal management
 import os
 import logging
 import math
+import shlex
 from typing import Optional, Dict, Any, List, Tuple, Callable
 
 import gi
@@ -4404,6 +4405,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     return None
 
             if is_macos():
+                # Preferences may store either an app name ("iTerm") or a full
+                # command ("open -a iTerm").  If the value already starts with
+                # "open" use it verbatim, otherwise build an "open -a" command
+                # for the specified app.
+                if preferred_terminal.startswith('open'):
+                    return shlex.split(preferred_terminal)
+
                 return ['open', '-a', preferred_terminal]
 
             try:
