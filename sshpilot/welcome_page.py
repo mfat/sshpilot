@@ -25,6 +25,36 @@ class WelcomePage(Gtk.Overlay):
         (_("Red"), "#FF4757"),
         (_("Warm"), "linear-gradient(to bottom right, #ff7e5f, #feb47b)"),
         (_("Cool"), "linear-gradient(to bottom right, #6a11cb, #2575fc)"),
+        (_("Sunset"), "linear-gradient(to bottom right, #ff6b6b, #feca57)"),
+        (_("Ocean"), "linear-gradient(to bottom right, #74b9ff, #0984e3)"),
+        (_("Forest"), "linear-gradient(to bottom right, #00b894, #00cec9)"),
+        (_("Purple"), "linear-gradient(to bottom right, #a29bfe, #6c5ce7)"),
+        (_("Pink"), "linear-gradient(to bottom right, #fd79a8, #e84393)"),
+        (_("Orange"), "linear-gradient(to bottom right, #fdcb6e, #e17055)"),
+        (_("Mint"), "linear-gradient(to bottom right, #00cec9, #55a3ff)"),
+        (_("Lavender"), "linear-gradient(to bottom right, #a29bfe, #fd79a8)"),
+        (_("Emerald"), "linear-gradient(to bottom right, #00b894, #00cec9)"),
+        (_("Coral"), "linear-gradient(to bottom right, #ff7675, #fd79a8)"),
+        (_("Sky"), "linear-gradient(to bottom right, #74b9ff, #a29bfe)"),
+        (_("Fire"), "linear-gradient(to bottom right, #ff7675, #fdcb6e)"),
+        (_("Ice"), "linear-gradient(to bottom right, #74b9ff, #00cec9)"),
+        (_("Rainbow"), "linear-gradient(to bottom right, #ff6b6b, #4ecdc4, #45b7d1, #96ceb4, #feca57)"),
+        # Dark gradients
+        (_("Dark Blue"), "linear-gradient(to bottom right, #1a237e, #0d47a1)"),
+        (_("Dark Green"), "linear-gradient(to bottom right, #1b5e20, #2e7d32)"),
+        (_("Dark Red"), "linear-gradient(to bottom right, #b71c1c, #d32f2f)"),
+        (_("Dark Purple"), "linear-gradient(to bottom right, #4a148c, #6a1b9a)"),
+        (_("Dark Orange"), "linear-gradient(to bottom right, #e65100, #f57c00)"),
+        (_("Dark Teal"), "linear-gradient(to bottom right, #004d40, #00695c)"),
+        (_("Dark Indigo"), "linear-gradient(to bottom right, #1a237e, #283593)"),
+        (_("Dark Brown"), "linear-gradient(to bottom right, #3e2723, #5d4037)"),
+        (_("Dark Gray"), "linear-gradient(to bottom right, #212121, #424242)"),
+        (_("Dark Navy"), "linear-gradient(to bottom right, #0d47a1, #1565c0)"),
+        (_("Dark Forest"), "linear-gradient(to bottom right, #1b5e20, #388e3c)"),
+        (_("Dark Crimson"), "linear-gradient(to bottom right, #b71c1c, #c62828)"),
+        (_("Dark Violet"), "linear-gradient(to bottom right, #4a148c, #7b1fa2)"),
+        (_("Dark Amber"), "linear-gradient(to bottom right, #e65100, #ff8f00)"),
+        (_("Dark Cyan"), "linear-gradient(to bottom right, #004d40, #00796b)"),
     ]
 
     def __init__(self, window) -> None:
@@ -65,13 +95,14 @@ class WelcomePage(Gtk.Overlay):
         container.append(grid)
 
         # Background selection button (top-right overlay)
-        self.bg_button = Gtk.Button.new_from_icon_name("color-select-symbolic")
+        self.bg_button = Gtk.Button.new_from_icon_name("preferences-color-symbolic")
         self.bg_button.add_css_class("flat")
         self.bg_button.set_tooltip_text(_("Change background"))
         self.bg_button.set_halign(Gtk.Align.END)
         self.bg_button.set_valign(Gtk.Align.START)
         self.bg_button.set_margin_top(6)
         self.bg_button.set_margin_end(6)
+        self.bg_button.set_can_focus(False)
         self.bg_button.connect("clicked", self._show_bg_menu)
         self.add_overlay(self.bg_button)
 
@@ -88,6 +119,7 @@ class WelcomePage(Gtk.Overlay):
             btn.set_size_request(32, 32)
             btn.add_css_class("flat")
             btn.set_tooltip_text(name)
+            btn.set_can_focus(False)
             if css:
                 provider = Gtk.CssProvider()
                 provider.load_from_data(
@@ -100,15 +132,13 @@ class WelcomePage(Gtk.Overlay):
                 img = Gtk.Image.new_from_icon_name("window-close-symbolic")
                 btn.set_child(img)
             btn.connect("clicked", self._on_bg_selected, css)
-            menu_grid.attach(btn, idx % 3, idx // 3, 1, 1)
+            menu_grid.attach(btn, idx % 4, idx // 4, 1, 1)
         
         # Create large tile buttons
-        def create_tile(title, tooltip_text, icon_name, callback, css_class=None):
+        def create_tile(title, tooltip_text, icon_name, callback):
             """Create a large tile button with icon and title"""
             tile = Gtk.Button()
             tile.set_css_classes(['card', 'flat'])
-            if css_class:
-                tile.add_css_class(css_class)
             tile.set_size_request(180, 140)
             tile.set_hexpand(False)
             tile.set_vexpand(False)
@@ -144,53 +174,47 @@ class WelcomePage(Gtk.Overlay):
             
             return tile
         
-        # Create tiles with different colors
+        # Create tiles
         quick_connect_tile = create_tile(
             _('Quick Connect'),
             _('Connect to a server using SSH command'),
             'network-server-symbolic',
-            self.on_quick_connect_clicked,
-            'tile-blue'
+            self.on_quick_connect_clicked
         )
         
         local_terminal_tile = create_tile(
             _('Local Terminal'),
             _('Open a local terminal session'),
             'utilities-terminal-symbolic',
-            lambda *_: window.terminal_manager.show_local_terminal(),
-            'tile-green'
+            lambda *_: window.terminal_manager.show_local_terminal()
         )
         
         known_hosts_tile = create_tile(
             _('Known Hosts'),
             _('Manage trusted SSH host keys'),
             'view-list-symbolic',
-            lambda *_: window.show_known_hosts_editor(),
-            'tile-orange'
+            lambda *_: window.show_known_hosts_editor()
         )
         
         preferences_tile = create_tile(
             _('Preferences'),
             _('Configure application settings'),
             'preferences-system-symbolic',
-            lambda *_: window.show_preferences(),
-            'tile-purple'
+            lambda *_: window.show_preferences()
         )
         
         shortcuts_tile = create_tile(
             _('Shortcuts'),
             _('View and learn keyboard shortcuts'),
             'preferences-desktop-keyboard-symbolic',
-            lambda *_: window.show_shortcuts_window(),
-            'tile-red'
+            lambda *_: window.show_shortcuts_window()
         )
         
         help_tile = create_tile(
             _('Online Help'),
             _('View online documentation and help'),
             'help-contents-symbolic',
-            lambda *_: self.open_online_help(),
-            'tile-teal'
+            lambda *_: self.open_online_help()
         )
         
         # Add tiles to grid (3 columns, 2 rows)
@@ -200,6 +224,9 @@ class WelcomePage(Gtk.Overlay):
         grid.attach(preferences_tile, 1, 1, 1, 1)
         grid.attach(shortcuts_tile, 0, 2, 1, 1)
         grid.attach(help_tile, 1, 2, 1, 1)
+        
+        # Load saved background setting
+        self._load_saved_background()
 
     def _show_bg_menu(self, button):
         """Display background selection popover."""
@@ -212,6 +239,12 @@ class WelcomePage(Gtk.Overlay):
 
     def _apply_background(self, css):
         """Apply CSS background or reset to default."""
+        # Save the background setting to config
+        self.window.config.set_setting('welcome.background', css)
+        self._set_background_css(css)
+
+    def _set_background_css(self, css):
+        """Apply CSS background without saving to config."""
         if not css:
             if self.has_css_class("welcome-bg"):
                 self.remove_css_class("welcome-bg")
@@ -227,103 +260,11 @@ class WelcomePage(Gtk.Overlay):
         if not self.has_css_class("welcome-bg"):
             self.add_css_class("welcome-bg")
 
-
-    def _add_tile_colors(self):
-        """Add CSS styling for different colored tiles"""
-        css = b"""
-        /* Blue tile */
-        .tile-blue {
-            background: linear-gradient(135deg, #3584e4 0%, #1c71d8 100%);
-            border: 1px solid #1c71d8;
-        }
-        .tile-blue:hover {
-            background: linear-gradient(135deg, #1c71d8 0%, #1a5fb4 100%);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(28, 113, 216, 0.3);
-        }
-        
-        /* Green tile */
-        .tile-green {
-            background: linear-gradient(135deg, #2ec27e 0%, #26a269 100%);
-            border: 1px solid #26a269;
-        }
-        .tile-green:hover {
-            background: linear-gradient(135deg, #26a269 0%, #2d8659 100%);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(38, 162, 105, 0.3);
-        }
-        
-        /* Orange tile */
-        .tile-orange {
-            background: linear-gradient(135deg, #ff7800 0%, #e66100 100%);
-            border: 1px solid #e66100;
-        }
-        .tile-orange:hover {
-            background: linear-gradient(135deg, #e66100 0%, #c64600 100%);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(230, 97, 0, 0.3);
-        }
-        
-        /* Purple tile */
-        .tile-purple {
-            background: linear-gradient(135deg, #9141ac 0%, #813d9c 100%);
-            border: 1px solid #813d9c;
-        }
-        .tile-purple:hover {
-            background: linear-gradient(135deg, #813d9c 0%, #6d2c85 100%);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(129, 61, 156, 0.3);
-        }
-        
-        /* Red tile */
-        .tile-red {
-            background: linear-gradient(135deg, #e01b24 0%, #c01c28 100%);
-            border: 1px solid #c01c28;
-        }
-        .tile-red:hover {
-            background: linear-gradient(135deg, #c01c28 0%, #a51d2d 100%);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(192, 28, 40, 0.3);
-        }
-        
-        /* Teal tile */
-        .tile-teal {
-            background: linear-gradient(135deg, #1e9a96 0%, #1a7f7b 100%);
-            border: 1px solid #1a7f7b;
-        }
-        .tile-teal:hover {
-            background: linear-gradient(135deg, #1a7f7b 0%, #166461 100%);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(26, 127, 123, 0.3);
-        }
-        
-        /* Make text white on colored tiles */
-        .tile-blue label,
-        .tile-green label,
-        .tile-orange label,
-        .tile-purple label,
-        .tile-red label,
-        .tile-teal label {
-            color: white;
-            font-weight: 600;
-        }
-        
-        /* Make icons white on colored tiles */
-        .tile-blue image,
-        .tile-green image,
-        .tile-orange image,
-        .tile-purple image,
-        .tile-red image,
-        .tile-teal image {
-            color: white;
-            -gtk-icon-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-        }
-        """
-        provider = Gtk.CssProvider()
-        provider.load_from_data(css)
-        Gtk.StyleContext.add_provider_for_display(
-            self.get_display(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
+    def _load_saved_background(self):
+        """Load and apply saved background setting from config."""
+        saved_bg = self.window.config.get_setting('welcome.background', None)
+        if saved_bg:
+            self._set_background_css(saved_bg)
 
     # Quick connect handlers
     def on_quick_connect_clicked(self, button):
