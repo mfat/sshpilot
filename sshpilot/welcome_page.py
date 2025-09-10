@@ -104,8 +104,8 @@ class WelcomePage(Gtk.Box):
 
         shortcuts_scroller = Gtk.ScrolledWindow()
         shortcuts_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        shortcuts_scroller.set_min_content_height(120)
-        shortcuts_scroller.set_max_content_height(200)
+        shortcuts_scroller.set_min_content_height(200)
+        shortcuts_scroller.set_max_content_height(500)
         shortcuts_scroller.set_hexpand(True)
         shortcuts_scroller.set_vexpand(False)
 
