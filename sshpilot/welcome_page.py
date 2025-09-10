@@ -5,8 +5,9 @@ import shlex
 import re
 
 gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
 
-from gi.repository import Gtk, Gdk
+from gi.repository import Gtk, Gdk, Adw
 from gettext import gettext as _
 
 
@@ -33,27 +34,14 @@ class WelcomePage(Gtk.Box):
         self.set_focus_on_click(False)
 
 
-        # Quick connect box
-        self.quick_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        self.quick_box.set_halign(Gtk.Align.CENTER)
-        self.quick_box.set_hexpand(False)
-        self.quick_entry = Gtk.Entry()
-        self.quick_entry.set_hexpand(False)
-        self.quick_entry.set_size_request(200, -1)
-
-        self.quick_entry.set_placeholder_text(_('ssh -p 2222 user@host'))
-        self.quick_entry.connect('activate', self.on_quick_connect)
-        
-        # Add focus controller for auto-expansion
-        focus_controller = Gtk.EventControllerFocus()
-        focus_controller.connect('enter', self.on_quick_entry_focus_in)
-        focus_controller.connect('leave', self.on_quick_entry_focus_out)
-        self.quick_entry.add_controller(focus_controller)
-        connect_button = Gtk.Button(label=_('Connect'))
-        connect_button.connect('clicked', self.on_quick_connect)
-        self.quick_box.append(self.quick_entry)
-        self.quick_box.append(connect_button)
-        self.append(self.quick_box)
+        # Quick connect button
+        quick_connect_button = Gtk.Button()
+        quick_connect_button.set_icon_name('network-server-symbolic')
+        quick_connect_button.set_tooltip_text(_('Quick Connect'))
+        quick_connect_button.connect('clicked', self.on_quick_connect_clicked)
+        quick_connect_button.set_halign(Gtk.Align.CENTER)
+        quick_connect_button.set_hexpand(False)
+        self.append(quick_connect_button)
 
 
         # Action buttons
@@ -109,16 +97,10 @@ class WelcomePage(Gtk.Box):
 
 
     # Quick connect handlers
-    def on_quick_connect(self, *_args):
-        text = self.quick_entry.get_text().strip()
-        if not text:
-            return
-        
-        # Parse the SSH command
-        connection_data = self._parse_ssh_command(text)
-        if connection_data:
-            connection = Connection(connection_data)
-            self.window.terminal_manager.connect_to_host(connection, force_new=False)
+    def on_quick_connect_clicked(self, button):
+        """Open quick connect dialog"""
+        dialog = QuickConnectDialog(self.window)
+        dialog.present()
     
     def _parse_ssh_command(self, command_text):
         """Parse SSH command text and extract connection parameters"""
@@ -279,14 +261,224 @@ class WelcomePage(Gtk.Box):
         """Handle search button click - activate sidebar search"""
         self.window.focus_search_entry()
     
-    # Quick connect box focus handlers
-    def on_quick_entry_focus_in(self, controller):
-        """Handle focus in event - expand the quick connect box"""
-        # Expand the entry field width when focused
-        self.quick_entry.set_size_request(300, -1)  # Expand from 200 to 300 pixels
+
+
+class QuickConnectDialog(Adw.MessageDialog):
+    """Modal dialog for quick SSH connection"""
     
-    def on_quick_entry_focus_out(self, controller):
-        """Handle focus out event - contract the quick connect box"""
-        # Contract the entry field width when focus is lost
-        self.quick_entry.set_size_request(200, -1)  # Contract back to 200 pixels
+    def __init__(self, parent_window):
+        super().__init__()
+        
+        self.parent_window = parent_window
+        
+        # Set dialog properties
+        self.set_modal(True)
+        self.set_transient_for(parent_window)
+        self.set_title("Quick Connect")
+        
+        # Create content area
+        content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        content_area.set_margin_top(12)
+        content_area.set_margin_bottom(12)
+        content_area.set_margin_start(12)
+        content_area.set_margin_end(12)
+        
+        # Add description
+        description = Gtk.Label()
+        description.set_text("Enter SSH command or connection details:")
+        description.set_halign(Gtk.Align.START)
+        content_area.append(description)
+        
+        # Create entry field
+        self.entry = Gtk.Entry()
+        self.entry.set_placeholder_text("ssh -p 2222 user@host")
+        self.entry.set_hexpand(True)
+        self.entry.connect('activate', self.on_connect)
+        content_area.append(self.entry)
+        
+        # Add content to dialog
+        self.set_extra_child(content_area)
+        
+        # Add response buttons
+        self.add_response("cancel", "Cancel")
+        self.add_response("connect", "Connect")
+        self.set_response_appearance("connect", Adw.ResponseAppearance.SUGGESTED)
+        
+        # Connect response signal
+        self.connect('response', self.on_response)
+        
+        # Focus the entry when dialog is shown
+        self.entry.grab_focus()
     
+    def on_response(self, dialog, response):
+        """Handle dialog response"""
+        if response == "connect":
+            self.on_connect()
+        self.destroy()
+    
+    def on_connect(self, *args):
+        """Handle connect button or Enter key"""
+        text = self.entry.get_text().strip()
+        if not text:
+            return
+        
+        # Parse the SSH command
+        connection_data = self._parse_ssh_command(text)
+        if connection_data:
+            connection = Connection(connection_data)
+            self.parent_window.terminal_manager.connect_to_host(connection, force_new=False)
+            self.destroy()
+    
+    def _parse_ssh_command(self, command_text):
+        """Parse SSH command text and extract connection parameters"""
+        try:
+            # Handle simple user@host format (backward compatibility)
+            if not command_text.startswith('ssh') and '@' in command_text and ' ' not in command_text:
+                username, host = command_text.split('@', 1)
+                return {
+                    "nickname": host,
+                    "host": host,
+                    "username": username,
+                    "port": 22,
+                    "auth_method": 0,  # Default to key-based auth
+                    "key_select_mode": 0  # Try all keys
+                }
+            
+            # Parse full SSH command
+            # Remove 'ssh' prefix if present
+            if command_text.startswith('ssh '):
+                command_text = command_text[4:]
+            elif command_text.startswith('ssh'):
+                command_text = command_text[3:]
+            
+            # Use shlex to properly parse the command with quoted arguments
+            try:
+                args = shlex.split(command_text)
+            except ValueError:
+                # If shlex fails, fall back to simple split
+                args = command_text.split()
+            
+            # Initialize connection data with defaults
+            connection_data = {
+                "nickname": "",
+                "host": "",
+                "username": "",
+                "port": 22,
+                "auth_method": 0,  # Key-based auth
+                "key_select_mode": 0,  # Try all keys
+                "keyfile": "",
+                "certificate": "",
+                "x11_forwarding": False,
+                "local_port_forwards": [],
+                "remote_port_forwards": [],
+                "dynamic_forwards": []
+            }
+            
+            i = 0
+            while i < len(args):
+                arg = args[i]
+                
+                # Handle options with values
+                if arg == '-p' and i + 1 < len(args):
+                    try:
+                        connection_data["port"] = int(args[i + 1])
+                        i += 2
+                        continue
+                    except ValueError:
+                        pass
+                elif arg == '-i' and i + 1 < len(args):
+                    connection_data["keyfile"] = args[i + 1]
+                    connection_data["key_select_mode"] = 1  # Use specific key
+                    i += 2
+                    continue
+                elif arg == '-o' and i + 1 < len(args):
+                    # Handle SSH options like -o "UserKnownHostsFile=/dev/null"
+                    option = args[i + 1]
+                    if '=' in option:
+                        key, value = option.split('=', 1)
+                        if key == 'User':
+                            connection_data["username"] = value
+                        elif key == 'Port':
+                            try:
+                                connection_data["port"] = int(value)
+                            except ValueError:
+                                pass
+                        elif key == 'IdentityFile':
+                            connection_data["keyfile"] = value
+                            connection_data["key_select_mode"] = 1
+                    i += 2
+                    continue
+                elif arg == '-X':
+                    connection_data["x11_forwarding"] = True
+                    i += 1
+                    continue
+                elif arg == '-L' and i + 1 < len(args):
+                    # Local port forwarding: -L [bind_address:]port:host:hostport
+                    forward_spec = args[i + 1]
+                    connection_data["local_port_forwards"].append(forward_spec)
+                    i += 2
+                    continue
+                elif arg == '-R' and i + 1 < len(args):
+                    # Remote port forwarding: -R [bind_address:]port:host:hostport
+                    forward_spec = args[i + 1]
+                    connection_data["remote_port_forwards"].append(forward_spec)
+                    i += 2
+                    continue
+                elif arg == '-D' and i + 1 < len(args):
+                    # Dynamic port forwarding: -D [bind_address:]port
+                    forward_spec = args[i + 1]
+                    connection_data["dynamic_forwards"].append(forward_spec)
+                    i += 2
+                    continue
+                elif arg.startswith('-p'):
+                    # Handle -p2222 format (no space)
+                    try:
+                        connection_data["port"] = int(arg[2:])
+                        i += 1
+                        continue
+                    except ValueError:
+                        pass
+                elif arg.startswith('-i'):
+                    # Handle -i/path/to/key format (no space)
+                    connection_data["keyfile"] = arg[2:]
+                    connection_data["key_select_mode"] = 1
+                    i += 1
+                    continue
+                elif not arg.startswith('-'):
+                    # This should be the host specification (user@host)
+                    if '@' in arg:
+                        username, host = arg.split('@', 1)
+                        connection_data["username"] = username
+                        connection_data["host"] = host
+                        connection_data["nickname"] = host
+                    else:
+                        # Just hostname, no username
+                        connection_data["host"] = arg
+                        connection_data["nickname"] = arg
+                    i += 1
+                else:
+                    # Unknown option, skip it
+                    i += 1
+            
+            # Validate that we have at least a host
+            if not connection_data["host"]:
+                return None
+            
+            return connection_data
+            
+        except Exception as e:
+            # If parsing fails, try simple fallback
+            if '@' in command_text:
+                try:
+                    username, host = command_text.split('@', 1)
+                    return {
+                        "nickname": host,
+                        "host": host,
+                        "username": username,
+                        "port": 22,
+                        "auth_method": 0,
+                        "key_select_mode": 0
+                    }
+                except:
+                    pass
+            return None
