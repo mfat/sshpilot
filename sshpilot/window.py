@@ -4250,77 +4250,70 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def open_in_system_terminal(self, connection):
         """Open the connection in the system's default terminal"""
         try:
-            # Build the SSH command
             port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
             ssh_command = f"ssh{port_text} {connection.username}@{connection.host}"
-            
-            # Check if user prefers external terminal
+
             use_external = self.config.get_setting('use-external-terminal', False)
-            
             if use_external:
-                # Use user's preferred external terminal
                 terminal_command = self._get_user_preferred_terminal()
             else:
-                # Use built-in terminal (fallback to system default)
                 terminal_command = self._get_default_terminal_command()
-            
+
             if not terminal_command:
-                # Fallback to common terminals
                 common_terminals = [
-                    'gnome-terminal', 'konsole', 'xterm', 'alacritty', 
+                    'gnome-terminal', 'konsole', 'xterm', 'alacritty',
                     'kitty', 'terminator', 'tilix', 'xfce4-terminal'
                 ]
-                
                 for term in common_terminals:
                     try:
                         result = subprocess.run(['which', term], capture_output=True, text=True, timeout=2)
                         if result.returncode == 0:
-                            terminal_command = term
+                            terminal_command = [term]
                             break
                     except Exception:
                         continue
-            
+
             if not terminal_command:
-                # Last resort: try xdg-terminal
                 try:
                     result = subprocess.run(['which', 'xdg-terminal'], capture_output=True, text=True, timeout=2)
                     if result.returncode == 0:
-                        terminal_command = 'xdg-terminal'
+                        terminal_command = ['xdg-terminal']
                 except Exception:
                     pass
-            
+
             if not terminal_command:
-                # Show error dialog
                 self._show_terminal_error_dialog()
                 return
-            
-            # Get the basename for terminal type detection
-            import os
-            terminal_basename = os.path.basename(terminal_command)
-            
-            # Launch the terminal with SSH command
-            if terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
-                # These terminals use -- to separate options from command
-                cmd = [terminal_command, '--', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_basename in ['konsole', 'terminator', 'guake']:
-                # These terminals use -e for command execution
-                cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
-            elif terminal_basename in ['alacritty', 'kitty']:
-                # These terminals use -e for command execution
-                cmd = [terminal_command, '-e', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_basename == 'xterm':
-                # xterm uses -e for command execution
-                cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
-            elif terminal_basename == 'xdg-terminal':
-                # xdg-terminal opens the default terminal
-                cmd = [terminal_command, ssh_command]
+
+            self._open_system_terminal(terminal_command, ssh_command)
+
+        except Exception as e:
+            logger.error(f"Failed to open system terminal: {e}")
+            self._show_terminal_error_dialog()
+
+    def _open_system_terminal(self, terminal_command: List[str], ssh_command: str):
+        """Launch a terminal command with an SSH command."""
+        try:
+            if is_macos():
+                cmd = terminal_command + ['--args', 'bash', '-lc', f'{ssh_command}; exec bash']
             else:
-                # Generic fallback
-                cmd = [terminal_command, ssh_command]
-            
+                terminal_basename = os.path.basename(terminal_command[0])
+                if terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
+                    cmd = terminal_command + ['--', 'bash', '-c', f'{ssh_command}; exec bash']
+                elif terminal_basename in ['konsole', 'terminator', 'guake']:
+                    cmd = terminal_command + ['-e', f'bash -c "{ssh_command}; exec bash"']
+                elif terminal_basename in ['alacritty', 'kitty']:
+                    cmd = terminal_command + ['-e', 'bash', '-c', f'{ssh_command}; exec bash']
+                elif terminal_basename == 'xterm':
+                    cmd = terminal_command + ['-e', f'bash -c "{ssh_command}; exec bash"']
+                elif terminal_basename == 'xdg-terminal':
+                    cmd = terminal_command + [ssh_command]
+                else:
+                    cmd = terminal_command + [ssh_command]
+
             logger.info(f"Launching system terminal: {' '.join(cmd)}")
             subprocess.Popen(cmd, start_new_session=True)
-            
+
         except Exception as e:
             logger.error(f"Failed to open system terminal: {e}")
             self._show_terminal_error_dialog()
@@ -4328,121 +4321,102 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def _open_connection_in_external_terminal(self, connection):
         """Open the connection in the user's preferred external terminal"""
         try:
-            # Build the SSH command
             port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
             ssh_command = f"ssh{port_text} {connection.username}@{connection.host}"
-            
-            # Get user's preferred terminal
+
             terminal_command = self._get_user_preferred_terminal()
-            
             if not terminal_command:
-                # Fallback to default terminal
                 terminal_command = self._get_default_terminal_command()
-            
+
             if not terminal_command:
-                # Show error dialog
                 self._show_terminal_error_dialog()
                 return
-            
-            # Get the basename for terminal type detection
-            import os
-            terminal_basename = os.path.basename(terminal_command)
-            
-            # Launch the terminal with SSH command
-            if terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
-                # These terminals use -- to separate options from command
-                cmd = [terminal_command, '--', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_basename in ['konsole', 'terminator', 'guake']:
-                # These terminals use -e for command execution
-                cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
-            elif terminal_basename in ['alacritty', 'kitty']:
-                # These terminals use -e for command execution
-                cmd = [terminal_command, '-e', 'bash', '-c', f'{ssh_command}; exec bash']
-            elif terminal_basename == 'xterm':
-                # xterm uses -e for command execution
-                cmd = [terminal_command, '-e', f'bash -c "{ssh_command}; exec bash"']
-            elif terminal_basename == 'xdg-terminal':
-                # xdg-terminal opens the default terminal
-                cmd = [terminal_command, ssh_command]
-            else:
-                # Generic fallback
-                cmd = [terminal_command, ssh_command]
-            
-            logger.info(f"Opening connection in external terminal: {' '.join(cmd)}")
-            subprocess.Popen(cmd, start_new_session=True)
-            
+
+            self._open_system_terminal(terminal_command, ssh_command)
+
         except Exception as e:
             logger.error(f"Failed to open connection in external terminal: {e}")
             self._show_terminal_error_dialog()
 
-    def _get_default_terminal_command(self):
+    def _get_default_terminal_command(self) -> Optional[List[str]]:
         """Get the default terminal command from desktop environment"""
         try:
-            # Check for desktop-specific terminals
+            if is_macos():
+                mac_terms = ['iTerm', 'Warp', 'WezTerm', 'Alacritty', 'Terminal']
+                for app in mac_terms:
+                    try:
+                        result = subprocess.run(['open', '-Ra', app], capture_output=True, text=True, timeout=2)
+                        if result.returncode == 0:
+                            return ['open', '-a', app]
+                    except Exception:
+                        continue
+                return None
+
             desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
-            
+
             if 'gnome' in desktop:
-                return 'gnome-terminal'
+                return ['gnome-terminal']
             elif 'kde' in desktop or 'plasma' in desktop:
-                return 'konsole'
+                return ['konsole']
             elif 'xfce' in desktop:
-                return 'xfce4-terminal'
+                return ['xfce4-terminal']
             elif 'cinnamon' in desktop:
-                return 'gnome-terminal'  # Cinnamon uses gnome-terminal
+                return ['gnome-terminal']
             elif 'mate' in desktop:
-                return 'mate-terminal'
+                return ['mate-terminal']
             elif 'lxqt' in desktop:
-                return 'qterminal'
+                return ['qterminal']
             elif 'lxde' in desktop:
-                return 'lxterminal'
-            
-            # Check for common terminals in PATH
+                return ['lxterminal']
+
             common_terminals = [
-                'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty', 
+                'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty',
                 'kitty', 'terminator', 'tilix', 'guake'
             ]
-            
+
             for term in common_terminals:
                 try:
                     result = subprocess.run(['which', term], capture_output=True, text=True, timeout=2)
                     if result.returncode == 0:
-                        return term
+                        return [term]
                 except Exception:
                     continue
-            
+
             return None
-            
+
         except Exception as e:
             logger.error(f"Failed to get default terminal: {e}")
             return None
     
-    def _get_user_preferred_terminal(self):
+    def _get_user_preferred_terminal(self) -> Optional[List[str]]:
         """Get the user's preferred terminal from settings"""
         try:
-            # Get the user's preferred terminal
             preferred_terminal = self.config.get_setting('external-terminal', 'gnome-terminal')
-            
+
             if preferred_terminal == 'custom':
-                # Use custom path
                 custom_path = self.config.get_setting('custom-terminal-path', '')
                 if custom_path:
-                    return custom_path
+                    if is_macos():
+                        return ['open', '-a', custom_path]
+                    return [custom_path]
                 else:
                     logger.warning("Custom terminal path is not set, falling back to built-in terminal")
                     return None
-            
-            # Check if the preferred terminal is available
+
+            if is_macos():
+                return ['open', '-a', preferred_terminal]
+
             try:
                 result = subprocess.run(['which', preferred_terminal], capture_output=True, text=True, timeout=2)
                 if result.returncode == 0:
-                    return preferred_terminal
+                    return [preferred_terminal]
                 else:
                     logger.warning(f"Preferred terminal '{preferred_terminal}' not found, falling back to built-in terminal")
                     return None
             except Exception as e:
                 logger.error(f"Failed to check preferred terminal '{preferred_terminal}': {e}")
                 return None
-                
+
         except Exception as e:
             logger.error(f"Failed to get user preferred terminal: {e}")
             return None
