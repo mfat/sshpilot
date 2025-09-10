@@ -133,7 +133,29 @@ def test_get_default_terminal_command_macos(monkeypatch):
     assert win._get_default_terminal_command() == ["open", "-a", "Terminal"]
 
 
-def test_open_connection_in_external_terminal_macos(monkeypatch):
+def test_open_connection_terminal_app(monkeypatch):
+    monkeypatch.setattr(window_mod, "is_macos", lambda: True)
+    win = DummyWindow({"external-terminal": "Terminal"})
+
+    captured = {}
+
+    def fake_popen(cmd, start_new_session=False):
+        captured["cmd"] = cmd
+        class P:
+            pass
+        return P()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    connection = types.SimpleNamespace(username="user", host="example.com", port=22)
+    win._open_connection_in_external_terminal(connection)
+
+    assert captured["cmd"][0] == "osascript"
+    assert "Terminal" in captured["cmd"][-1]
+    assert "ssh user@example.com" in captured["cmd"][-1]
+
+
+def test_open_connection_iterm_app(monkeypatch):
     monkeypatch.setattr(window_mod, "is_macos", lambda: True)
     win = DummyWindow({"external-terminal": "iTerm"})
 
@@ -150,14 +172,14 @@ def test_open_connection_in_external_terminal_macos(monkeypatch):
     connection = types.SimpleNamespace(username="user", host="example.com", port=22)
     win._open_connection_in_external_terminal(connection)
 
-    assert captured["cmd"][0:3] == ["open", "-a", "iTerm"]
-    assert "--args" in captured["cmd"]
-    assert "ssh user@example.com; exec bash" in captured["cmd"][-1]
+    assert captured["cmd"][0] == "osascript"
+    assert "iTerm2" in captured["cmd"][-1]
+    assert "ssh user@example.com" in captured["cmd"][-1]
 
 
-def test_open_connection_in_external_terminal_macos_with_command(monkeypatch):
+def test_open_connection_alacritty(monkeypatch):
     monkeypatch.setattr(window_mod, "is_macos", lambda: True)
-    win = DummyWindow({"external-terminal": "open -a iTerm"})
+    win = DummyWindow({"external-terminal": "Alacritty"})
 
     captured = {}
 
@@ -172,7 +194,7 @@ def test_open_connection_in_external_terminal_macos_with_command(monkeypatch):
     connection = types.SimpleNamespace(username="user", host="example.com", port=22)
     win._open_connection_in_external_terminal(connection)
 
-    assert captured["cmd"][0:3] == ["open", "-a", "iTerm"]
+    assert captured["cmd"][0:3] == ["open", "-a", "Alacritty"]
     assert "--args" in captured["cmd"]
-    assert "ssh user@example.com; exec bash" in captured["cmd"][-1]
+    assert "ssh user@example.com" in captured["cmd"][-1]
 

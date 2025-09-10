@@ -4296,7 +4296,34 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Launch a terminal command with an SSH command."""
         try:
             if is_macos():
-                cmd = terminal_command + ['--args', 'bash', '-lc', f'{ssh_command}; exec bash']
+                app = None
+                if terminal_command and terminal_command[0] == 'open':
+                    # handle commands like ['open', '-a', 'App']
+                    if len(terminal_command) >= 3 and terminal_command[1] == '-a':
+                        app = os.path.basename(terminal_command[2])
+                if app:
+                    app_lower = app.lower()
+                    if app_lower in ['terminal', 'terminal.app']:
+                        script = f'tell app "Terminal" to do script "{ssh_command}"'
+                        cmd = ['osascript', '-e', script]
+                    elif app_lower in ['iterm', 'iterm2', 'iterm.app']:
+                        script = (
+                            'tell application "iTerm2"\n'
+                            '    tell current window\n'
+                            '        create tab with default profile\n'
+                            f'        tell current session to write text "{ssh_command}"\n'
+                            '    end tell\n'
+                            'end tell'
+                        )
+                        cmd = ['osascript', '-e', script]
+                    elif app_lower == 'warp':
+                        cmd = ['open', f'warp://{ssh_command}']
+                    elif app_lower in ['alacritty', 'kitty', 'ghostty']:
+                        cmd = ['open', '-a', app, '--args', '-e', 'bash', '-lc', f'{ssh_command}; exec bash']
+                    else:
+                        cmd = ['open', '-a', app, '--args', 'bash', '-lc', f'{ssh_command}; exec bash']
+                else:
+                    cmd = terminal_command + ['--args', 'bash', '-lc', f'{ssh_command}; exec bash']
             else:
                 terminal_basename = os.path.basename(terminal_command[0])
                 if terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
@@ -4325,15 +4352,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
             ssh_command = f"ssh{port_text} {connection.username}@{connection.host}"
 
-            terminal_command = self._get_user_preferred_terminal()
-            if not terminal_command:
-                terminal_command = self._get_default_terminal_command()
+            terminal = self._get_user_preferred_terminal()
+            if not terminal:
+                terminal = self._get_default_terminal_command()
 
-            if not terminal_command:
+            if not terminal:
                 self._show_terminal_error_dialog()
                 return
 
-            self._open_system_terminal(terminal_command, ssh_command)
+            self._open_system_terminal(terminal, ssh_command)
 
         except Exception as e:
             logger.error(f"Failed to open connection in external terminal: {e}")
