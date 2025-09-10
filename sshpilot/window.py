@@ -343,6 +343,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Load window geometry
         geometry = self.config.get_window_geometry()
         self.set_default_size(geometry['width'], geometry['height'])
+        self.set_resizable(True)
         
         # Connect window state signals
         self.connect('notify::default-width', self.on_window_size_changed)

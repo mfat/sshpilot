@@ -88,11 +88,22 @@ class WelcomePage(Gtk.Box):
         self.append(buttons_box)
 
         # Shortcuts box
-        shortcuts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        shortcuts_box.set_halign(Gtk.Align.FILL)
-
+        shortcuts_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        shortcuts_container.set_halign(Gtk.Align.FILL)
         shortcuts_title = Gtk.Label(label=_('Keyboard Shortcuts'))
-        shortcuts_box.append(shortcuts_title)
+        shortcuts_title.set_halign(Gtk.Align.START)
+        shortcuts_container.append(shortcuts_title)
+
+        shortcuts_scroller = Gtk.ScrolledWindow()
+        shortcuts_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        shortcuts_scroller.set_min_content_height(120)
+        shortcuts_scroller.set_max_content_height(200)
+        shortcuts_scroller.set_hexpand(True)
+        shortcuts_scroller.set_vexpand(False)
+
+        grid = Gtk.Grid(column_spacing=12, row_spacing=6)
+        grid.set_halign(Gtk.Align.START)
+
 
         shortcuts = [
             ("<Primary>N", _('New Connection')),
@@ -108,20 +119,19 @@ class WelcomePage(Gtk.Box):
             ("<Primary>minus", _('Zoom Out')),
             ("<Primary>0", _('Reset Zoom')),
             ("<Primary>comma", _('Preferences')),
-
         ]
 
-        for shortcut, description in shortcuts:
-            shortcut_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        for row, (shortcut, description) in enumerate(shortcuts):
             key_label = Gtk.ShortcutLabel.new(shortcut)
             key_label.set_halign(Gtk.Align.START)
-            shortcut_box.append(key_label)
-            desc_label = Gtk.Label(label=description)
-            desc_label.set_halign(Gtk.Align.START)
-            shortcut_box.append(desc_label)
-            shortcuts_box.append(shortcut_box)
+            desc_label = Gtk.Label(label=description, xalign=0)
+            grid.attach(key_label, 0, row, 1, 1)
+            grid.attach(desc_label, 1, row, 1, 1)
 
-        self.append(shortcuts_box)
+        shortcuts_scroller.set_child(grid)
+        shortcuts_container.append(shortcuts_scroller)
+        self.append(shortcuts_container)
+
 
     # Quick connect handlers
     def on_quick_connect(self, *_args):
