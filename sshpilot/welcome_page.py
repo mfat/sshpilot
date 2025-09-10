@@ -103,10 +103,12 @@ class WelcomePage(Gtk.Overlay):
             menu_grid.attach(btn, idx % 3, idx // 3, 1, 1)
         
         # Create large tile buttons
-        def create_tile(title, tooltip_text, icon_name, callback):
+        def create_tile(title, tooltip_text, icon_name, callback, css_class=None):
             """Create a large tile button with icon and title"""
             tile = Gtk.Button()
             tile.set_css_classes(['card', 'flat'])
+            if css_class:
+                tile.add_css_class(css_class)
             tile.set_size_request(180, 140)
             tile.set_hexpand(False)
             tile.set_vexpand(False)
@@ -142,50 +144,56 @@ class WelcomePage(Gtk.Overlay):
             
             return tile
         
-        # Create tiles
+        # Create tiles with different colors
         quick_connect_tile = create_tile(
             _('Quick Connect'),
             _('Connect to a server using SSH command'),
             'network-server-symbolic',
-            self.on_quick_connect_clicked
+            self.on_quick_connect_clicked,
+            'tile-blue'
         )
         
         local_terminal_tile = create_tile(
             _('Local Terminal'),
             _('Open a local terminal session'),
             'utilities-terminal-symbolic',
-            lambda *_: window.terminal_manager.show_local_terminal()
+            lambda *_: window.terminal_manager.show_local_terminal(),
+            'tile-green'
         )
         
         known_hosts_tile = create_tile(
             _('Known Hosts'),
             _('Manage trusted SSH host keys'),
             'view-list-symbolic',
-            lambda *_: window.show_known_hosts_editor()
+            lambda *_: window.show_known_hosts_editor(),
+            'tile-orange'
         )
         
         preferences_tile = create_tile(
             _('Preferences'),
             _('Configure application settings'),
             'preferences-system-symbolic',
-            lambda *_: window.show_preferences()
+            lambda *_: window.show_preferences(),
+            'tile-purple'
         )
         
         shortcuts_tile = create_tile(
             _('Shortcuts'),
             _('View and learn keyboard shortcuts'),
             'preferences-desktop-keyboard-symbolic',
-            lambda *_: window.show_shortcuts_window()
+            lambda *_: window.show_shortcuts_window(),
+            'tile-red'
         )
         
         help_tile = create_tile(
             _('Online Help'),
             _('View online documentation and help'),
             'help-contents-symbolic',
-            lambda *_: self.open_online_help()
+            lambda *_: self.open_online_help(),
+            'tile-teal'
         )
         
-        # Add tiles to grid (2 columns)
+        # Add tiles to grid (3 columns, 2 rows)
         grid.attach(quick_connect_tile, 0, 0, 1, 1)
         grid.attach(local_terminal_tile, 1, 0, 1, 1)
         grid.attach(known_hosts_tile, 0, 1, 1, 1)
@@ -220,6 +228,102 @@ class WelcomePage(Gtk.Overlay):
             self.add_css_class("welcome-bg")
 
 
+    def _add_tile_colors(self):
+        """Add CSS styling for different colored tiles"""
+        css = b"""
+        /* Blue tile */
+        .tile-blue {
+            background: linear-gradient(135deg, #3584e4 0%, #1c71d8 100%);
+            border: 1px solid #1c71d8;
+        }
+        .tile-blue:hover {
+            background: linear-gradient(135deg, #1c71d8 0%, #1a5fb4 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(28, 113, 216, 0.3);
+        }
+        
+        /* Green tile */
+        .tile-green {
+            background: linear-gradient(135deg, #2ec27e 0%, #26a269 100%);
+            border: 1px solid #26a269;
+        }
+        .tile-green:hover {
+            background: linear-gradient(135deg, #26a269 0%, #2d8659 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(38, 162, 105, 0.3);
+        }
+        
+        /* Orange tile */
+        .tile-orange {
+            background: linear-gradient(135deg, #ff7800 0%, #e66100 100%);
+            border: 1px solid #e66100;
+        }
+        .tile-orange:hover {
+            background: linear-gradient(135deg, #e66100 0%, #c64600 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(230, 97, 0, 0.3);
+        }
+        
+        /* Purple tile */
+        .tile-purple {
+            background: linear-gradient(135deg, #9141ac 0%, #813d9c 100%);
+            border: 1px solid #813d9c;
+        }
+        .tile-purple:hover {
+            background: linear-gradient(135deg, #813d9c 0%, #6d2c85 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(129, 61, 156, 0.3);
+        }
+        
+        /* Red tile */
+        .tile-red {
+            background: linear-gradient(135deg, #e01b24 0%, #c01c28 100%);
+            border: 1px solid #c01c28;
+        }
+        .tile-red:hover {
+            background: linear-gradient(135deg, #c01c28 0%, #a51d2d 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(192, 28, 40, 0.3);
+        }
+        
+        /* Teal tile */
+        .tile-teal {
+            background: linear-gradient(135deg, #1e9a96 0%, #1a7f7b 100%);
+            border: 1px solid #1a7f7b;
+        }
+        .tile-teal:hover {
+            background: linear-gradient(135deg, #1a7f7b 0%, #166461 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(26, 127, 123, 0.3);
+        }
+        
+        /* Make text white on colored tiles */
+        .tile-blue label,
+        .tile-green label,
+        .tile-orange label,
+        .tile-purple label,
+        .tile-red label,
+        .tile-teal label {
+            color: white;
+            font-weight: 600;
+        }
+        
+        /* Make icons white on colored tiles */
+        .tile-blue image,
+        .tile-green image,
+        .tile-orange image,
+        .tile-purple image,
+        .tile-red image,
+        .tile-teal image {
+            color: white;
+            -gtk-icon-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+        }
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css)
+        Gtk.StyleContext.add_provider_for_display(
+            self.get_display(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
 
     # Quick connect handlers
     def on_quick_connect_clicked(self, button):
