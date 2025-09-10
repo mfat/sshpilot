@@ -179,6 +179,16 @@ class WindowActions:
         except Exception as e:
             logger.error(f"Failed to open in system terminal: {e}")
 
+    def on_edit_known_hosts_action(self, action, param=None):
+        """Open the Known Hosts editor window."""
+        try:
+            from .known_hosts_editor import KnownHostsEditorWindow
+
+            win = KnownHostsEditorWindow(self, self.connection_manager)
+            win.present()
+        except Exception as e:
+            logger.error(f"Failed to open known hosts editor: {e}")
+
     def on_broadcast_command_action(self, action, param=None):
         """Handle broadcast command action - shows dialog to input command"""
         try:
@@ -717,6 +727,11 @@ def register_window_actions(window):
         window.open_in_system_terminal_action = Gio.SimpleAction.new('open-in-system-terminal', None)
         window.open_in_system_terminal_action.connect('activate', window.on_open_in_system_terminal_action)
         window.add_action(window.open_in_system_terminal_action)
+
+    # Known hosts editor action
+    window.edit_known_hosts_action = Gio.SimpleAction.new('edit-known-hosts', None)
+    window.edit_known_hosts_action.connect('activate', window.on_edit_known_hosts_action)
+    window.add_action(window.edit_known_hosts_action)
 
     # Action for broadcasting commands to all SSH terminals
     window.broadcast_command_action = Gio.SimpleAction.new('broadcast-command', None)

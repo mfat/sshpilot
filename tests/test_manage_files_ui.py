@@ -63,6 +63,8 @@ def create_window():
             pass
         def on_broadcast_command_action(self, *args):
              pass
+        def on_edit_known_hosts_action(self, *args):
+             pass
         def on_create_group_action(self, *args):
              pass
         def on_edit_group_action(self, *args):

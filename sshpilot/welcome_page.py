@@ -7,6 +7,7 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Gdk
 
 from .shortcut_utils import get_primary_modifier_label
+from gettext import gettext as _
 
 
 class WelcomePage(Gtk.Box):
@@ -38,6 +39,12 @@ class WelcomePage(Gtk.Box):
         message.set_halign(Gtk.Align.CENTER)
         message.add_css_class('dim-label')
         self.append(message)
+
+        # Known hosts editor button
+        kh_button = Gtk.Button(label=_('Known Hosts Editor'))
+        kh_button.set_halign(Gtk.Align.CENTER)
+        kh_button.connect('clicked', lambda b: b.activate_action('win.edit-known-hosts', None))
+        self.append(kh_button)
 
         # Shortcuts box
         shortcuts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)

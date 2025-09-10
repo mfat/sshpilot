@@ -997,6 +997,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         menu.append('Local Terminal', 'app.local-terminal')
         menu.append('Copy Key to Server', 'app.new-key')
         menu.append('Broadcast Command', 'app.broadcast-command')
+        menu.append('Known Hosts Editor', 'win.edit-known-hosts')
         menu.append('Preferences', 'app.preferences')
         menu.append('Help', 'app.help')
         menu.append('About', 'app.about')
