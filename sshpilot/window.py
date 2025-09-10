@@ -545,6 +545,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
         header.append(add_button)
 
+        # Search button
+        search_button = Gtk.Button.new_from_icon_name('system-search-symbolic')
+        # Platform-aware shortcut in tooltip
+        shortcut = 'Cmd+F' if is_macos() else 'Ctrl+F'
+        search_button.set_tooltip_text(f'Search Connections ({shortcut})')
+        search_button.connect('clicked', lambda *_: self.focus_search_entry())
+        try:
+            search_button.set_can_focus(False)
+        except Exception:
+            pass
+        header.append(search_button)
+
         # Menu button
         menu_button = Gtk.MenuButton()
         menu_button.set_can_focus(False)

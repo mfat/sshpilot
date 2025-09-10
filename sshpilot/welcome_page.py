@@ -50,18 +50,6 @@ class WelcomePage(Gtk.Box):
         quick_connect_row.connect('activated', self.on_quick_connect_clicked)
         preferences_group.add(quick_connect_row)
         
-        # Search Connections action row
-        search_row = Adw.ActionRow()
-        search_row.set_title(_('Search Connections'))
-        search_row.set_subtitle(_('Find and filter your saved connections'))
-        search_row.set_icon_name('system-search-symbolic')
-        # Platform-aware shortcut
-        shortcut = 'Cmd+F' if is_macos() else 'Ctrl+F'
-        search_row.set_subtitle(_('Find and filter your saved connections') + f' ({shortcut})')
-        search_row.set_activatable(True)
-        search_row.connect('activated', self.on_search_clicked)
-        preferences_group.add(search_row)
-        
         # Local Terminal action row
         local_terminal_row = Adw.ActionRow()
         local_terminal_row.set_title(_('Local Terminal'))
@@ -270,12 +258,6 @@ class WelcomePage(Gtk.Box):
                 except:
                     pass
             return None
-
-    # Search button handler
-    def on_search_clicked(self, button):
-        """Handle search button click - activate sidebar search"""
-        self.window.focus_search_entry()
-    
 
 
 class QuickConnectDialog(Adw.MessageDialog):
