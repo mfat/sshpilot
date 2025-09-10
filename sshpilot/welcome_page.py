@@ -58,6 +58,9 @@ class WelcomePage(Gtk.Box):
             ('Alt+Left', 'Previous Tab'),
             (f'{primary}+F4', 'Close Tab'),
             (f'{primary}+Shift+T', 'New Local Terminal'),
+            (f'{primary}+Shift+=', 'Zoom In'),
+            (f'{primary}+-', 'Zoom Out'),
+            (f'{primary}+0', 'Reset Zoom'),
             (f'{primary}+,', 'Preferences'),
         ]
 
