@@ -526,12 +526,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         header.set_margin_top(12)
         header.set_margin_bottom(6)
         
-        # Title
-        title_label = Gtk.Label()
-        title_label.set_markup('<b>Connections</b>')
-        title_label.set_halign(Gtk.Align.START)
-        title_label.set_hexpand(True)
-        header.append(title_label)
+        # # Title
+        # title_label = Gtk.Label()
+        # title_label.set_markup('<b>Connections</b>')
+        # title_label.set_halign(Gtk.Align.START)
+        # title_label.set_hexpand(True)
+        # header.append(title_label)
         
         # Add connection button
         add_button = Gtk.Button.new_from_icon_name('list-add-symbolic')
