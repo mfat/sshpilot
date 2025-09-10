@@ -1210,7 +1210,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 pass
         self.content_stack.set_visible_child_name("welcome")
-        
+        GLib.idle_add(self._focus_connection_list_first_row)
+
         # Update view toggle button
         if hasattr(self, 'view_toggle_button'):
             # Check if there are any active tabs
