@@ -1191,17 +1191,18 @@ class PreferencesWindow(Adw.PreferencesWindow):
         if model and selected < model.get_n_items():
             terminal_name = model.get_string(selected)
             logger.info(f"Terminal dropdown selection changed to: {terminal_name}")
-            
+
             # Show/hide custom path entry based on selection
             if hasattr(self, 'custom_terminal_box'):
                 if terminal_name == "Custom":
                     self.custom_terminal_box.set_visible(True)
                 else:
                     self.custom_terminal_box.set_visible(False)
-            
+
             # Save the selected terminal
             if terminal_name != "Custom":
-                self.config.set_setting('external-terminal', terminal_name)
+                command = self.terminal_commands.get(terminal_name, terminal_name)
+                self.config.set_setting('external-terminal', command)
     
     def on_custom_terminal_path_changed(self, entry, *args):
         """Handle custom terminal path entry change"""
@@ -1221,34 +1222,75 @@ class PreferencesWindow(Adw.PreferencesWindow):
         try:
             # Create string list for dropdown
             terminals_list = Gtk.StringList()
-            
-            # Add common terminals
+
+            # Mapping of terminal labels to their launch commands
             common_terminals = [
-                'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty', 
-                'kitty', 'terminator', 'tilix', 'xterm', 'guake'
+                ("gnome-terminal", "gnome-terminal"),
+                ("konsole", "konsole"),
+                ("xfce4-terminal", "xfce4-terminal"),
+                ("alacritty", "alacritty"),
+                ("kitty", "kitty"),
+                ("terminator", "terminator"),
+                ("tilix", "tilix"),
+                ("xterm", "xterm"),
+                ("guake", "guake"),
             ]
-            
+
+            # Append macOS terminals when running on macOS
+            if is_macos():
+                common_terminals.extend(
+                    [
+                        ("Terminal", "open -a Terminal"),
+                        ("iTerm2", "open -a iTerm2"),
+                        ("Ghostty", "open -a Ghostty"),
+                        ("Warp", "open -a Warp"),
+                    ]
+                )
+
+            # Prepare mapping for later lookup
+            self.terminal_commands = {}
+
+            def _macos_app_exists(app_name: str) -> bool:
+                """Check if a macOS .app bundle exists"""
+                app_dirs = [
+                    "/Applications",
+                    "/Applications/Utilities",
+                    "/System/Applications",
+                    "/System/Applications/Utilities",
+                ]
+                for dir_path in app_dirs:
+                    if os.path.exists(os.path.join(dir_path, f"{app_name}.app")):
+                        return True
+                return False
+
             # Check which terminals are available
             available_terminals = []
-            for terminal in common_terminals:
+            for label, command in common_terminals:
                 try:
-                    result = subprocess.run(['which', terminal], capture_output=True, text=True, timeout=2)
-                    if result.returncode == 0:
-                        available_terminals.append(terminal)
+                    if command.startswith("open -a "):
+                        app_name = command.split("open -a ", 1)[1]
+                        if _macos_app_exists(app_name):
+                            available_terminals.append((label, command))
+                    else:
+                        if shutil.which(command):
+                            available_terminals.append((label, command))
                 except Exception:
                     continue
-            
-            # Add available terminals to dropdown
-            for terminal in available_terminals:
-                terminals_list.append(terminal)
-            
+
+            # Add available terminals to dropdown and mapping
+            for label, command in available_terminals:
+                terminals_list.append(label)
+                self.terminal_commands[label] = command
+
             # Add "Custom" option
             terminals_list.append("Custom")
-            
+
             # Set the model
             self.terminal_dropdown.set_model(terminals_list)
-            
-            logger.info(f"Populated terminal dropdown with {len(available_terminals)} available terminals")
+
+            logger.info(
+                f"Populated terminal dropdown with {len(available_terminals)} available terminals"
+            )
             
         except Exception as e:
             logger.error(f"Failed to populate terminal dropdown: {e}")
@@ -1259,19 +1301,28 @@ class PreferencesWindow(Adw.PreferencesWindow):
             model = self.terminal_dropdown.get_model()
             if not model:
                 return
-            
+
             # Handle the case where terminal_name is 'custom' but dropdown has 'Custom'
             if terminal_name == 'custom':
-                terminal_name = 'Custom'
-            
+                terminal_label = 'Custom'
+            else:
+                # Try to find corresponding label for stored command
+                terminal_label = None
+                for label, command in self.terminal_commands.items():
+                    if terminal_name == command or terminal_name == label:
+                        terminal_label = label
+                        break
+                if terminal_label is None:
+                    terminal_label = terminal_name
+
             # Find the terminal in the model
             for i in range(model.get_n_items()):
-                if model.get_string(i) == terminal_name:
+                if model.get_string(i) == terminal_label:
                     self.terminal_dropdown.set_selected(i)
-                    
+
                     # Show/hide custom path entry based on selection
                     if hasattr(self, 'custom_terminal_box'):
-                        if terminal_name == "Custom":
+                        if terminal_label == "Custom":
                             self.custom_terminal_box.set_visible(True)
                         else:
                             self.custom_terminal_box.set_visible(False)
