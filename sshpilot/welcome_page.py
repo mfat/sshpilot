@@ -32,6 +32,7 @@ class WelcomePage(Gtk.Box):
         self.set_can_focus(False)
         self.set_focus_on_click(False)
 
+
         # Quick connect box
         self.quick_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.quick_box.set_halign(Gtk.Align.CENTER)
