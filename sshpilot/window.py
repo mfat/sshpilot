@@ -4318,8 +4318,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         cmd = ['osascript', '-e', script]
                     elif app_lower == 'warp':
                         cmd = ['open', f'warp://{ssh_command}']
-                    elif app_lower in ['alacritty', 'kitty', 'ghostty']:
+                    elif app_lower in ['alacritty', 'kitty']:
                         cmd = ['open', '-a', app, '--args', '-e', 'bash', '-lc', f'{ssh_command}; exec bash']
+                    elif app_lower == 'ghostty':
+                        cmd = ['open', '-a', app, '--args', ssh_command]
                     else:
                         cmd = ['open', '-a', app, '--args', 'bash', '-lc', f'{ssh_command}; exec bash']
                 else:
@@ -4370,14 +4372,43 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Get the default terminal command from desktop environment"""
         try:
             if is_macos():
-                mac_terms = ['iTerm', 'Warp', 'WezTerm', 'Alacritty', 'Terminal']
-                for app in mac_terms:
+                # Map bundle identifiers to display names in preference order.
+                mac_terms = {
+                    'com.apple.Terminal': 'Terminal',
+                    'com.googlecode.iterm2': 'iTerm',
+                    'dev.warp.Warp': 'Warp',
+                    'io.alacritty': 'Alacritty',
+                    'net.kovidgoyal.kitty': 'Kitty',
+                    'com.mitmaro.ghostty': 'Ghostty',
+                }
+
+                for bundle_id, name in mac_terms.items():
+                    # First try AppleScript lookup by app name
                     try:
-                        result = subprocess.run(['open', '-Ra', app], capture_output=True, text=True, timeout=2)
-                        if result.returncode == 0:
-                            return ['open', '-a', app]
+                        result = subprocess.run(
+                            ['osascript', '-e', f'id of app "{name}"'],
+                            capture_output=True,
+                            text=True,
+                            timeout=2,
+                        )
+                        if result.returncode == 0 and bundle_id in result.stdout:
+                            return ['open', '-a', name]
                     except Exception:
-                        continue
+                        pass
+
+                    # Fallback to Spotlight metadata search by bundle identifier
+                    try:
+                        result = subprocess.run(
+                            ['mdfind', f'kMDItemCFBundleIdentifier=={bundle_id}'],
+                            capture_output=True,
+                            text=True,
+                            timeout=2,
+                        )
+                        if result.returncode == 0 and result.stdout.strip():
+                            return ['open', '-a', name]
+                    except Exception:
+                        pass
+
                 return None
 
             desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
