@@ -12,6 +12,7 @@ from gettext import gettext as _
 
 from .connection_manager import Connection
 from .search_utils import connection_matches
+from .sidebar import ConnectionRow
 
 
 class WelcomePage(Gtk.Box):
@@ -74,14 +75,37 @@ class WelcomePage(Gtk.Box):
         self.search_entry.set_placeholder_text(_('Search connections'))
         self.search_entry.connect('activate', self.on_search_activate)
         self.search_entry.connect('search-changed', self.on_search_changed)
+        
+        # Add keyboard navigation support
+        key_controller = Gtk.EventControllerKey()
+        key_controller.connect('key-pressed', self.on_search_key_pressed)
+        self.search_entry.add_controller(key_controller)
+        
         search_container.append(self.search_entry)
 
         self.results_list = Gtk.ListBox()
         self.results_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self.results_list.set_hexpand(True)
+        self.results_list.add_css_class('boxed-list')
 
         self.results_list.connect('row-activated', self.on_result_activated)
-        search_container.append(self.results_list)
+        
+        # Add keyboard navigation to results list
+        results_key_controller = Gtk.EventControllerKey()
+        results_key_controller.connect('key-pressed', self.on_results_key_pressed)
+        self.results_list.add_controller(results_key_controller)
+        
+        # Wrap the list in a scrolled window for better UX
+        self.results_scrolled = Gtk.ScrolledWindow()
+        self.results_scrolled.set_child(self.results_list)
+        self.results_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.results_scrolled.set_min_content_height(100)
+        self.results_scrolled.set_max_content_height(300)
+        self.results_scrolled.set_hexpand(True)
+        self.results_scrolled.set_vexpand(False)
+        self.results_scrolled.set_visible(False)  # Hidden by default
+        
+        search_container.append(self.results_scrolled)
         self.append(search_container)
 
         # Action buttons
@@ -281,16 +305,12 @@ class WelcomePage(Gtk.Box):
         for child in list(self.results_list):
             self.results_list.remove(child)
         if not query:
+            self.results_scrolled.set_visible(False)
             return
         for conn in self._search_results(query):
-            row = Gtk.ListBoxRow()
-            row.connection = conn
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            label = Gtk.Label(label=f"{conn.nickname} ({conn.host})", xalign=0)
-            box.append(label)
-            row.set_child(box)
+            row = ConnectionRow(conn)
             self.results_list.append(row)
-        self.results_list.show()
+        self.results_scrolled.set_visible(True)
 
     def on_search_activate(self, entry):
         query = entry.get_text().strip().lower()
@@ -301,4 +321,63 @@ class WelcomePage(Gtk.Box):
     def on_result_activated(self, listbox, row):
         if hasattr(row, 'connection'):
             self.window.terminal_manager.connect_to_host(row.connection, force_new=False)
+    
+    def on_search_key_pressed(self, controller, keyval, keycode, state):
+        """Handle key presses in search entry for navigation"""
+        # Arrow down - move to first result or next result
+        if keyval == Gdk.KEY_Down:
+            if self.results_scrolled.get_visible():
+                # Check if there are any results by trying to get the first row
+                first_row = self.results_list.get_row_at_index(0)
+                if first_row:
+                    # Focus the results list
+                    self.results_list.grab_focus()
+                    # Select first row if none selected
+                    selected_row = self.results_list.get_selected_row()
+                    if not selected_row:
+                        self.results_list.select_row(first_row)
+                    return True
+        
+        # Arrow up - move to search entry (when in results)
+        elif keyval == Gdk.KEY_Up:
+            # This will be handled by the results list when it has focus
+            return False
+        
+        # Enter - activate selected result or first result
+        elif keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+            if self.results_scrolled.get_visible():
+                # Check if there are any results by trying to get the first row
+                first_row = self.results_list.get_row_at_index(0)
+                if first_row:
+                    selected_row = self.results_list.get_selected_row()
+                    if not selected_row:
+                        # No selection, activate first row
+                        self.on_result_activated(self.results_list, first_row)
+                    else:
+                        # Activate selected row
+                        self.on_result_activated(self.results_list, selected_row)
+                    return True
+        
+        return False
+    
+    def on_results_key_pressed(self, controller, keyval, keycode, state):
+        """Handle key presses in results list for navigation"""
+        # Arrow up on first row - move focus back to search entry
+        if keyval == Gdk.KEY_Up:
+            selected_row = self.results_list.get_selected_row()
+            if selected_row:
+                row_index = selected_row.get_index()
+                if row_index == 0:
+                    # On first row, move focus back to search entry
+                    self.search_entry.grab_focus()
+                    return True
+        
+        # Enter - activate selected result
+        elif keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+            selected_row = self.results_list.get_selected_row()
+            if selected_row:
+                self.on_result_activated(self.results_list, selected_row)
+                return True
+        
+        return False
     
