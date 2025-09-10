@@ -28,6 +28,8 @@ class WelcomePage(Gtk.Box):
         self.set_margin_end(24)
         self.set_margin_top(24)
         self.set_margin_bottom(24)
+        # Prevent the welcome page container from grabbing keyboard focus
+        self.set_can_focus(False)
         self.set_focus_on_click(False)
 
 
