@@ -7,6 +7,7 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Gdk
 from gettext import gettext as _
 
+
 from .connection_manager import Connection
 from .search_utils import connection_matches
 
@@ -26,6 +27,7 @@ class WelcomePage(Gtk.Box):
         self.set_margin_top(24)
         self.set_margin_bottom(24)
 
+
         # Welcome icon
         try:
             texture = Gdk.Texture.new_from_resource('/io/github/mfat/sshpilot/sshpilot.svg')
@@ -44,6 +46,7 @@ class WelcomePage(Gtk.Box):
         quick_box.set_hexpand(True)
         self.quick_entry = Gtk.Entry()
         self.quick_entry.set_hexpand(True)
+
         self.quick_entry.set_placeholder_text(_('user@host'))
         self.quick_entry.connect('activate', self.on_quick_connect)
         connect_button = Gtk.Button(label=_('Connect'))
@@ -58,6 +61,7 @@ class WelcomePage(Gtk.Box):
         search_container.set_hexpand(True)
         self.search_entry = Gtk.SearchEntry()
         self.search_entry.set_hexpand(True)
+
         self.search_entry.set_placeholder_text(_('Search connections'))
         self.search_entry.connect('activate', self.on_search_activate)
         self.search_entry.connect('search-changed', self.on_search_changed)
@@ -66,6 +70,7 @@ class WelcomePage(Gtk.Box):
         self.results_list = Gtk.ListBox()
         self.results_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self.results_list.set_hexpand(True)
+
         self.results_list.connect('row-activated', self.on_result_activated)
         search_container.append(self.results_list)
         self.append(search_container)
@@ -73,6 +78,7 @@ class WelcomePage(Gtk.Box):
         # Action buttons
         buttons_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         buttons_box.set_halign(Gtk.Align.START)
+
         local_button = Gtk.Button(label=_('Local Terminal'))
         local_button.connect('clicked', lambda *_: window.terminal_manager.show_local_terminal())
         prefs_button = Gtk.Button(label=_('Preferences'))
@@ -97,6 +103,7 @@ class WelcomePage(Gtk.Box):
 
         grid = Gtk.Grid(column_spacing=12, row_spacing=6)
         grid.set_halign(Gtk.Align.START)
+
 
         shortcuts = [
             ("<Primary>N", _('New Connection')),
@@ -124,6 +131,7 @@ class WelcomePage(Gtk.Box):
         shortcuts_scroller.set_child(grid)
         shortcuts_container.append(shortcuts_scroller)
         self.append(shortcuts_container)
+
 
     # Quick connect handlers
     def on_quick_connect(self, *_args):
