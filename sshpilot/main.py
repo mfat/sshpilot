@@ -81,7 +81,7 @@ class SshPilotApplication(Adw.Application):
 
         if mac:
             # macOS-specific shortcuts using Meta key (Command key)
-            self.create_action('quit', self.on_quit_action, ['<Meta>q'])
+            self.create_action('quit', self.on_quit_action, ['<Meta><Shift>q'])
             self.create_action('new-connection', self.on_new_connection, ['<Meta>n'])
             self.create_action('open-new-connection-tab', self.on_open_new_connection_tab, ['<Meta><Alt>n'])
             self.create_action('toggle-list', self.on_toggle_list, ['<Meta>l'])
@@ -90,7 +90,7 @@ class SshPilotApplication(Adw.Application):
             logging.info("Using macOS-specific shortcuts (Meta key = Command key)")
         else:
             # Linux/Windows shortcuts using Primary key
-            self.create_action('quit', self.on_quit_action, ['<primary>q'])
+            self.create_action('quit', self.on_quit_action, ['<primary><shift>q'])
             self.create_action('new-connection', self.on_new_connection, ['<primary>n'])
             self.create_action('open-new-connection-tab', self.on_open_new_connection_tab, ['<primary><alt>n'])
             self.create_action('toggle-list', self.on_toggle_list, ['<primary>l'])
