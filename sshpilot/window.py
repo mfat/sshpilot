@@ -437,8 +437,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Add tab button to header bar (will be created later in setup_content_area)
         # This will be added after the tab view is created
         
-        # Add header bar to main container
-        main_box.append(self.header_bar)
+        # Add header bar to main container only when using traditional split views
+        if not HAS_NAV_SPLIT:
+            main_box.append(self.header_bar)
         
         # Create main layout (fallback if split view widgets are unavailable)
         if HAS_NAV_SPLIT:
@@ -472,13 +473,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Create sidebar
         self.setup_sidebar()
-        
+
         # Create main content area
         self.setup_content_area()
-        
+
         # Add split view to main container
         main_box.append(self.split_view)
-        
+
         # Sidebar is always visible on startup
 
         # Create toast overlay and set main content
@@ -1045,8 +1046,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Start with welcome view visible
         self.content_stack.set_visible_child_name("welcome")
-        
-        self._set_content_widget(self.content_stack)
+
+        if HAS_NAV_SPLIT:
+            content_box = Adw.ToolbarView()
+            content_box.add_top_bar(self.header_bar)
+            content_box.set_content(self.content_stack)
+            self._set_content_widget(content_box)
+        else:
+            self._set_content_widget(self.content_stack)
 
 
 
