@@ -25,6 +25,7 @@ import subprocess
 import threading
 
 # Feature detection for libadwaita versions across distros
+HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
 HAS_TIMED_ANIMATION = hasattr(Adw, 'TimedAnimation')
 
@@ -436,11 +437,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Add tab button to header bar (will be created later in setup_content_area)
         # This will be added after the tab view is created
         
-        # Add header bar to main container
-        main_box.append(self.header_bar)
+        # Add header bar to main container only when using traditional split views
+        if not HAS_NAV_SPLIT:
+            main_box.append(self.header_bar)
         
-        # Create main layout (fallback if OverlaySplitView is unavailable)
-        if HAS_OVERLAY_SPLIT:
+        # Create main layout (fallback if split view widgets are unavailable)
+        if HAS_NAV_SPLIT:
+            self.split_view = Adw.NavigationSplitView()
+            try:
+                self.split_view.set_sidebar_width_fraction(0.25)
+                self.split_view.set_min_sidebar_width(200)
+                self.split_view.set_max_sidebar_width(400)
+            except Exception:
+                pass
+            self.split_view.set_vexpand(True)
+            self._split_variant = 'navigation'
+        elif HAS_OVERLAY_SPLIT:
             self.split_view = Adw.OverlaySplitView()
             try:
                 self.split_view.set_sidebar_width_fraction(0.25)
@@ -461,13 +473,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Create sidebar
         self.setup_sidebar()
-        
+
         # Create main content area
         self.setup_content_area()
-        
+
         # Add split view to main container
         main_box.append(self.split_view)
-        
+
         # Sidebar is always visible on startup
 
         # Create toast overlay and set main content
@@ -476,7 +488,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.set_content(self.toast_overlay)
 
     def _set_sidebar_widget(self, widget: Gtk.Widget) -> None:
-        if HAS_OVERLAY_SPLIT:
+        if HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT:
             try:
                 self.split_view.set_sidebar(widget)
                 return
@@ -489,7 +501,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
 
     def _set_content_widget(self, widget: Gtk.Widget) -> None:
-        if HAS_OVERLAY_SPLIT:
+        if HAS_NAV_SPLIT:
+            try:
+                if not hasattr(self, "_nav_view"):
+                    self._nav_view = Adw.NavigationView()
+                    self.split_view.set_content(self._nav_view)
+                page = Adw.NavigationPage.new(widget, "")
+                self._nav_view.push(page)
+                return
+            except Exception:
+                pass
+        elif HAS_OVERLAY_SPLIT:
             try:
                 self.split_view.set_content(widget)
                 return
@@ -503,7 +525,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _get_sidebar_width(self) -> int:
         try:
-            if HAS_OVERLAY_SPLIT and hasattr(self.split_view, 'get_max_sidebar_width'):
+            if (HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT) and hasattr(self.split_view, 'get_max_sidebar_width'):
                 return int(self.split_view.get_max_sidebar_width())
         except Exception:
             pass
@@ -1023,8 +1045,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Start with welcome view visible
         self.content_stack.set_visible_child_name("welcome")
-        
-        self._set_content_widget(self.content_stack)
+
+        if HAS_NAV_SPLIT:
+            content_box = Adw.ToolbarView()
+            content_box.add_top_bar(self.header_bar)
+            content_box.set_content(self.content_stack)
+            self._set_content_widget(content_box)
+        else:
+            self._set_content_widget(self.content_stack)
 
 
 
@@ -2185,8 +2213,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def _toggle_sidebar_visibility(self, is_visible):
         """Helper method to toggle sidebar visibility"""
         try:
-            if HAS_OVERLAY_SPLIT:
-                # For Adw.OverlaySplitView
+            if HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT:
+                # For Adw split view widgets
                 self.split_view.set_show_sidebar(is_visible)
             else:
                 # For Gtk.Paned fallback

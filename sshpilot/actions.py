@@ -13,6 +13,7 @@ from .preferences import (
 from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos
 
+HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ class WindowActions:
         try:
             # Get current sidebar visibility
             if hasattr(self, 'split_view') and hasattr(self, '_toggle_sidebar_visibility'):
-                if HAS_OVERLAY_SPLIT:
+                if HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT:
                     current_visible = self.split_view.get_show_sidebar()
                 else:
                     sidebar_widget = self.split_view.get_start_child()
