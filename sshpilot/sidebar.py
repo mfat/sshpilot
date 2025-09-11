@@ -416,10 +416,13 @@ def _show_drop_indicator(window, row, position):
         if (window._drop_indicator_row != row or
             window._drop_indicator_position != position):
             drop_pos = None
-            if position == "above":
-                drop_pos = Gtk.ListBoxDropPosition.BEFORE
-            elif position == "below":
-                drop_pos = Gtk.ListBoxDropPosition.AFTER
+            # Some GTK versions don't expose ListBoxDropPosition
+            if hasattr(Gtk, "ListBoxDropPosition"):
+                if position == "above":
+                    drop_pos = Gtk.ListBoxDropPosition.BEFORE
+                elif position == "below":
+                    drop_pos = Gtk.ListBoxDropPosition.AFTER
+
 
             if drop_pos is not None:
                 try:
