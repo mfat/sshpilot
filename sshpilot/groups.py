@@ -19,6 +19,7 @@ class GroupManager:
         self.config = config
         self.groups = {}  # group_id -> GroupInfo
         self.connections = {}  # connection_nickname -> group_id
+        self.root_connections: List[str] = []  # order of ungrouped connections
         self._load_groups()
 
     def _load_groups(self):
@@ -27,17 +28,25 @@ class GroupManager:
             groups_data = self.config.get_setting('connection_groups', {})
             self.groups = groups_data.get('groups', {})
             self.connections = groups_data.get('connections', {})
+            self.root_connections = groups_data.get('root_connections', [])
         except Exception as e:
             logger.error(f"Failed to load groups: {e}")
             self.groups = {}
             self.connections = {}
+            self.root_connections = []
+
+        # Ensure root_connections includes all ungrouped connections
+        for nickname, group_id in self.connections.items():
+            if group_id is None and nickname not in self.root_connections:
+                self.root_connections.append(nickname)
 
     def _save_groups(self):
         """Save groups to configuration"""
         try:
             groups_data = {
                 'groups': self.groups,
-                'connections': self.connections
+                'connections': self.connections,
+                'root_connections': self.root_connections,
             }
             self.config.set_setting('connection_groups', groups_data)
         except Exception as e:
@@ -86,6 +95,9 @@ class GroupManager:
         # Move connections to parent or root
         for conn_nickname in group['connections']:
             self.connections[conn_nickname] = parent_id
+            if parent_id is None:
+                if conn_nickname not in self.root_connections:
+                    self.root_connections.append(conn_nickname)
 
         # Move child groups to parent
         for child_id in group['children']:
@@ -107,15 +119,20 @@ class GroupManager:
         """Move a connection to a different group"""
         self.connections[connection_nickname] = target_group_id
 
-        # Remove from old group
+        # Remove from old group and root list
         for group in self.groups.values():
             if connection_nickname in group['connections']:
                 group['connections'].remove(connection_nickname)
+        if connection_nickname in self.root_connections:
+            self.root_connections.remove(connection_nickname)
 
-        # Add to new group
+        # Add to new group or root list
         if target_group_id and target_group_id in self.groups:
             if connection_nickname not in self.groups[target_group_id]['connections']:
                 self.groups[target_group_id]['connections'].append(connection_nickname)
+        else:
+            if connection_nickname not in self.root_connections:
+                self.root_connections.append(connection_nickname)
 
         self._save_groups()
 
@@ -162,14 +179,16 @@ class GroupManager:
         target_group_id = self.connections.get(target_connection_nickname)
 
         # Both connections must be in the same group
-        if source_group_id != target_group_id or not source_group_id:
+        if source_group_id != target_group_id:
             return
 
-        group = self.groups.get(source_group_id)
-        if not group:
-            return
-
-        connections = group['connections']
+        if source_group_id:
+            group = self.groups.get(source_group_id)
+            if not group:
+                return
+            connections = group['connections']
+        else:
+            connections = self.root_connections
 
         # Remove the source connection from its current position
         if connection_nickname in connections:
