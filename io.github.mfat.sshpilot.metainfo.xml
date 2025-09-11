@@ -31,7 +31,9 @@
   <url type="donation">https://github.com/sponsors/mfat</url>
 
   <releases>
-    <release version="3.7.3" date="2025-09-11">
+
+    <release version="3.7.5" date="2025-09-11">
+
       <description>
         <p>Latest stable release.</p>
       </description>

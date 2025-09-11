@@ -635,6 +635,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         scrolled.set_vexpand(True)
         
         self.connection_list = Gtk.ListBox()
+        self.connection_list.add_css_class("navigation-sidebar")
         self.connection_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
         try:
             self.connection_list.set_can_focus(True)
@@ -1870,7 +1871,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Keyboard Shortcuts'), accelerator=f"{primary}<Shift>slash"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Quit'), accelerator=f"{primary}q"))
+            title=_('Quit'), accelerator=f"{primary}<Shift>q"))
         section.add_group(group_general)
 
         # Connection management shortcuts
