@@ -6,7 +6,8 @@ import shlex
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 
-from gi.repository import Gtk, Adw
+from gi.repository import Gtk, Adw, Gdk
+
 from gettext import gettext as _
 
 
@@ -43,7 +44,24 @@ class WelcomePage(Gtk.Overlay):
             card.set_child(content)
             card.set_tooltip_text(tooltip_text)
             card.set_focusable(True)
-            card.connect("activate", callback)
+            card.set_accessible_role(Gtk.AccessibleRole.BUTTON)
+
+            click = Gtk.GestureClick()
+            click.connect("released", lambda *_: callback(card))
+            card.add_controller(click)
+
+            key = Gtk.EventControllerKey()
+            key.connect(
+                "key-released",
+                lambda _c, keyval, *_: (
+                    callback(card)
+                    if keyval in (Gdk.KEY_Return, Gdk.KEY_space)
+                    else False
+                ),
+            )
+            card.add_controller(key)
+
+
             return card
         
         quick_connect_card = create_card(
