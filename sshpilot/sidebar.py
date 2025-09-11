@@ -430,6 +430,7 @@ def _show_drop_indicator(window, row, position):
             else:
                 window.connection_list.drag_highlight_row(row)
 
+
             window._drop_indicator_row = row
             window._drop_indicator_position = position
     except Exception as e:
@@ -494,6 +495,7 @@ def _clear_drop_indicator(window):
     try:
         if window._drop_indicator_row:
             window.connection_list.drag_unhighlight_row()
+
         window._drop_indicator_row = None
         window._drop_indicator_position = None
     except Exception as e:
@@ -524,6 +526,7 @@ def _on_connection_list_drop(window, target, value, x, y):
                 except Exception:
                     continue
             value = extracted
+
 
         if not isinstance(value, dict):
             return False
