@@ -26,7 +26,10 @@ class WelcomePage(Gtk.Overlay):
         clamp = Adw.Clamp()
         clamp.set_halign(Gtk.Align.CENTER)
         clamp.set_valign(Gtk.Align.CENTER)
-        grid = Gtk.Grid(column_spacing=12, row_spacing=12)
+        grid = Gtk.Grid(column_spacing=24, row_spacing=24)
+        grid.set_column_homogeneous(True)
+        grid.set_row_homogeneous(True)
+
         grid.set_halign(Gtk.Align.CENTER)
         grid.set_valign(Gtk.Align.CENTER)
         clamp.set_child(grid)
@@ -37,6 +40,13 @@ class WelcomePage(Gtk.Overlay):
             content = Adw.ButtonContent()
             content.set_icon_name(icon_name)
             content.set_label(title)
+            content.set_margin_top(24)
+            content.set_margin_bottom(24)
+            content.set_margin_start(24)
+            content.set_margin_end(24)
+            content.set_halign(Gtk.Align.CENTER)
+            content.set_valign(Gtk.Align.CENTER)
+
 
             card = Adw.Bin()
             card.add_css_class("card")
@@ -45,6 +55,10 @@ class WelcomePage(Gtk.Overlay):
             card.set_tooltip_text(tooltip_text)
             card.set_focusable(True)
             card.set_accessible_role(Gtk.AccessibleRole.BUTTON)
+            card.set_hexpand(True)
+            card.set_vexpand(True)
+            card.set_valign(Gtk.Align.FILL)
+
 
             click = Gtk.GestureClick()
             click.connect("released", lambda *_: callback(card))
