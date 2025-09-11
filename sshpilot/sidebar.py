@@ -518,6 +518,7 @@ def _on_connection_list_drop(window, target, value, x, y):
                     continue
             value = extracted
 
+
         if not isinstance(value, dict):
             return False
 
