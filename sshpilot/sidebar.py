@@ -381,7 +381,7 @@ def _on_connection_list_motion(window, target, x, y):
             return Gdk.DragAction.MOVE
 
         if getattr(row, "ungrouped_area", False):
-            row.add_css_class("drag-over")
+            Gtk.drag_highlight(row)
             window._drop_indicator_row = row
             window._drop_indicator_position = "ungrouped"
             return Gdk.DragAction.MOVE
@@ -413,13 +413,23 @@ def _on_connection_list_leave(window, target):
 def _show_drop_indicator(window, row, position):
     try:
         # Only update if the indicator has changed
-        if (window._drop_indicator_row != row or 
+        if (window._drop_indicator_row != row or
             window._drop_indicator_position != position):
-            
+            drop_pos = None
             if position == "above":
-                row.add_css_class("drop-above")
+                drop_pos = Gtk.ListBoxDropPosition.BEFORE
+            elif position == "below":
+                drop_pos = Gtk.ListBoxDropPosition.AFTER
+
+            if drop_pos is not None:
+                try:
+                    window.connection_list.drag_highlight_row(row, drop_pos)
+                except TypeError:
+                    # Fallback for older GTK versions without drop position
+                    window.connection_list.drag_highlight_row(row)
             else:
-                row.add_css_class("drop-below")
+                window.connection_list.drag_highlight_row(row)
+
             window._drop_indicator_row = row
             window._drop_indicator_position = position
     except Exception as e:
@@ -431,7 +441,6 @@ def _create_ungrouped_area(window):
         return window._ungrouped_area_row
 
     ungrouped_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-    ungrouped_area.add_css_class("ungrouped-area")
 
     icon = Gtk.Image.new_from_icon_name("folder-open-symbolic")
     icon.set_pixel_size(24)
@@ -466,7 +475,6 @@ def _show_ungrouped_area(window):
         ungrouped_row = _create_ungrouped_area(window)
         window.connection_list.append(ungrouped_row)
         window._ungrouped_area_visible = True
-        logger.debug("Ungrouped area shown")
     except Exception as e:
         logger.error(f"Error showing ungrouped area: {e}")
 
@@ -478,7 +486,6 @@ def _hide_ungrouped_area(window):
 
         window.connection_list.remove(window._ungrouped_area_row)
         window._ungrouped_area_visible = False
-        logger.debug("Ungrouped area hidden")
     except Exception as e:
         logger.error(f"Error hiding ungrouped area: {e}")
 
@@ -486,9 +493,7 @@ def _hide_ungrouped_area(window):
 def _clear_drop_indicator(window):
     try:
         if window._drop_indicator_row:
-            window._drop_indicator_row.remove_css_class("drop-above")
-            window._drop_indicator_row.remove_css_class("drop-below")
-            window._drop_indicator_row.remove_css_class("drag-over")
+            window.connection_list.drag_unhighlight_row()
         window._drop_indicator_row = None
         window._drop_indicator_position = None
     except Exception as e:
@@ -507,6 +512,18 @@ def _on_connection_list_drop(window, target, value, x, y):
         if hasattr(window, '_drag_in_progress'):
             window._drag_in_progress = False
             window.connection_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+
+        # Extract Python object from GObject.Value drops
+        if isinstance(value, GObject.Value):
+            extracted = None
+            for getter in ("get_boxed", "get_object", "get"):
+                try:
+                    extracted = getattr(value, getter)()
+                    if extracted is not None:
+                        break
+                except Exception:
+                    continue
+            value = extracted
 
         if not isinstance(value, dict):
             return False
