@@ -1230,7 +1230,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Check if there are any active tabs
             has_tabs = len(self.tab_view.get_pages()) > 0
             if has_tabs:
-                self.view_toggle_button.set_icon_name('go-previous-symbolic')
+                self.view_toggle_button.set_icon_name('utilities-terminal-symbolic')
                 self.view_toggle_button.set_tooltip_text('Return to Terminal Tabs')
                 self.view_toggle_button.set_visible(True)
             else:
