@@ -280,6 +280,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         try:
             window = self.get_root()
             if window:
+                # Track which connection is being dragged
+                window._dragged_connection = self.connection
                 _show_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag begin: {e}")
@@ -288,6 +290,9 @@ class ConnectionRow(Gtk.ListBoxRow):
         try:
             window = self.get_root()
             if window:
+                # Clear the dragged connection tracking
+                if hasattr(window, "_dragged_connection"):
+                    delattr(window, "_dragged_connection")
                 _hide_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag end: {e}")
@@ -442,25 +447,40 @@ def _on_connection_list_motion(window, target, x, y):
                 return Gdk.DragAction.MOVE
         window._last_motion_time = current_time
 
-        _clear_drop_indicator(window)
         _show_ungrouped_area(window)
 
         row = window.connection_list.get_row_at_y(int(y))
         if not row:
+            _clear_drop_indicator(window)
             return Gdk.DragAction.MOVE
 
         if getattr(row, "ungrouped_area", False):
-            Gtk.drag_highlight(row)
+            # For ungrouped area, we don't need special highlighting
+            _clear_drop_indicator(window)
             window._drop_indicator_row = row
             window._drop_indicator_position = "ungrouped"
             return Gdk.DragAction.MOVE
 
-        row_y = row.get_allocation().y
-        row_height = row.get_allocation().height
-        relative_y = y - row_y
-        position = "above" if relative_y < row_height / 2 else "below"
+        # Only show indicators on connection rows that are valid drop targets
+        if (hasattr(row, "connection") and 
+            hasattr(row, "show_drop_indicator") and 
+            hasattr(window, "_dragged_connection")):
+            
+            # Don't show indicators on the row being dragged
+            if row.connection == window._dragged_connection:
+                _clear_drop_indicator(window)
+                return Gdk.DragAction.MOVE
+            
+            # Only show indicator if this is a different connection
+            row_y = row.get_allocation().y
+            row_height = row.get_allocation().height
+            relative_y = y - row_y
+            position = "above" if relative_y < row_height / 2 else "below"
 
-        _show_drop_indicator(window, row, position)
+            _show_drop_indicator(window, row, position)
+        else:
+            # Clear indicators if we're over a non-valid target
+            _clear_drop_indicator(window)
         return Gdk.DragAction.MOVE
     except Exception as e:
         logger.error(f"Error handling motion: {e}")
@@ -618,7 +638,7 @@ def _on_connection_list_drop(window, target, value, x, y):
                     position = "above" if relative_y < row_height / 2 else "below"
 
                     if hasattr(target_row, "group_id"):
-                        # Drop on group row
+                        # Drop on group row - add to the group
                         target_group_id = target_row.group_id
                         if target_group_id != current_group_id:
                             window.group_manager.move_connection(connection_nickname, target_group_id)
@@ -631,9 +651,15 @@ def _on_connection_list_drop(window, target, value, x, y):
                                 target_connection.nickname
                             )
                             if target_group_id != current_group_id:
+                                # Moving to a different group - move first, then reorder
                                 window.group_manager.move_connection(connection_nickname, target_group_id)
+                                # Now reorder within the new group
+                                window.group_manager.reorder_connection_in_group(
+                                    connection_nickname, target_connection.nickname, position
+                                )
                                 changes_made = True
                             else:
+                                # Same group - just reorder
                                 window.group_manager.reorder_connection_in_group(
                                     connection_nickname, target_connection.nickname, position
                                 )

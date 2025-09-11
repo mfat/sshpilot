@@ -185,6 +185,25 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               background: alpha(@accent_bg_color, 0.1);
             }
             
+            /* Smooth drag indicator transitions */
+            .drag-indicator {
+              opacity: 0;
+              transition: opacity 0.15s ease-in-out;
+            }
+            
+            .drag-indicator.visible {
+              opacity: 1;
+            }
+            
+            /* Smooth transitions for connection rows during drag */
+            .navigation-sidebar {
+              transition: transform 0.1s ease-out, opacity 0.1s ease-out;
+            }
+            
+            .navigation-sidebar.dragging {
+              opacity: 0.7;
+              transform: scale(0.98);
+            }
 
             """
             provider.load_from_data(css.encode('utf-8'))
