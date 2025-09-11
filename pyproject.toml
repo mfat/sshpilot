@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sshpilot"
-version = "3.5.4"
-description = "A user-friendly, modern and lightweight SSH connection manager for Linux, with an integrated terminal"
+version = "3.7.6"
+description = "A user-friendly, modern and lightweight SSH connection manager with an integrated terminal"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "GPL-3.0-only"}
