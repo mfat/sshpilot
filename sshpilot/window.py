@@ -1191,10 +1191,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Apply indentation for grouped connections
         if indent_level > 0:
-            content = row.get_child()
-            if hasattr(content, 'get_child'):  # Handle overlay
-                content = content.get_child()
-            content.set_margin_start(12 + (indent_level * 20))
+            row.set_indentation(indent_level)
         
         self.connection_list.append(row)
         self.connection_rows[connection] = row

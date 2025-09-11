@@ -8,7 +8,7 @@ from typing import Dict
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Gdk, GObject, GLib, Adw
+from gi.repository import Gtk, Gdk, GObject, GLib, Adw, Graphene
 
 from gettext import gettext as _
 
@@ -21,6 +21,30 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Row widgets
 # ---------------------------------------------------------------------------
+
+
+class DragIndicator(Gtk.Widget):
+    """Custom widget to show drop indicator line"""
+    
+    def __init__(self):
+        super().__init__()
+        self.set_size_request(-1, 3)  # 3px height
+        self.set_visible(False)
+    
+    def do_snapshot(self, snapshot):
+        """Draw the horizontal line"""
+        width = self.get_width()
+        height = self.get_height()
+        
+        # Create a Graphene rectangle for the drop indicator
+        rect = Graphene.Rect()
+        rect.init(8, height // 2 - 1, width - 16, 2)  # x, y, width, height
+        
+        # Use accent color for the drop indicator
+        color = Gdk.RGBA()
+        color.parse("#3584e4")  # Adwaita blue
+        
+        snapshot.append_color(color, rect)
 
 
 class GroupRow(Gtk.ListBoxRow):
@@ -136,9 +160,14 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.add_css_class("navigation-sidebar")
         self.connection = connection
 
-        overlay = Gtk.Overlay()
-        self.set_child(overlay)
-
+        # Main container with drop indicators
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        
+        # Drop indicator (top)
+        self.drop_indicator_top = DragIndicator()
+        main_box.append(self.drop_indicator_top)
+        
+        # Content container
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         content.set_margin_start(12)
         content.set_margin_end(12)
@@ -173,21 +202,61 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.status_icon = Gtk.Image.new_from_icon_name("network-offline-symbolic")
         self.status_icon.set_pixel_size(16)
         content.append(self.status_icon)
+        
+        # Now add the content to main_box
+        main_box.append(content)
+        
+        # Drop indicator (bottom)
+        self.drop_indicator_bottom = DragIndicator()
+        main_box.append(self.drop_indicator_bottom)
 
-        overlay.set_child(content)
-
+        # Add pulse overlay to the main box
         self._pulse = Gtk.Box()
         self._pulse.add_css_class("pulse-highlight")
         self._pulse.set_can_target(False)
         self._pulse.set_hexpand(True)
         self._pulse.set_vexpand(True)
+        
+        # Create overlay for pulse effect
+        overlay = Gtk.Overlay()
+        overlay.set_child(main_box)
         overlay.add_overlay(self._pulse)
+        self.set_child(overlay)
 
         self.set_selectable(True)
 
         self.update_status()
         self._update_forwarding_indicators()
         self._setup_drag_source()
+    
+    def show_drop_indicator(self, top: bool):
+        """Show drop indicator line"""
+        self.hide_drop_indicators()
+        
+        if top:
+            self.drop_indicator_top.set_visible(True)
+        else:
+            self.drop_indicator_bottom.set_visible(True)
+    
+    def hide_drop_indicators(self):
+        """Hide all drop indicator lines"""
+        self.drop_indicator_top.set_visible(False)
+        self.drop_indicator_bottom.set_visible(False)
+    
+    def set_indentation(self, level: int):
+        """Set indentation level for grouped connections"""
+        if level > 0:
+            # Find the content box and set its margin
+            overlay = self.get_child()
+            if overlay and hasattr(overlay, 'get_child'):
+                main_box = overlay.get_child()
+                if main_box and hasattr(main_box, 'get_first_child'):
+                    # Skip the first child (top drop indicator) and get the content box
+                    top_indicator = main_box.get_first_child()
+                    if top_indicator and hasattr(top_indicator, 'get_next_sibling'):
+                        content = top_indicator.get_next_sibling()
+                        if content:
+                            content.set_margin_start(12 + (level * 20))
 
     # -- drag source ------------------------------------------------------
 
@@ -415,24 +484,15 @@ def _show_drop_indicator(window, row, position):
         # Only update if the indicator has changed
         if (window._drop_indicator_row != row or
             window._drop_indicator_position != position):
-            drop_pos = None
-            # Some GTK versions don't expose ListBoxDropPosition
-            if hasattr(Gtk, "ListBoxDropPosition"):
-                if position == "above":
-                    drop_pos = Gtk.ListBoxDropPosition.BEFORE
-                elif position == "below":
-                    drop_pos = Gtk.ListBoxDropPosition.AFTER
-
-
-            if drop_pos is not None:
-                try:
-                    window.connection_list.drag_highlight_row(row, drop_pos)
-                except TypeError:
-                    # Fallback for older GTK versions without drop position
-                    window.connection_list.drag_highlight_row(row)
-            else:
-                window.connection_list.drag_highlight_row(row)
-
+            
+            # Clear any existing indicators
+            if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
+                window._drop_indicator_row.hide_drop_indicators()
+            
+            # Show indicator on the target row
+            if hasattr(row, 'show_drop_indicator'):
+                show_top = (position == "above")
+                row.show_drop_indicator(show_top)
 
             window._drop_indicator_row = row
             window._drop_indicator_position = position
@@ -496,8 +556,8 @@ def _hide_ungrouped_area(window):
 
 def _clear_drop_indicator(window):
     try:
-        if window._drop_indicator_row:
-            window.connection_list.drag_unhighlight_row()
+        if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
+            window._drop_indicator_row.hide_drop_indicators()
 
         window._drop_indicator_row = None
         window._drop_indicator_position = None
