@@ -500,7 +500,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
 
     def _set_content_widget(self, widget: Gtk.Widget) -> None:
-        if HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT:
+        if HAS_NAV_SPLIT:
+            try:
+                if not hasattr(self, "_nav_view"):
+                    self._nav_view = Adw.NavigationView()
+                    self.split_view.set_content(self._nav_view)
+                page = Adw.NavigationPage.new(widget, "")
+                self._nav_view.push(page)
+                return
+            except Exception:
+                pass
+        elif HAS_OVERLAY_SPLIT:
+
             try:
                 self.split_view.set_content(widget)
                 return
