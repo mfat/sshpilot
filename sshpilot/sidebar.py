@@ -416,7 +416,8 @@ def _show_drop_indicator(window, row, position):
         if (window._drop_indicator_row != row or 
             window._drop_indicator_position != position):
             
-            Gtk.drag_highlight(row)
+            window.connection_list.drag_highlight_row(row)
+
             window._drop_indicator_row = row
             window._drop_indicator_position = position
     except Exception as e:
@@ -480,7 +481,8 @@ def _hide_ungrouped_area(window):
 def _clear_drop_indicator(window):
     try:
         if window._drop_indicator_row:
-            Gtk.drag_unhighlight(window._drop_indicator_row)
+            window.connection_list.drag_unhighlight_row()
+
         window._drop_indicator_row = None
         window._drop_indicator_position = None
     except Exception as e:
