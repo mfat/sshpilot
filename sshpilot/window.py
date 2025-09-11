@@ -433,6 +433,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.view_toggle_button.set_visible(False)  # Hidden by default
         self.header_bar.pack_start(self.view_toggle_button)
         
+        # Add tab button to header bar (will be created later in setup_content_area)
+        # This will be added after the tab view is created
+        
         # Add header bar to main container
         main_box.append(self.header_bar)
         
@@ -984,6 +987,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
         
+        # Create tab overview
+        self.tab_overview = Adw.TabOverview()
+        self.tab_overview.set_view(self.tab_view)
+        self.tab_overview.set_enable_new_tab(False)
+        self.tab_overview.set_enable_search(True)
+        
         # Create tab bar
         self.tab_bar = Adw.TabBar()
         self.tab_bar.set_view(self.tab_view)
@@ -997,7 +1006,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if hasattr(tab_content_box, 'add_css_class'):
             tab_content_box.add_css_class('terminal-bg')
         
-        self.content_stack.add_named(tab_content_box, "tabs")
+        # Set the tab content box as the child of the tab overview
+        self.tab_overview.set_child(tab_content_box)
+        
+        # Create and add tab button to header bar
+        self.tab_button = Adw.TabButton()
+        self.tab_button.set_view(self.tab_view)
+        self.tab_button.connect('clicked', self.on_tab_button_clicked)
+        self.tab_button.set_visible(False)  # Hidden by default, shown when tabs exist
+        self.header_bar.pack_start(self.tab_button)
+        
+        self.content_stack.add_named(self.tab_overview, "tabs")
         # Also color the stack background
         if hasattr(self.content_stack, 'add_css_class'):
             self.content_stack.add_css_class('terminal-bg')
@@ -1230,8 +1249,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Check if there are any active tabs
             has_tabs = len(self.tab_view.get_pages()) > 0
             if has_tabs:
-                self.view_toggle_button.set_icon_name('go-previous-symbolic')
-                self.view_toggle_button.set_tooltip_text('Return to Terminal Tabs')
+                self.view_toggle_button.set_icon_name('go-home-symbolic')
+                self.view_toggle_button.set_tooltip_text('Leave Start Page')
                 self.view_toggle_button.set_visible(True)
             else:
                 self.view_toggle_button.set_visible(False)  # Hide button when no tabs
@@ -1888,6 +1907,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             title=_('Search Connections'), accelerator=f"{primary}f"))
         group_connections.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Focus Connection List'), accelerator=f"{primary}l"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Quick Connect'), accelerator=f"{primary}<Alt>c"))
         section.add_group(group_connections)
 
         # Tab navigation shortcuts
@@ -1901,6 +1922,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             title=_('Previous Tab'), accelerator='<Alt>Left'))
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Close Tab'), accelerator=f"{primary}F4"))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Tab Overview'), accelerator=f"{primary}<Shift>Tab"))
         section.add_group(group_tabs)
 
         win.add_section(section)
@@ -3391,6 +3414,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Now, tell the tab view to finish closing the page.
             tab_view.close_page_finish(page, True)
             
+            # Update tab button visibility after closing
+            self._update_tab_button_visibility()
+            
             # Check if this was the last tab and show welcome screen if needed
             if tab_view.get_n_pages() == 0:
                 self.show_welcome_view()
@@ -3408,7 +3434,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     def on_tab_attached(self, tab_view, page, position):
         """Handle tab attached"""
-        pass
+        self._update_tab_button_visibility()
+
+    def _update_tab_button_visibility(self):
+        """Update TabButton visibility based on number of tabs"""
+        try:
+            if hasattr(self, 'tab_button'):
+                has_tabs = self.tab_view.get_n_pages() > 0
+                self.tab_button.set_visible(has_tabs)
+        except Exception as e:
+            logger.error(f"Failed to update tab button visibility: {e}")
 
     def on_tab_detached(self, tab_view, page, position):
         """Handle tab detached"""
@@ -3435,6 +3470,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
 
+        # Update tab button visibility
+        self._update_tab_button_visibility()
+        
         # Show welcome view if no more tabs are left
         if tab_view.get_n_pages() == 0:
             self.show_welcome_view()
@@ -3442,6 +3480,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Update button visibility when tabs remain
             if hasattr(self, 'view_toggle_button'):
                 self.view_toggle_button.set_visible(True)
+
+    def on_tab_button_clicked(self, button):
+        """Handle tab button click to open/close tab overview"""
+        try:
+            # Toggle the tab overview
+            is_open = self.tab_overview.get_open()
+            self.tab_overview.set_open(not is_open)
+        except Exception as e:
+            logger.error(f"Failed to toggle tab overview: {e}")
+
 
             
     def on_connection_added(self, manager, connection):
