@@ -186,39 +186,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             }
             
 
-            
-            /* Drag and drop visual feedback */
-            row.drag-highlight {
-              background: alpha(@accent_bg_color, 0.2);
-              border: 2px dashed @accent_bg_color;
-              border-radius: 8px;
-            }
-            
-            /* Drop indicators */
-            row.drop-above {
-              border-top: 3px solid @accent_bg_color;
-              background: alpha(@accent_bg_color, 0.1);
-            }
-            
-            row.drop-below {
-              border-bottom: 3px solid @accent_bg_color;
-              background: alpha(@accent_bg_color, 0.1);
-            }
-
-            /* Ungrouped area indicator */
-            .ungrouped-area {
-              background: alpha(@accent_bg_color, 0.05);
-              border: 2px dashed alpha(@accent_bg_color, 0.3);
-              border-radius: 8px;
-              margin: 8px;
-              padding: 12px;
-            }
-
-            .ungrouped-area.drag-over {
-              background: alpha(@accent_bg_color, 0.1);
-              border-color: @accent_bg_color;
-            }
-            
             """
             provider.load_from_data(css.encode('utf-8'))
             Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)

@@ -381,7 +381,7 @@ def _on_connection_list_motion(window, target, x, y):
             return Gdk.DragAction.MOVE
 
         if getattr(row, "ungrouped_area", False):
-            row.add_css_class("drag-over")
+            Gtk.drag_highlight(row)
             window._drop_indicator_row = row
             window._drop_indicator_position = "ungrouped"
             return Gdk.DragAction.MOVE
@@ -416,10 +416,7 @@ def _show_drop_indicator(window, row, position):
         if (window._drop_indicator_row != row or 
             window._drop_indicator_position != position):
             
-            if position == "above":
-                row.add_css_class("drop-above")
-            else:
-                row.add_css_class("drop-below")
+            Gtk.drag_highlight(row)
             window._drop_indicator_row = row
             window._drop_indicator_position = position
     except Exception as e:
@@ -431,7 +428,6 @@ def _create_ungrouped_area(window):
         return window._ungrouped_area_row
 
     ungrouped_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-    ungrouped_area.add_css_class("ungrouped-area")
 
     icon = Gtk.Image.new_from_icon_name("folder-open-symbolic")
     icon.set_pixel_size(24)
@@ -484,9 +480,7 @@ def _hide_ungrouped_area(window):
 def _clear_drop_indicator(window):
     try:
         if window._drop_indicator_row:
-            window._drop_indicator_row.remove_css_class("drop-above")
-            window._drop_indicator_row.remove_css_class("drop-below")
-            window._drop_indicator_row.remove_css_class("drag-over")
+            Gtk.drag_unhighlight(window._drop_indicator_row)
         window._drop_indicator_row = None
         window._drop_indicator_position = None
     except Exception as e:
