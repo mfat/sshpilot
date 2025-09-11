@@ -204,7 +204,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               border-bottom: 3px solid @accent_bg_color;
               background: alpha(@accent_bg_color, 0.1);
             }
-            
+
             /* Ungrouped area indicator */
             .ungrouped-area {
               background: alpha(@accent_bg_color, 0.05);
@@ -213,11 +213,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               margin: 8px;
               padding: 12px;
             }
-            
+
             .ungrouped-area.drag-over {
               background: alpha(@accent_bg_color, 0.1);
               border-color: @accent_bg_color;
             }
+            
             """
             provider.load_from_data(css.encode('utf-8'))
             Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -1150,22 +1151,37 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._build_grouped_list(hierarchy, connections_dict, 0)
 
         # Add ungrouped connections at the end
-        ungrouped_connections = []
-        for conn in connections:
-            if not self.group_manager.get_connection_group(conn.nickname):
-                ungrouped_connections.append(conn)
+        ungrouped_nicks = [
+            conn.nickname for conn in connections
+            if not self.group_manager.get_connection_group(conn.nickname)
+        ]
 
-        if ungrouped_connections:
-            # No separator - just add ungrouped connections directly
-            pass
+        if ungrouped_nicks:
+            # Keep root connection order in sync
+            updated = False
+            for nick in ungrouped_nicks:
+                if nick not in self.group_manager.root_connections:
+                    self.group_manager.root_connections.append(nick)
+                    updated = True
 
-            # Add ungrouped connections
-            for conn in sorted(ungrouped_connections, key=lambda c: c.nickname.lower()):
-                self.add_connection_row(conn)
+            existing = set(ungrouped_nicks)
+            if any(nick not in existing for nick in self.group_manager.root_connections):
+                self.group_manager.root_connections = [
+                    nick for nick in self.group_manager.root_connections
+                    if nick in existing
+                ]
+                updated = True
+
+            if updated:
+                self.group_manager._save_groups()
+
+            for nick in self.group_manager.root_connections:
+                conn = connections_dict.get(nick)
+                if conn:
+                    self.add_connection_row(conn)
 
         # Store reference to ungrouped area (hidden by default)
         self._ungrouped_area_row = None
-    
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list"""
         for group_info in hierarchy:
@@ -3564,6 +3580,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_connection_added(self, manager, connection):
         """Handle new connection added to the connection manager"""
         logger.info(f"New connection added: {connection.nickname}")
+        self.group_manager.connections.setdefault(connection.nickname, None)
+        if connection.nickname not in self.group_manager.root_connections:
+            self.group_manager.root_connections.append(connection.nickname)
+            self.group_manager._save_groups()
         self.rebuild_connection_list()
         
                 
@@ -3579,6 +3599,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Remove from group manager
         self.group_manager.connections.pop(connection.nickname, None)
+        if connection.nickname in self.group_manager.root_connections:
+            self.group_manager.root_connections.remove(connection.nickname)
         self.group_manager._save_groups()
 
         # Close all terminals for this connection and clean up maps
@@ -3615,6 +3637,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def on_connection_added(self, manager, connection):
         """Handle new connection added"""
+        self.group_manager.connections.setdefault(connection.nickname, None)
+        if connection.nickname not in self.group_manager.root_connections:
+            self.group_manager.root_connections.append(connection.nickname)
+            self.group_manager._save_groups()
         self.rebuild_connection_list()
 
     def on_connection_removed(self, manager, connection):
@@ -3624,9 +3650,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             row = self.connection_rows[connection]
             self.connection_list.remove(row)
             del self.connection_rows[connection]
-        
+
         # Remove from group manager
         self.group_manager.connections.pop(connection.nickname, None)
+        if connection.nickname in self.group_manager.root_connections:
+            self.group_manager.root_connections.remove(connection.nickname)
         self.group_manager._save_groups()
 
         # Close all terminals for this connection and clean up maps
