@@ -31,7 +31,7 @@
 - Privacy toggle to show/hide ip addresses/hostnames in the main window
 - Light/Dark interface themes
 - Customizable terminal font and color schemes
-- Load/save standard .ssh/config entries
+- Load/save standard .ssh/config entries (Or use dedicated config file)
 - Free software (GPL v3 license)
 
 
