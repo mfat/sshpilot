@@ -413,10 +413,23 @@ def _on_connection_list_leave(window, target):
 def _show_drop_indicator(window, row, position):
     try:
         # Only update if the indicator has changed
-        if (window._drop_indicator_row != row or 
+        if (window._drop_indicator_row != row or
             window._drop_indicator_position != position):
-            
-            window.connection_list.drag_highlight_row(row)
+            drop_pos = None
+            if position == "above":
+                drop_pos = Gtk.ListBoxDropPosition.BEFORE
+            elif position == "below":
+                drop_pos = Gtk.ListBoxDropPosition.AFTER
+
+            if drop_pos is not None:
+                try:
+                    window.connection_list.drag_highlight_row(row, drop_pos)
+                except TypeError:
+                    # Fallback for older GTK versions without drop position
+                    window.connection_list.drag_highlight_row(row)
+            else:
+                window.connection_list.drag_highlight_row(row)
+
 
             window._drop_indicator_row = row
             window._drop_indicator_position = position
