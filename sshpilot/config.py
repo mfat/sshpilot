@@ -124,6 +124,10 @@ class Config(GObject.Object):
                 'window_height': 800,
                 'sidebar_width': 250,
             },
+            'welcome': {
+                'background_color': None,  # None for default, or CSS string for custom
+                'tile_color': None,  # None for default, or hex color for custom
+            },
             'connections_meta': {},  # per-connection metadata
             'ssh': {
                 'connection_timeout': 30,
