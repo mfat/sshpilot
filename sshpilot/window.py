@@ -512,6 +512,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 pass
         elif HAS_OVERLAY_SPLIT:
+
             try:
                 self.split_view.set_content(widget)
                 return
