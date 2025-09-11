@@ -1180,6 +1180,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if conn:
                     self.add_connection_row(conn)
 
+
         # Store reference to ungrouped area (hidden by default)
         self._ungrouped_area_row = None
     def _build_grouped_list(self, hierarchy, connections_dict, level):
