@@ -1440,7 +1440,7 @@ class TerminalWidget(Gtk.Box):
             ))
             
             # Add zoom shortcuts
-            if is_macos:
+            if is_macos():
                 # macOS: Use Cmd+= (equals key), Cmd+-, and Cmd+0 for zoom
                 # Note: On macOS, Cmd+Shift+= is the same as Cmd+=
                 zoom_in_trigger = "<Meta>equal"
@@ -1448,9 +1448,11 @@ class TerminalWidget(Gtk.Box):
                 zoom_reset_trigger = "<Meta>0"
             else:
                 # Linux/Windows: Use Ctrl++, Ctrl+-, and Ctrl+0 for zoom
-                zoom_in_trigger = "<Primary>plus"
+                zoom_in_trigger = "<Primary>equal"
                 zoom_out_trigger = "<Primary>minus"
                 zoom_reset_trigger = "<Primary>0"
+            
+            logger.debug(f"Setting up terminal zoom shortcuts: in={zoom_in_trigger}, out={zoom_out_trigger}, reset={zoom_reset_trigger}")
             
             def _cb_zoom_in(widget, *args):
                 try:
