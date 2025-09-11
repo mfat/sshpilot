@@ -7,6 +7,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 
 from gi.repository import Gtk, Adw, Gdk
+
 from gettext import gettext as _
 
 
@@ -59,6 +60,7 @@ class WelcomePage(Gtk.Overlay):
                 ),
             )
             card.add_controller(key)
+
 
             return card
         
