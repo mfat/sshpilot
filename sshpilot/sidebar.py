@@ -508,6 +508,13 @@ def _on_connection_list_drop(window, target, value, x, y):
             window._drag_in_progress = False
             window.connection_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
 
+        # Extract Python object from GObject.Value drops
+        if isinstance(value, GObject.Value):
+            try:
+                value = value.get_boxed()
+            except Exception:
+                value = None
+
         if not isinstance(value, dict):
             return False
 
