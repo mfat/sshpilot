@@ -204,7 +204,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               border-bottom: 3px solid @accent_bg_color;
               background: alpha(@accent_bg_color, 0.1);
             }
-            
+
             /* Ungrouped area indicator */
             .ungrouped-area {
               background: alpha(@accent_bg_color, 0.05);
@@ -213,11 +213,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               margin: 8px;
               padding: 12px;
             }
-            
+
             .ungrouped-area.drag-over {
               background: alpha(@accent_bg_color, 0.1);
               border-color: @accent_bg_color;
             }
+            
             """
             provider.load_from_data(css.encode('utf-8'))
             Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -1162,10 +1163,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Add ungrouped connections
             for conn in sorted(ungrouped_connections, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
-
         # Store reference to ungrouped area (hidden by default)
         self._ungrouped_area_row = None
-    
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list"""
         for group_info in hierarchy:

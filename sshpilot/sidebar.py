@@ -466,7 +466,6 @@ def _show_ungrouped_area(window):
         ungrouped_row = _create_ungrouped_area(window)
         window.connection_list.append(ungrouped_row)
         window._ungrouped_area_visible = True
-        logger.debug("Ungrouped area shown")
     except Exception as e:
         logger.error(f"Error showing ungrouped area: {e}")
 
@@ -478,7 +477,6 @@ def _hide_ungrouped_area(window):
 
         window.connection_list.remove(window._ungrouped_area_row)
         window._ungrouped_area_visible = False
-        logger.debug("Ungrouped area hidden")
     except Exception as e:
         logger.error(f"Error hiding ungrouped area: {e}")
 
@@ -510,10 +508,16 @@ def _on_connection_list_drop(window, target, value, x, y):
 
         # Extract Python object from GObject.Value drops
         if isinstance(value, GObject.Value):
-            try:
-                value = value.get_boxed()
-            except Exception:
-                value = None
+            extracted = None
+            for getter in ("get_boxed", "get_object", "get"):
+                try:
+                    extracted = getattr(value, getter)()
+                    if extracted is not None:
+                        break
+                except Exception:
+                    continue
+            value = extracted
+
 
         if not isinstance(value, dict):
             return False
