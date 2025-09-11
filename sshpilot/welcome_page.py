@@ -7,6 +7,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 
 from gi.repository import Gtk, Adw, Gdk
+
 from gettext import gettext as _
 
 
@@ -28,6 +29,7 @@ class WelcomePage(Gtk.Overlay):
         grid = Gtk.Grid(column_spacing=24, row_spacing=24)
         grid.set_column_homogeneous(True)
         grid.set_row_homogeneous(True)
+
         grid.set_halign(Gtk.Align.CENTER)
         grid.set_valign(Gtk.Align.CENTER)
         clamp.set_child(grid)
@@ -45,6 +47,7 @@ class WelcomePage(Gtk.Overlay):
             content.set_halign(Gtk.Align.CENTER)
             content.set_valign(Gtk.Align.CENTER)
 
+
             card = Adw.Bin()
             card.add_css_class("card")
             card.add_css_class("activatable")
@@ -55,6 +58,7 @@ class WelcomePage(Gtk.Overlay):
             card.set_hexpand(True)
             card.set_vexpand(True)
             card.set_valign(Gtk.Align.FILL)
+
 
             click = Gtk.GestureClick()
             click.connect("released", lambda *_: callback(card))
@@ -70,6 +74,7 @@ class WelcomePage(Gtk.Overlay):
                 ),
             )
             card.add_controller(key)
+
 
             return card
         
