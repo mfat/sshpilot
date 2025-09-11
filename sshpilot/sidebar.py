@@ -32,6 +32,7 @@ class GroupRow(Gtk.ListBoxRow):
 
     def __init__(self, group_info: Dict, group_manager: GroupManager, connections_dict: Dict | None = None):
         super().__init__()
+        self.add_css_class("navigation-sidebar")
         self.group_info = group_info
         self.group_manager = group_manager
         self.group_id = group_info["id"]
@@ -41,8 +42,8 @@ class GroupRow(Gtk.ListBoxRow):
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         content.set_margin_start(12)
         content.set_margin_end(12)
-        content.set_margin_top(17)
-        content.set_margin_bottom(17)
+        content.set_margin_top(6)
+        content.set_margin_bottom(6)
 
         icon = Gtk.Image.new_from_icon_name("folder-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
@@ -132,6 +133,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     def __init__(self, connection: Connection):
         super().__init__()
+        self.add_css_class("navigation-sidebar")
         self.connection = connection
 
         overlay = Gtk.Overlay()
