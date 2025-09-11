@@ -11,8 +11,8 @@ from gi.repository import Gtk, Adw, Gdk
 
 from gettext import gettext as _
 
-
 from .connection_manager import Connection
+from .platform_utils import is_macos
 
 
 class WelcomePage(Gtk.Overlay):
@@ -99,6 +99,8 @@ class WelcomePage(Gtk.Overlay):
             .welcome-card {
                 min-width: 100px;
                 min-height: 100px;
+                border: none;
+                box-shadow: none;
             }
             """
         )
@@ -236,31 +238,36 @@ class WelcomePage(Gtk.Overlay):
         # Load saved color settings
         self._load_color_settings()
         
-        # Create welcome page cards
+        # Create welcome page cards with keyboard shortcuts in tooltips
+        mac = is_macos()
+        primary = '⌘' if mac else 'Ctrl'
+        alt = '⌥' if mac else 'Alt'
+        shift = '⇧' if mac else 'Shift'
+        
         quick_connect_card = self.create_card(
             _('Quick Connect'),
-            _('Connect to a server using SSH command'),
+            _('Connect to a server using SSH command\n({})').format(f'{primary}+{alt}+C'),
             'network-server-symbolic',
             self.on_quick_connect_clicked
         )
 
         local_terminal_card = self.create_card(
             _('Local Terminal'),
-            _('Open a local terminal session'),
+            _('Open a local terminal session\n({})').format(f'{primary}+{shift}+T'),
             'utilities-terminal-symbolic',
             lambda *_: window.terminal_manager.show_local_terminal()
         )
 
         shortcuts_card = self.create_card(
             _('Shortcuts'),
-            _('View and learn keyboard shortcuts'),
+            _('View and learn keyboard shortcuts\n({})').format(f'{primary}+{shift}+/'),
             'preferences-desktop-keyboard-symbolic',
             lambda *_: window.show_shortcuts_window()
         )
 
         help_card = self.create_card(
             _('Help'),
-            _('View online documentation and help'),
+            _('View online documentation\n(F1)'),
             'help-browser-symbolic',
             lambda *_: self.open_online_help()
         )
@@ -309,6 +316,8 @@ class WelcomePage(Gtk.Overlay):
             .welcome-card {
                 min-width: 100px;
                 min-height: 100px;
+                border: none;
+                box-shadow: none;
             }
             """
         else:
@@ -324,6 +333,7 @@ class WelcomePage(Gtk.Overlay):
                 color: #ffffff;
                 border-radius: 12px;
                 border: 1px solid {border_color};
+                box-shadow: none;
             }}
             .welcome-card:hover {{
                 background: {hover_color};
@@ -475,7 +485,7 @@ class WelcomePage(Gtk.Overlay):
         """Open quick connect dialog"""
         dialog = QuickConnectDialog(self.window)
         dialog.present()
-    
+
     def open_online_help(self):
         """Open online help documentation"""
         import webbrowser
@@ -651,10 +661,10 @@ class WelcomePage(Gtk.Overlay):
 
 class QuickConnectDialog(Adw.MessageDialog):
     """Modal dialog for quick SSH connection"""
-    
+
     def __init__(self, parent_window):
         super().__init__()
-        
+
         self.parent_window = parent_window
         
         # Set dialog properties
@@ -681,10 +691,10 @@ class QuickConnectDialog(Adw.MessageDialog):
         self.entry.set_hexpand(True)
         self.entry.connect('activate', self.on_connect)
         content_area.append(self.entry)
-        
+
         # Add content to dialog
         self.set_extra_child(content_area)
-        
+
         # Add response buttons
         self.add_response("cancel", "Cancel")
         self.add_response("connect", "Connect")
@@ -692,16 +702,16 @@ class QuickConnectDialog(Adw.MessageDialog):
         
         # Connect response signal
         self.connect('response', self.on_response)
-        
+
         # Focus the entry when dialog is shown
         self.entry.grab_focus()
-    
+
     def on_response(self, dialog, response):
         """Handle dialog response"""
         if response == "connect":
             self.on_connect()
         self.destroy()
-    
+
     def on_connect(self, *args):
         """Handle connect button or Enter key"""
         text = self.entry.get_text().strip()
@@ -714,7 +724,7 @@ class QuickConnectDialog(Adw.MessageDialog):
             connection = Connection(connection_data)
             self.parent_window.terminal_manager.connect_to_host(connection, force_new=False)
             self.destroy()
-    
+
     def _parse_ssh_command(self, command_text):
         """Parse SSH command text and extract connection parameters"""
         try:
@@ -729,21 +739,21 @@ class QuickConnectDialog(Adw.MessageDialog):
                     "auth_method": 0,  # Default to key-based auth
                     "key_select_mode": 0  # Try all keys
                 }
-            
+
             # Parse full SSH command
             # Remove 'ssh' prefix if present
             if command_text.startswith('ssh '):
                 command_text = command_text[4:]
             elif command_text.startswith('ssh'):
                 command_text = command_text[3:]
-            
+
             # Use shlex to properly parse the command with quoted arguments
             try:
                 args = shlex.split(command_text)
             except ValueError:
                 # If shlex fails, fall back to simple split
                 args = command_text.split()
-            
+
             # Initialize connection data with defaults
             connection_data = {
                 "nickname": "",
@@ -759,7 +769,7 @@ class QuickConnectDialog(Adw.MessageDialog):
                 "remote_port_forwards": [],
                 "dynamic_forwards": []
             }
-            
+
             i = 0
             while i < len(args):
                 arg = args[i]
@@ -845,7 +855,7 @@ class QuickConnectDialog(Adw.MessageDialog):
                 else:
                     # Unknown option, skip it
                     i += 1
-            
+
             # Validate that we have at least a host
             if not connection_data["host"]:
                 return None

@@ -1907,6 +1907,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             title=_('Search Connections'), accelerator=f"{primary}f"))
         group_connections.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Focus Connection List'), accelerator=f"{primary}l"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Quick Connect'), accelerator=f"{primary}<Alt>c"))
         section.add_group(group_connections)
 
         # Tab navigation shortcuts
@@ -1920,6 +1922,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             title=_('Previous Tab'), accelerator='<Alt>Left'))
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Close Tab'), accelerator=f"{primary}F4"))
+        group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Tab Overview'), accelerator=f"{primary}<Shift>Tab"))
         section.add_group(group_tabs)
 
         win.add_section(section)
