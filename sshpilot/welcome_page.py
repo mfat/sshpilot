@@ -19,11 +19,31 @@ class WelcomePage(Gtk.Overlay):
 
     BG_OPTIONS = [
         (_("Default"), None),
-        (_("Blue"), "#4A90E2"),
-        (_("Green"), "#27AE60"),
-        (_("Red"), "#FF4757"),
-        (_("Warm"), "linear-gradient(to bottom right, #ff7e5f, #feb47b)"),
-        (_("Cool"), "linear-gradient(to bottom right, #6a11cb, #2575fc)"),
+        (
+            _("Sunset"),
+            "linear-gradient(135deg, #ff9a9e 0%, #fad0c4 100%)",
+        ),
+        (
+            _("Ocean"),
+            "linear-gradient(135deg, #a1c4fd 0%, #c2e9fb 100%)",
+        ),
+        (
+            _("Mint"),
+            "linear-gradient(135deg, #d4fc79 0%, #96e6a1 100%)",
+        ),
+        (
+            _("Lavender"),
+            "linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%)",
+        ),
+        (
+            _("Peach"),
+            "linear-gradient(135deg, #fccb90 0%, #d57eeb 100%)",
+        ),
+        (
+            _("Sky"),
+            "linear-gradient(135deg, #89f7fe 0%, #66a6ff 100%)",
+        ),
+
     ]
 
 
@@ -50,12 +70,23 @@ class WelcomePage(Gtk.Overlay):
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
         )
 
-        self._bg_provider = Gtk.CssProvider()
+        self._card_provider = Gtk.CssProvider()
+        self._card_provider.load_from_data(
+            b".welcome-card{min-width:180px;min-height:180px;aspect-ratio:1;}"
+        )
+
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(),
-            self._bg_provider,
+            self._card_provider,
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
         )
+
+        self._bg_provider = Gtk.CssProvider()
+        self.get_style_context().add_provider(
+            self._bg_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        self.add_css_class("welcome-bg")
+
 
         clamp = Adw.Clamp()
         clamp.set_halign(Gtk.Align.CENTER)
@@ -68,7 +99,8 @@ class WelcomePage(Gtk.Overlay):
         clamp.set_child(grid)
         self.set_child(clamp)
 
-        self.bg_button = Gtk.Button.new_from_icon_name("color-select-symbolic")
+        self.bg_button = Gtk.Button.new_from_icon_name("preferences-color-symbolic")
+
         self.bg_button.add_css_class("flat")
         self.bg_button.set_tooltip_text(_("Change background"))
         self.bg_button.set_halign(Gtk.Align.END)
@@ -194,7 +226,8 @@ class WelcomePage(Gtk.Overlay):
     def _on_bg_selected(self, button, css):
         if css:
             self._bg_provider.load_from_data(
-                f"* {{ background: {css}; }}".encode()
+                f".welcome-bg {{ background: {css}; }}".encode()
+
             )
         else:
             self._bg_provider.load_from_data(b"")
