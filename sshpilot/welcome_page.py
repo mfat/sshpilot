@@ -189,19 +189,6 @@ class WelcomePage(Gtk.Overlay):
             lambda *_: window.terminal_manager.show_local_terminal()
         )
         
-        known_hosts_tile = create_tile(
-            _('Known Hosts'),
-            _('Manage trusted SSH host keys'),
-            'view-list-symbolic',
-            lambda *_: window.show_known_hosts_editor()
-        )
-        
-        preferences_tile = create_tile(
-            _('Preferences'),
-            _('Configure application settings'),
-            'preferences-system-symbolic',
-            lambda *_: window.show_preferences()
-        )
         
         shortcuts_tile = create_tile(
             _('Shortcuts'),
@@ -217,13 +204,11 @@ class WelcomePage(Gtk.Overlay):
             lambda *_: self.open_online_help()
         )
         
-        # Add tiles to grid (3 columns, 2 rows)
+        # Add tiles to grid (2 columns, 2 rows)
         grid.attach(quick_connect_tile, 0, 0, 1, 1)
         grid.attach(local_terminal_tile, 1, 0, 1, 1)
-        grid.attach(known_hosts_tile, 0, 1, 1, 1)
-        grid.attach(preferences_tile, 1, 1, 1, 1)
-        grid.attach(shortcuts_tile, 0, 2, 1, 1)
-        grid.attach(help_tile, 1, 2, 1, 1)
+        grid.attach(shortcuts_tile, 0, 1, 1, 1)
+        grid.attach(help_tile, 1, 1, 1, 1)
         
         # Load saved background setting
         self._load_saved_background()
