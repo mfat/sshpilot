@@ -74,7 +74,7 @@ jobs:
             echo "         python3-paramiko,"
             echo "         python3-cryptography,"
             echo "         python3-secretstorage,"
-
+            echo "         polkitd | policykit-1,"
             echo "         ssh-askpass,"
             echo "         sshpass"
           } >> debian/control
