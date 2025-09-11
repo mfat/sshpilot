@@ -185,6 +185,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               background: alpha(@accent_bg_color, 0.1);
             }
             
+
             """
             provider.load_from_data(css.encode('utf-8'))
             Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -1145,6 +1146,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 conn = connections_dict.get(nick)
                 if conn:
                     self.add_connection_row(conn)
+
 
         # Store reference to ungrouped area (hidden by default)
         self._ungrouped_area_row = None
