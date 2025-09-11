@@ -8,7 +8,7 @@ from typing import Dict
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Gdk, GObject, GLib, Adw
+from gi.repository import Gtk, Gdk, GObject, GLib, Adw, Gio
 
 from gettext import gettext as _
 
@@ -23,40 +23,36 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-class GroupRow(Gtk.ListBoxRow):
-    """Row widget for group headers."""
+class GroupRow(Gtk.Box):
+    """Row widget for group headers for ``Gtk.ListView``."""
 
     __gsignals__ = {
         "group-toggled": (GObject.SignalFlags.RUN_FIRST, None, (str, bool)),
     }
 
     def __init__(self, group_info: Dict, group_manager: GroupManager, connections_dict: Dict | None = None):
-        super().__init__()
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         self.add_css_class("navigation-sidebar")
         self.group_info = group_info
         self.group_manager = group_manager
         self.group_id = group_info["id"]
         self.connections_dict = connections_dict or {}
-
-        # Main content
-        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        content.set_margin_start(12)
-        content.set_margin_end(12)
-        content.set_margin_top(6)
-        content.set_margin_bottom(6)
+        self.set_margin_start(12)
+        self.set_margin_end(12)
+        self.set_margin_top(6)
+        self.set_margin_bottom(6)
 
         icon = Gtk.Image.new_from_icon_name("folder-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
-        content.append(icon)
+        self.append(icon)
 
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_box.set_hexpand(True)
+        self.append(info_box)
 
         self.name_label = Gtk.Label()
         self.name_label.set_halign(Gtk.Align.START)
         info_box.append(self.name_label)
-
-        content.append(info_box)
 
         self.expand_button = Gtk.Button()
         self.expand_button.set_icon_name("pan-end-symbolic")
@@ -64,11 +60,7 @@ class GroupRow(Gtk.ListBoxRow):
         self.expand_button.add_css_class("group-expand-button")
         self.expand_button.set_can_focus(False)
         self.expand_button.connect("clicked", self._on_expand_clicked)
-        content.append(self.expand_button)
-
-        self.set_child(content)
-        self.set_selectable(True)
-        self.set_can_focus(True)
+        self.append(self.expand_button)
 
         self._update_display()
         self._setup_drag_source()
@@ -128,16 +120,13 @@ class GroupRow(Gtk.ListBoxRow):
         self.emit("group-toggled", self.group_id, expanded)
 
 
-class ConnectionRow(Gtk.ListBoxRow):
-    """Row widget for connection list."""
+class ConnectionRow(Gtk.Overlay):
+    """Row widget for connection list for ``Gtk.ListView``."""
 
     def __init__(self, connection: Connection):
         super().__init__()
         self.add_css_class("navigation-sidebar")
         self.connection = connection
-
-        overlay = Gtk.Overlay()
-        self.set_child(overlay)
 
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         content.set_margin_start(12)
@@ -174,16 +163,16 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.status_icon.set_pixel_size(16)
         content.append(self.status_icon)
 
-        overlay.set_child(content)
+        self.set_child(content)
 
         self._pulse = Gtk.Box()
         self._pulse.add_css_class("pulse-highlight")
         self._pulse.set_can_target(False)
         self._pulse.set_hexpand(True)
         self._pulse.set_vexpand(True)
-        overlay.add_overlay(self._pulse)
+        self.add_overlay(self._pulse)
 
-        self.set_selectable(True)
+        # Selection handled by Gtk.ListView model
 
         self.update_status()
         self._update_forwarding_indicators()
@@ -412,28 +401,8 @@ def _on_connection_list_leave(window, target):
 
 def _show_drop_indicator(window, row, position):
     try:
-        # Only update if the indicator has changed
-        if (window._drop_indicator_row != row or
-            window._drop_indicator_position != position):
-            drop_pos = None
-            # Some GTK versions don't expose ListBoxDropPosition
-            if hasattr(Gtk, "ListBoxDropPosition"):
-                if position == "above":
-                    drop_pos = Gtk.ListBoxDropPosition.BEFORE
-                elif position == "below":
-                    drop_pos = Gtk.ListBoxDropPosition.AFTER
-
-
-            if drop_pos is not None:
-                try:
-                    window.connection_list.drag_highlight_row(row, drop_pos)
-                except TypeError:
-                    # Fallback for older GTK versions without drop position
-                    window.connection_list.drag_highlight_row(row)
-            else:
-                window.connection_list.drag_highlight_row(row)
-
-
+        if window._drop_indicator_row != row or window._drop_indicator_position != position:
+            window.connection_list.drag_highlight_row(row)
             window._drop_indicator_row = row
             window._drop_indicator_position = position
     except Exception as e:
@@ -444,7 +413,7 @@ def _create_ungrouped_area(window):
     if window._ungrouped_area_row:
         return window._ungrouped_area_row
 
-    ungrouped_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    ungrouped_row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
 
     icon = Gtk.Image.new_from_icon_name("folder-open-symbolic")
     icon.set_pixel_size(24)
@@ -454,13 +423,9 @@ def _create_ungrouped_area(window):
     label.add_css_class("dim-label")
     label.add_css_class("caption")
 
-    ungrouped_area.append(icon)
-    ungrouped_area.append(label)
+    ungrouped_row.append(icon)
+    ungrouped_row.append(label)
 
-    ungrouped_row = Gtk.ListBoxRow()
-    ungrouped_row.set_child(ungrouped_area)
-    ungrouped_row.set_selectable(False)
-    ungrouped_row.set_activatable(False)
     ungrouped_row.ungrouped_area = True
 
     window._ungrouped_area_row = ungrouped_row
@@ -670,5 +635,92 @@ def build_sidebar(window):
     return window.connection_list
 
 
-__all__ = ["GroupRow", "ConnectionRow", "build_sidebar"]
+__all__ = ["GroupRow", "ConnectionRow", "ConnectionList", "build_sidebar"]
 
+# ---------------------------------------------------------------------------
+# Connection list view
+# ---------------------------------------------------------------------------
+
+
+class ConnectionList(Gtk.ListView):
+    """ListView wrapper exposing ``Gtk.ListBox``-like helpers."""
+
+    def __init__(self):
+        self.store: Gio.ListStore = Gio.ListStore.new(Gtk.Widget)
+        self.model = Gtk.SingleSelection.new(self.store)
+        factory = Gtk.SignalListItemFactory()
+        factory.connect("setup", self._on_setup)
+        factory.connect("bind", self._on_bind)
+        super().__init__(model=self.model, factory=factory)
+        self.add_css_class("navigation-sidebar")
+        self._highlighted_row = None
+
+    def _on_setup(self, factory, list_item):
+        placeholder = Gtk.Box()
+        list_item.set_child(placeholder)
+
+    def _on_bind(self, factory, list_item):
+        widget = list_item.get_item()
+        list_item.set_child(widget)
+
+    # -- ListBox compatibility helpers ----------------------------------
+    def append(self, widget):
+        self.store.append(widget)
+
+    def remove(self, widget):
+        for i in range(self.store.get_n_items()):
+            if self.store.get_item(i) is widget:
+                self.store.remove(i)
+                return
+
+    def get_first_child(self):
+        return self.store.get_item(0) if self.store.get_n_items() else None
+
+    def __iter__(self):
+        for i in range(self.store.get_n_items()):
+            yield self.store.get_item(i)
+
+    def get_row_at_index(self, index):
+        if 0 <= index < self.store.get_n_items():
+            return self.store.get_item(index)
+        return None
+
+    def get_row_at_y(self, y):
+        for row in self:
+            alloc = row.get_allocation()
+            if y >= alloc.y and y < alloc.y + alloc.height:
+                return row
+        return None
+
+    def get_selected_row(self):
+        idx = self.model.get_selected()
+        if idx >= 0:
+            return self.store.get_item(idx)
+        return None
+
+    def select_row(self, row):
+        for i in range(self.store.get_n_items()):
+            if self.store.get_item(i) is row:
+                self.model.set_selected(i)
+                break
+
+    # compatibility stubs
+    def set_selection_mode(self, mode):
+        pass
+
+    def set_activate_on_single_click(self, val):
+        pass
+
+    def set_focus_on_click(self, val):
+        pass
+
+    def drag_highlight_row(self, row, position=None):
+        if self._highlighted_row:
+            self._highlighted_row.remove_css_class("drop-indicator")
+        row.add_css_class("drop-indicator")
+        self._highlighted_row = row
+
+    def drag_unhighlight_row(self):
+        if self._highlighted_row:
+            self._highlighted_row.remove_css_class("drop-indicator")
+            self._highlighted_row = None

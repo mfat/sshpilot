@@ -48,7 +48,7 @@ from .preferences import (
 )
 from .sshcopyid_window import SshCopyIdWindow
 from .groups import GroupManager
-from .sidebar import GroupRow, ConnectionRow, build_sidebar
+from .sidebar import GroupRow, ConnectionRow, ConnectionList, build_sidebar
 
 from .sftp_utils import open_remote_in_file_manager
 from .welcome_page import WelcomePage
@@ -205,9 +205,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
 
 
-    def pulse_selected_row(self, list_box: Gtk.ListBox, repeats=3, duration_ms=280):
+    def pulse_selected_row(self, list_widget: Gtk.Widget, repeats=3, duration_ms=280):
         """Pulse the selected row with highlight effect"""
-        row = list_box.get_selected_row() or (list_box.get_selected_rows()[0] if list_box.get_selected_rows() else None)
+        row = None
+        if hasattr(list_widget, "get_selected_row"):
+            row = list_widget.get_selected_row()
+        elif hasattr(list_widget, "get_selected_rows"):
+            selected = list_widget.get_selected_rows()
+            row = selected[0] if selected else None
         if not row:
             return
         if not hasattr(row, "_pulse"):
@@ -643,26 +648,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.set_vexpand(True)
         
-        self.connection_list = Gtk.ListBox()
-        self.connection_list.add_css_class("navigation-sidebar")
-        self.connection_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        try:
-            self.connection_list.set_can_focus(True)
-        except Exception:
-            pass
-        
+        self.connection_list = ConnectionList()
+
         # Wire pulse effects
         self._wire_pulses()
-        
-        # Connect signals
-        self.connection_list.connect('row-selected', self.on_connection_selected)  # For button sensitivity
-        self.connection_list.connect('row-activated', self.on_connection_activated)  # For Enter key/double-click
-        
-        # Make sure the connection list is focusable and can receive key events
+
+        # Connect signals using ListView API
+        self.connection_list.model.connect('selection-changed', self._on_connection_selection_changed)
+        self.connection_list.connect('activate', self._on_connection_activate)
+
+        # Make sure the connection list is focusable
         self.connection_list.set_focusable(True)
         self.connection_list.set_can_focus(True)
-        self.connection_list.set_focus_on_click(True)
-        self.connection_list.set_activate_on_single_click(False)  # Require double-click to activate
         
         # Set connection list as the default focus widget for the sidebar
         sidebar_box.set_focus_child(self.connection_list)
@@ -1089,11 +1086,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def rebuild_connection_list(self):
         """Rebuild the connection list with groups"""
         # Clear existing rows
-        child = self.connection_list.get_first_child()
-        while child:
-            next_child = child.get_next_sibling()
-            self.connection_list.remove(child)
-            child = next_child
+        while self.connection_list.store.get_n_items():
+            self.connection_list.store.remove(0)
         self.connection_rows.clear()
         
         # Get all connections
@@ -1192,9 +1186,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Apply indentation for grouped connections
         if indent_level > 0:
             content = row.get_child()
-            if hasattr(content, 'get_child'):  # Handle overlay
-                content = content.get_child()
-            content.set_margin_start(12 + (indent_level * 20))
+            if content:
+                content.set_margin_start(12 + (indent_level * 20))
         
         self.connection_list.append(row)
         self.connection_rows[connection] = row
@@ -2172,6 +2165,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # No selection - hide both toolbars
             self.connection_toolbar.set_visible(False)
             self.group_toolbar.set_visible(False)
+
+    def _on_connection_selection_changed(self, model, pos, n_items):
+        row = self.connection_list.get_selected_row()
+        self.on_connection_selected(self.connection_list, row)
+
+    def _on_connection_activate(self, listview, position):
+        row = self.connection_list.get_row_at_index(position)
+        if row:
+            self.on_connection_activated(self.connection_list, row)
 
     def on_add_connection_clicked(self, button):
         """Handle add connection button click"""
