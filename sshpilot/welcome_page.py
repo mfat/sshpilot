@@ -261,7 +261,7 @@ class WelcomePage(Gtk.Overlay):
         help_card = self.create_card(
             _('Help'),
             _('View online documentation and help'),
-            'help-symbolic',
+            'help-browser-symbolic',
             lambda *_: self.open_online_help()
         )
 
