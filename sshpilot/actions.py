@@ -182,55 +182,31 @@ class WindowActions:
     def on_broadcast_command_action(self, action, param=None):
         """Handle broadcast command action - shows dialog to input command"""
         try:
-            # Create a custom dialog window instead of using Adw.MessageDialog
-            dialog = Gtk.Dialog(
-                title=_("Broadcast Command"),
+            dialog = Adw.MessageDialog(
                 transient_for=self,
                 modal=True,
-                destroy_with_parent=True
+                heading=_("Broadcast Command"),
+                body=_("Enter a command to send to all open SSH terminals:"),
             )
 
-            # Set dialog properties
-            dialog.set_default_size(400, 150)
-            dialog.set_resizable(False)
-
-            # Get the content area
-            content_area = dialog.get_content_area()
-            content_area.set_margin_start(20)
-            content_area.set_margin_end(20)
-            content_area.set_margin_top(20)
-            content_area.set_margin_bottom(20)
-            content_area.set_spacing(12)
-
-            # Add label
-            label = Gtk.Label(label=_("Enter a command to send to all open SSH terminals:"))
-            label.set_wrap(True)
-            label.set_xalign(0)
-            content_area.append(label)
-
-            # Add text entry
             entry = Gtk.Entry()
             entry.set_placeholder_text(_("e.g., ls -la"))
             entry.set_activates_default(True)
             entry.set_hexpand(True)
-            content_area.append(entry)
+            dialog.set_extra_child(entry)
 
-            # Add buttons
-            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-            send_button = dialog.add_button(_('Send'), Gtk.ResponseType.OK)
-            send_button.get_style_context().add_class('suggested-action')
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('send', _('Send'))
+            dialog.set_response_appearance('send', Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response('send')
+            dialog.set_close_response('cancel')
 
-            # Set default button
-            dialog.set_default_response(Gtk.ResponseType.OK)
-
-            # Connect to response signal
             def on_response(dialog, response):
-                if response == Gtk.ResponseType.OK:
+                if response == 'send':
                     command = entry.get_text().strip()
                     if command:
                         sent_count, failed_count = self.terminal_manager.broadcast_command(command)
 
-                        # Show result dialog
                         result_dialog = Adw.MessageDialog(
                             transient_for=self,
                             modal=True,
@@ -240,7 +216,6 @@ class WindowActions:
                         result_dialog.add_response('ok', _('OK'))
                         result_dialog.present()
                     else:
-                        # Show error for empty command
                         error_dialog = Adw.MessageDialog(
                             transient_for=self,
                             modal=True,
@@ -252,11 +227,8 @@ class WindowActions:
                 dialog.destroy()
 
             dialog.connect('response', on_response)
-
-            # Show the dialog
             dialog.present()
 
-            # Focus the entry after the dialog is shown
             def focus_entry():
                 entry.grab_focus()
                 return False
@@ -265,7 +237,6 @@ class WindowActions:
 
         except Exception as e:
             logger.error(f"Failed to show broadcast command dialog: {e}")
-            # Show error dialog
             try:
                 error_dialog = Adw.MessageDialog(
                     transient_for=self,
@@ -289,46 +260,27 @@ class WindowActions:
     def on_create_group_action(self, action, param=None):
         """Handle create group action"""
         try:
-            # Show dialog for group creation
-            dialog = Gtk.Dialog(
-                title=_('Create Group'),
+            dialog = Adw.MessageDialog(
                 transient_for=self,
                 modal=True,
-                destroy_with_parent=True
+                heading=_('Create Group'),
+                body=_('Enter a name for the new group:'),
             )
 
-            dialog.set_default_size(400, 150)
-            dialog.set_resizable(False)
-
-            content_area = dialog.get_content_area()
-            content_area.set_margin_start(20)
-            content_area.set_margin_end(20)
-            content_area.set_margin_top(20)
-            content_area.set_margin_bottom(20)
-            content_area.set_spacing(12)
-
-            # Add label
-            label = Gtk.Label(label=_('Enter a name for the new group:'))
-            label.set_wrap(True)
-            label.set_xalign(0)
-            content_area.append(label)
-
-            # Add text entry
             entry = Gtk.Entry()
             entry.set_placeholder_text(_('e.g., Work Servers'))
             entry.set_activates_default(True)
             entry.set_hexpand(True)
-            content_area.append(entry)
+            dialog.set_extra_child(entry)
 
-            # Add buttons
-            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-            create_button = dialog.add_button(_('Create'), Gtk.ResponseType.OK)
-            create_button.get_style_context().add_class('suggested-action')
-
-            dialog.set_default_response(Gtk.ResponseType.OK)
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('create', _('Create'))
+            dialog.set_response_appearance('create', Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response('create')
+            dialog.set_close_response('cancel')
 
             def on_response(dialog, response):
-                if response == Gtk.ResponseType.OK:
+                if response == 'create':
                     name = entry.get_text().strip()
                     if name:
                         self.group_manager.create_group(name)
@@ -370,40 +322,26 @@ class WindowActions:
             if not group_info:
                 return
 
-            dialog = Gtk.Dialog(
-                title=_('Edit Group'),
+            dialog = Adw.MessageDialog(
                 transient_for=self,
                 modal=True,
-                destroy_with_parent=True
+                heading=_('Edit Group'),
+                body=_('Enter a new name for the group:'),
             )
-            dialog.set_default_size(400, 150)
-            dialog.set_resizable(False)
-
-            content_area = dialog.get_content_area()
-            content_area.set_margin_start(20)
-            content_area.set_margin_end(20)
-            content_area.set_margin_top(20)
-            content_area.set_margin_bottom(20)
-            content_area.set_spacing(12)
-
-            label = Gtk.Label(label=_('Enter a new name for the group:'))
-            label.set_wrap(True)
-            label.set_xalign(0)
-            content_area.append(label)
 
             entry = Gtk.Entry(text=group_info['name'])
             entry.set_activates_default(True)
             entry.set_hexpand(True)
-            content_area.append(entry)
+            dialog.set_extra_child(entry)
 
-            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-            save_button = dialog.add_button(_('Save'), Gtk.ResponseType.OK)
-            save_button.get_style_context().add_class('suggested-action')
-
-            dialog.set_default_response(Gtk.ResponseType.OK)
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('save', _('Save'))
+            dialog.set_response_appearance('save', Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response('save')
+            dialog.set_close_response('cancel')
 
             def on_response(dialog, response):
-                if response == Gtk.ResponseType.OK:
+                if response == 'save':
                     new_name = entry.get_text().strip()
                     if new_name:
                         group_info['name'] = new_name
@@ -514,78 +452,58 @@ class WindowActions:
             available_groups = self.get_available_groups()
             logger.debug(f"Available groups for move dialog: {len(available_groups)} groups")
 
-            # Show group selection dialog
-            dialog = Gtk.Dialog(
-                title=_("Move to Group"),
+            dialog = Adw.MessageDialog(
                 transient_for=self,
                 modal=True,
-                destroy_with_parent=True
+                heading=_("Move to Group"),
+                body=_("Select a group to move the connection to:"),
             )
 
-            dialog.set_default_size(400, 300)
-            dialog.set_resizable(False)
+            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            content_box.set_margin_start(20)
+            content_box.set_margin_end(20)
+            content_box.set_margin_top(20)
+            content_box.set_margin_bottom(20)
 
-            content_area = dialog.get_content_area()
-            content_area.set_margin_start(20)
-            content_area.set_margin_end(20)
-            content_area.set_margin_top(20)
-            content_area.set_margin_bottom(20)
-            content_area.set_spacing(12)
-
-            # Add label
-            label = Gtk.Label(label=_("Select a group to move the connection to:"))
-            label.set_wrap(True)
-            label.set_xalign(0)
-            content_area.append(label)
-
-            # Add list box for groups
             listbox = Gtk.ListBox()
             listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
             listbox.set_vexpand(True)
 
-            # Add inline group creation section
             create_section_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             create_section_box.set_margin_start(12)
             create_section_box.set_margin_end(12)
             create_section_box.set_margin_top(6)
             create_section_box.set_margin_bottom(6)
-            
-            # Create new group label
+
             create_label = Gtk.Label(label=_("Create New Group"))
             create_label.set_xalign(0)
             create_label.add_css_class("heading")
             create_section_box.append(create_label)
-            
-            # Create new group entry and button
+
             create_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-            
+
             self.create_group_entry = Gtk.Entry()
             self.create_group_entry.set_placeholder_text(_("Enter group name"))
             self.create_group_entry.set_hexpand(True)
             create_box.append(self.create_group_entry)
-            
+
             self.create_group_button = Gtk.Button(label=_("Create"))
             self.create_group_button.add_css_class("suggested-action")
             self.create_group_button.set_sensitive(False)
             create_box.append(self.create_group_button)
-            
+
             create_section_box.append(create_box)
-            
-            # Add the create section to content area
-            content_area.append(create_section_box)
-            
-            # Add separator
+            content_box.append(create_section_box)
+
             separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-            content_area.append(separator)
-            
-            # Add existing groups label
+            content_box.append(separator)
+
             if available_groups:
                 existing_label = Gtk.Label(label=_("Existing Groups"))
                 existing_label.set_xalign(0)
                 existing_label.add_css_class("heading")
-                content_area.append(existing_label)
-            
-            # Add groups to list
+                content_box.append(existing_label)
+
             for group in available_groups:
                 row = Gtk.ListBoxRow()
                 box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -603,15 +521,16 @@ class WindowActions:
                 row.group_id = group['id']
                 listbox.append(row)
 
-            content_area.append(listbox)
+            content_box.append(listbox)
 
-            # Add buttons
-            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-            move_button = dialog.add_button(_('Move'), Gtk.ResponseType.OK)
-            move_button.get_style_context().add_class('suggested-action')
-            
-            dialog.set_default_response(Gtk.ResponseType.OK)
-            
+            dialog.set_extra_child(content_box)
+
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('move', _('Move'))
+            dialog.set_response_appearance('move', Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response('move')
+            dialog.set_close_response('cancel')
+
             # Connect entry and button events
             def on_entry_changed(entry):
                 text = entry.get_text().strip()
@@ -676,7 +595,7 @@ class WindowActions:
             self.create_group_button.connect('clicked', lambda btn: on_create_group_clicked())
             
             def on_response(dialog, response):
-                if response == Gtk.ResponseType.OK:
+                if response == 'move':
                     selected_row = listbox.get_selected_row()
                     if selected_row:
                         target_group_id = selected_row.group_id
