@@ -9,7 +9,7 @@ leaner and makes the quit logic reusable.
 from gettext import gettext as _
 import logging
 
-from gi.repository import Gtk, GLib
+from gi.repository import Gtk, GLib, Adw
 
 
 logger = logging.getLogger(__name__)
@@ -106,12 +106,11 @@ def _perform_cleanup_and_quit(window, connections_to_disconnect):
 def _show_cleanup_progress(window, total_connections):
     """Show cleanup progress dialog."""
 
-    window._progress_dialog = Gtk.Window()
-    window._progress_dialog.set_title("Closing Connections")
-    window._progress_dialog.set_transient_for(window)
-    window._progress_dialog.set_modal(True)
-    window._progress_dialog.set_default_size(350, 120)
-    window._progress_dialog.set_resizable(False)
+    window._progress_dialog = Adw.MessageDialog(
+        transient_for=window,
+        modal=True,
+        heading=_("Closing Connections"),
+    )
 
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
     box.set_margin_top(20)
@@ -129,7 +128,7 @@ def _show_cleanup_progress(window, total_connections):
     )
     box.append(window._progress_label)
 
-    window._progress_dialog.set_child(box)
+    window._progress_dialog.set_extra_child(box)
     window._progress_dialog.present()
 
 
@@ -166,12 +165,11 @@ def show_reconnecting_message(window, connection):
         if getattr(window, "_reconnect_dialog", None):
             return
 
-        window._reconnect_dialog = Gtk.Window()
-        window._reconnect_dialog.set_title(_("Reconnecting"))
-        window._reconnect_dialog.set_transient_for(window)
-        window._reconnect_dialog.set_modal(True)
-        window._reconnect_dialog.set_default_size(320, 100)
-        window._reconnect_dialog.set_resizable(False)
+        window._reconnect_dialog = Adw.MessageDialog(
+            transient_for=window,
+            modal=True,
+            heading=_("Reconnecting"),
+        )
 
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         box.set_margin_top(16)
@@ -195,7 +193,7 @@ def show_reconnecting_message(window, connection):
 
         window._reconnect_spinner = spinner
         window._reconnect_label = label
-        window._reconnect_dialog.set_child(box)
+        window._reconnect_dialog.set_extra_child(box)
         window._reconnect_dialog.present()
     except Exception as e:
         logger.debug(f"Failed to show reconnecting message: {e}")

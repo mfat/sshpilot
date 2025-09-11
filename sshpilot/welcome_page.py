@@ -7,6 +7,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 
 from gi.repository import Gtk, Adw, Gdk
+
 from gettext import gettext as _
 
 
@@ -25,12 +26,19 @@ class WelcomePage(Gtk.Overlay):
         (_("Cool"), "linear-gradient(to bottom right, #6a11cb, #2575fc)"),
     ]
 
+
     def __init__(self, window) -> None:
         super().__init__()
         self.window = window
         self.connection_manager = window.connection_manager
         self.set_hexpand(True)
         self.set_vexpand(True)
+        clamp = Adw.Clamp()
+        clamp.set_halign(Gtk.Align.CENTER)
+        clamp.set_valign(Gtk.Align.CENTER)
+        grid = Gtk.Grid(column_spacing=24, row_spacing=24)
+        grid.set_column_homogeneous(True)
+        grid.set_row_homogeneous(True)
 
         self._card_provider = Gtk.CssProvider()
         self._card_provider.load_from_data(
@@ -125,6 +133,7 @@ class WelcomePage(Gtk.Overlay):
             card.set_vexpand(True)
             card.set_valign(Gtk.Align.FILL)
 
+
             click = Gtk.GestureClick()
             click.connect("released", lambda *_: callback(card))
             card.add_controller(click)
@@ -139,6 +148,7 @@ class WelcomePage(Gtk.Overlay):
                 ),
             )
             card.add_controller(key)
+
 
             return card
         
@@ -189,6 +199,7 @@ class WelcomePage(Gtk.Overlay):
         else:
             self._bg_provider.load_from_data(b"")
         self.bg_popover.popdown()
+
 
     def on_quick_connect_clicked(self, button):
         """Open quick connect dialog"""

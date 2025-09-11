@@ -1871,7 +1871,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Keyboard Shortcuts'), accelerator=f"{primary}<Shift>slash"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Quit'), accelerator=f"{primary}q"))
+            title=_('Quit'), accelerator=f"{primary}<Shift>q"))
         section.add_group(group_general)
 
         # Connection management shortcuts
