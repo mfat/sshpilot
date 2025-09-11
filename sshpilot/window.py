@@ -635,6 +635,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         scrolled.set_vexpand(True)
         
         self.connection_list = Gtk.ListBox()
+        self.connection_list.add_css_class("navigation-sidebar")
         self.connection_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
         try:
             self.connection_list.set_can_focus(True)
