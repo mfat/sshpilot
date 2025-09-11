@@ -17,6 +17,16 @@ from .connection_manager import Connection
 class WelcomePage(Gtk.Overlay):
     """Welcome page shown when no tabs are open."""
 
+    BG_OPTIONS = [
+        (_("Default"), None),
+        (_("Blue"), "#4A90E2"),
+        (_("Green"), "#27AE60"),
+        (_("Red"), "#FF4757"),
+        (_("Warm"), "linear-gradient(to bottom right, #ff7e5f, #feb47b)"),
+        (_("Cool"), "linear-gradient(to bottom right, #6a11cb, #2575fc)"),
+    ]
+
+
     def __init__(self, window) -> None:
         super().__init__()
         self.window = window
@@ -30,10 +40,74 @@ class WelcomePage(Gtk.Overlay):
         grid.set_column_homogeneous(True)
         grid.set_row_homogeneous(True)
 
+        self._card_provider = Gtk.CssProvider()
+        self._card_provider.load_from_data(
+            b".welcome-card{min-width:180px;min-height:180px;aspect-ratio:1;}"
+        )
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(),
+            self._card_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+
+        self._bg_provider = Gtk.CssProvider()
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(),
+            self._bg_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+
+        clamp = Adw.Clamp()
+        clamp.set_halign(Gtk.Align.CENTER)
+        clamp.set_valign(Gtk.Align.CENTER)
+        grid = Gtk.Grid(column_spacing=24, row_spacing=24)
+        grid.set_column_homogeneous(True)
+        grid.set_row_homogeneous(True)
         grid.set_halign(Gtk.Align.CENTER)
         grid.set_valign(Gtk.Align.CENTER)
         clamp.set_child(grid)
         self.set_child(clamp)
+
+        self.bg_button = Gtk.Button.new_from_icon_name("color-select-symbolic")
+        self.bg_button.add_css_class("flat")
+        self.bg_button.set_tooltip_text(_("Change background"))
+        self.bg_button.set_halign(Gtk.Align.END)
+        self.bg_button.set_valign(Gtk.Align.START)
+        self.bg_button.set_margin_top(6)
+        self.bg_button.set_margin_end(6)
+        self.bg_button.connect("clicked", self._show_bg_menu)
+        self.add_overlay(self.bg_button)
+
+        self.bg_popover = Gtk.Popover.new()
+        self.bg_popover.set_has_arrow(True)
+        self.bg_popover.set_parent(self.bg_button)
+        menu_grid = Gtk.Grid(
+            margin_top=6,
+            margin_bottom=6,
+            margin_start=6,
+            margin_end=6,
+            column_spacing=6,
+            row_spacing=6,
+        )
+        self.bg_popover.set_child(menu_grid)
+        for idx, (name, css) in enumerate(self.BG_OPTIONS):
+            btn = Gtk.Button()
+            btn.set_size_request(32, 32)
+            btn.add_css_class("flat")
+            btn.set_tooltip_text(name)
+            if css:
+                provider = Gtk.CssProvider()
+                provider.load_from_data(
+                    f"* {{ background: {css}; border-radius:4px; }}".encode()
+                )
+                btn.get_style_context().add_provider(
+                    provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                )
+            else:
+                img = Gtk.Image.new_from_icon_name("window-close-symbolic")
+                btn.set_child(img)
+            btn.connect("clicked", self._on_bg_selected, css)
+            menu_grid.attach(btn, idx % 3, idx // 3, 1, 1)
 
         def create_card(title, tooltip_text, icon_name, callback):
             """Create an activatable card with icon and title"""
@@ -47,10 +121,10 @@ class WelcomePage(Gtk.Overlay):
             content.set_halign(Gtk.Align.CENTER)
             content.set_valign(Gtk.Align.CENTER)
 
-
             card = Adw.Bin()
             card.add_css_class("card")
             card.add_css_class("activatable")
+            card.add_css_class("welcome-card")
             card.set_child(content)
             card.set_tooltip_text(tooltip_text)
             card.set_focusable(True)
@@ -114,6 +188,19 @@ class WelcomePage(Gtk.Overlay):
 
 
     # Quick connect handlers
+    def _show_bg_menu(self, button):
+        self.bg_popover.popup()
+
+    def _on_bg_selected(self, button, css):
+        if css:
+            self._bg_provider.load_from_data(
+                f"* {{ background: {css}; }}".encode()
+            )
+        else:
+            self._bg_provider.load_from_data(b"")
+        self.bg_popover.popdown()
+
+
     def on_quick_connect_clicked(self, button):
         """Open quick connect dialog"""
         dialog = QuickConnectDialog(self.window)
