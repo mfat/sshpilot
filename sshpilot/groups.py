@@ -35,10 +35,17 @@ class GroupManager:
             self.connections = {}
             self.root_connections = []
 
-        # Ensure root_connections includes all ungrouped connections
+        # Ensure root_connections only contains ungrouped connections
         for nickname, group_id in self.connections.items():
-            if group_id is None and nickname not in self.root_connections:
-                self.root_connections.append(nickname)
+            if group_id is None:
+                if nickname not in self.root_connections:
+                    self.root_connections.append(nickname)
+            elif nickname in self.root_connections:
+                self.root_connections.remove(nickname)
+
+        # Deduplicate while preserving order
+        seen = set()
+        self.root_connections = [n for n in self.root_connections if not (n in seen or seen.add(n))]
 
     def _save_groups(self):
         """Save groups to configuration"""
@@ -144,15 +151,28 @@ class GroupManager:
         group_id = self.connections.pop(old_nickname, None)
         self.connections[new_nickname] = group_id
 
+        # Remove any stray references to the old nickname
+        if old_nickname in self.root_connections:
+            self.root_connections = [n for n in self.root_connections if n != old_nickname]
+        for group in self.groups.values():
+            if old_nickname in group.get('connections', []):
+                group['connections'] = [n for n in group['connections'] if n != old_nickname]
+
         if group_id and group_id in self.groups:
-            conn_list = self.groups[group_id].get('connections', [])
-            if old_nickname in conn_list:
-                idx = conn_list.index(old_nickname)
-                conn_list[idx] = new_nickname
+            conn_list = self.groups[group_id].setdefault('connections', [])
+            if new_nickname not in conn_list:
+                conn_list.append(new_nickname)
+            if new_nickname in self.root_connections:
+                self.root_connections.remove(new_nickname)
         else:
-            if old_nickname in self.root_connections:
-                idx = self.root_connections.index(old_nickname)
-                self.root_connections[idx] = new_nickname
+            if new_nickname not in self.root_connections:
+                self.root_connections.append(new_nickname)
+
+        # Deduplicate connections within groups
+        for group in self.groups.values():
+            seen = set()
+            group['connections'] = [n for n in group.get('connections', []) if not (n in seen or seen.add(n))]
+
 
         self._save_groups()
 

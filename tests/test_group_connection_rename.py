@@ -38,3 +38,24 @@ def test_rename_connection_preserves_group():
     assert gm.get_connection_group("new") == gid
     assert "new" in gm.groups[gid]['connections']
     assert "old" not in gm.groups[gid]['connections']
+
+
+def test_rename_connection_cleans_stale_root_entries():
+    cfg = DummyConfig()
+    gm = GroupManager(cfg)
+    gid = gm.create_group("Test")
+    gm.move_connection("old", gid)
+
+    # Simulate a leftover root entry for the connection
+    gm.root_connections.append("old")
+
+    gm.rename_connection("old", "new")
+
+    # Simulate application restart by reloading from saved config
+    cfg2 = DummyConfig()
+    cfg2.settings = cfg.settings.copy()
+    gm2 = GroupManager(cfg2)
+
+    assert gm2.root_connections == []
+    assert gm2.groups[gid]['connections'] == ["new"]
+
