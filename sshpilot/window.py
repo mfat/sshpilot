@@ -586,14 +586,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
         header.append(search_button)
 
-        # Menu button
-        menu_button = Gtk.MenuButton()
-        menu_button.set_can_focus(False)
-        menu_button.set_icon_name('open-menu-symbolic')
-        menu_button.set_tooltip_text('Menu')
-        menu_button.set_menu_model(self.create_menu())
-        header.append(menu_button)
-
         # Hide/Show hostnames button (eye icon)
         def _update_eye_icon(btn):
             try:
@@ -627,6 +619,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
         header.append(hide_button)
+
+        # Add spacer to push menu button to far right
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        header.append(spacer)
+
+        # Menu button - positioned at the far right relative to sidebar
+        menu_button = Gtk.MenuButton()
+        menu_button.set_can_focus(False)
+        menu_button.set_icon_name('open-menu-symbolic')
+        menu_button.set_tooltip_text('Menu')
+        menu_button.set_menu_model(self.create_menu())
+        header.append(menu_button)
 
         sidebar_box.append(header)
 
