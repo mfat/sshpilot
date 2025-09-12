@@ -65,3 +65,35 @@ def test_connection_multiple_jump_hosts_and_agent_forwarding():
     loop.run_until_complete(_connect(conn))
     assert "ProxyJump=b1,b2" in conn.ssh_cmd
     assert "-A" in conn.ssh_cmd
+
+
+def test_format_writes_jump_hosts_and_forward_agent():
+    cm = ConnectionManager.__new__(ConnectionManager)
+    data = {
+        "nickname": "test",
+        "host": "example.com",
+        "username": "user",
+        "jump_hosts": ["b1", "b2"],
+        "forward_agent": True,
+    }
+    entry = cm.format_ssh_config_entry(data)
+    assert "ProxyJump b1,b2" in entry
+    assert "ForwardAgent yes" in entry
+
+
+def test_update_config_persists_jump_and_agent(tmp_path):
+    cm = ConnectionManager.__new__(ConnectionManager)
+    cm.ssh_config_path = str(tmp_path / "cfg")
+    data = {
+        "nickname": "test",
+        "host": "example.com",
+        "username": "user",
+        "jump_hosts": ["b1", "b2"],
+        "forward_agent": True,
+    }
+    conn = Connection(data)
+    cm.update_ssh_config_file(conn, data)
+    content = (tmp_path / "cfg").read_text()
+    assert "ProxyJump b1,b2" in content
+    assert "ForwardAgent yes" in content
+

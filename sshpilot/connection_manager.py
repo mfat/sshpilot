@@ -1362,6 +1362,15 @@ class ConnectionManager(GObject.Object):
         port = data.get('port')
         if port and port != 22:  # Only add port if it's not the default 22
             lines.append(f"    Port {port}")
+
+        # Add ProxyJump if jump hosts are specified
+        jump_hosts = data.get('jump_hosts') or data.get('proxy_jump') or []
+        if isinstance(jump_hosts, list):
+            proxy_jump = ",".join(str(h).strip() for h in jump_hosts if str(h).strip())
+        else:
+            proxy_jump = str(jump_hosts).strip()
+        if proxy_jump:
+            lines.append(f"    ProxyJump {proxy_jump}")
         
         # Add IdentityFile/IdentitiesOnly per selection when auth is key-based
         keyfile = data.get('keyfile') or data.get('private_key')
@@ -1395,6 +1404,10 @@ class ConnectionManager(GObject.Object):
         # Add X11 forwarding if enabled
         if data.get('x11_forwarding', False):
             lines.append("    ForwardX11 yes")
+
+        # Add agent forwarding if enabled
+        if data.get('forward_agent', False):
+            lines.append("    ForwardAgent yes")
 
         # Add LocalCommand if specified, ensure PermitLocalCommand (write exactly as provided)
         local_cmd = (data.get('local_command') or '').strip()
