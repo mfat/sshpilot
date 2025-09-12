@@ -11,7 +11,7 @@ import ipaddress
 import socket
 import subprocess
 import shlex
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
 from .port_utils import get_port_checker
@@ -1322,12 +1322,27 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             except Exception:
                 pass
             
-            # Set X11 forwarding
+            # Set X11 and agent forwarding
             self.x11_row.set_active(getattr(self.connection, 'x11_forwarding', False))
-            
+            try:
+                self.forward_agent_row.set_active(getattr(self.connection, 'forward_agent', False))
+            except Exception:
+                pass
 
-            
-                        # SSH config block content is now handled by the SSH config editor window
+            # Load jump hosts
+            try:
+                existing = getattr(self.connection, 'jump_hosts', [])
+                self.selected_jump_hosts = []
+                for name in existing:
+                    self.ensure_jump_host_entry(name)
+                    cb = self.jump_host_checks.get(name)
+                    if cb:
+                        cb.set_active(True)
+                self.update_jump_hosts_subtitle()
+            except Exception:
+                pass
+
+            # SSH config block content is now handled by the SSH config editor window
             # No need to load it into an inline editor anymore
             
             # Load extra SSH config into advanced tab
@@ -2057,7 +2072,24 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             pass
         self.port_row.set_text("22")
         basic_group.add(self.port_row)
-        
+
+        # Jump Hosts selection
+        self.selected_jump_hosts = []
+        self.jump_hosts_row = Adw.ActionRow(title=_("Jump Hosts"), subtitle=_("None"))
+        self.jump_hosts_row.set_activatable(False)
+        self.jump_hosts_button = Gtk.MenuButton(icon_name="list-add-symbolic")
+        self.jump_hosts_row.add_suffix(self.jump_hosts_button)
+        basic_group.add(self.jump_hosts_row)
+        self._build_jump_hosts_popover()
+        self.update_jump_hosts_subtitle()
+
+        # Agent forwarding toggle
+        self.forward_agent_row = Adw.SwitchRow(
+            title=_("Agent Forwarding"),
+            subtitle=_("Forward SSH authentication agent")
+        )
+        basic_group.add(self.forward_agent_row)
+
         # Authentication Group
         auth_group = Adw.PreferencesGroup(title=_("Authentication"))
         
@@ -2417,9 +2449,123 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         dynamic_forwarding_group.set_visible(False)
         
         # X11 Forwarding moved to Port Forwarding view
-        
+
         # Return groups for PreferencesPage
         return [basic_group, auth_group, advanced_group]
+
+    def _build_jump_hosts_popover(self) -> None:
+        """Build the popover for selecting and adding jump hosts."""
+        popover = Gtk.Popover()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
+        box.set_margin_start(6)
+        box.set_margin_end(6)
+        popover.set_child(box)
+
+        # Search entry for filtering existing connections
+        self.jump_search_entry = Gtk.SearchEntry()
+        self.jump_search_entry.set_placeholder_text(_("Search connections"))
+        self.jump_search_entry.connect("search-changed", self.on_jump_host_search_changed)
+        box.append(self.jump_search_entry)
+
+        # List of available jump hosts
+        self.jump_host_list_box = Gtk.ListBox()
+        self.jump_host_list_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_min_content_height(200)
+        scroller.set_child(self.jump_host_list_box)
+        box.append(scroller)
+
+        self.jump_host_checks: Dict[str, Gtk.CheckButton] = {}
+        connections = getattr(self.connection_manager, 'connections', []) or []
+        for conn in connections:
+            name = getattr(conn, 'nickname', None) or getattr(conn, 'host', '')
+            if self.is_editing and self.connection and name == getattr(self.connection, 'nickname', None):
+                continue
+            cb = Gtk.CheckButton(label=name)
+            cb.connect("toggled", self.on_jump_host_toggled, name)
+            row = Gtk.ListBoxRow()
+            row.set_child(cb)
+            self.jump_host_list_box.append(row)
+            self.jump_host_checks[name] = cb
+
+        if not self.jump_host_checks:
+            lbl = Gtk.Label(label=_("No other connections available"))
+            lbl.add_css_class("dim-label")
+            row = Gtk.ListBoxRow()
+            row.set_child(lbl)
+            self.jump_host_list_box.append(row)
+            self.jump_placeholder_row = row
+
+        # Manual entry for custom jump hosts
+        manual_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.jump_manual_entry = Gtk.Entry()
+        self.jump_manual_entry.set_placeholder_text(_("Add custom host"))
+        self.jump_manual_entry.connect("activate", self.on_jump_host_manual_add)
+        add_button = Gtk.Button(icon_name="list-add-symbolic")
+        add_button.connect("clicked", self.on_jump_host_manual_add)
+        manual_box.append(self.jump_manual_entry)
+        manual_box.append(add_button)
+        box.append(manual_box)
+
+        self.jump_hosts_button.set_popover(popover)
+
+    def ensure_jump_host_entry(self, name: str) -> None:
+        """Ensure a checkbutton exists for the given jump host."""
+        if not name:
+            return
+        if hasattr(self, 'jump_placeholder_row') and getattr(self, 'jump_placeholder_row').get_parent():
+            self.jump_host_list_box.remove(self.jump_placeholder_row)
+            delattr(self, 'jump_placeholder_row')
+        if name in self.jump_host_checks:
+            return
+        cb = Gtk.CheckButton(label=name)
+        cb.connect("toggled", self.on_jump_host_toggled, name)
+        row = Gtk.ListBoxRow()
+        row.set_child(cb)
+        self.jump_host_list_box.append(row)
+        self.jump_host_checks[name] = cb
+
+    def on_jump_host_manual_add(self, _widget=None) -> None:
+        """Add a manually entered jump host."""
+        text = self.jump_manual_entry.get_text().strip()
+        if not text:
+            return
+        self.ensure_jump_host_entry(text)
+        cb = self.jump_host_checks.get(text)
+        if cb:
+            cb.set_active(True)
+        self.jump_manual_entry.set_text("")
+
+    def on_jump_host_search_changed(self, entry) -> None:
+        """Filter jump host list based on search text."""
+        term = entry.get_text().lower()
+        row = self.jump_host_list_box.get_first_child()
+        while row:
+            child = row.get_child()
+            if isinstance(child, Gtk.CheckButton):
+                label = child.get_label() or ""
+                row.set_visible(term in label.lower())
+            else:
+                row.set_visible(True)
+            row = row.get_next_sibling()
+
+    def on_jump_host_toggled(self, button, name: str) -> None:
+        """Handle toggling of a jump host checkbutton."""
+        if button.get_active():
+            if name not in self.selected_jump_hosts:
+                self.selected_jump_hosts.append(name)
+        else:
+            if name in self.selected_jump_hosts:
+                self.selected_jump_hosts.remove(name)
+        self.update_jump_hosts_subtitle()
+
+    def update_jump_hosts_subtitle(self) -> None:
+        """Update subtitle to reflect selected jump hosts."""
+        subtitle = ", ".join(self.selected_jump_hosts) if self.selected_jump_hosts else _("None")
+        if hasattr(self.jump_hosts_row, 'set_subtitle'):
+            self.jump_hosts_row.set_subtitle(subtitle)
     
     def build_port_forwarding_groups(self):
         """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""
@@ -2514,7 +2660,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 "• <b>Dynamic Forwarding</b>: Create a SOCKS proxy on your local machine"
             )
         )
-        
+
         # Return groups for PreferencesPage: Port forwarding first, commands, about, X11 last
         return [rules_group, commands_group, about_group, x11_group]
         
@@ -3363,8 +3509,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'key_passphrase': self.key_passphrase_row.get_text(),
             'password': self.password_row.get_text(),
             'x11_forwarding': self.x11_row.get_active(),
+            'forward_agent': self.forward_agent_row.get_active(),
             'pubkey_auth_no': self.pubkey_auth_row.get_active(),
 
+            'proxy_jump': ','.join(self.selected_jump_hosts),
             'forwarding_rules': forwarding_rules,
             'local_command': (self.local_command_row.get_text() if hasattr(self, 'local_command_row') else ''),
             'remote_command': (self.remote_command_row.get_text() if hasattr(self, 'remote_command_row') else ''),
@@ -3381,6 +3529,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.connection.aliases = connection_data.get('aliases', [])
             # Explicitly update forwarding rules to ensure they're fresh
             self.connection.forwarding_rules = forwarding_rules
+            self.connection.jump_hosts = list(self.selected_jump_hosts)
+            self.connection.proxy_jump = connection_data.get('proxy_jump', '')
+            self.connection.forward_agent = self.forward_agent_row.get_active()
             
         # Emit signal with connection data
         self.emit('connection-saved', connection_data)

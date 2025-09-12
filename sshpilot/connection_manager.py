@@ -77,7 +77,14 @@ class Connection:
         self.source = data.get('source', '')
         # Proxy settings
         self.proxy_command = data.get('proxy_command', '')
-        self.proxy_jump = data.get('proxy_jump', '')
+        proxy_jump_val = data.get('proxy_jump') or data.get('jump_hosts', [])
+        if isinstance(proxy_jump_val, list):
+            self.jump_hosts = [str(h).strip() for h in proxy_jump_val if str(h).strip()]
+        elif isinstance(proxy_jump_val, str):
+            self.jump_hosts = [h.strip() for h in proxy_jump_val.split(',') if h.strip()]
+        else:
+            self.jump_hosts = []
+        self.proxy_jump = ','.join(self.jump_hosts)
         # Commands
         self.local_command = data.get('local_command', '')
         self.remote_command = data.get('remote_command', '')
@@ -89,8 +96,9 @@ class Connection:
             self.auth_method = int(data.get('auth_method', 0))
         except Exception:
             self.auth_method = 0
-        # X11 forwarding preference
+        # X11 and agent forwarding preferences
         self.x11_forwarding = bool(data.get('x11_forwarding', False))
+        self.forward_agent = bool(data.get('forward_agent', False))
         
         # Key selection mode: 0 try all, 1 specific key
         try:
@@ -219,13 +227,24 @@ class Connection:
             except Exception:
                 pass
 
-            # Proxy directives
-            proxy_jump = self.proxy_jump or effective_cfg.get('proxyjump', '')
+            # Proxy and agent directives
+            proxy_jump = ','.join(self.jump_hosts) if getattr(self, 'jump_hosts', []) else self.proxy_jump
+            cfg_jump = effective_cfg.get('proxyjump', '')
+            if not proxy_jump and cfg_jump:
+                proxy_jump = ','.join(cfg_jump) if isinstance(cfg_jump, list) else cfg_jump
             if proxy_jump:
                 ssh_cmd.extend(['-o', f'ProxyJump={proxy_jump}'])
+
             proxy_command = self.proxy_command or effective_cfg.get('proxycommand', '')
             if proxy_command:
                 ssh_cmd.extend(['-o', f'ProxyCommand={proxy_command}'])
+
+            forward_agent = self.forward_agent
+            cfg_agent = effective_cfg.get('forwardagent', '')
+            if not forward_agent and cfg_agent:
+                forward_agent = str(cfg_agent).lower() in ('yes', 'true', '1', 'on')
+            if forward_agent:
+                ssh_cmd.append('-A')
 
             # Port and user/host
             if resolved_port != 22:
@@ -959,6 +978,8 @@ class ConnectionManager(GObject.Object):
                 parsed['proxy_command'] = config['proxycommand']
             if 'proxyjump' in config:
                 parsed['proxy_jump'] = config['proxyjump']
+            if 'forwardagent' in config:
+                parsed['forward_agent'] = str(config['forwardagent']).lower() in ('yes', 'true', '1', 'on')
             
             # Commands: LocalCommand requires PermitLocalCommand
             try:
@@ -1341,6 +1362,15 @@ class ConnectionManager(GObject.Object):
         port = data.get('port')
         if port and port != 22:  # Only add port if it's not the default 22
             lines.append(f"    Port {port}")
+
+        # Add ProxyJump if jump hosts are specified
+        jump_hosts = data.get('jump_hosts') or data.get('proxy_jump') or []
+        if isinstance(jump_hosts, list):
+            proxy_jump = ",".join(str(h).strip() for h in jump_hosts if str(h).strip())
+        else:
+            proxy_jump = str(jump_hosts).strip()
+        if proxy_jump:
+            lines.append(f"    ProxyJump {proxy_jump}")
         
         # Add IdentityFile/IdentitiesOnly per selection when auth is key-based
         keyfile = data.get('keyfile') or data.get('private_key')
@@ -1374,6 +1404,10 @@ class ConnectionManager(GObject.Object):
         # Add X11 forwarding if enabled
         if data.get('x11_forwarding', False):
             lines.append("    ForwardX11 yes")
+
+        # Add agent forwarding if enabled
+        if data.get('forward_agent', False):
+            lines.append("    ForwardAgent yes")
 
         # Add LocalCommand if specified, ensure PermitLocalCommand (write exactly as provided)
         local_cmd = (data.get('local_command') or '').strip()
