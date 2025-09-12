@@ -11,7 +11,7 @@ import ipaddress
 import socket
 import subprocess
 import shlex
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
 from .port_utils import get_port_checker
@@ -1322,12 +1322,24 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             except Exception:
                 pass
             
-            # Set X11 forwarding
+            # Set X11 and agent forwarding
             self.x11_row.set_active(getattr(self.connection, 'x11_forwarding', False))
-            
+            try:
+                self.forward_agent_row.set_active(getattr(self.connection, 'forward_agent', False))
+            except Exception:
+                pass
 
-            
-                        # SSH config block content is now handled by the SSH config editor window
+            # Load jump hosts
+            try:
+                existing = getattr(self.connection, 'jump_hosts', [])
+                self.selected_jump_hosts = list(existing)
+                for name, cb in getattr(self, 'jump_host_checks', {}).items():
+                    cb.set_active(name in existing)
+                self.update_jump_hosts_subtitle()
+            except Exception:
+                pass
+
+            # SSH config block content is now handled by the SSH config editor window
             # No need to load it into an inline editor anymore
             
             # Load extra SSH config into advanced tab
@@ -2057,6 +2069,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             pass
         self.port_row.set_text("22")
         basic_group.add(self.port_row)
+
+        # Jump Hosts selection
+        self.selected_jump_hosts = []
+        self.jump_hosts_row = Adw.ActionRow(title=_("Jump Hosts"), subtitle=_("None"))
+        self.jump_hosts_row.set_activatable(False)
+        self.jump_hosts_button = Gtk.MenuButton(icon_name="list-add-symbolic")
+        self.jump_hosts_row.add_suffix(self.jump_hosts_button)
+        basic_group.add(self.jump_hosts_row)
+        self._build_jump_hosts_popover()
+        self.update_jump_hosts_subtitle()
         
         # Authentication Group
         auth_group = Adw.PreferencesGroup(title=_("Authentication"))
@@ -2417,9 +2439,52 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         dynamic_forwarding_group.set_visible(False)
         
         # X11 Forwarding moved to Port Forwarding view
-        
+
         # Return groups for PreferencesPage
         return [basic_group, auth_group, advanced_group]
+
+    def _build_jump_hosts_popover(self) -> None:
+        """Build the popover for selecting jump hosts from existing connections."""
+        popover = Gtk.Popover()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
+        box.set_margin_start(6)
+        box.set_margin_end(6)
+        popover.set_child(box)
+
+        self.jump_host_checks: Dict[str, object] = {}
+        if self.connection_manager and getattr(self.connection_manager, 'connections', None):
+            for conn in self.connection_manager.connections:
+                name = getattr(conn, 'nickname', None) or getattr(conn, 'host', '')
+                if self.is_editing and self.connection and name == getattr(self.connection, 'nickname', None):
+                    continue
+                cb = Gtk.CheckButton(label=name)
+                cb.connect("toggled", self.on_jump_host_toggled, name)
+                box.append(cb)
+                self.jump_host_checks[name] = cb
+        else:
+            lbl = Gtk.Label(label=_("No other connections available"))
+            lbl.add_css_class("dim-label")
+            box.append(lbl)
+
+        self.jump_hosts_button.set_popover(popover)
+
+    def on_jump_host_toggled(self, button, name: str) -> None:
+        """Handle toggling of a jump host checkbutton."""
+        if button.get_active():
+            if name not in self.selected_jump_hosts:
+                self.selected_jump_hosts.append(name)
+        else:
+            if name in self.selected_jump_hosts:
+                self.selected_jump_hosts.remove(name)
+        self.update_jump_hosts_subtitle()
+
+    def update_jump_hosts_subtitle(self) -> None:
+        """Update subtitle to reflect selected jump hosts."""
+        subtitle = ", ".join(self.selected_jump_hosts) if self.selected_jump_hosts else _("None")
+        if hasattr(self.jump_hosts_row, 'set_subtitle'):
+            self.jump_hosts_row.set_subtitle(subtitle)
     
     def build_port_forwarding_groups(self):
         """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""
@@ -2504,6 +2569,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         commands_group.add(self.local_command_row)
         commands_group.add(self.remote_command_row)
 
+        # Agent Forwarding group
+        self.forward_agent_row = Adw.SwitchRow(
+            title=_("Agent Forwarding"),
+            subtitle=_("Forward SSH authentication agent")
+        )
+        agent_group = Adw.PreferencesGroup(title=_("Agent Forwarding"))
+        agent_group.add(self.forward_agent_row)
+
         # About Port Forwarding Group
         about_group = Adw.PreferencesGroup(
             title=_("About Port Forwarding"),
@@ -2514,9 +2587,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 "• <b>Dynamic Forwarding</b>: Create a SOCKS proxy on your local machine"
             )
         )
-        
-        # Return groups for PreferencesPage: Port forwarding first, commands, about, X11 last
-        return [rules_group, commands_group, about_group, x11_group]
+
+        # Return groups for PreferencesPage: Port forwarding first, commands, agent, about, X11 last
+        return [rules_group, commands_group, agent_group, about_group, x11_group]
         
         # Initialize empty rules list if it doesn't exist
         if not hasattr(self, 'forwarding_rules'):
@@ -3363,8 +3436,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'key_passphrase': self.key_passphrase_row.get_text(),
             'password': self.password_row.get_text(),
             'x11_forwarding': self.x11_row.get_active(),
+            'forward_agent': self.forward_agent_row.get_active(),
             'pubkey_auth_no': self.pubkey_auth_row.get_active(),
 
+            'proxy_jump': ','.join(self.selected_jump_hosts),
             'forwarding_rules': forwarding_rules,
             'local_command': (self.local_command_row.get_text() if hasattr(self, 'local_command_row') else ''),
             'remote_command': (self.remote_command_row.get_text() if hasattr(self, 'remote_command_row') else ''),
@@ -3381,6 +3456,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.connection.aliases = connection_data.get('aliases', [])
             # Explicitly update forwarding rules to ensure they're fresh
             self.connection.forwarding_rules = forwarding_rules
+            self.connection.jump_hosts = list(self.selected_jump_hosts)
+            self.connection.proxy_jump = connection_data.get('proxy_jump', '')
+            self.connection.forward_agent = self.forward_agent_row.get_active()
             
         # Emit signal with connection data
         self.emit('connection-saved', connection_data)
