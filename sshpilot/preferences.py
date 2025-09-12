@@ -368,6 +368,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             
             color_schemes = Gtk.StringList()
             color_schemes.append("Default")
+            color_schemes.append("Black on White")
             color_schemes.append("Solarized Dark")
             color_schemes.append("Solarized Light")
             color_schemes.append("Monokai")
@@ -389,7 +390,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             
             # Find the index of the current scheme in the dropdown
             scheme_names = [
-                "Default", "Solarized Dark", "Solarized Light",
+                "Default", "Black on White", "Solarized Dark", "Solarized Light",
                 "Monokai", "Dracula", "Nord",
                 "Gruvbox Dark", "One Dark", "Tomorrow Night", "Material Dark"
             ]
@@ -1172,7 +1173,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
         """Get mapping between display names and config keys"""
         return {
             "Default": "default",
-            "Solarized Dark": "solarized_dark", 
+            "Black on White": "black_on_white",
+            "Solarized Dark": "solarized_dark",
             "Solarized Light": "solarized_light",
             "Monokai": "monokai",
             "Dracula": "dracula",
@@ -1192,7 +1194,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
         """Handle terminal color scheme change"""
         selected = combo_row.get_selected()
         scheme_names = [
-            "Default", "Solarized Dark", "Solarized Light",
+            "Default", "Black on White", "Solarized Dark", "Solarized Light",
             "Monokai", "Dracula", "Nord",
             "Gruvbox Dark", "One Dark", "Tomorrow Night", "Material Dark"
         ]
@@ -1282,6 +1284,16 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 'background': '#000000',
                 'foreground': '#ffffff',
                 'blue': '#0088ff',
+                'green': '#00ff00',
+                'red': '#ff0000',
+                'yellow': '#ffff00',
+                'magenta': '#ff00ff',
+                'cyan': '#00ffff'
+            },
+            'black_on_white': {
+                'background': '#ffffff',
+                'foreground': '#000000',
+                'blue': '#0000ff',
                 'green': '#00ff00',
                 'red': '#ff0000',
                 'yellow': '#ffff00',
