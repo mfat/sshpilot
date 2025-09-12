@@ -39,9 +39,9 @@ class WindowActions:
                 # Update sidebar visibility
                 self._toggle_sidebar_visibility(new_visible)
 
-                # Update button state if it exists
+                # Update button state if it exists (inverted logic: active = should hide)
                 if hasattr(self, 'sidebar_toggle_button'):
-                    self.sidebar_toggle_button.set_active(new_visible)
+                    self.sidebar_toggle_button.set_active(not new_visible)
         except Exception as e:
             logger.error(f"Failed to toggle sidebar via action: {e}")
 

@@ -215,7 +215,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
             'CertificateFile', 'CheckHostIP', 'Ciphers', 'ClearAllForwardings', 'Compression',
             'ConnectionAttempts', 'ConnectTimeout', 'ControlMaster', 'ControlPath',
             'ControlPersist', 'DynamicForward', 'EnableSSHKeysign', 'EscapeChar',
-            'ExitOnForwardFailure', 'FingerprintHash', 'ForwardAgent', 'ForwardX11',
+            'ExitOnForwardFailure', 'FingerprintHash', 'ForwardX11',
             'ForwardX11Timeout', 'ForwardX11Trusted', 'GatewayPorts', 'GlobalKnownHostsFile',
             'GSSAPIAuthentication', 'GSSAPIClientIdentity', 'GSSAPIDelegateCredentials',
             'GSSAPIKeyExchange', 'GSSAPIRenewalForcesRekey', 'GSSAPIServerIdentity',
@@ -226,7 +226,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
             'KnownHostsCommand', 'LocalCommand', 'LocalForward', 'LogLevel', 'MACs', 'Match',
             'NoHostAuthenticationForLocalhost', 'NumberOfPasswordPrompts', 'PasswordAuthentication',
             'PermitLocalCommand', 'PermitRemoteOpen', 'PKCS11Provider', 'Port',
-            'PreferredAuthentications', 'ProxyCommand', 'ProxyJump', 'ProxyUseFdpass',
+            'PreferredAuthentications', 'ProxyCommand', 'ProxyUseFdpass',
             'PubkeyAcceptedAlgorithms', 'PubkeyAuthentication', 'RekeyLimit', 'RemoteCommand',
             'RemoteForward', 'RequestTTY', 'RequiredRSASize', 'RevokedHostKeys', 'SecurityKeyProvider',
             'SendEnv', 'ServerAliveCountMax', 'ServerAliveInterval', 'SessionType', 'SetEnv',
@@ -1142,7 +1142,16 @@ class ConnectionDialog(Adw.Window):
             # Add port if not default
             if port_val and port_val != "22":
                 config_lines.append(f"    Port {port_val}")
-            
+
+            # Add proxy settings
+            proxy_hosts = []
+            if hasattr(self, 'proxy_jump_row'):
+                proxy_hosts = [h.strip() for h in re.split(r'[\s,]+', self.proxy_jump_row.get_text()) if h.strip()]
+            if proxy_hosts:
+                config_lines.append(f"    ProxyJump {','.join(proxy_hosts)}")
+            if hasattr(self, 'forward_agent_row') and self.forward_agent_row.get_active():
+                config_lines.append("    ForwardAgent yes")
+
             # Add authentication settings
             password_val = self.password_row.get_text().strip() if hasattr(self, 'password_row') else ''
 
@@ -1205,6 +1214,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # Ensure UI controls exist
             required_attrs = [
                 'nickname_row', 'host_row', 'aliases_row', 'username_row', 'port_row',
+                'proxy_jump_row', 'forward_agent_row',
                 'auth_method_row', 'keyfile_row', 'password_row', 'key_passphrase_row',
                 'pubkey_auth_row'
             ]
@@ -1225,6 +1235,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     self.port_row.set_text(str(int(self.connection.port) if self.connection.port else 22))
                 except Exception:
                     self.port_row.set_text("22")
+
+            # Load proxy settings
+            if hasattr(self.connection, 'proxy_jump'):
+                try:
+                    self.proxy_jump_row.set_text(
+                        ",".join(self.connection.proxy_jump or [])
+                    )
+                except Exception:
+                    self.proxy_jump_row.set_text("")
+            if hasattr(self.connection, 'forward_agent'):
+                try:
+                    self.forward_agent_row.set_active(bool(self.connection.forward_agent))
+                except Exception:
+                    self.forward_agent_row.set_active(False)
             
             # Set authentication method and related fields
             auth_method = getattr(self.connection, 'auth_method', 0)
@@ -2034,7 +2058,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         basic_group.add(self.nickname_row)
         
         # Host
-        self.host_row = Adw.EntryRow(title=_("Host"))
+        self.host_row = Adw.EntryRow(title=_("Host/IP address"))
         basic_group.add(self.host_row)
 
         # Aliases
@@ -2057,7 +2081,24 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             pass
         self.port_row.set_text("22")
         basic_group.add(self.port_row)
-        
+
+        # Proxy Group
+        proxy_group = Adw.PreferencesGroup(title=_("Proxy"))
+
+        # ProxyJump hosts (comma-separated for multiple hops)
+        self.proxy_jump_row = Adw.EntryRow(title=_("Proxy Jump"))
+        try:
+            self.proxy_jump_row.set_subtitle(_("Comma-separated hosts"))
+        except Exception:
+            pass
+        proxy_group.add(self.proxy_jump_row)
+
+        # Agent forwarding toggle
+        self.forward_agent_row = Adw.SwitchRow()
+        self.forward_agent_row.set_title(_("Agent Forwarding"))
+        self.forward_agent_row.set_active(False)
+        proxy_group.add(self.forward_agent_row)
+
         # Authentication Group
         auth_group = Adw.PreferencesGroup(title=_("Authentication"))
         
@@ -2419,7 +2460,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # X11 Forwarding moved to Port Forwarding view
         
         # Return groups for PreferencesPage
-        return [basic_group, auth_group, advanced_group]
+        return [basic_group, proxy_group, auth_group, advanced_group]
     
     def build_port_forwarding_groups(self):
         """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""
@@ -3364,6 +3405,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'password': self.password_row.get_text(),
             'x11_forwarding': self.x11_row.get_active(),
             'pubkey_auth_no': self.pubkey_auth_row.get_active(),
+            'proxy_jump': [h.strip() for h in re.split(r'[\s,]+', self.proxy_jump_row.get_text()) if h.strip()],
+            'forward_agent': self.forward_agent_row.get_active(),
 
             'forwarding_rules': forwarding_rules,
             'local_command': (self.local_command_row.get_text() if hasattr(self, 'local_command_row') else ''),
@@ -3379,6 +3422,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             except Exception:
                 pass
             self.connection.aliases = connection_data.get('aliases', [])
+            self.connection.proxy_jump = connection_data.get('proxy_jump', [])
+            self.connection.forward_agent = connection_data.get('forward_agent', False)
             # Explicitly update forwarding rules to ensure they're fresh
             self.connection.forwarding_rules = forwarding_rules
             

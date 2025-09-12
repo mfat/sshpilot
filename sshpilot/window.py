@@ -411,7 +411,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.sidebar_toggle_button.set_tooltip_text(
             f'Hide Sidebar (F9, {get_primary_modifier_label()}+B)'
         )
-        self.sidebar_toggle_button.set_active(sidebar_visible)
+        # Button should not appear pressed when sidebar is visible
+        self.sidebar_toggle_button.set_active(False)
         self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
         self.header_bar.pack_start(self.sidebar_toggle_button)
         
@@ -585,14 +586,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
         header.append(search_button)
 
-        # Menu button
-        menu_button = Gtk.MenuButton()
-        menu_button.set_can_focus(False)
-        menu_button.set_icon_name('open-menu-symbolic')
-        menu_button.set_tooltip_text('Menu')
-        menu_button.set_menu_model(self.create_menu())
-        header.append(menu_button)
-
         # Hide/Show hostnames button (eye icon)
         def _update_eye_icon(btn):
             try:
@@ -626,6 +619,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
         header.append(hide_button)
+
+        # Add spacer to push menu button to far right
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        header.append(spacer)
+
+        # Menu button - positioned at the far right relative to sidebar
+        menu_button = Gtk.MenuButton()
+        menu_button.set_can_focus(False)
+        menu_button.set_icon_name('open-menu-symbolic')
+        menu_button.set_tooltip_text('Menu')
+        menu_button.set_menu_model(self.create_menu())
+        header.append(menu_button)
 
         sidebar_box.append(header)
 
@@ -969,11 +975,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tab_view = Adw.TabView()
         self.tab_view.set_hexpand(True)
         self.tab_view.set_vexpand(True)
-        
+
         # Connect tab signals
         self.tab_view.connect('close-page', self.on_tab_close)
         self.tab_view.connect('page-attached', self.on_tab_attached)
         self.tab_view.connect('page-detached', self.on_tab_detached)
+        # Track selected tab to keep row selection in sync
+        self.tab_view.connect('notify::selected-page', self.on_tab_selected)
 
         # Whenever the window layout changes, propagate toolbar height to
         # any TerminalWidget so the reconnect banner exactly matches.
@@ -1341,8 +1349,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if hasattr(self, 'connection_list') and self.connection_list:
                 # If sidebar is hidden, show it first
                 if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
-                    if not self.sidebar_toggle_button.get_active():
-                        self.sidebar_toggle_button.set_active(True)
+                    if self.sidebar_toggle_button.get_active():
+                        self.sidebar_toggle_button.set_active(False)
                 
                 # Ensure a row is selected before focusing
                 selected = self.connection_list.get_selected_row()
@@ -1376,8 +1384,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if hasattr(self, 'search_entry') and self.search_entry:
                 # If sidebar is hidden, show it first
                 if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
-                    if not self.sidebar_toggle_button.get_active():
-                        self.sidebar_toggle_button.set_active(True)
+                    if self.sidebar_toggle_button.get_active():
+                        self.sidebar_toggle_button.set_active(False)
                 
                 # Toggle search container visibility
                 if hasattr(self, 'search_container') and self.search_container:
@@ -2070,7 +2078,45 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         row = self.connection_list.get_selected_row()
         if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
-            
+
+    def _focus_most_recent_tab(self, connection: Connection) -> None:
+        """Focus the most recent tab for a connection if one exists.
+
+        Does nothing if the connection has no open tabs.
+        """
+        try:
+            terms_for_conn = []
+            try:
+                n = self.tab_view.get_n_pages()
+            except Exception:
+                n = 0
+            for i in range(n):
+                page = self.tab_view.get_nth_page(i)
+                child = page.get_child() if hasattr(page, 'get_child') else None
+                if child is not None and self.terminal_to_connection.get(child) == connection:
+                    terms_for_conn.append(child)
+
+            if not terms_for_conn:
+                return
+
+            target_term = self.active_terminals.get(connection)
+            if target_term not in terms_for_conn:
+                target_term = terms_for_conn[0]
+
+            page = self.tab_view.get_page(target_term)
+            if page is None:
+                return
+
+            if self.tab_view.get_selected_page() != page:
+                self.tab_view.set_selected_page(page)
+
+            self.active_terminals[connection] = target_term
+            try:
+                target_term.vte.grab_focus()
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Failed to focus most recent tab for {getattr(connection, 'nickname', '')}: {e}")
 
 
     def _focus_most_recent_tab_or_open_new(self, connection: Connection):
@@ -2149,21 +2195,55 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self.tab_view.set_selected_page(page)
                     # Update most-recent mapping
                     self.active_terminals[connection] = next_term
+                    try:
+                        next_term.vte.grab_focus()
+                    except Exception:
+                        pass
                     return
 
             # No existing tabs for this connection -> open a new one
             self.terminal_manager.connect_to_host(connection, force_new=False)
+            try:
+                self._focus_most_recent_tab(connection)
+            except Exception:
+                pass
         except Exception as e:
             logger.error(f"Failed to cycle or open for {getattr(connection, 'nickname', '')}: {e}")
+
+    def on_tab_selected(self, tab_view: Adw.TabView, _pspec=None) -> None:
+        """Update active terminal mapping when the user switches tabs."""
+        try:
+            page = tab_view.get_selected_page()
+            if page is None:
+                return
+            child = page.get_child() if hasattr(page, 'get_child') else None
+            if child is None:
+                return
+            connection = self.terminal_to_connection.get(child)
+            if connection:
+                # Regular connection terminal - select the corresponding row
+                self.active_terminals[connection] = child
+                row = self.connection_rows.get(connection)
+                if row:
+                    current = self.connection_list.get_selected_row()
+                    if current != row:
+                        self.connection_list.select_row(row)
+            else:
+                # Local terminal or other non-connection terminal - clear selection
+                current = self.connection_list.get_selected_row()
+                if current is not None:
+                    self.connection_list.unselect_row(current)
+        except Exception as e:
+            logger.error(f"Failed to sync tab selection: {e}")
 
     def on_connection_selected(self, list_box, row):
         """Handle connection list selection change"""
         has_selection = row is not None
-        
+
         if has_selection:
             # Check if selected item is a group or connection
             is_group = hasattr(row, 'group_id')
-            
+
             if is_group:
                 # Show group toolbar, hide connection toolbar
                 self.connection_toolbar.set_visible(False)
@@ -2205,10 +2285,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_sidebar_toggle(self, button):
         """Handle sidebar toggle button click"""
         try:
-            is_visible = button.get_active()
+            # Button active state now represents the action to perform
+            # True = hide sidebar, False = show sidebar
+            should_hide = button.get_active()
+            is_visible = not should_hide
             self._toggle_sidebar_visibility(is_visible)
             
-            # Update button icon and tooltip
+            # Update button icon and tooltip based on current sidebar state
             if is_visible:
                 button.set_icon_name('sidebar-show-symbolic')
                 button.set_tooltip_text(
@@ -5037,10 +5120,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 except Exception:
                     connection_data['auth_method'] = 0
 
+                original_nickname = old_connection.nickname
+
                 # Update connection in manager first
                 if not self.connection_manager.update_connection(old_connection, connection_data):
                     logger.error("Failed to update connection in SSH config")
                     return
+
+                # Preserve group assignment if nickname changed
+                new_nickname = connection_data['nickname']
+                if original_nickname != new_nickname:
+                    try:
+                        self.group_manager.rename_connection(original_nickname, new_nickname)
+                    except Exception:
+                        pass
 
                 # Update connection attributes in memory (ensure forwarding rules kept)
                 old_connection.nickname = connection_data['nickname']
