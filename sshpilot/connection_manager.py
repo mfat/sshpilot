@@ -11,6 +11,7 @@ import getpass
 import subprocess
 import shlex
 import signal
+import re
 from typing import Dict, List, Optional, Any, Tuple, Union
 
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
@@ -77,7 +78,11 @@ class Connection:
         self.source = data.get('source', '')
         # Proxy settings
         self.proxy_command = data.get('proxy_command', '')
-        self.proxy_jump = data.get('proxy_jump', '')
+        pj = data.get('proxy_jump', [])
+        if isinstance(pj, str):
+            pj = [h.strip() for h in re.split(r'[\s,]+', pj) if h.strip()]
+        self.proxy_jump = pj
+        self.forward_agent = bool(data.get('forward_agent', False))
         # Commands
         self.local_command = data.get('local_command', '')
         self.remote_command = data.get('remote_command', '')
@@ -220,12 +225,19 @@ class Connection:
                 pass
 
             # Proxy directives
-            proxy_jump = self.proxy_jump or effective_cfg.get('proxyjump', '')
+            proxy_jump = self.proxy_jump or effective_cfg.get('proxyjump', [])
+            if isinstance(proxy_jump, str):
+                proxy_jump = [h.strip() for h in re.split(r'[\s,]+', proxy_jump) if h.strip()]
             if proxy_jump:
-                ssh_cmd.extend(['-o', f'ProxyJump={proxy_jump}'])
+                ssh_cmd.extend(['-o', f"ProxyJump={','.join(proxy_jump)}"])
             proxy_command = self.proxy_command or effective_cfg.get('proxycommand', '')
             if proxy_command:
                 ssh_cmd.extend(['-o', f'ProxyCommand={proxy_command}'])
+
+            forward_agent = self.forward_agent or str(effective_cfg.get('forwardagent', '')).strip().lower() in ('yes', 'true', '1', 'on')
+            if forward_agent:
+                ssh_cmd.append('-A')
+                ssh_cmd.extend(['-o', 'ForwardAgent=yes'])
 
             # Port and user/host
             if resolved_port != 22:
@@ -603,7 +615,11 @@ class Connection:
         self.local_command = data.get('local_command', '')
         self.remote_command = data.get('remote_command', '')
         self.proxy_command = data.get('proxy_command', '')
-        self.proxy_jump = data.get('proxy_jump', '')
+        pj = data.get('proxy_jump', [])
+        if isinstance(pj, str):
+            pj = [h.strip() for h in re.split(r'[\s,]+', pj) if h.strip()]
+        self.proxy_jump = pj
+        self.forward_agent = bool(data.get('forward_agent', False))
         # Extra SSH config parameters
         self.extra_ssh_config = data.get('extra_ssh_config', '')
         self.pubkey_auth_no = bool(data.get('pubkey_auth_no', False))
@@ -958,7 +974,14 @@ class ConnectionManager(GObject.Object):
             if 'proxycommand' in config:
                 parsed['proxy_command'] = config['proxycommand']
             if 'proxyjump' in config:
-                parsed['proxy_jump'] = config['proxyjump']
+                pj = config['proxyjump']
+                if isinstance(pj, list):
+                    parsed['proxy_jump'] = [p.strip() for p in pj]
+                else:
+                    parsed['proxy_jump'] = [p.strip() for p in re.split(r'[\s,]+', pj)]
+            if 'forwardagent' in config:
+                fa = str(config.get('forwardagent', '')).strip().lower()
+                parsed['forward_agent'] = fa in ('yes', 'true', '1', 'on')
             
             # Commands: LocalCommand requires PermitLocalCommand
             try:
@@ -1025,7 +1048,7 @@ class ConnectionManager(GObject.Object):
             standard_options = {
                 'host', 'hostname', 'aliases', 'port', 'user', 'identityfile', 'certificatefile',
                 'forwardx11', 'localforward', 'remoteforward', 'dynamicforward',
-                'proxycommand', 'proxyjump', 'localcommand', 'remotecommand', 'requesttty',
+                'proxycommand', 'proxyjump', 'forwardagent', 'localcommand', 'remotecommand', 'requesttty',
                 'identitiesonly', 'permitlocalcommand',
                 'preferredauthentications', 'pubkeyauthentication'
             }
@@ -1341,7 +1364,16 @@ class ConnectionManager(GObject.Object):
         port = data.get('port')
         if port and port != 22:  # Only add port if it's not the default 22
             lines.append(f"    Port {port}")
-        
+
+        # Proxy settings
+        proxy_jump = data.get('proxy_jump') or []
+        if isinstance(proxy_jump, str):
+            proxy_jump = [h.strip() for h in re.split(r'[\s,]+', proxy_jump) if h.strip()]
+        if proxy_jump:
+            lines.append(f"    ProxyJump {','.join(proxy_jump)}")
+        if data.get('forward_agent'):
+            lines.append("    ForwardAgent yes")
+
         # Add IdentityFile/IdentitiesOnly per selection when auth is key-based
         keyfile = data.get('keyfile') or data.get('private_key')
         auth_method = int(data.get('auth_method', 0) or 0)
