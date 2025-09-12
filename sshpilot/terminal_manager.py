@@ -165,6 +165,13 @@ class TerminalManager:
             terminal_widget = TerminalWidget(local_connection, self.window.config, self.window.connection_manager)
             terminal_widget.setup_local_shell()
             self._add_terminal_tab(terminal_widget, "Local Terminal")
+
+            # Register terminal so theme/font updates affect existing local tabs
+            window = self.window
+            window.connection_to_terminals.setdefault(local_connection, []).append(terminal_widget)
+            window.terminal_to_connection[terminal_widget] = local_connection
+            window.active_terminals[local_connection] = terminal_widget
+
             GLib.idle_add(terminal_widget.show)
             GLib.idle_add(terminal_widget.vte.show)
             logger.info("Local terminal tab created successfully")
