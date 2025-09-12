@@ -411,7 +411,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.sidebar_toggle_button.set_tooltip_text(
             f'Hide Sidebar (F9, {get_primary_modifier_label()}+B)'
         )
-        self.sidebar_toggle_button.set_active(sidebar_visible)
+        # Button should not appear pressed when sidebar is visible
+        self.sidebar_toggle_button.set_active(False)
         self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
         self.header_bar.pack_start(self.sidebar_toggle_button)
         
@@ -1343,8 +1344,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if hasattr(self, 'connection_list') and self.connection_list:
                 # If sidebar is hidden, show it first
                 if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
-                    if not self.sidebar_toggle_button.get_active():
-                        self.sidebar_toggle_button.set_active(True)
+                    if self.sidebar_toggle_button.get_active():
+                        self.sidebar_toggle_button.set_active(False)
                 
                 # Ensure a row is selected before focusing
                 selected = self.connection_list.get_selected_row()
@@ -1378,8 +1379,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if hasattr(self, 'search_entry') and self.search_entry:
                 # If sidebar is hidden, show it first
                 if hasattr(self, 'sidebar_toggle_button') and self.sidebar_toggle_button:
-                    if not self.sidebar_toggle_button.get_active():
-                        self.sidebar_toggle_button.set_active(True)
+                    if self.sidebar_toggle_button.get_active():
+                        self.sidebar_toggle_button.set_active(False)
                 
                 # Toggle search container visibility
                 if hasattr(self, 'search_container') and self.search_container:
@@ -2268,10 +2269,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_sidebar_toggle(self, button):
         """Handle sidebar toggle button click"""
         try:
-            is_visible = button.get_active()
+            # Button active state now represents the action to perform
+            # True = hide sidebar, False = show sidebar
+            should_hide = button.get_active()
+            is_visible = not should_hide
             self._toggle_sidebar_visibility(is_visible)
             
-            # Update button icon and tooltip
+            # Update button icon and tooltip based on current sidebar state
             if is_visible:
                 button.set_icon_name('sidebar-show-symbolic')
                 button.set_tooltip_text(
