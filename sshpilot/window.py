@@ -5037,10 +5037,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 except Exception:
                     connection_data['auth_method'] = 0
 
+                original_nickname = old_connection.nickname
+
                 # Update connection in manager first
                 if not self.connection_manager.update_connection(old_connection, connection_data):
                     logger.error("Failed to update connection in SSH config")
                     return
+
+                # Preserve group assignment if nickname changed
+                new_nickname = connection_data['nickname']
+                if original_nickname != new_nickname:
+                    try:
+                        self.group_manager.rename_connection(original_nickname, new_nickname)
+                    except Exception:
+                        pass
 
                 # Update connection attributes in memory (ensure forwarding rules kept)
                 old_connection.nickname = connection_data['nickname']
