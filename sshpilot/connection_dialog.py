@@ -1338,6 +1338,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     cb = self.jump_host_checks.get(name)
                     if cb:
                         cb.set_active(True)
+
                 self.update_jump_hosts_subtitle()
             except Exception:
                 pass
@@ -2090,6 +2091,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         )
         basic_group.add(self.forward_agent_row)
 
+
         # Authentication Group
         auth_group = Adw.PreferencesGroup(title=_("Authentication"))
         
@@ -2455,6 +2457,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
     def _build_jump_hosts_popover(self) -> None:
         """Build the popover for selecting and adding jump hosts."""
+
         popover = Gtk.Popover()
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.set_margin_top(6)
@@ -2550,6 +2553,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             else:
                 row.set_visible(True)
             row = row.get_next_sibling()
+
 
     def on_jump_host_toggled(self, button, name: str) -> None:
         """Handle toggling of a jump host checkbutton."""
@@ -2650,6 +2654,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         commands_group.add(self.local_command_row)
         commands_group.add(self.remote_command_row)
 
+        # Agent Forwarding group
+        self.forward_agent_row = Adw.SwitchRow(
+            title=_("Agent Forwarding"),
+            subtitle=_("Forward SSH authentication agent")
+        )
+        agent_group = Adw.PreferencesGroup(title=_("Agent Forwarding"))
+        agent_group.add(self.forward_agent_row)
+
         # About Port Forwarding Group
         about_group = Adw.PreferencesGroup(
             title=_("About Port Forwarding"),
@@ -2663,6 +2675,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # Return groups for PreferencesPage: Port forwarding first, commands, about, X11 last
         return [rules_group, commands_group, about_group, x11_group]
+
         
         # Initialize empty rules list if it doesn't exist
         if not hasattr(self, 'forwarding_rules'):

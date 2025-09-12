@@ -96,3 +96,4 @@ def test_update_config_persists_jump_and_agent(tmp_path):
     content = (tmp_path / "cfg").read_text()
     assert "ProxyJump b1,b2" in content
     assert "ForwardAgent yes" in content
+
