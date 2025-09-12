@@ -2190,10 +2190,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self.tab_view.set_selected_page(page)
                     # Update most-recent mapping
                     self.active_terminals[connection] = next_term
+                    try:
+                        next_term.vte.grab_focus()
+                    except Exception:
+                        pass
                     return
 
             # No existing tabs for this connection -> open a new one
             self.terminal_manager.connect_to_host(connection, force_new=False)
+            try:
+                self._focus_most_recent_tab(connection)
+            except Exception:
+                pass
         except Exception as e:
             logger.error(f"Failed to cycle or open for {getattr(connection, 'nickname', '')}: {e}")
 
@@ -2245,9 +2253,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
                     self.system_terminal_button.set_sensitive(True)
                 self.delete_button.set_sensitive(True)
-                # Focus the most recent terminal tab if one exists
-                if hasattr(row, 'connection'):
-                    self._focus_most_recent_tab(row.connection)
         else:
             # No selection - hide both toolbars
             self.connection_toolbar.set_visible(False)
