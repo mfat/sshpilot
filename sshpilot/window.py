@@ -969,11 +969,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tab_view = Adw.TabView()
         self.tab_view.set_hexpand(True)
         self.tab_view.set_vexpand(True)
-        
+
         # Connect tab signals
         self.tab_view.connect('close-page', self.on_tab_close)
         self.tab_view.connect('page-attached', self.on_tab_attached)
         self.tab_view.connect('page-detached', self.on_tab_detached)
+        # Track selected tab to keep row selection in sync
+        self.tab_view.connect('notify::selected-page', self.on_tab_selected)
 
         # Whenever the window layout changes, propagate toolbar height to
         # any TerminalWidget so the reconnect banner exactly matches.
@@ -2070,7 +2072,45 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         row = self.connection_list.get_selected_row()
         if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
-            
+
+    def _focus_most_recent_tab(self, connection: Connection) -> None:
+        """Focus the most recent tab for a connection if one exists.
+
+        Does nothing if the connection has no open tabs.
+        """
+        try:
+            terms_for_conn = []
+            try:
+                n = self.tab_view.get_n_pages()
+            except Exception:
+                n = 0
+            for i in range(n):
+                page = self.tab_view.get_nth_page(i)
+                child = page.get_child() if hasattr(page, 'get_child') else None
+                if child is not None and self.terminal_to_connection.get(child) == connection:
+                    terms_for_conn.append(child)
+
+            if not terms_for_conn:
+                return
+
+            target_term = self.active_terminals.get(connection)
+            if target_term not in terms_for_conn:
+                target_term = terms_for_conn[0]
+
+            page = self.tab_view.get_page(target_term)
+            if page is None:
+                return
+
+            if self.tab_view.get_selected_page() != page:
+                self.tab_view.set_selected_page(page)
+
+            self.active_terminals[connection] = target_term
+            try:
+                target_term.vte.grab_focus()
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Failed to focus most recent tab for {getattr(connection, 'nickname', '')}: {e}")
 
 
     def _focus_most_recent_tab_or_open_new(self, connection: Connection):
@@ -2156,14 +2196,34 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to cycle or open for {getattr(connection, 'nickname', '')}: {e}")
 
+    def on_tab_selected(self, tab_view: Adw.TabView, _pspec=None) -> None:
+        """Update active terminal mapping when the user switches tabs."""
+        try:
+            page = tab_view.get_selected_page()
+            if page is None:
+                return
+            child = page.get_child() if hasattr(page, 'get_child') else None
+            if child is None:
+                return
+            connection = self.terminal_to_connection.get(child)
+            if connection:
+                self.active_terminals[connection] = child
+                row = self.connection_rows.get(connection)
+                if row:
+                    current = self.connection_list.get_selected_row()
+                    if current != row:
+                        self.connection_list.select_row(row)
+        except Exception as e:
+            logger.error(f"Failed to sync tab selection: {e}")
+
     def on_connection_selected(self, list_box, row):
         """Handle connection list selection change"""
         has_selection = row is not None
-        
+
         if has_selection:
             # Check if selected item is a group or connection
             is_group = hasattr(row, 'group_id')
-            
+
             if is_group:
                 # Show group toolbar, hide connection toolbar
                 self.connection_toolbar.set_visible(False)
@@ -2184,6 +2244,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
                     self.system_terminal_button.set_sensitive(True)
                 self.delete_button.set_sensitive(True)
+                # Focus the most recent terminal tab if one exists
+                if hasattr(row, 'connection'):
+                    self._focus_most_recent_tab(row.connection)
         else:
             # No selection - hide both toolbars
             self.connection_toolbar.set_visible(False)
@@ -5037,10 +5100,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 except Exception:
                     connection_data['auth_method'] = 0
 
+                original_nickname = old_connection.nickname
+
                 # Update connection in manager first
                 if not self.connection_manager.update_connection(old_connection, connection_data):
                     logger.error("Failed to update connection in SSH config")
                     return
+
+                # Preserve group assignment if nickname changed
+                new_nickname = connection_data['nickname']
+                if original_nickname != new_nickname:
+                    try:
+                        self.group_manager.rename_connection(original_nickname, new_nickname)
+                    except Exception:
+                        pass
 
                 # Update connection attributes in memory (ensure forwarding rules kept)
                 old_connection.nickname = connection_data['nickname']
