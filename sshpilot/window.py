@@ -20,11 +20,13 @@ try:
 except Exception:
     _HAS_VTE = False
 
+gi.require_version('PangoFT2', '1.0')
 from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
 import subprocess
 import threading
 
 # Feature detection for libadwaita versions across distros
+HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
 HAS_TIMED_ANIMATION = hasattr(Adw, 'TimedAnimation')
 
@@ -123,8 +125,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.error(f"Failed to install sidebar CSS: {e}")
 
         # On startup, focus the first item in the connection list (not the toolbar buttons)
+        # Delay this to ensure the UI is fully set up
         try:
-            GLib.idle_add(self._focus_connection_list_first_row)
+            GLib.timeout_add(100, self._focus_connection_list_first_row)
         except Exception:
             pass
         
@@ -165,8 +168,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             /* optional: a subtle focus ring while the list is focused */
             row:selected:focus-within {
-            #   box-shadow: 0 0 8px 2px @accent_bg_color inset;
-            #border: 2px solid @accent_bg_color;  /* Adds a solid border of 2px thickness */
+              /* box-shadow: 0 0 8px 2px @accent_bg_color inset; */
+              /* border: 2px solid @accent_bg_color;  Adds a solid border of 2px thickness */
               border-radius: 8px;
             }
             
@@ -182,39 +185,26 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               background: alpha(@accent_bg_color, 0.1);
             }
             
+            /* Smooth drag indicator transitions */
+            .drag-indicator {
+              opacity: 0;
+              transition: opacity 0.15s ease-in-out;
+            }
+            
+            .drag-indicator.visible {
+              opacity: 1;
+            }
+            
+            /* Smooth transitions for connection rows during drag */
+            .navigation-sidebar {
+              transition: transform 0.1s ease-out, opacity 0.1s ease-out;
+            }
+            
+            .navigation-sidebar.dragging {
+              opacity: 0.7;
+              transform: scale(0.98);
+            }
 
-            
-            /* Drag and drop visual feedback */
-            row.drag-highlight {
-              background: alpha(@accent_bg_color, 0.2);
-              border: 2px dashed @accent_bg_color;
-              border-radius: 8px;
-            }
-            
-            /* Drop indicators */
-            row.drop-above {
-              border-top: 3px solid @accent_bg_color;
-              background: alpha(@accent_bg_color, 0.1);
-            }
-            
-            row.drop-below {
-              border-bottom: 3px solid @accent_bg_color;
-              background: alpha(@accent_bg_color, 0.1);
-            }
-            
-            /* Ungrouped area indicator */
-            .ungrouped-area {
-              background: alpha(@accent_bg_color, 0.05);
-              border: 2px dashed alpha(@accent_bg_color, 0.3);
-              border-radius: 8px;
-              margin: 8px;
-              padding: 12px;
-            }
-            
-            .ungrouped-area.drag-over {
-              background: alpha(@accent_bg_color, 0.1);
-              border-color: @accent_bg_color;
-            }
             """
             provider.load_from_data(css.encode('utf-8'))
             Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -350,7 +340,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connect('notify::default-height', self.on_window_size_changed)
         # Ensure initial focus after the window is mapped
         try:
-            self.connect('map', lambda *a: GLib.timeout_add(50, self._focus_connection_list_first_row))
+            self.connect('map', lambda *a: GLib.timeout_add(200, self._focus_connection_list_first_row))
         except Exception:
             pass
 
@@ -436,10 +426,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Add tab button to header bar (will be created later in setup_content_area)
         # This will be added after the tab view is created
         
-        # Add header bar to main container
-        main_box.append(self.header_bar)
+        # Add header bar to main container only when using traditional split views
+        if not (HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT):
+            main_box.append(self.header_bar)
         
-        # Create main layout (fallback if OverlaySplitView is unavailable)
+        # Create main layout (fallback if split view widgets are unavailable)
+        # Try OverlaySplitView first as it's more reliable
         if HAS_OVERLAY_SPLIT:
             self.split_view = Adw.OverlaySplitView()
             try:
@@ -450,24 +442,47 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 pass
             self.split_view.set_vexpand(True)
             self._split_variant = 'overlay'
+            logger.debug("Using OverlaySplitView")
+        elif HAS_NAV_SPLIT:
+            self.split_view = Adw.NavigationSplitView()
+            try:
+                self.split_view.set_sidebar_width_fraction(0.25)
+                self.split_view.set_min_sidebar_width(200)
+                self.split_view.set_max_sidebar_width(400)
+            except Exception:
+                pass
+            self.split_view.set_vexpand(True)
+            self._split_variant = 'navigation'
+            logger.debug("Using NavigationSplitView")
         else:
             self.split_view = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
             self.split_view.set_wide_handle(True)
             self.split_view.set_vexpand(True)
             self._split_variant = 'paned'
+            logger.debug("Using Gtk.Paned fallback")
         
         # Sidebar always starts visible
         sidebar_visible = True
         
+        # For OverlaySplitView, we need to explicitly show the sidebar
+        if HAS_OVERLAY_SPLIT:
+            try:
+                self.split_view.set_show_sidebar(True)
+                logger.debug("Set OverlaySplitView sidebar to visible")
+            except Exception as e:
+                logger.error(f"Failed to show OverlaySplitView sidebar: {e}")
+        elif HAS_NAV_SPLIT:
+            logger.debug("NavigationSplitView sidebar will be shown when content is set")
+        
         # Create sidebar
         self.setup_sidebar()
-        
+
         # Create main content area
         self.setup_content_area()
-        
+
         # Add split view to main container
         main_box.append(self.split_view)
-        
+
         # Sidebar is always visible on startup
 
         # Create toast overlay and set main content
@@ -476,7 +491,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.set_content(self.toast_overlay)
 
     def _set_sidebar_widget(self, widget: Gtk.Widget) -> None:
-        if HAS_OVERLAY_SPLIT:
+        if HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT:
             try:
                 self.split_view.set_sidebar(widget)
                 return
@@ -489,7 +504,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
 
     def _set_content_widget(self, widget: Gtk.Widget) -> None:
-        if HAS_OVERLAY_SPLIT:
+        if HAS_NAV_SPLIT:
+            try:
+                if not hasattr(self, "_nav_view"):
+                    self._nav_view = Adw.NavigationView()
+                    self.split_view.set_content(self._nav_view)
+                page = Adw.NavigationPage.new(widget, "")
+                self._nav_view.push(page)
+                return
+            except Exception:
+                pass
+        elif HAS_OVERLAY_SPLIT:
             try:
                 self.split_view.set_content(widget)
                 return
@@ -503,7 +528,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _get_sidebar_width(self) -> int:
         try:
-            if HAS_OVERLAY_SPLIT and hasattr(self.split_view, 'get_max_sidebar_width'):
+            if (HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT) and hasattr(self.split_view, 'get_max_sidebar_width'):
                 return int(self.split_view.get_max_sidebar_width())
         except Exception:
             pass
@@ -927,6 +952,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         sidebar_box.append(toolbar)
         
         self._set_sidebar_widget(sidebar_box)
+        logger.debug("Set sidebar widget")
 
     def setup_content_area(self):
         """Set up the main content area with stack for tabs and welcome view"""
@@ -1023,8 +1049,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Start with welcome view visible
         self.content_stack.set_visible_child_name("welcome")
-        
-        self._set_content_widget(self.content_stack)
+
+        if HAS_OVERLAY_SPLIT:
+            content_box = Adw.ToolbarView()
+            content_box.add_top_bar(self.header_bar)
+            content_box.set_content(self.content_stack)
+            self._set_content_widget(content_box)
+            logger.debug("Set content widget for OverlaySplitView")
+        elif HAS_NAV_SPLIT:
+            content_box = Adw.ToolbarView()
+            content_box.add_top_bar(self.header_bar)
+            content_box.set_content(self.content_stack)
+            self._set_content_widget(content_box)
+            logger.debug("Set content widget for NavigationSplitView")
+        else:
+            self._set_content_widget(self.content_stack)
+            logger.debug("Set content widget for other split view types")
 
 
 
@@ -1097,22 +1137,38 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._build_grouped_list(hierarchy, connections_dict, 0)
 
         # Add ungrouped connections at the end
-        ungrouped_connections = []
-        for conn in connections:
-            if not self.group_manager.get_connection_group(conn.nickname):
-                ungrouped_connections.append(conn)
+        ungrouped_nicks = [
+            conn.nickname for conn in connections
+            if not self.group_manager.get_connection_group(conn.nickname)
+        ]
 
-        if ungrouped_connections:
-            # No separator - just add ungrouped connections directly
-            pass
+        if ungrouped_nicks:
+            # Keep root connection order in sync
+            updated = False
+            for nick in ungrouped_nicks:
+                if nick not in self.group_manager.root_connections:
+                    self.group_manager.root_connections.append(nick)
+                    updated = True
 
-            # Add ungrouped connections
-            for conn in sorted(ungrouped_connections, key=lambda c: c.nickname.lower()):
-                self.add_connection_row(conn)
+            existing = set(ungrouped_nicks)
+            if any(nick not in existing for nick in self.group_manager.root_connections):
+                self.group_manager.root_connections = [
+                    nick for nick in self.group_manager.root_connections
+                    if nick in existing
+                ]
+                updated = True
+
+            if updated:
+                self.group_manager._save_groups()
+
+            for nick in self.group_manager.root_connections:
+                conn = connections_dict.get(nick)
+                if conn:
+                    self.add_connection_row(conn)
+
 
         # Store reference to ungrouped area (hidden by default)
         self._ungrouped_area_row = None
-    
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list"""
         for group_info in hierarchy:
@@ -1154,10 +1210,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Apply indentation for grouped connections
         if indent_level > 0:
-            content = row.get_child()
-            if hasattr(content, 'get_child'):  # Handle overlay
-                content = content.get_child()
-            content.set_margin_start(12 + (indent_level * 20))
+            row.set_indentation(indent_level)
         
         self.connection_list.append(row)
         self.connection_rows[connection] = row
@@ -1250,7 +1303,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             has_tabs = len(self.tab_view.get_pages()) > 0
             if has_tabs:
                 self.view_toggle_button.set_icon_name('go-home-symbolic')
-                self.view_toggle_button.set_tooltip_text('Leave Start Page')
+                self.view_toggle_button.set_tooltip_text('Hide Start Page')
                 self.view_toggle_button.set_visible(True)
             else:
                 self.view_toggle_button.set_visible(False)  # Hide button when no tabs
@@ -1262,6 +1315,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         try:
             if not hasattr(self, 'connection_list') or self.connection_list is None:
                 return False
+            
+            # Check if the connection list is properly attached to its parent
+            if not self.connection_list.get_parent():
+                return False
+                
             # If the list has no selection, select the first row
             selected = self.connection_list.get_selected_row() if hasattr(self.connection_list, 'get_selected_row') else None
             first_row = self.connection_list.get_row_at_index(0)
@@ -1270,9 +1328,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             # Always focus the connection list on startup, regardless of current focus
             # This ensures the connection list gets focus instead of the search entry
-            if first_row:
+            if first_row and self.connection_list.get_parent():
                 self.connection_list.grab_focus()
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Focus connection list failed: {e}")
             pass
         return False
 
@@ -2185,14 +2244,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def _toggle_sidebar_visibility(self, is_visible):
         """Helper method to toggle sidebar visibility"""
         try:
-            if HAS_OVERLAY_SPLIT:
-                # For Adw.OverlaySplitView
+            logger.debug(f"Toggle sidebar visibility requested: {is_visible}, split variant: {getattr(self, '_split_variant', 'unknown')}")
+            if HAS_OVERLAY_SPLIT and getattr(self, '_split_variant', '') == 'overlay':
+                # For OverlaySplitView
                 self.split_view.set_show_sidebar(is_visible)
+                logger.debug(f"Set OverlaySplitView sidebar visibility to: {is_visible}")
+            elif HAS_NAV_SPLIT and getattr(self, '_split_variant', '') == 'navigation':
+                # NavigationSplitView doesn't have set_show_sidebar method
+                # The sidebar visibility is controlled by the navigation view
+                logger.debug(f"NavigationSplitView sidebar visibility toggle requested: {is_visible}")
             else:
                 # For Gtk.Paned fallback
                 sidebar_widget = self.split_view.get_start_child()
                 if sidebar_widget:
                     sidebar_widget.set_visible(is_visible)
+                    logger.debug(f"Set Gtk.Paned sidebar visibility to: {is_visible}")
         except Exception as e:
             logger.error(f"Failed to toggle sidebar visibility: {e}")
 
@@ -3482,9 +3548,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.view_toggle_button.set_visible(True)
 
     def on_tab_button_clicked(self, button):
-        """Handle tab button click to open/close tab overview"""
+        """Handle tab button click to open/close tab overview and switch to tab view"""
         try:
-            # Toggle the tab overview
+            # First, ensure we're showing the tab view stack
+            self.show_tab_view()
+            
+            # Then toggle the tab overview
             is_open = self.tab_overview.get_open()
             self.tab_overview.set_open(not is_open)
         except Exception as e:
@@ -3495,6 +3564,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_connection_added(self, manager, connection):
         """Handle new connection added to the connection manager"""
         logger.info(f"New connection added: {connection.nickname}")
+        self.group_manager.connections.setdefault(connection.nickname, None)
+        if connection.nickname not in self.group_manager.root_connections:
+            self.group_manager.root_connections.append(connection.nickname)
+            self.group_manager._save_groups()
         self.rebuild_connection_list()
         
                 
@@ -3510,6 +3583,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Remove from group manager
         self.group_manager.connections.pop(connection.nickname, None)
+        if connection.nickname in self.group_manager.root_connections:
+            self.group_manager.root_connections.remove(connection.nickname)
         self.group_manager._save_groups()
 
         # Close all terminals for this connection and clean up maps
@@ -3546,6 +3621,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def on_connection_added(self, manager, connection):
         """Handle new connection added"""
+        self.group_manager.connections.setdefault(connection.nickname, None)
+        if connection.nickname not in self.group_manager.root_connections:
+            self.group_manager.root_connections.append(connection.nickname)
+            self.group_manager._save_groups()
         self.rebuild_connection_list()
 
     def on_connection_removed(self, manager, connection):
@@ -3555,9 +3634,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             row = self.connection_rows[connection]
             self.connection_list.remove(row)
             del self.connection_rows[connection]
-        
+
         # Remove from group manager
         self.group_manager.connections.pop(connection.nickname, None)
+        if connection.nickname in self.group_manager.root_connections:
+            self.group_manager.root_connections.remove(connection.nickname)
         self.group_manager._save_groups()
 
         # Close all terminals for this connection and clean up maps
