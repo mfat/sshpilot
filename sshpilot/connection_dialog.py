@@ -2034,7 +2034,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         basic_group.add(self.nickname_row)
         
         # Host
-        self.host_row = Adw.EntryRow(title=_("Host"))
+        self.host_row = Adw.EntryRow(title=_("Host/IP address"))
         basic_group.add(self.host_row)
 
         # Aliases
