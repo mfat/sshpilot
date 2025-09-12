@@ -189,6 +189,20 @@ class Config(GObject.Object):
                     '#729FCF', '#AD7FA8', '#34E2E2', '#EEEEEC'
                 ]
             },
+            'black_on_white': {
+                'name': 'Black on White',
+                'foreground': '#000000',
+                'background': '#FFFFFF',
+                'cursor_color': '#000000',
+                'highlight_background': '#C4E3F3',
+                'highlight_foreground': '#000000',
+                'palette': [
+                    '#000000', '#CC0000', '#4E9A06', '#C4A000',
+                    '#3465A4', '#75507B', '#06989A', '#D3D7CF',
+                    '#555753', '#EF2929', '#8AE234', '#FCE94F',
+                    '#729FCF', '#AD7FA8', '#34E2E2', '#EEEEEC'
+                ]
+            },
             'solarized_dark': {
                 'name': 'Solarized Dark',
                 'foreground': '#839496',
@@ -484,7 +498,7 @@ class Config(GObject.Object):
 
     def remove_custom_theme(self, name: str):
         """Remove a custom theme"""
-        if name in self.terminal_themes and name not in ['default', 'dark', 'light', 'solarized_dark', 'solarized_light', 'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark', 'tomorrow_night', 'material_dark']:
+        if name in self.terminal_themes and name not in ['default', 'dark', 'light', 'black_on_white', 'solarized_dark', 'solarized_light', 'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark', 'tomorrow_night', 'material_dark']:
             del self.terminal_themes[name]
             
             # Remove from config
@@ -565,7 +579,7 @@ class Config(GObject.Object):
                 config_data = self.config_data.copy()
             
             # Add custom themes
-            builtin = ['default', 'dark', 'light', 'solarized_dark', 'solarized_light', 'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark', 'tomorrow_night', 'material_dark']
+            builtin = ['default', 'dark', 'light', 'black_on_white', 'solarized_dark', 'solarized_light', 'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark', 'tomorrow_night', 'material_dark']
             config_data['custom_themes'] = {name: theme for name, theme in self.terminal_themes.items() if name not in builtin}
             
             with open(file_path, 'w') as f:
