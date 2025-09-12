@@ -1144,9 +1144,7 @@ class ConnectionDialog(Adw.Window):
                 config_lines.append(f"    Port {port_val}")
 
             # Add proxy settings
-            proxy_hosts = []
-            if hasattr(self, 'proxy_jump_row'):
-                proxy_hosts = [h.strip() for h in re.split(r'[\s,]+', self.proxy_jump_row.get_text()) if h.strip()]
+            proxy_hosts = self._get_proxy_jump_hosts() if hasattr(self, 'proxy_jump_list') else []
             if proxy_hosts:
                 config_lines.append(f"    ProxyJump {','.join(proxy_hosts)}")
             if hasattr(self, 'forward_agent_row') and self.forward_agent_row.get_active():
@@ -1214,7 +1212,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # Ensure UI controls exist
             required_attrs = [
                 'nickname_row', 'host_row', 'aliases_row', 'username_row', 'port_row',
-                'proxy_jump_row', 'forward_agent_row',
+                'proxy_jump_list', 'forward_agent_row',
                 'auth_method_row', 'keyfile_row', 'password_row', 'key_passphrase_row',
                 'pubkey_auth_row'
             ]
@@ -1237,13 +1235,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     self.port_row.set_text("22")
 
             # Load proxy settings
+            # Load proxy settings
             if hasattr(self.connection, 'proxy_jump'):
                 try:
-                    self.proxy_jump_row.set_text(
-                        ",".join(self.connection.proxy_jump or [])
-                    )
+                    while row := self.proxy_jump_list.get_first_child():
+                        self.proxy_jump_list.remove(row)
+                    for host in self.connection.proxy_jump or []:
+                        self._add_proxy_host_row(host)
                 except Exception:
-                    self.proxy_jump_row.set_text("")
+                    pass
             if hasattr(self.connection, 'forward_agent'):
                 try:
                     self.forward_agent_row.set_active(bool(self.connection.forward_agent))
@@ -2085,13 +2085,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Proxy Group
         proxy_group = Adw.PreferencesGroup(title=_("Proxy"))
 
-        # ProxyJump hosts (comma-separated for multiple hops)
-        self.proxy_jump_row = Adw.EntryRow(title=_("Proxy Jump"))
-        try:
-            self.proxy_jump_row.set_subtitle(_("Comma-separated hosts"))
-        except Exception:
-            pass
-        proxy_group.add(self.proxy_jump_row)
+        # ProxyJump hosts list
+        self.proxy_jump_list = Gtk.ListBox()
+        self.proxy_jump_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.proxy_jump_list.set_reorderable(True)
+        self.proxy_jump_list.add_css_class("boxed-list")
+        proxy_group.add(self.proxy_jump_list)
+
+        # Button to add new proxy host
+        self.add_proxy_jump_button = Gtk.Button(label=_("Add Proxy Jump Host"))
+        self.add_proxy_jump_button.connect("clicked", self._on_add_proxy_host_clicked)
+        proxy_group.add(self.add_proxy_jump_button)
 
         # Agent forwarding toggle
         self.forward_agent_row = Adw.SwitchRow()
@@ -2461,6 +2465,83 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         
         # Return groups for PreferencesPage
         return [basic_group, proxy_group, auth_group, advanced_group]
+
+    def _add_proxy_host_row(self, host: str):
+        """Add a proxy host to the list widget"""
+        if not host:
+            return
+        row = Adw.ActionRow()
+        row.set_title(host)
+        row.host = host
+        remove_button = Gtk.Button.new_from_icon_name('user-trash-symbolic')
+        remove_button.add_css_class('flat')
+        remove_button.add_css_class('error')
+        remove_button.connect('clicked', lambda _btn, r=row: self.proxy_jump_list.remove(r))
+        row.add_suffix(remove_button)
+        self.proxy_jump_list.append(row)
+
+    def _on_add_proxy_host_clicked(self, button):
+        """Open dialog to add proxy jump host"""
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            modal=True,
+            heading=_('Add Proxy Jump Host'),
+        )
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        content.set_margin_top(12)
+        content.set_margin_bottom(12)
+        content.set_margin_start(12)
+        content.set_margin_end(12)
+
+        entry = Adw.EntryRow(title=_('Host'))
+        content.append(entry)
+
+        connections_list = Gtk.ListBox()
+        connections_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        if self.connection_manager:
+            for conn in self.connection_manager.get_connections():
+                r = Gtk.ListBoxRow()
+                r.host = conn.nickname or conn.host
+                label = Gtk.Label(
+                    label=f"{conn.nickname} ({conn.host})" if conn.host else conn.nickname,
+                    xalign=0,
+                )
+                label.set_margin_start(6)
+                label.set_margin_end(6)
+                label.set_hexpand(True)
+                r.set_child(label)
+                connections_list.append(r)
+        content.append(connections_list)
+
+        dialog.set_extra_child(content)
+        dialog.add_response('cancel', _('Cancel'))
+        dialog.add_response('add', _('Add'))
+        dialog.set_response_appearance('add', Adw.ResponseAppearance.SUGGESTED)
+
+        def _on_response(dlg, response):
+            if response == 'add':
+                host = entry.get_text().strip()
+                if not host:
+                    selected = connections_list.get_selected_row()
+                    if selected:
+                        host = getattr(selected, 'host', '')
+                if host:
+                    self._add_proxy_host_row(host)
+            dlg.destroy()
+
+        dialog.connect('response', _on_response)
+        dialog.present()
+
+    def _get_proxy_jump_hosts(self) -> list[str]:
+        """Return ordered list of proxy jump hosts"""
+        hosts: list[str] = []
+        if hasattr(self, 'proxy_jump_list'):
+            for row in self.proxy_jump_list.get_children():
+                host = getattr(row, 'host', None)
+                if host:
+                    hosts.append(host)
+        return hosts
     
     def build_port_forwarding_groups(self):
         """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""
@@ -3405,7 +3486,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'password': self.password_row.get_text(),
             'x11_forwarding': self.x11_row.get_active(),
             'pubkey_auth_no': self.pubkey_auth_row.get_active(),
-            'proxy_jump': [h.strip() for h in re.split(r'[\s,]+', self.proxy_jump_row.get_text()) if h.strip()],
+            'proxy_jump': self._get_proxy_jump_hosts(),
             'forward_agent': self.forward_agent_row.get_active(),
 
             'forwarding_rules': forwarding_rules,
