@@ -9,8 +9,9 @@ from .platform_utils import is_macos
 
 import gi
 gi.require_version('Gtk', '4.0')
+gi.require_version('Gdk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, Pango, PangoFT2
+from gi.repository import Gtk, Gdk, Adw, Pango, PangoFT2
 
 logger = logging.getLogger(__name__)
 
@@ -328,6 +329,9 @@ class PreferencesWindow(Adw.PreferencesWindow):
         
         # Initialize the preferences UI
         self.setup_preferences()
+        
+        # Apply any existing color overrides
+        self.apply_color_overrides()
 
         # Save on close to persist advanced SSH settings
         self.connect('close-request', self.on_close_request)
@@ -563,6 +567,94 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.theme_row.connect('notify::selected', self.on_theme_changed)
             
             interface_appearance_group.add(self.theme_row)
+            
+            # Color overrides section
+            color_override_group = Adw.PreferencesGroup()
+            color_override_group.set_title("Color Overrides")
+            color_override_group.set_description("Override default app colors")
+            
+            # App color override
+            self.app_color_row = Adw.ActionRow()
+            self.app_color_row.set_title("App Color")
+            self.app_color_row.set_subtitle("Override the primary app color")
+            
+            self.app_color_button = Gtk.ColorButton()
+            self.app_color_button.set_use_alpha(False)
+            self.app_color_button.set_tooltip_text("Choose app color")
+            
+            # Load saved app color
+            saved_app_color = self.config.get_setting('app-color-override', None)
+            if saved_app_color:
+                color = Gdk.RGBA()
+                color.parse(saved_app_color)
+                self.app_color_button.set_rgba(color)
+            else:
+                # Default to system accent color
+                self.app_color_button.set_rgba(Gdk.RGBA(0.2, 0.5, 0.9, 1.0))
+            
+            self.app_color_button.connect('color-set', self.on_app_color_changed)
+            self.app_color_row.add_suffix(self.app_color_button)
+            color_override_group.add(self.app_color_row)
+            
+            # Accent color override
+            self.accent_color_row = Adw.ActionRow()
+            self.accent_color_row.set_title("Accent Color")
+            self.accent_color_row.set_subtitle("Override the accent color for highlights")
+            
+            self.accent_color_button = Gtk.ColorButton()
+            self.accent_color_button.set_use_alpha(False)
+            self.accent_color_button.set_tooltip_text("Choose accent color")
+            
+            # Load saved accent color
+            saved_accent_color = self.config.get_setting('accent-color-override', None)
+            if saved_accent_color:
+                color = Gdk.RGBA()
+                color.parse(saved_accent_color)
+                self.accent_color_button.set_rgba(color)
+            else:
+                # Default to system accent color
+                self.accent_color_button.set_rgba(Gdk.RGBA(0.2, 0.5, 0.9, 1.0))
+            
+            self.accent_color_button.connect('color-set', self.on_accent_color_changed)
+            self.accent_color_row.add_suffix(self.accent_color_button)
+            color_override_group.add(self.accent_color_row)
+            
+            # Sidebar color override
+            self.sidebar_color_row = Adw.ActionRow()
+            self.sidebar_color_row.set_title("Sidebar Color")
+            self.sidebar_color_row.set_subtitle("Override the sidebar background color")
+            
+            self.sidebar_color_button = Gtk.ColorButton()
+            self.sidebar_color_button.set_use_alpha(False)
+            self.sidebar_color_button.set_tooltip_text("Choose sidebar color")
+            
+            # Load saved sidebar color
+            saved_sidebar_color = self.config.get_setting('sidebar-color-override', None)
+            if saved_sidebar_color:
+                color = Gdk.RGBA()
+                color.parse(saved_sidebar_color)
+                self.sidebar_color_button.set_rgba(color)
+            else:
+                # Default to system sidebar color
+                self.sidebar_color_button.set_rgba(Gdk.RGBA(0.9, 0.9, 0.9, 1.0))
+            
+            self.sidebar_color_button.connect('color-set', self.on_sidebar_color_changed)
+            self.sidebar_color_row.add_suffix(self.sidebar_color_button)
+            color_override_group.add(self.sidebar_color_row)
+            
+            # Reset colors button
+            reset_colors_row = Adw.ActionRow()
+            reset_colors_row.set_title("Reset to Default")
+            reset_colors_row.set_subtitle("Remove color overrides and use system colors")
+            
+            reset_button = Gtk.Button()
+            reset_button.set_label("Reset")
+            reset_button.add_css_class("destructive-action")
+            reset_button.connect('clicked', self.on_reset_colors_clicked)
+            reset_colors_row.add_suffix(reset_button)
+            color_override_group.add(reset_colors_row)
+            
+            interface_appearance_group.add(color_override_group)
             interface_page.add(interface_appearance_group)
             
             # Window group
@@ -829,6 +921,147 @@ class PreferencesWindow(Adw.PreferencesWindow):
         elif selected == 2:  # Dark
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
             self.config.set_setting('app-theme', 'dark')
+
+    def on_app_color_changed(self, color_button):
+        """Handle app color change"""
+        color = color_button.get_rgba()
+        color_str = color.to_string()
+        self.config.set_setting('app-color-override', color_str)
+        logger.info(f"App color changed to: {color_str}")
+        self.apply_color_overrides()
+
+    def on_accent_color_changed(self, color_button):
+        """Handle accent color change"""
+        color = color_button.get_rgba()
+        color_str = color.to_string()
+        self.config.set_setting('accent-color-override', color_str)
+        logger.info(f"Accent color changed to: {color_str}")
+        self.apply_color_overrides()
+
+    def on_sidebar_color_changed(self, color_button):
+        """Handle sidebar color change"""
+        color = color_button.get_rgba()
+        color_str = color.to_string()
+        self.config.set_setting('sidebar-color-override', color_str)
+        logger.info(f"Sidebar color changed to: {color_str}")
+        self.apply_color_overrides()
+
+    def on_reset_colors_clicked(self, button):
+        """Reset color overrides to default"""
+        self.config.set_setting('app-color-override', None)
+        self.config.set_setting('accent-color-override', None)
+        self.config.set_setting('sidebar-color-override', None)
+        
+        # Reset color buttons to default
+        default_color = Gdk.RGBA(0.2, 0.5, 0.9, 1.0)
+        default_sidebar_color = Gdk.RGBA(0.9, 0.9, 0.9, 1.0)
+        self.app_color_button.set_rgba(default_color)
+        self.accent_color_button.set_rgba(default_color)
+        self.sidebar_color_button.set_rgba(default_sidebar_color)
+        
+        logger.info("Color overrides reset to default")
+        self.apply_color_overrides()
+
+    def apply_color_overrides(self):
+        """Apply color overrides to the application"""
+        try:
+            # Get color overrides from config
+            app_color = self.config.get_setting('app-color-override', None)
+            accent_color = self.config.get_setting('accent-color-override', None)
+            sidebar_color = self.config.get_setting('sidebar-color-override', None)
+            
+            # Build CSS with color overrides using proper Adwaita named colors
+            css_rules = []
+            
+            if app_color:
+                # Override all accent-related colors for comprehensive theming
+                css_rules.append(f"@define-color accent_bg_color {app_color};")
+                css_rules.append(f"@define-color accent_fg_color white;")
+                css_rules.append(f"@define-color accent_color {app_color};")
+                # Override selected colors (used for selected rows, list items, etc.)
+                css_rules.append(f"@define-color theme_selected_bg_color {app_color};")
+                css_rules.append(f"@define-color theme_selected_fg_color white;")
+                css_rules.append(f"@define-color theme_unfocused_selected_bg_color {app_color};")
+                css_rules.append(f"@define-color theme_unfocused_selected_fg_color white;")
+                # Override window background colors
+                css_rules.append(f"@define-color window_bg_color {app_color};")
+                css_rules.append(f"@define-color theme_bg_color {app_color};")
+                css_rules.append(f"@define-color theme_unfocused_bg_color {app_color};")
+                # Override sidebar colors
+                css_rules.append(f"@define-color sidebar_bg_color {app_color};")
+                css_rules.append(f"@define-color secondary_sidebar_bg_color {app_color};")
+            
+            if accent_color:
+                # Override only accent-related colors (not background colors)
+                css_rules.append(f"@define-color accent_color {accent_color};")
+                # If no app color is set, also set accent background colors
+                if not app_color:
+                    css_rules.append(f"@define-color accent_bg_color {accent_color};")
+                    css_rules.append(f"@define-color accent_fg_color white;")
+                    css_rules.append(f"@define-color theme_selected_bg_color {accent_color};")
+                    css_rules.append(f"@define-color theme_selected_fg_color white;")
+                    css_rules.append(f"@define-color theme_unfocused_selected_bg_color {accent_color};")
+                    css_rules.append(f"@define-color theme_unfocused_selected_fg_color white;")
+            
+            if sidebar_color:
+                # Override sidebar colors independently
+                css_rules.append(f"@define-color sidebar_bg_color {sidebar_color};")
+                css_rules.append(f"@define-color secondary_sidebar_bg_color {sidebar_color};")
+            
+            if css_rules:
+                # Add specific CSS rules for row selection
+                css_rules.append("")
+                css_rules.append("/* Force row selection to use custom colors */")
+                css_rules.append("row:selected {")
+                css_rules.append("  background-color: @theme_selected_bg_color;")
+                css_rules.append("  color: @theme_selected_fg_color;")
+                css_rules.append("}")
+                css_rules.append("")
+                css_rules.append("row:selected:focus {")
+                css_rules.append("  background-color: @theme_selected_bg_color;")
+                css_rules.append("  color: @theme_selected_fg_color;")
+                css_rules.append("}")
+                css_rules.append("")
+                css_rules.append("list row:selected {")
+                css_rules.append("  background-color: @theme_selected_bg_color;")
+                css_rules.append("  color: @theme_selected_fg_color;")
+                css_rules.append("}")
+                
+                # Apply custom CSS
+                provider = Gtk.CssProvider()
+                css = "\n".join(css_rules)
+                provider.load_from_data(css.encode('utf-8'))
+                
+                # Add provider to display
+                display = Gdk.Display.get_default()
+                if display:
+                    # Remove any existing color override provider first
+                    self.remove_color_override_provider()
+                    
+                    Gtk.StyleContext.add_provider_for_display(
+                        display, 
+                        provider, 
+                        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                    )
+                    # Store provider reference for cleanup
+                    display._color_override_provider = provider
+                    logger.info("Applied color overrides")
+            else:
+                # Remove any existing color override provider
+                self.remove_color_override_provider()
+                
+        except Exception as e:
+            logger.error(f"Failed to apply color overrides: {e}")
+
+    def remove_color_override_provider(self):
+        """Remove color override CSS provider"""
+        try:
+            display = Gdk.Display.get_default()
+            if display and hasattr(display, '_color_override_provider'):
+                Gtk.StyleContext.remove_provider_for_display(display, display._color_override_provider)
+                delattr(display, '_color_override_provider')
+        except Exception as e:
+            logger.error(f"Failed to remove color override provider: {e}")
 
     def save_advanced_ssh_settings(self):
         """Persist advanced SSH settings from the preferences UI"""

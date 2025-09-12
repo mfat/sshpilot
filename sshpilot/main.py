@@ -71,6 +71,10 @@ class SshPilotApplication(Adw.Application):
                 style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
             else:
                 style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+            
+            # Apply color overrides
+            self.apply_color_overrides(cfg)
+            
             self.isolated_mode = isolated or bool(cfg.get_setting('ssh.use_isolated_config', False))
         except Exception:
             self.isolated_mode = isolated
@@ -408,6 +412,95 @@ class SshPilotApplication(Adw.Application):
         if self.props.active_window:
             # Forward to the window's action
             self.props.active_window.broadcast_command_action.activate(None)
+
+    def apply_color_overrides(self, config):
+        """Apply color overrides to the application"""
+        try:
+            import gi
+            gi.require_version('Gtk', '4.0')
+            from gi.repository import Gtk, Gdk
+            
+            # Get color overrides from config
+            app_color = config.get_setting('app-color-override', None)
+            accent_color = config.get_setting('accent-color-override', None)
+            sidebar_color = config.get_setting('sidebar-color-override', None)
+            
+            # Build CSS with color overrides using proper Adwaita named colors
+            css_rules = []
+            
+            if app_color:
+                # Override all accent-related colors for comprehensive theming
+                css_rules.append(f"@define-color accent_bg_color {app_color};")
+                css_rules.append(f"@define-color accent_fg_color white;")
+                css_rules.append(f"@define-color accent_color {app_color};")
+                # Override selected colors (used for selected rows, list items, etc.)
+                css_rules.append(f"@define-color theme_selected_bg_color {app_color};")
+                css_rules.append(f"@define-color theme_selected_fg_color white;")
+                css_rules.append(f"@define-color theme_unfocused_selected_bg_color {app_color};")
+                css_rules.append(f"@define-color theme_unfocused_selected_fg_color white;")
+                # Override window background colors
+                css_rules.append(f"@define-color window_bg_color {app_color};")
+                css_rules.append(f"@define-color theme_bg_color {app_color};")
+                css_rules.append(f"@define-color theme_unfocused_bg_color {app_color};")
+                # Override sidebar colors
+                css_rules.append(f"@define-color sidebar_bg_color {app_color};")
+                css_rules.append(f"@define-color secondary_sidebar_bg_color {app_color};")
+            
+            if accent_color:
+                # Override only accent-related colors (not background colors)
+                css_rules.append(f"@define-color accent_color {accent_color};")
+                # If no app color is set, also set accent background colors
+                if not app_color:
+                    css_rules.append(f"@define-color accent_bg_color {accent_color};")
+                    css_rules.append(f"@define-color accent_fg_color white;")
+                    css_rules.append(f"@define-color theme_selected_bg_color {accent_color};")
+                    css_rules.append(f"@define-color theme_selected_fg_color white;")
+                    css_rules.append(f"@define-color theme_unfocused_selected_bg_color {accent_color};")
+                    css_rules.append(f"@define-color theme_unfocused_selected_fg_color white;")
+            
+            if sidebar_color:
+                # Override sidebar colors independently
+                css_rules.append(f"@define-color sidebar_bg_color {sidebar_color};")
+                css_rules.append(f"@define-color secondary_sidebar_bg_color {sidebar_color};")
+            
+            if css_rules:
+                # Add specific CSS rules for row selection
+                css_rules.append("")
+                css_rules.append("/* Force row selection to use custom colors */")
+                css_rules.append("row:selected {")
+                css_rules.append("  background-color: @theme_selected_bg_color;")
+                css_rules.append("  color: @theme_selected_fg_color;")
+                css_rules.append("}")
+                css_rules.append("")
+                css_rules.append("row:selected:focus {")
+                css_rules.append("  background-color: @theme_selected_bg_color;")
+                css_rules.append("  color: @theme_selected_fg_color;")
+                css_rules.append("}")
+                css_rules.append("")
+                css_rules.append("list row:selected {")
+                css_rules.append("  background-color: @theme_selected_bg_color;")
+                css_rules.append("  color: @theme_selected_fg_color;")
+                css_rules.append("}")
+                
+                # Apply custom CSS
+                provider = Gtk.CssProvider()
+                css = "\n".join(css_rules)
+                provider.load_from_data(css.encode('utf-8'))
+                
+                # Add provider to display
+                display = Gdk.Display.get_default()
+                if display:
+                    Gtk.StyleContext.add_provider_for_display(
+                        display, 
+                        provider, 
+                        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                    )
+                    # Store provider reference for cleanup
+                    display._color_override_provider = provider
+                    logging.info("Applied color overrides on startup")
+                
+        except Exception as e:
+            logging.error(f"Failed to apply color overrides: {e}")
 
 def main():
     """Main entry point"""
