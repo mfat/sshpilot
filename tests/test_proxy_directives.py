@@ -47,6 +47,7 @@ def test_parse_and_load_proxy_directives(tmp_path):
     assert 'proxyjump' not in (proxy_jump_conn.extra_ssh_config or '').lower()
     assert 'forwardagent' not in (forward_agent_conn.extra_ssh_config or '').lower()
 
+
 async def _connect(conn: Connection):
     await conn.connect()
 
@@ -106,3 +107,4 @@ def test_connection_update_data_preserves_jump_and_agent():
     conn.update_data({"jump_hosts": ["b1", "b2"], "forward_agent": True})
     assert conn.jump_hosts == ["b1", "b2"]
     assert conn.forward_agent is True
+
