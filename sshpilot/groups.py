@@ -136,6 +136,26 @@ class GroupManager:
 
         self._save_groups()
 
+    def rename_connection(self, old_nickname: str, new_nickname: str):
+        """Rename a connection while preserving its group membership."""
+        if old_nickname == new_nickname:
+            return
+
+        group_id = self.connections.pop(old_nickname, None)
+        self.connections[new_nickname] = group_id
+
+        if group_id and group_id in self.groups:
+            conn_list = self.groups[group_id].get('connections', [])
+            if old_nickname in conn_list:
+                idx = conn_list.index(old_nickname)
+                conn_list[idx] = new_nickname
+        else:
+            if old_nickname in self.root_connections:
+                idx = self.root_connections.index(old_nickname)
+                self.root_connections[idx] = new_nickname
+
+        self._save_groups()
+
     def get_group_hierarchy(self) -> List[Dict]:
         """Get the complete group hierarchy"""
 
