@@ -58,3 +58,4 @@ def test_rename_connection_cleans_stale_root_entries():
 
     assert gm2.root_connections == []
     assert gm2.groups[gid]['connections'] == ["new"]
+

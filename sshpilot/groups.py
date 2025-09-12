@@ -173,6 +173,7 @@ class GroupManager:
             seen = set()
             group['connections'] = [n for n in group.get('connections', []) if not (n in seen or seen.add(n))]
 
+
         self._save_groups()
 
     def get_group_hierarchy(self) -> List[Dict]:
