@@ -1025,11 +1025,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tab_overview.set_view(self.tab_view)
         self.tab_overview.set_enable_new_tab(False)
         self.tab_overview.set_enable_search(True)
+        # Hide window buttons in tab overview
+        self.tab_overview.set_show_start_title_buttons(False)
+        self.tab_overview.set_show_end_title_buttons(False)
         
         # Create tab bar
         self.tab_bar = Adw.TabBar()
         self.tab_bar.set_view(self.tab_view)
-        self.tab_bar.set_autohide(False)
+        self.tab_bar.set_autohide(True)
         
         # Create tab content box
         tab_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
