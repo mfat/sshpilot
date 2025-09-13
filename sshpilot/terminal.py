@@ -1004,6 +1004,14 @@ class TerminalWidget(Gtk.Box):
         """
         pty = getattr(self, "pty", None)
         pgid = getattr(self, "process_pgid", None)
+        if pty is None:
+            try:
+                pty = self.vte.get_pty()
+                if pty:
+                    self.pty = pty
+            except Exception as e:
+                logger.debug(f"Could not retrieve PTY: {e}")
+                pty = None
         if pty is None or pgid is None:
             return True
         try:
@@ -1296,6 +1304,12 @@ class TerminalWidget(Gtk.Box):
                 self._on_spawn_complete,
                 ()
             )
+
+            # Store PTY for foreground job detection
+            try:
+                self.pty = self.vte.get_pty()
+            except Exception:
+                self.pty = None
 
             # Add fallback timer to hide spinner if spawn completion doesn't fire
             self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
