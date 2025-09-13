@@ -996,6 +996,22 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Error in spawn complete: {e}")
             self._on_connection_failed(str(e))
     
+    def has_active_foreground_job(self) -> bool:
+        """Check if the terminal has an active foreground job.
+
+        Returns:
+            bool: True if a foreground job is running or detection fails.
+        """
+        pty = getattr(self, "pty", None)
+        pgid = getattr(self, "process_pgid", None)
+        if pty is None or pgid is None:
+            return True
+        try:
+            fg_pgid = os.tcgetpgrp(pty.get_fd())
+        except Exception:
+            return True
+        return fg_pgid != pgid
+
     def _fallback_hide_spinner(self):
         """Fallback method to hide spinner if spawn completion doesn't fire"""
         # Clear stored timer ID
@@ -2163,3 +2179,6 @@ class TerminalWidget(Gtk.Box):
                 'connected': self.is_connected
             }
         return None
+
+
+__all__ = ["SSHProcessManager", "TerminalWidget"]

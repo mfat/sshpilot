@@ -3818,15 +3818,33 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             return False  # Already quitting, allow close
             
         # Check for active connections across all tabs
-        actually_connected = {}
+        remote_connected = {}
+        local_terms = []
         for conn, terms in self.connection_to_terminals.items():
             for term in terms:
-                if getattr(term, 'is_connected', False):
-                    actually_connected.setdefault(conn, []).append(term)
-        if actually_connected:
+                if getattr(term, "is_connected", False):
+                    if getattr(conn, "nickname", "") == "Local Terminal":
+                        local_terms.append(term)
+                    else:
+                        remote_connected.setdefault(conn, []).append(term)
+        if remote_connected:
             self.show_quit_confirmation_dialog()
             return True  # Prevent close, let dialog handle it
-        
+
+        # Only local terminals remain
+        if len(local_terms) == 1:
+            term = local_terms[0]
+            busy = True
+            if hasattr(term, "has_active_foreground_job"):
+                busy = term.has_active_foreground_job()
+            if not busy:
+                return False  # No warning needed
+            self.show_quit_confirmation_dialog()
+            return True
+        elif len(local_terms) > 1:
+            self.show_quit_confirmation_dialog()
+            return True
+
         # No active connections, safe to close
         return False  # Allow close
 
