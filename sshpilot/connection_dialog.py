@@ -2215,7 +2215,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         auth_group.add(self.key_passphrase_row)
         
         # Password
-        self.password_row = Adw.PasswordEntryRow(title=_("Password"))
+        self.password_row = Adw.PasswordEntryRow(title=_("Password (optional)"))
         self.password_row.set_show_apply_button(False)
         # Always visible; optional for key-based auth
         self.password_row.set_visible(True)
