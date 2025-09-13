@@ -3848,11 +3848,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         connection_names = [conn.nickname for conn, _ in connected_items]
         
         if active_count == 1:
-            message = f"You have 1 active SSH connection to '{connection_names[0]}'."
+            message = f"You have 1 open terminal tab."
             detail = "Closing the application will disconnect this connection."
         else:
-            message = f"You have {active_count} active SSH connections."
-            detail = f"Closing the application will disconnect all connections:\n• " + "\n• ".join(connection_names)
+            message = f"You have {active_count} open terminal tabs."
+            detail = f"Closing the application will disconnect all connections."
         
         dialog = Adw.AlertDialog()
         dialog.set_heading("Active SSH Connections")
