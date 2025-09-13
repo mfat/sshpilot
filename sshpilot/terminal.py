@@ -2186,33 +2186,43 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             return False
 
-    def _on_termprops_changed(self, terminal, ids):
+    def _on_termprops_changed(self, terminal, ids, user_data=None):
         """Handle terminal properties changes for job detection (local terminals only)"""
         # Only enable job detection for local terminals
         if not self._is_local_terminal():
             return
             
         try:
-            # Check if job finished (also gives exit status)
-            ok, code = terminal.get_termprop_uint(Vte.TERMPROP_SHELL_POSTEXEC)
-            if ok:
-                self._job_status = "IDLE"
-                logger.debug(f"Local terminal job finished with exit code: {code}")
+            # Check which properties changed - ids should be a list of VteTerminalProp values
+            if not ids:
                 return
+                
+            # Convert ids to a set for efficient lookup if it's not already
+            changed_props = set(ids) if hasattr(ids, '__iter__') else {ids}
+            
+            # Check if job finished (also gives exit status)
+            if Vte.TERMPROP_SHELL_POSTEXEC in changed_props:
+                ok, code = terminal.get_termprop_uint(Vte.TERMPROP_SHELL_POSTEXEC)
+                if ok:
+                    self._job_status = "IDLE"
+                    logger.debug(f"Local terminal job finished with exit code: {code}")
+                    return
             
             # Check if job is running
-            ok, _ = terminal.get_termprop_value(Vte.TERMPROP_SHELL_PREEXEC)
-            if ok:
-                self._job_status = "RUNNING"
-                logger.debug("Local terminal job is running")
-                return
+            if Vte.TERMPROP_SHELL_PREEXEC in changed_props:
+                ok, _ = terminal.get_termprop_value(Vte.TERMPROP_SHELL_PREEXEC)
+                if ok:
+                    self._job_status = "RUNNING"
+                    logger.debug("Local terminal job is running")
+                    return
             
             # Check if prompt is visible
-            ok, _ = terminal.get_termprop_value(Vte.TERMPROP_SHELL_PRECMD)
-            if ok:
-                self._job_status = "PROMPT"
-                logger.debug("Local terminal prompt is visible")
-                return
+            if Vte.TERMPROP_SHELL_PRECMD in changed_props:
+                ok, _ = terminal.get_termprop_value(Vte.TERMPROP_SHELL_PRECMD)
+                if ok:
+                    self._job_status = "PROMPT"
+                    logger.debug("Local terminal prompt is visible")
+                    return
                 
         except Exception as e:
             logger.debug(f"Error in termprops changed handler: {e}")
