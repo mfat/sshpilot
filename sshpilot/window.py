@@ -1034,6 +1034,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tab_bar.set_view(self.tab_view)
         self.tab_bar.set_autohide(True)
         
+        # Add local terminal button before the tabs
+        self.local_terminal_button = Gtk.Button()
+        self.local_terminal_button.set_icon_name('utilities-terminal-symbolic')
+        
+        # Set tooltip with keyboard shortcut
+        mac = is_macos()
+        primary = '⌘' if mac else 'Ctrl'
+        shift = '⇧' if mac else 'Shift'
+        shortcut_text = f'{primary}+{shift}+T'
+        self.local_terminal_button.set_tooltip_text(_('Open Local Terminal ({})').format(shortcut_text))
+        
+        self.local_terminal_button.connect('clicked', self.on_local_terminal_button_clicked)
+        self.tab_bar.set_start_action_widget(self.local_terminal_button)
+        
         # Create tab content box
         tab_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         tab_content_box.append(self.tab_bar)
@@ -3583,6 +3597,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Update button visibility when tabs remain
             if hasattr(self, 'view_toggle_button'):
                 self.view_toggle_button.set_visible(True)
+
+    def on_local_terminal_button_clicked(self, button):
+        """Handle local terminal button click"""
+        try:
+            logger.info("Local terminal button clicked")
+            self.terminal_manager.show_local_terminal()
+        except Exception as e:
+            logger.error(f"Failed to open local terminal: {e}")
 
     def on_tab_button_clicked(self, button):
         """Handle tab button click to open/close tab overview and switch to tab view"""
