@@ -28,7 +28,6 @@ except Exception:
 import socket
 import time
 from gi.repository import GObject, GLib
-from .askpass_utils import get_ssh_env_with_askpass, get_ssh_env_with_askpass_for_password
 
 # Set up asyncio event loop for GTK integration
 if os.name == 'posix':
@@ -418,11 +417,10 @@ class Connection:
             # Log the full command (without sensitive data)
             logger.debug(f"SSH command: {' '.join(ssh_cmd[:10])}...")
             
-            # Set up askpass environment to prevent Flatpak from using system askpass
-            from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
-            ensure_askpass_script()
+            # Ensure ssh can prompt interactively by removing any askpass settings
             env = os.environ.copy()
-            env.update(get_ssh_env_with_askpass_for_password(self.host, self.username))
+            env.pop("SSH_ASKPASS", None)
+            env.pop("SSH_ASKPASS_REQUIRE", None)
             
             # Start the SSH process
             logger.info(f"Starting dynamic port forwarding with command: {' '.join(ssh_cmd)}")
@@ -502,11 +500,10 @@ class Connection:
                 '-L', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"
             ]
             
-            # Set up askpass environment to prevent Flatpak from using system askpass
-            from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
-            ensure_askpass_script()
+            # Ensure ssh can prompt interactively by removing any askpass settings
             env = os.environ.copy()
-            env.update(get_ssh_env_with_askpass_for_password(self.host, self.username))
+            env.pop("SSH_ASKPASS", None)
+            env.pop("SSH_ASKPASS_REQUIRE", None)
             
             # Start the SSH process
             self.process = await asyncio.create_subprocess_exec(
@@ -552,11 +549,10 @@ class Connection:
                 '-R', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"
             ]
             
-            # Set up askpass environment to prevent Flatpak from using system askpass
-            from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
-            ensure_askpass_script()
+            # Ensure ssh can prompt interactively by removing any askpass settings
             env = os.environ.copy()
-            env.update(get_ssh_env_with_askpass_for_password(self.host, self.username))
+            env.pop("SSH_ASKPASS", None)
+            env.pop("SSH_ASKPASS_REQUIRE", None)
             
             # Start the SSH process
             self.process = await asyncio.create_subprocess_exec(
