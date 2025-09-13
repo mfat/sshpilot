@@ -1008,6 +1008,7 @@ class TerminalWidget(Gtk.Box):
             return True
         try:
             slave_fd = pty.get_slave_fd()
+
             try:
                 fg_pgid = os.tcgetpgrp(slave_fd)
             finally:

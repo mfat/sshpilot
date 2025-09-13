@@ -60,6 +60,7 @@ def test_single_idle_local_terminal_allows_close():
 
     Gtk = repo.Gtk
 
+
     stub_modules = {
         'sshpilot.terminal': types.SimpleNamespace(TerminalWidget=object),
         'sshpilot.terminal_manager': types.SimpleNamespace(TerminalManager=lambda window: None),
@@ -127,6 +128,7 @@ def test_single_idle_local_terminal_allows_close():
                 del sys.modules[name]
             else:
                 sys.modules[name] = old
+
 
     assert result is False
     assert called['dialog'] is False
