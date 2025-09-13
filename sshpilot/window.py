@@ -41,7 +41,6 @@ from .key_manager import KeyManager, SSHKey
 from .connection_dialog import ConnectionDialog
 from .preferences import (
     PreferencesWindow,
-    is_running_in_flatpak,
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
 )
