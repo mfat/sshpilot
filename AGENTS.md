@@ -65,7 +65,7 @@ sudo dnf install python3-gobject gtk4 libadwaita vte291-gtk4 libsecret python3-p
 - Never store passwords in plain text
 - Use `secretstorage` on Linux for credential storage
 - Use `keyring` for cross-platform credential management
-
+- The app uses askpass for private key passphrases and sshpass for ssh passwords
 ## Build and Packaging
 
 

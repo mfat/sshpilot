@@ -2231,17 +2231,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         proxy_group = Adw.PreferencesGroup(title=_("ProxyJump"))
 
         # ProxyJump hosts (comma-separated for multiple hops)
-        self.proxy_jump_row = Adw.EntryRow(title=_("ProxyJump"))
-        try:
-            self.proxy_jump_row.set_subtitle(_("Comma-separated hosts"))
-        except Exception:
-            pass
-        self.proxy_jump_row.set_placeholder_text(
-            _(
-                "multiple, comma-separated hostnames supported  "
-                "example: bastion1,bastion2,bastion3"
-            )
-        )
+        self.proxy_jump_row = Adw.EntryRow(title=_("Multiple comma-separated hosts supported: bastion1,bastion2,bastion3"))
         proxy_group.add(self.proxy_jump_row)
 
         # Agent forwarding toggle
