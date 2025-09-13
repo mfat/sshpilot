@@ -39,7 +39,6 @@ from .config import Config
 from .key_manager import KeyManager, SSHKey
 # Port forwarding UI is now integrated into connection_dialog.py
 from .connection_dialog import ConnectionDialog
-from .askpass_utils import ensure_askpass_script
 from .preferences import (
     PreferencesWindow,
     is_running_in_flatpak,
@@ -1899,8 +1898,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_general = Gtk.ShortcutsGroup()
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Toggle Sidebar'), accelerator='F9'))
-        group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Toggle Sidebar'), accelerator=f"{primary}b"))
+        if mac:
+            group_general.add_shortcut(Gtk.ShortcutsShortcut(
+                title=_('Toggle Sidebar'), accelerator=f"{primary}b"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Preferences'), accelerator=f"{primary}comma"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
@@ -2617,12 +2617,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     import atexit
                     atexit.register(cleanup_tmpdir)
                 else:
-                    # sshpass not available, fallback to askpass
-                    logger.debug("Main window: sshpass not available, falling back to askpass")
-                    from .askpass_utils import get_ssh_env_with_askpass
-                    askpass_env = get_ssh_env_with_askpass()
-                    logger.debug(f"Main window: Askpass environment variables: {list(askpass_env.keys())}")
-                    env.update(askpass_env)
+                    # sshpass not available – allow interactive password prompt
+                    logger.warning("Main window: sshpass not available, falling back to interactive prompt")
+                    env.pop("SSH_ASKPASS", None)
+                    env.pop("SSH_ASKPASS_REQUIRE", None)
             elif (prefer_password or combined_auth) and not has_saved_password:
                 # Password may be required but none saved - let SSH prompt interactively
                 # Don't set any askpass environment variables
@@ -3053,13 +3051,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             # Handle environment variables for authentication
             env = os.environ.copy()
-            
+
             # Check if we have stored askpass environment from key passphrase handling
             if hasattr(self, '_scp_askpass_env') and self._scp_askpass_env:
                 env.update(self._scp_askpass_env)
                 logger.debug(f"SCP: Using askpass environment for key passphrase: {list(self._scp_askpass_env.keys())}")
                 # Clear the stored environment after use
                 self._scp_askpass_env = {}
+
+            # If sshpass was unavailable earlier, ensure askpass is cleared
+            if getattr(self, '_scp_strip_askpass', False):
+                env.pop("SSH_ASKPASS", None)
+                env.pop("SSH_ASKPASS_REQUIRE", None)
+                logger.debug("SCP: Removed SSH_ASKPASS variables for interactive password prompt")
+                self._scp_strip_askpass = False
                 
                 # For key-based auth, ensure the key is loaded in SSH agent first
                 try:
@@ -3304,14 +3309,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             import atexit
                             atexit.register(cleanup_tmpdir)
                         else:
-                            # sshpass not available → use askpass env (same pattern as in ssh-copy-id path)
-                            from .askpass_utils import get_ssh_env_with_askpass
-                            askpass_env = get_ssh_env_with_askpass("force")
-                            # Store for later use in the main execution
-                            if not hasattr(self, '_scp_askpass_env'):
-                                self._scp_askpass_env = {}
-                            self._scp_askpass_env.update(askpass_env)
-                            logger.debug("SCP: sshpass unavailable, using SSH_ASKPASS fallback")
+                            # sshpass not available – allow interactive password prompt
+                            logger.warning("SCP: sshpass unavailable, falling back to interactive prompt")
+                            self._scp_strip_askpass = True
                     else:
                         # No saved password - will use interactive prompt
                         logger.debug("SCP: Password auth selected but no saved password - using interactive prompt")

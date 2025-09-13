@@ -67,26 +67,18 @@ def run_ssh_with_password(host: str, user: str, password: str, *,
     logger.debug(f"/app/bin/sshpass exists: {os.path.exists('/app/bin/sshpass')}")
     logger.debug(f"/app/bin/sshpass executable: {os.access('/app/bin/sshpass', os.X_OK) if os.path.exists('/app/bin/sshpass') else False}")
     
-    if not sshpass:
-        # sshpass not available → use askpass fallback
-        from .askpass_utils import get_ssh_env_with_askpass
-        askpass_env = get_ssh_env_with_askpass("force")
-        env = (inherit_env or os.environ).copy()
-        env.update(askpass_env)
-        # Build cmd WITHOUT sshpass, just ssh + opts
-        cmd = [sshbin, "-p", str(port), *ssh_opts, f"{user}@{host}"]
-    else:
+    if sshpass:
         cmd = [sshpass, "-f", fifo, sshbin, "-p", str(port), *ssh_opts, f"{user}@{host}"]
+    else:
+        # sshpass not available – allow interactive password prompt
+        cmd = [sshbin, "-p", str(port), *ssh_opts, f"{user}@{host}"]
     if argv_tail:
         cmd += argv_tail  # e.g. ["uptime"] or ["-tt"] etc.
 
-    # Important: strip askpass vars so OpenSSH won't try your passphrase helper for passwords
-    # Only do this if we're using sshpass (not askpass fallback)
-    if sshpass:
-        env = (inherit_env or os.environ).copy()
-        env.pop("SSH_ASKPASS", None)
-        env.pop("SSH_ASKPASS_REQUIRE", None)
-    # If using askpass fallback, env is already set up above
+    # Always strip askpass vars so OpenSSH can prompt interactively if needed
+    env = (inherit_env or os.environ).copy()
+    env.pop("SSH_ASKPASS", None)
+    env.pop("SSH_ASKPASS_REQUIRE", None)
 
     # Ensure /app/bin is first in PATH for Flatpak compatibility
     if os.path.exists('/app/bin'):
@@ -137,23 +129,16 @@ def run_scp_with_password(host: str, user: str, password: str,
     sshpass = ("/app/bin/sshpass" if os.path.exists("/app/bin/sshpass") and os.access("/app/bin/sshpass", os.X_OK) else None) or shutil.which("sshpass")
     scpbin = shutil.which("scp") or "/usr/bin/scp"
     
-    if not sshpass:
-        # sshpass not available → use askpass fallback
-        from .askpass_utils import get_ssh_env_with_askpass
-        askpass_env = get_ssh_env_with_askpass("force")
-        env = (inherit_env or os.environ).copy()
-        env.update(askpass_env)
-        # Build cmd WITHOUT sshpass, just scp + opts
-        cmd = [scpbin, "-v", "-P", str(port), *ssh_opts, *local_paths, f"{user}@{host}:{remote_dir}"]
-    else:
-        cmd = [sshpass, "-f", fifo, scpbin, "-v", "-P", str(port), *ssh_opts, *local_paths, f"{user}@{host}:{remote_dir}"]
-
-    # Only strip askpass vars if we're using sshpass (not askpass fallback)
     if sshpass:
-        env = (inherit_env or os.environ).copy()
-        env.pop("SSH_ASKPASS", None)
-        env.pop("SSH_ASKPASS_REQUIRE", None)
-    # If using askpass fallback, env is already set up above
+        cmd = [sshpass, "-f", fifo, scpbin, "-v", "-P", str(port), *ssh_opts, *local_paths, f"{user}@{host}:{remote_dir}"]
+    else:
+        # sshpass not available – allow interactive password prompt
+        cmd = [scpbin, "-v", "-P", str(port), *ssh_opts, *local_paths, f"{user}@{host}:{remote_dir}"]
+
+    # Always strip askpass vars so OpenSSH can prompt interactively if needed
+    env = (inherit_env or os.environ).copy()
+    env.pop("SSH_ASKPASS", None)
+    env.pop("SSH_ASKPASS_REQUIRE", None)
 
     # Ensure /app/bin is first in PATH for Flatpak compatibility
     if os.path.exists('/app/bin'):
