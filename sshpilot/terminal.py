@@ -1762,8 +1762,20 @@ class TerminalWidget(Gtk.Box):
             
             # First try a clean termination
             try:
+                if pgid:
+                    try:
+                        os.killpg(pgid, signal.SIGTERM)
+                        logger.debug(
+                            f"Sent SIGTERM to process group {pgid}"
+                        )
+                    except ProcessLookupError:
+                        logger.debug(
+                            f"Process group {pgid} already terminated"
+                        )
                 os.kill(pid, signal.SIGTERM)
-                logger.debug(f"Sent SIGTERM to process {pid} (PGID: {pgid})")
+                logger.debug(
+                    f"Sent SIGTERM to process {pid} (PGID: {pgid})"
+                )
                 
                 # Wait for clean termination (shorter timeout for faster cleanup)
                 for _ in range(2):  # Wait up to 0.2 seconds (reduced from 0.5 seconds)
