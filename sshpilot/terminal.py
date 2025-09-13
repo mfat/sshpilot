@@ -2217,8 +2217,14 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             return False
 
-    def _on_termprops_changed(self, terminal, ids):
-        """Handle terminal properties changes for job detection (local terminals only)"""
+    def _on_termprops_changed(self, terminal, _changed, _ids):
+        """Handle terminal property changes for job detection (local terminals only).
+
+        Args:
+            terminal: The VTE terminal emitting the signal.
+            _changed: Number of changed properties (unused).
+            _ids: Sequence of changed termprop identifiers (unused).
+        """
         # Only enable job detection for local terminals
         if not self._is_local_terminal():
             return
