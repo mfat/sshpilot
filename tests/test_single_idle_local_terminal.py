@@ -1,17 +1,66 @@
 import sys
 import types
-import pytest
-
-try:
-    import gi
-    gi.require_version('Gtk', '4.0')
-    gi.require_version('Adw', '1')
-    from gi.repository import Gtk, Adw
-except Exception:  # pragma: no cover - environment without GI bindings
-    pytest.skip("GTK or Adw not available", allow_module_level=True)
 
 
 def test_single_idle_local_terminal_allows_close():
+    gi_module = types.ModuleType("gi")
+    gi_module.require_version = lambda *a, **k: None
+
+    class Module(types.SimpleNamespace):
+        def __getattr__(self, name):
+            return Module()
+
+        def __call__(self, *a, **k):
+            return Module()
+
+    repo = Module()
+    repo.Gtk = Module(ApplicationWindow=type("ApplicationWindow", (), {}))
+    repo.Adw = Module()
+    repo.Gio = Module()
+    repo.GLib = Module()
+    repo.GObject = Module()
+    repo.Gdk = Module()
+    repo.Pango = Module()
+    repo.PangoFT2 = Module()
+    repo.Vte = Module()
+
+    gi_module.repository = repo
+    original_gi = {
+        name: sys.modules.get(name)
+        for name in [
+            "gi",
+            "gi.repository",
+            *[f"gi.repository.{n}" for n in [
+                "Gtk",
+                "Adw",
+                "Gio",
+                "GLib",
+                "GObject",
+                "Gdk",
+                "Pango",
+                "PangoFT2",
+                "Vte",
+            ]],
+        ]
+    }
+    sys.modules["gi"] = gi_module
+    sys.modules["gi.repository"] = repo
+    for name in [
+        "Gtk",
+        "Adw",
+        "Gio",
+        "GLib",
+        "GObject",
+        "Gdk",
+        "Pango",
+        "PangoFT2",
+        "Vte",
+    ]:
+        sys.modules[f"gi.repository.{name}"] = getattr(repo, name)
+
+    Gtk = repo.Gtk
+
+
     stub_modules = {
         'sshpilot.terminal': types.SimpleNamespace(TerminalWidget=object),
         'sshpilot.terminal_manager': types.SimpleNamespace(TerminalManager=lambda window: None),
@@ -43,6 +92,7 @@ def test_single_idle_local_terminal_allows_close():
 
     class DummyTerm:
         is_connected = True
+
         def has_active_foreground_job(self):
             return False
 
@@ -73,6 +123,12 @@ def test_single_idle_local_terminal_allows_close():
                 del sys.modules[name]
             else:
                 sys.modules[name] = old
+        for name, old in original_gi.items():
+            if old is None:
+                del sys.modules[name]
+            else:
+                sys.modules[name] = old
+
 
     assert result is False
     assert called['dialog'] is False

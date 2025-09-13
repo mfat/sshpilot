@@ -1007,8 +1007,8 @@ class TerminalWidget(Gtk.Box):
         if pty is None or pgid is None:
             return True
         try:
-            slave_path = os.ttyname(pty.get_fd())
-            slave_fd = os.open(slave_path, os.O_RDONLY)
+            slave_fd = pty.get_slave_fd()
+
             try:
                 fg_pgid = os.tcgetpgrp(slave_fd)
             finally:
