@@ -117,8 +117,8 @@ class SSHProcessManager:
             pgid = os.getpgid(pid)
             os.killpg(pgid, signal.SIGTERM)
             
-            # Wait with timeout
-            for _ in range(10):  # 1 second max
+            # Wait with shorter timeout for faster cleanup
+            for _ in range(3):  # 0.3 seconds max (reduced from 1 second)
                 try:
                     os.killpg(pgid, 0)
                     time.sleep(0.1)
@@ -1765,8 +1765,8 @@ class TerminalWidget(Gtk.Box):
                 os.kill(pid, signal.SIGTERM)
                 logger.debug(f"Sent SIGTERM to process {pid} (PGID: {pgid})")
                 
-                # Wait for clean termination
-                for _ in range(5):  # Wait up to 0.5 seconds
+                # Wait for clean termination (shorter timeout for faster cleanup)
+                for _ in range(2):  # Wait up to 0.2 seconds (reduced from 0.5 seconds)
                     try:
                         os.kill(pid, 0)
                         time.sleep(0.1)
