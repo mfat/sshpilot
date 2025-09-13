@@ -1007,8 +1007,13 @@ class TerminalWidget(Gtk.Box):
         if pty is None or pgid is None:
             return True
         try:
-            fg_pgid = os.tcgetpgrp(pty.get_fd())
-        except Exception:
+            slave_fd = pty.get_slave_fd()
+            try:
+                fg_pgid = os.tcgetpgrp(slave_fd)
+            finally:
+                os.close(slave_fd)
+        except Exception as e:
+            logger.warning(f"Failed to determine foreground pgid: {e}")
             return True
         return fg_pgid != pgid
 
