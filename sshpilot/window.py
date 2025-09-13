@@ -3818,14 +3818,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             return False  # Already quitting, allow close
             
         # Check for active connections across all tabs
-        actually_connected = {}
         local_terminals = []
         ssh_terminals = []
-        
+
         for conn, terms in self.connection_to_terminals.items():
             for term in terms:
                 if getattr(term, 'is_connected', False):
-                    actually_connected.setdefault(conn, []).append(term)
                     # Categorize terminals
                     if hasattr(term, '_is_local_terminal') and term._is_local_terminal():
                         local_terminals.append(term)
@@ -3863,21 +3861,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.debug(f"Failed to bring window to foreground: {e}")
         
         # Categorize connected terminals
-        connected_items = []
-        local_terminals = []
-        ssh_terminals = []
-        
+        local_active: List[Tuple[Connection, TerminalWidget]] = []
+        ssh_terminals: List[Tuple[Connection, TerminalWidget]] = []
+
         for conn, terms in self.connection_to_terminals.items():
             for term in terms:
                 if getattr(term, 'is_connected', False):
-                    connected_items.append((conn, term))
-                    # Categorize terminals
                     if hasattr(term, '_is_local_terminal') and term._is_local_terminal():
-                        local_terminals.append((conn, term))
+                        if getattr(term, 'has_active_job', None) and term.has_active_job():
+                            local_active.append((conn, term))
                     else:
                         ssh_terminals.append((conn, term))
-        
-        active_count = len(connected_items)
+
+        active_count = len(local_active) + len(ssh_terminals)
         
         # Determine dialog content based on terminal types
         if ssh_terminals:

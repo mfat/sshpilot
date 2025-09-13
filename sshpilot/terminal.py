@@ -2181,8 +2181,8 @@ class TerminalWidget(Gtk.Box):
         try:
             if not hasattr(self, 'connection') or not self.connection:
                 return False
-            return (hasattr(self.connection, 'host') and 
-                   self.connection.host == 'localhost')
+            host = getattr(self.connection, 'host', '')
+            return host in ('localhost', '127.0.0.1', '::1')
         except Exception:
             return False
 
@@ -2278,9 +2278,9 @@ class TerminalWidget(Gtk.Box):
                 logger.debug(f"Local terminal PTY job detection: fg_pgid={fg_pgid}, shell_pgid={self._shell_pgid}, idle={idle}")
                 return idle
             
-            # If no shell PGID stored, assume idle (conservative approach)
-            logger.debug(f"Local terminal PTY job detection: fg_pgid={fg_pgid}, no shell_pgid stored, assuming idle")
-            return True
+            # If no shell PGID stored, treat as non-idle (unknown state)
+            logger.debug(f"Local terminal PTY job detection: fg_pgid={fg_pgid}, no shell_pgid stored, treating as active")
+            return False
             
         except Exception as e:
             logger.debug(f"Error in PTY job detection: {e}")
