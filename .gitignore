@@ -13,3 +13,4 @@ release.sh
 /.flatpak-builder
 /repo
 /__pycache__
+/tests/__pycache__

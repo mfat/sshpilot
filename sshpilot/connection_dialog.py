@@ -2082,23 +2082,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.port_row.set_text("22")
         basic_group.add(self.port_row)
 
-        # Proxy Group
-        proxy_group = Adw.PreferencesGroup(title=_("Proxy"))
-
-        # ProxyJump hosts (comma-separated for multiple hops)
-        self.proxy_jump_row = Adw.EntryRow(title=_("Proxy Jump"))
-        try:
-            self.proxy_jump_row.set_subtitle(_("Comma-separated hosts"))
-        except Exception:
-            pass
-        proxy_group.add(self.proxy_jump_row)
-
-        # Agent forwarding toggle
-        self.forward_agent_row = Adw.SwitchRow()
-        self.forward_agent_row.set_title(_("Agent Forwarding"))
-        self.forward_agent_row.set_active(False)
-        proxy_group.add(self.forward_agent_row)
-
         # Authentication Group
         auth_group = Adw.PreferencesGroup(title=_("Authentication"))
         
@@ -2232,7 +2215,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         auth_group.add(self.key_passphrase_row)
         
         # Password
-        self.password_row = Adw.PasswordEntryRow(title=_("Password"))
+        self.password_row = Adw.PasswordEntryRow(title=_("Password (optional)"))
         self.password_row.set_show_apply_button(False)
         # Always visible; optional for key-based auth
         self.password_row.set_visible(True)
@@ -2243,9 +2226,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.pubkey_auth_row.set_title(_("Disable public key authentication (force password only)"))
         self.pubkey_auth_row.set_active(False)
         auth_group.add(self.pubkey_auth_row)
-        
 
-        
+        # ProxyJump Group
+        proxy_group = Adw.PreferencesGroup(title=_("ProxyJump"))
+
+        # ProxyJump hosts (comma-separated for multiple hops)
+        self.proxy_jump_row = Adw.EntryRow(title=_("Multiple comma-separated hosts supported: bastion1,bastion2,bastion3"))
+        proxy_group.add(self.proxy_jump_row)
+
+        # Agent forwarding toggle
+        self.forward_agent_row = Adw.SwitchRow()
+        self.forward_agent_row.set_title(_("Agent Forwarding"))
+        self.forward_agent_row.set_active(False)
+        proxy_group.add(self.forward_agent_row)
+
         # Remove unused advanced label group from this page
         advanced_group = Adw.PreferencesGroup()
         advanced_group.set_visible(False)
@@ -2460,7 +2454,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # X11 Forwarding moved to Port Forwarding view
         
         # Return groups for PreferencesPage
-        return [basic_group, proxy_group, auth_group, advanced_group]
+        return [basic_group, auth_group, proxy_group, advanced_group]
     
     def build_port_forwarding_groups(self):
         """Build PreferencesGroups for the Advanced page (Port Forwarding first, X11 last)"""
