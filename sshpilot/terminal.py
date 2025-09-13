@@ -116,17 +116,22 @@ class SSHProcessManager:
             # Always try process group first
             pgid = os.getpgid(pid)
             os.killpg(pgid, signal.SIGTERM)
-            
+
             # Wait with shorter timeout for faster cleanup
             for _ in range(3):  # 0.3 seconds max (reduced from 1 second)
                 try:
                     os.killpg(pgid, 0)
                     time.sleep(0.1)
                 except ProcessLookupError:
-                    return True
-                    
-            # Force kill if still alive
-            os.killpg(pgid, signal.SIGKILL)
+                    break
+            else:
+                # Force kill if still alive
+                os.killpg(pgid, signal.SIGKILL)
+
+            try:
+                os.waitpid(pid, os.WNOHANG)
+            except (ChildProcessError, OSError):
+                pass
             return True
         except Exception:
             return False
@@ -1744,7 +1749,7 @@ class TerminalWidget(Gtk.Box):
         """Clean up a process by PID"""
         if not pid:
             return False
-            
+
         try:
             # Try to get process info from manager first
             pgid = None
@@ -1773,10 +1778,9 @@ class TerminalWidget(Gtk.Box):
                             f"Process group {pgid} already terminated"
                         )
                 os.kill(pid, signal.SIGTERM)
-                logger.debug(
-                    f"Sent SIGTERM to process {pid} (PGID: {pgid})"
-                )
-                
+                logger.debug(f"Sent SIGTERM to process {pid} (PGID: {pgid})")
+
+
                 # Wait for clean termination (shorter timeout for faster cleanup)
                 for _ in range(2):  # Wait up to 0.2 seconds (reduced from 0.5 seconds)
                     try:
@@ -1784,25 +1788,30 @@ class TerminalWidget(Gtk.Box):
                         time.sleep(0.1)
                     except ProcessLookupError:
                         logger.debug(f"Process {pid} terminated cleanly")
-                        return True
-                
-                # If still running, force kill
-                try:
-                    os.kill(pid, 0)  # Check if still exists
-                    logger.debug(f"Process {pid} still running, sending SIGKILL")
-                    if pgid:
-                        try:
-                            os.killpg(pgid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                    os.kill(pid, signal.SIGKILL)
-                    return True
-                except ProcessLookupError:
-                    return True
-                    
+                        break
+                else:
+                    # If still running, force kill
+                    try:
+                        os.kill(pid, 0)  # Check if still exists
+                        logger.debug(f"Process {pid} still running, sending SIGKILL")
+                        if pgid:
+                            try:
+                                os.killpg(pgid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
             except ProcessLookupError:
-                return True
-                
+                pass
+
+            try:
+                os.waitpid(pid, os.WNOHANG)
+            except (ChildProcessError, OSError):
+                pass
+            return True
+
         except Exception as e:
             logger.error(f"Error terminating process {pid}: {e}")
             return False
