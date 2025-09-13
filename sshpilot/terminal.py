@@ -18,6 +18,7 @@ import weakref
 import subprocess
 import pwd
 from datetime import datetime
+from typing import Dict, List
 from .port_utils import get_port_checker
 from .platform_utils import is_macos
 
@@ -159,10 +160,63 @@ class SSHProcessManager:
                 # Atomically extract and clear all processes
                 processes_to_clean = dict(self.processes)
                 self.processes.clear()
-            
-            # Clean up processes without holding the lock
+
+            # Track processes that need sequential handling (e.g. active local jobs)
+            pgid_map: Dict[int, int] = {}
+            local_active: List[int] = []
+
             for pid, info in processes_to_clean.items():
-                logger.debug(f"Cleaning up process {pid} (command: {info.get('command', 'unknown')})")
+                term = info.get('terminal')
+                term = term() if term else None
+
+                is_local = info.get('command') == 'bash'
+                has_active = bool(
+                    term and getattr(term, 'has_active_job', None) and term.has_active_job()
+                )
+
+                try:
+                    pgid = os.getpgid(pid)
+                except Exception:
+                    pgid = pid
+
+                if is_local and has_active:
+                    # Defer active local jobs to sequential cleanup
+                    local_active.append(pid)
+                    pgid_map[pid] = pgid
+                    continue
+
+                pgid_map[pid] = pgid
+                try:
+                    os.killpg(pgid, signal.SIGTERM)
+                    logger.debug(
+                        f"Sent SIGTERM to process {pid} (command: {info.get('command', 'unknown')})"
+                    )
+                except Exception as e:
+                    logger.debug(f"Failed to send SIGTERM to {pid}: {e}")
+
+            # Wait for batched processes to exit collectively
+            remaining = set(pgid_map.keys()) - set(local_active)
+            end_time = time.time() + 0.3  # shorter timeout for idle terminals
+            while remaining and time.time() < end_time:
+                try:
+                    waited_pid, _ = os.waitpid(-1, os.WNOHANG)
+                    if waited_pid == 0:
+                        time.sleep(0.05)
+                        continue
+                    remaining.discard(waited_pid)
+                except ChildProcessError:
+                    break
+
+            # Force kill any remaining batched processes
+            for pid in list(remaining):
+                try:
+                    os.killpg(pgid_map.get(pid, pid), signal.SIGKILL)
+                    logger.debug(f"Force killed process {pid}")
+                except Exception as e:
+                    logger.debug(f"Failed to force kill {pid}: {e}")
+
+            # Handle active local jobs sequentially to respect warnings
+            for pid in local_active:
                 self._terminate_process_by_pid(pid)
             
             # Clean up terminals separately
@@ -2186,8 +2240,13 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             return False
 
-    def _on_termprops_changed(self, terminal, ids):
-        """Handle terminal properties changes for job detection (local terminals only)"""
+    def _on_termprops_changed(self, terminal, *unused):
+        """Handle terminal property changes for job detection (local terminals only).
+
+        Args:
+            terminal: The VTE terminal emitting the signal.
+            *unused: Additional signal parameters ignored.
+        """
         # Only enable job detection for local terminals
         if not self._is_local_terminal():
             return
