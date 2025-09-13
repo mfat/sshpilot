@@ -1828,73 +1828,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def show_about_dialog(self):
         """Show about dialog"""
-        # Use Gtk.AboutDialog so we can force a logo even without icon theme entries
-        about = Gtk.AboutDialog()
-        about.set_transient_for(self)
-        about.set_modal(True)
-        about.set_program_name('sshPilot')
+        # Use Adw.AboutDialog to get support-url and issue-url properties
+        about = Adw.AboutDialog()
+        about.set_application_name('sshPilot')
         try:
             from . import __version__ as APP_VERSION
         except Exception:
             APP_VERSION = "0.0.0"
         about.set_version(APP_VERSION)
-        about.set_comments('SSH connection manager with integrated terminal')
-        about.set_website('https://sshpilot.app')
-        # Gtk.AboutDialog in GTK4 has no set_issue_url; include issue link in website label
-        about.set_website_label('sshPilot Website')
+        about.set_application_icon('io.github.mfat.sshpilot')
         about.set_license_type(Gtk.License.GPL_3_0)
-        about.set_authors(['mFat <newmfat@gmail.com>'])
+        about.set_website('https://sshpilot.app')
+        about.set_issue_url('https://github.com/mfat/sshpilot/issues')
+        about.set_copyright('© 2025 mFat')
+        about.set_developers(['mFat <newmfat@gmail.com>'])
+        about.set_translator_credits('')
         
-        # Attempt to load logo from GResource; fall back to local files
-        logo_texture = None
-        # 1) From GResource bundle
-        for resource_path in (
-            '/io/github/mfat/sshpilot/sshpilot.svg',
-        ):
-            try:
-                logo_texture = Gdk.Texture.new_from_resource(resource_path)
-                if logo_texture:
-                    break
-            except Exception:
-                logo_texture = None
-        # 2) From project-local files
-        if logo_texture is None:
-            candidate_files = []
-            # repo root (user added io.github.mfat.sshpilot.png)
-            try:
-                path = os.path.abspath(os.path.dirname(__file__))
-                repo_root = path
-                while True:
-                    if os.path.exists(os.path.join(repo_root, '.git')):
-                        break
-                    parent = os.path.dirname(repo_root)
-                    if parent == repo_root:
-                        break
-                    repo_root = parent
-                candidate_files.extend([
-                    os.path.join(repo_root, 'io.github.mfat.sshpilot.svg'),
-                    os.path.join(repo_root, 'sshpilot.svg'),
-                ])
-                # package resources folder (when running from source)
-                candidate_files.append(os.path.join(os.path.dirname(__file__), 'resources', 'sshpilot.svg'))
-            except Exception:
-                pass
-            for png_path in candidate_files:
-                try:
-                    if os.path.exists(png_path):
-                        logo_texture = Gdk.Texture.new_from_filename(png_path)
-                        if logo_texture:
-                            break
-                except Exception:
-                    logo_texture = None
-        # Apply if loaded
-        if logo_texture is not None:
-            try:
-                about.set_logo(logo_texture)
-            except Exception:
-                pass
-        
-        about.present()
+        # Present the dialog as a child of this window
+        about.present(self)
 
     def open_help_url(self):
         """Open the SSH Pilot wiki in the default browser"""
