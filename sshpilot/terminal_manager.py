@@ -5,7 +5,7 @@ from gi.repository import Gio, GLib, Adw, Gdk
 from gettext import gettext as _
 
 from .terminal import TerminalWidget
-from .preferences import is_running_in_flatpak, should_hide_external_terminal_options
+from .preferences import should_hide_external_terminal_options
 
 logger = logging.getLogger(__name__)
 
