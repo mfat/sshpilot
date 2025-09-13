@@ -9,6 +9,7 @@ import os
 from typing import Dict, Any, Optional
 
 from gi.repository import Gio, GLib, GObject
+from .platform_utils import get_config_dir
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class Config(GObject.Object):
             logger.warning(f"GSettings unavailable; using JSON config: {e}")
 
         # JSON config is used either as primary or as fallback store
-        self.config_file = os.path.expanduser('~/.config/sshpilot/config.json')
+        self.config_file = os.path.join(get_config_dir(), 'config.json')
         self.config_data = self.load_json_config()
         
         # Load built-in themes

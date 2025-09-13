@@ -5,7 +5,8 @@ import logging
 import subprocess
 import shutil
 
-from .platform_utils import is_macos, is_flatpak
+from .platform_utils import is_macos, is_flatpak, get_config_dir
+
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -664,7 +665,10 @@ class PreferencesWindow(Adw.PreferencesWindow):
             # Isolated mode row
             self.isolated_mode_row = Adw.ActionRow()
             self.isolated_mode_row.set_title("Isolated Mode")
-            self.isolated_mode_row.set_subtitle("sshPilot stores its own configuration file in ~/.config/sshpilot/")
+            config_path = get_config_dir()
+            self.isolated_mode_row.set_subtitle(
+                f"sshPilot stores its own configuration file in {config_path}/"
+            )
             self.isolated_mode_radio = Gtk.CheckButton()
 
             # Group the radios for exclusive selection
