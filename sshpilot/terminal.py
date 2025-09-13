@@ -18,7 +18,6 @@ import weakref
 import subprocess
 import pwd
 from datetime import datetime
-from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
 from .port_utils import get_port_checker
 from .platform_utils import is_macos
 
@@ -796,10 +795,10 @@ class TerminalWidget(Gtk.Box):
                     # Store tmpdir for cleanup
                     self._sshpass_tmpdir = tmpdir
                 else:
-                    # sshpass not available, fallback to askpass for password prompts
-                    ensure_askpass_script()
-                    askpass_env = get_ssh_env_with_askpass_for_password(self.connection.host, self.connection.username)
-                    env.update(askpass_env)
+                    # sshpass not available – allow interactive password prompt
+                    env.pop("SSH_ASKPASS", None)
+                    env.pop("SSH_ASKPASS_REQUIRE", None)
+                    logger.warning("sshpass not available; falling back to interactive password prompt")
             elif (password_auth_selected or auth_method == 0) and not has_saved_password:
                 # Password may be required but none saved - allow interactive prompt
                 logger.debug("No saved password - using interactive prompt if required")
@@ -888,25 +887,21 @@ class TerminalWidget(Gtk.Box):
             self._on_connection_failed(str(e))
     
     def _fallback_to_askpass(self, ssh_cmd, env_list):
-        """Fallback method when sshpass fails - use askpass instead"""
+        """Fallback when sshpass fails - allow interactive prompting"""
         try:
-            logger.info("Falling back to askpass method for password authentication")
-            
+            logger.info("Falling back to interactive password prompt")
+
             # Remove sshpass from the command
-            if ssh_cmd[0] == 'sshpass':
+            if ssh_cmd and ssh_cmd[0] == 'sshpass':
                 ssh_cmd = ssh_cmd[3:]  # Remove sshpass, -f, and fifo_path
-            
-            # Set up askpass environment
-            from .askpass_utils import get_ssh_env_with_askpass_for_password
-            askpass_env = get_ssh_env_with_askpass_for_password(self.connection.host, self.connection.username)
-            
-            # Update environment list
-            for key, value in askpass_env.items():
-                env_list.append(f"{key}={value}")
-            
+
+            # Strip any askpass variables from the environment list
+            env_list = [e for e in env_list if not e.startswith('SSH_ASKPASS')]
+            env_list = [e for e in env_list if not e.startswith('SSH_ASKPASS_REQUIRE')]
+
             logger.debug(f"Fallback SSH command: {ssh_cmd}")
-            
-            # Try spawning again with askpass
+
+            # Try spawning again without askpass
             self.vte.spawn_async(
                 Vte.PtyFlags.DEFAULT,
                 os.path.expanduser('~') or '/',
@@ -920,9 +915,8 @@ class TerminalWidget(Gtk.Box):
                 self._on_spawn_complete,
                 ()
             )
-            
         except Exception as e:
-            logger.error(f"Fallback to askpass also failed: {e}")
+            logger.error(f"Fallback to interactive prompt failed: {e}")
             self._on_connection_failed(str(e))
     
     def _on_spawn_complete(self, terminal, pid, error, user_data=None):
