@@ -969,28 +969,28 @@ class TerminalWidget(Gtk.Box):
             self.vte.grab_focus()
             self.apply_theme()
 
-            # Spawn succeeded; mark as connected and hide overlay
-            self.is_connected = True
-            
-            # Update connection status in the connection manager (only for SSH connections)
-            if hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'host') and self.connection.host != 'localhost':
+            # Hide connecting overlay and any disconnected banner
+            self._set_connecting_overlay_visible(False)
+            try:
+                self._set_disconnected_banner_visible(False)
+            except Exception:
+                pass
+
+            # For SSH connections, mark as connected and notify UI components
+            if (hasattr(self, 'connection') and self.connection and
+                    getattr(self.connection, 'host', None) != 'localhost'):
+                self.is_connected = True
                 if hasattr(self, 'connection_manager') and self.connection_manager:
                     self.connection_manager.update_connection_status(self.connection, True)
                     logger.debug(f"Terminal {self.session_id} updated connection status to connected")
                 else:
                     logger.warning(f"Terminal {self.session_id} has no connection manager")
-            elif hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'host') and self.connection.host == 'localhost':
+                self.emit('connection-established')
+            elif (hasattr(self, 'connection') and self.connection and
+                  getattr(self.connection, 'host', None) == 'localhost'):
                 logger.debug(f"Local terminal {self.session_id} spawned successfully")
             else:
                 logger.warning(f"Terminal {self.session_id} has no connection object to update")
-            
-            self.emit('connection-established')
-            self._set_connecting_overlay_visible(False)
-            # Ensure any reconnect/disconnected banner is hidden upon successful spawn
-            try:
-                self._set_disconnected_banner_visible(False)
-            except Exception:
-                pass
             
         except Exception as e:
             logger.error(f"Error in spawn complete: {e}")
@@ -1045,21 +1045,23 @@ class TerminalWidget(Gtk.Box):
 
         if not self.is_connected:
             logger.warning("Flatpak: Spawn completion callback didn't fire, forcing connection state")
-            self.is_connected = True
-            
-            # Update connection status in the connection manager (only for SSH connections)
-            if hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'host') and self.connection.host != 'localhost':
+
+            # Only mark as connected for remote SSH sessions
+            if (hasattr(self, 'connection') and self.connection and
+                    getattr(self.connection, 'host', None) != 'localhost'):
+                self.is_connected = True
                 if hasattr(self, 'connection_manager') and self.connection_manager:
                     self.connection_manager.update_connection_status(self.connection, True)
                     logger.debug(f"Terminal {self.session_id} updated connection status to connected (fallback)")
                 else:
                     logger.warning(f"Terminal {self.session_id} has no connection manager (fallback)")
-            elif hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'host') and self.connection.host == 'localhost':
+                self.emit('connection-established')
+            elif (hasattr(self, 'connection') and self.connection and
+                  getattr(self.connection, 'host', None) == 'localhost'):
                 logger.debug(f"Local terminal {self.session_id} spawned successfully (fallback)")
             else:
                 logger.warning(f"Terminal {self.session_id} has no connection object to update (fallback)")
-            
-            self.emit('connection-established')
+
             self._set_connecting_overlay_visible(False)
             try:
                 self._set_disconnected_banner_visible(False)

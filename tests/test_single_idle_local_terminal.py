@@ -91,7 +91,7 @@ def test_single_idle_local_terminal_allows_close():
     import sshpilot.window as window
 
     class DummyTerm:
-        is_connected = True
+        is_connected = False
 
         def has_active_foreground_job(self):
             return False
