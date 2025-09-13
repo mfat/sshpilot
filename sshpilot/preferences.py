@@ -5,7 +5,7 @@ import logging
 import subprocess
 import shutil
 
-from .platform_utils import is_macos
+from .platform_utils import is_macos, is_flatpak, get_config_dir
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -14,10 +14,6 @@ gi.require_version('Adw', '1')
 from gi.repository import Gtk, Gdk, Adw, Pango, PangoFT2
 
 logger = logging.getLogger(__name__)
-
-def is_running_in_flatpak() -> bool:
-    """Check if running inside Flatpak sandbox"""
-    return os.path.exists("/.flatpak-info") or os.environ.get("FLATPAK_ID") is not None
 
 def macos_third_party_terminal_available() -> bool:
     """Check if a third-party terminal is available on macOS."""
@@ -57,7 +53,7 @@ def should_hide_external_terminal_options() -> bool:
     Returns True when running in Flatpak or when on macOS without a supported
     third-party terminal.
     """
-    return is_running_in_flatpak() or (
+    return is_flatpak() or (
         is_macos() and not macos_third_party_terminal_available()
     )
 
@@ -668,7 +664,10 @@ class PreferencesWindow(Adw.PreferencesWindow):
             # Isolated mode row
             self.isolated_mode_row = Adw.ActionRow()
             self.isolated_mode_row.set_title("Isolated Mode")
-            self.isolated_mode_row.set_subtitle("sshPilot stores its own configuration file in ~/.config/sshpilot/")
+            config_path = get_config_dir()
+            self.isolated_mode_row.set_subtitle(
+                f"sshPilot stores its own configuration file in {config_path}/"
+            )
             self.isolated_mode_radio = Gtk.CheckButton()
 
             # Group the radios for exclusive selection

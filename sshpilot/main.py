@@ -42,7 +42,7 @@ if not load_resources():
     sys.exit(1)
 
 from .window import MainWindow
-from .platform_utils import is_macos
+from .platform_utils import is_macos, get_data_dir
 
 class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
@@ -187,7 +187,7 @@ class SshPilotApplication(Adw.Application):
     def setup_logging(self):
         """Set up logging configuration"""
         # Create log directory if it doesn't exist
-        log_dir = os.path.expanduser('~/.local/share/sshPilot')
+        log_dir = get_data_dir()
         os.makedirs(log_dir, exist_ok=True)
 
         # Default log level is INFO for cleaner logs

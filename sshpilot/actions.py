@@ -6,7 +6,6 @@ from gettext import gettext as _
 
 from .sftp_utils import open_remote_in_file_manager
 from .preferences import (
-    is_running_in_flatpak,
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
 )
