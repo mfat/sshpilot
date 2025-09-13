@@ -1899,8 +1899,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_general = Gtk.ShortcutsGroup()
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Toggle Sidebar'), accelerator='F9'))
-        group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Toggle Sidebar'), accelerator=f"{primary}b"))
+        if mac:
+            group_general.add_shortcut(Gtk.ShortcutsShortcut(
+                title=_('Toggle Sidebar'), accelerator=f"{primary}b"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Preferences'), accelerator=f"{primary}comma"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
