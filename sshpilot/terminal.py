@@ -187,6 +187,7 @@ class SSHProcessManager:
 
                 pgid_map[pid] = pgid
                 try:
+
                     os.killpg(pgid, signal.SIGTERM)
                     logger.debug(
                         f"Sent SIGTERM to process {pid} (command: {info.get('command', 'unknown')})"
@@ -197,6 +198,7 @@ class SSHProcessManager:
             # Wait for batched processes to exit collectively
             remaining = set(pgid_map.keys()) - set(local_active)
             end_time = time.time() + 0.3  # shorter timeout for idle terminals
+
             while remaining and time.time() < end_time:
                 try:
                     waited_pid, _ = os.waitpid(-1, os.WNOHANG)
@@ -209,6 +211,7 @@ class SSHProcessManager:
 
             # Force kill any remaining batched processes
             for pid in list(remaining):
+
                 try:
                     os.killpg(pgid_map.get(pid, pid), signal.SIGKILL)
                     logger.debug(f"Force killed process {pid}")
@@ -218,6 +221,7 @@ class SSHProcessManager:
             # Handle active local jobs sequentially to respect warnings
             for pid in local_active:
                 self._terminate_process_by_pid(pid)
+
             
             # Clean up terminals separately
             for terminal in list(self.terminals):
@@ -2241,11 +2245,13 @@ class TerminalWidget(Gtk.Box):
             return False
 
     def _on_termprops_changed(self, terminal, *unused):
+
         """Handle terminal property changes for job detection (local terminals only).
 
         Args:
             terminal: The VTE terminal emitting the signal.
             *unused: Additional signal parameters ignored.
+
         """
         # Only enable job detection for local terminals
         if not self._is_local_terminal():
