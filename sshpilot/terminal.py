@@ -159,11 +159,42 @@ class SSHProcessManager:
                 # Atomically extract and clear all processes
                 processes_to_clean = dict(self.processes)
                 self.processes.clear()
-            
+
             # Clean up processes without holding the lock
+            pgid_map = {}
             for pid, info in processes_to_clean.items():
-                logger.debug(f"Cleaning up process {pid} (command: {info.get('command', 'unknown')})")
-                self._terminate_process_by_pid(pid)
+                try:
+                    pgid = os.getpgid(pid)
+                    pgid_map[pid] = pgid
+                    os.killpg(pgid, signal.SIGTERM)
+                    logger.debug(
+                        f"Sent SIGTERM to process {pid} (command: {info.get('command', 'unknown')})"
+                    )
+                except Exception as e:
+                    logger.debug(f"Failed to send SIGTERM to {pid}: {e}")
+
+            # Wait for all processes to exit collectively
+            remaining = set(pgid_map.keys())
+            end_time = time.time() + 1.0  # 1 second max for all processes
+            while remaining and time.time() < end_time:
+                try:
+                    waited_pid, _ = os.waitpid(-1, os.WNOHANG)
+                    if waited_pid == 0:
+                        time.sleep(0.05)
+                        continue
+                    if waited_pid in remaining:
+                        remaining.remove(waited_pid)
+                except ChildProcessError:
+                    # No child processes remain
+                    break
+
+            # Force kill any remaining processes
+            for pid in remaining:
+                try:
+                    os.killpg(pgid_map.get(pid, pid), signal.SIGKILL)
+                    logger.debug(f"Force killed process {pid}")
+                except Exception as e:
+                    logger.debug(f"Failed to force kill {pid}: {e}")
             
             # Clean up terminals separately
             for terminal in list(self.terminals):
@@ -2186,8 +2217,14 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             return False
 
-    def _on_termprops_changed(self, terminal, ids):
-        """Handle terminal properties changes for job detection (local terminals only)"""
+    def _on_termprops_changed(self, terminal, _changed, _ids):
+        """Handle terminal property changes for job detection (local terminals only).
+
+        Args:
+            terminal: The VTE terminal emitting the signal.
+            _changed: Number of changed properties (unused).
+            _ids: Sequence of changed termprop identifiers (unused).
+        """
         # Only enable job detection for local terminals
         if not self._is_local_terminal():
             return
