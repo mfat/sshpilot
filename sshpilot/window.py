@@ -39,7 +39,6 @@ from .config import Config
 from .key_manager import KeyManager, SSHKey
 # Port forwarding UI is now integrated into connection_dialog.py
 from .connection_dialog import ConnectionDialog
-from .askpass_utils import ensure_askpass_script
 from .preferences import (
     PreferencesWindow,
     is_running_in_flatpak,
@@ -1026,11 +1025,29 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tab_overview.set_view(self.tab_view)
         self.tab_overview.set_enable_new_tab(False)
         self.tab_overview.set_enable_search(True)
+        # Hide window buttons in tab overview
+        self.tab_overview.set_show_start_title_buttons(False)
+        self.tab_overview.set_show_end_title_buttons(False)
         
         # Create tab bar
         self.tab_bar = Adw.TabBar()
         self.tab_bar.set_view(self.tab_view)
-        self.tab_bar.set_autohide(False)
+        self.tab_bar.set_autohide(True)
+        
+        # Add local terminal button before the tabs
+        self.local_terminal_button = Gtk.Button()
+        self.local_terminal_button.set_icon_name('utilities-terminal-symbolic')
+        self.local_terminal_button.add_css_class('flat')  # Make button flat
+        
+        # Set tooltip with keyboard shortcut
+        mac = is_macos()
+        primary = '⌘' if mac else 'Ctrl'
+        shift = '⇧' if mac else 'Shift'
+        shortcut_text = f'{primary}+{shift}+T'
+        self.local_terminal_button.set_tooltip_text(_('Open Local Terminal ({})').format(shortcut_text))
+        
+        self.local_terminal_button.connect('clicked', self.on_local_terminal_button_clicked)
+        self.tab_bar.set_start_action_widget(self.local_terminal_button)
         
         # Create tab content box
         tab_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -1899,8 +1916,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_general = Gtk.ShortcutsGroup()
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Toggle Sidebar'), accelerator='F9'))
-        group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Toggle Sidebar'), accelerator=f"{primary}b"))
+        if mac:
+            group_general.add_shortcut(Gtk.ShortcutsShortcut(
+                title=_('Toggle Sidebar'), accelerator=f"{primary}b"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Preferences'), accelerator=f"{primary}comma"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
@@ -2617,12 +2635,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     import atexit
                     atexit.register(cleanup_tmpdir)
                 else:
-                    # sshpass not available, fallback to askpass
-                    logger.debug("Main window: sshpass not available, falling back to askpass")
-                    from .askpass_utils import get_ssh_env_with_askpass
-                    askpass_env = get_ssh_env_with_askpass()
-                    logger.debug(f"Main window: Askpass environment variables: {list(askpass_env.keys())}")
-                    env.update(askpass_env)
+                    # sshpass not available – allow interactive password prompt
+                    logger.warning("Main window: sshpass not available, falling back to interactive prompt")
+                    env.pop("SSH_ASKPASS", None)
+                    env.pop("SSH_ASKPASS_REQUIRE", None)
             elif (prefer_password or combined_auth) and not has_saved_password:
                 # Password may be required but none saved - let SSH prompt interactively
                 # Don't set any askpass environment variables
@@ -3053,13 +3069,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             # Handle environment variables for authentication
             env = os.environ.copy()
-            
+
             # Check if we have stored askpass environment from key passphrase handling
             if hasattr(self, '_scp_askpass_env') and self._scp_askpass_env:
                 env.update(self._scp_askpass_env)
                 logger.debug(f"SCP: Using askpass environment for key passphrase: {list(self._scp_askpass_env.keys())}")
                 # Clear the stored environment after use
                 self._scp_askpass_env = {}
+
+            # If sshpass was unavailable earlier, ensure askpass is cleared
+            if getattr(self, '_scp_strip_askpass', False):
+                env.pop("SSH_ASKPASS", None)
+                env.pop("SSH_ASKPASS_REQUIRE", None)
+                logger.debug("SCP: Removed SSH_ASKPASS variables for interactive password prompt")
+                self._scp_strip_askpass = False
                 
                 # For key-based auth, ensure the key is loaded in SSH agent first
                 try:
@@ -3304,14 +3327,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             import atexit
                             atexit.register(cleanup_tmpdir)
                         else:
-                            # sshpass not available → use askpass env (same pattern as in ssh-copy-id path)
-                            from .askpass_utils import get_ssh_env_with_askpass
-                            askpass_env = get_ssh_env_with_askpass("force")
-                            # Store for later use in the main execution
-                            if not hasattr(self, '_scp_askpass_env'):
-                                self._scp_askpass_env = {}
-                            self._scp_askpass_env.update(askpass_env)
-                            logger.debug("SCP: sshpass unavailable, using SSH_ASKPASS fallback")
+                            # sshpass not available – allow interactive password prompt
+                            logger.warning("SCP: sshpass unavailable, falling back to interactive prompt")
+                            self._scp_strip_askpass = True
                     else:
                         # No saved password - will use interactive prompt
                         logger.debug("SCP: Password auth selected but no saved password - using interactive prompt")
@@ -3581,6 +3599,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if hasattr(self, 'view_toggle_button'):
                 self.view_toggle_button.set_visible(True)
 
+    def on_local_terminal_button_clicked(self, button):
+        """Handle local terminal button click"""
+        try:
+            logger.info("Local terminal button clicked")
+            self.terminal_manager.show_local_terminal()
+        except Exception as e:
+            logger.error(f"Failed to open local terminal: {e}")
+
     def on_tab_button_clicked(self, button):
         """Handle tab button click to open/close tab overview and switch to tab view"""
         try:
@@ -3793,15 +3819,39 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
         # Check for active connections across all tabs
         actually_connected = {}
+        local_terminals = []
+        ssh_terminals = []
+        
         for conn, terms in self.connection_to_terminals.items():
             for term in terms:
                 if getattr(term, 'is_connected', False):
                     actually_connected.setdefault(conn, []).append(term)
-        if actually_connected:
+                    # Categorize terminals
+                    if hasattr(term, '_is_local_terminal') and term._is_local_terminal():
+                        local_terminals.append(term)
+                    else:
+                        ssh_terminals.append(term)
+        
+        # If there are SSH terminals, always show warning
+        if ssh_terminals:
             self.show_quit_confirmation_dialog()
             return True  # Prevent close, let dialog handle it
         
-        # No active connections, safe to close
+        # If there are only local terminals, check their job status
+        if local_terminals:
+            # Check if any local terminal has an active job
+            has_active_jobs = False
+            for term in local_terminals:
+                if hasattr(term, 'has_active_job') and term.has_active_job():
+                    has_active_jobs = True
+                    break
+            
+            # If any local terminal has an active job, show warning
+            if has_active_jobs:
+                self.show_quit_confirmation_dialog()
+                return True  # Prevent close, let dialog handle it
+        
+        # No active connections or all local terminals are idle, safe to close
         return False  # Allow close
 
     def show_quit_confirmation_dialog(self):
@@ -3812,24 +3862,45 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.debug(f"Failed to bring window to foreground: {e}")
         
-        # Only count terminals that are actually connected across all tabs
+        # Categorize connected terminals
         connected_items = []
+        local_terminals = []
+        ssh_terminals = []
+        
         for conn, terms in self.connection_to_terminals.items():
             for term in terms:
                 if getattr(term, 'is_connected', False):
                     connected_items.append((conn, term))
-        active_count = len(connected_items)
-        connection_names = [conn.nickname for conn, _ in connected_items]
+                    # Categorize terminals
+                    if hasattr(term, '_is_local_terminal') and term._is_local_terminal():
+                        local_terminals.append((conn, term))
+                    else:
+                        ssh_terminals.append((conn, term))
         
-        if active_count == 1:
-            message = f"You have 1 active SSH connection to '{connection_names[0]}'."
-            detail = "Closing the application will disconnect this connection."
+        active_count = len(connected_items)
+        
+        # Determine dialog content based on terminal types
+        if ssh_terminals:
+            # SSH terminals present - use original messaging
+            if active_count == 1:
+                message = f"You have 1 open terminal tab."
+                detail = "Closing the application will disconnect this connection."
+            else:
+                message = f"You have {active_count} open terminal tabs."
+                detail = f"Closing the application will disconnect all connections."
+            heading = "Active SSH Connections"
         else:
-            message = f"You have {active_count} active SSH connections."
-            detail = f"Closing the application will disconnect all connections:\n• " + "\n• ".join(connection_names)
+            # Only local terminals with active jobs
+            if active_count == 1:
+                message = f"You have 1 local terminal with an active job."
+                detail = "Closing the application will terminate the running process."
+            else:
+                message = f"You have {active_count} local terminals with active jobs."
+                detail = f"Closing the application will terminate all running processes."
+            heading = "Active Local Terminal Jobs"
         
         dialog = Adw.AlertDialog()
-        dialog.set_heading("Active SSH Connections")
+        dialog.set_heading(heading)
         dialog.set_body(f"{message}\n\n{detail}")
         
         dialog.add_response('cancel', 'Cancel')

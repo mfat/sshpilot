@@ -257,3 +257,79 @@ class TerminalManager:
                 page.set_title(f"{terminal.connection.nickname} - {title}")
             else:
                 page.set_title(terminal.connection.nickname)
+
+    def get_terminal_job_status(self, terminal):
+        """
+        Get the job status of a terminal.
+        Only works for local terminals.
+        
+        Args:
+            terminal: TerminalWidget instance
+            
+        Returns:
+            dict: Job status information including idle state and status string
+        """
+        if not hasattr(terminal, 'is_terminal_idle'):
+            return {
+                'is_idle': False,
+                'has_active_job': False,
+                'status': 'UNKNOWN',
+                'error': 'Terminal does not support job detection'
+            }
+        
+        try:
+            is_idle = terminal.is_terminal_idle()
+            has_active_job = terminal.has_active_job()
+            status = terminal.get_job_status()
+            
+            # Check if this is an SSH terminal
+            is_ssh = status == "SSH_TERMINAL"
+            
+            return {
+                'is_idle': is_idle,
+                'has_active_job': has_active_job,
+                'status': status,
+                'is_ssh_terminal': is_ssh,
+                'error': None
+            }
+        except Exception as e:
+            return {
+                'is_idle': False,
+                'has_active_job': False,
+                'status': 'ERROR',
+                'is_ssh_terminal': False,
+                'error': str(e)
+            }
+
+    def get_all_terminal_job_statuses(self):
+        """
+        Get job status for all active terminals.
+        Only local terminals will have meaningful job detection.
+        
+        Returns:
+            list: List of dicts with terminal info and job status
+        """
+        statuses = []
+        
+        for i in range(self.window.tab_view.get_n_pages()):
+            page = self.window.tab_view.get_nth_page(i)
+            if page is None:
+                continue
+                
+            terminal_widget = page.get_child()
+            if terminal_widget is None or not hasattr(terminal_widget, 'vte'):
+                continue
+            
+            # Get connection info
+            connection_info = terminal_widget.get_connection_info() if hasattr(terminal_widget, 'get_connection_info') else None
+            
+            # Get job status
+            job_status = self.get_terminal_job_status(terminal_widget)
+            
+            statuses.append({
+                'page_title': page.get_title(),
+                'connection_info': connection_info,
+                'job_status': job_status
+            })
+        
+        return statuses

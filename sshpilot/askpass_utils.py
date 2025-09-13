@@ -289,8 +289,17 @@ def get_ssh_env_with_askpass(require: str = "prefer") -> dict:
     return env
 
 def get_ssh_env_with_askpass_for_password(host: str, username: str) -> dict:
-    """Get SSH environment with askpass for password authentication"""
-    env = get_ssh_env_with_askpass("force")
+    """Return a copy of the environment without SSH_ASKPASS variables.
+
+    Previously this helper forced use of the askpass script for password
+    authentication.  We now want the OpenSSH client to prompt the user
+    directly when sshpass is unavailable, so we explicitly strip any
+    askpass related variables that might interfere with interactive
+    prompts.
+    """
+    env = os.environ.copy()
+    env.pop("SSH_ASKPASS", None)
+    env.pop("SSH_ASKPASS_REQUIRE", None)
     return env
 
 def get_ssh_env_with_forced_askpass() -> dict:

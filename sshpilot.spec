@@ -66,6 +66,7 @@ datas += [
     (os.path.join(hb_share, "gtk-4.0"),               "Resources/share/gtk-4.0"),
     ("sshpilot", "sshpilot"),
     ("sshpilot/resources/sshpilot.gresource", "Resources/sshpilot"),
+    ("sshpilot/io.github.mfat.sshpilot.svg", "share/icons"),
 ]
 
 # Add keyring package files explicitly

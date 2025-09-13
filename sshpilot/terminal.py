@@ -18,7 +18,6 @@ import weakref
 import subprocess
 import pwd
 from datetime import datetime
-from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
 from .port_utils import get_port_checker
 from .platform_utils import is_macos
 
@@ -117,17 +116,22 @@ class SSHProcessManager:
             # Always try process group first
             pgid = os.getpgid(pid)
             os.killpg(pgid, signal.SIGTERM)
-            
-            # Wait with timeout
-            for _ in range(10):  # 1 second max
+
+            # Wait with shorter timeout for faster cleanup
+            for _ in range(3):  # 0.3 seconds max (reduced from 1 second)
                 try:
                     os.killpg(pgid, 0)
                     time.sleep(0.1)
                 except ProcessLookupError:
-                    return True
-                    
-            # Force kill if still alive
-            os.killpg(pgid, signal.SIGKILL)
+                    break
+            else:
+                # Force kill if still alive
+                os.killpg(pgid, signal.SIGKILL)
+
+            try:
+                os.waitpid(pid, os.WNOHANG)
+            except (ChildProcessError, OSError):
+                pass
             return True
         except Exception:
             return False
@@ -217,6 +221,10 @@ class TerminalWidget(Gtk.Box):
         self._is_quitting = False  # Flag to suppress signal handlers during quit
         self.last_error_message = None  # Store last SSH error for reporting
         self._fallback_timer_id = None  # GLib timeout ID for spawn fallback
+        
+        # Job detection state
+        self._job_status = "UNKNOWN"  # IDLE, RUNNING, PROMPT, UNKNOWN
+        self._shell_pgid = None  # Store shell process group ID for shell-agnostic detection
         
         # Register with process manager
         process_manager.register_terminal(self)
@@ -382,6 +390,7 @@ class TerminalWidget(Gtk.Box):
         # Connect terminal signals and store handler IDs for cleanup
         self._child_exited_handler = self.vte.connect('child-exited', self.on_child_exited)
         self._title_changed_handler = self.vte.connect('window-title-changed', self.on_title_changed)
+        self._termprops_changed_handler = self.vte.connect('termprops-changed', self._on_termprops_changed)
         
         # Apply theme
         self.force_style_refresh()
@@ -796,10 +805,10 @@ class TerminalWidget(Gtk.Box):
                     # Store tmpdir for cleanup
                     self._sshpass_tmpdir = tmpdir
                 else:
-                    # sshpass not available, fallback to askpass for password prompts
-                    ensure_askpass_script()
-                    askpass_env = get_ssh_env_with_askpass_for_password(self.connection.host, self.connection.username)
-                    env.update(askpass_env)
+                    # sshpass not available – allow interactive password prompt
+                    env.pop("SSH_ASKPASS", None)
+                    env.pop("SSH_ASKPASS_REQUIRE", None)
+                    logger.warning("sshpass not available; falling back to interactive password prompt")
             elif (password_auth_selected or auth_method == 0) and not has_saved_password:
                 # Password may be required but none saved - allow interactive prompt
                 logger.debug("No saved password - using interactive prompt if required")
@@ -888,25 +897,21 @@ class TerminalWidget(Gtk.Box):
             self._on_connection_failed(str(e))
     
     def _fallback_to_askpass(self, ssh_cmd, env_list):
-        """Fallback method when sshpass fails - use askpass instead"""
+        """Fallback when sshpass fails - allow interactive prompting"""
         try:
-            logger.info("Falling back to askpass method for password authentication")
-            
+            logger.info("Falling back to interactive password prompt")
+
             # Remove sshpass from the command
-            if ssh_cmd[0] == 'sshpass':
+            if ssh_cmd and ssh_cmd[0] == 'sshpass':
                 ssh_cmd = ssh_cmd[3:]  # Remove sshpass, -f, and fifo_path
-            
-            # Set up askpass environment
-            from .askpass_utils import get_ssh_env_with_askpass_for_password
-            askpass_env = get_ssh_env_with_askpass_for_password(self.connection.host, self.connection.username)
-            
-            # Update environment list
-            for key, value in askpass_env.items():
-                env_list.append(f"{key}={value}")
-            
+
+            # Strip any askpass variables from the environment list
+            env_list = [e for e in env_list if not e.startswith('SSH_ASKPASS')]
+            env_list = [e for e in env_list if not e.startswith('SSH_ASKPASS_REQUIRE')]
+
             logger.debug(f"Fallback SSH command: {ssh_cmd}")
-            
-            # Try spawning again with askpass
+
+            # Try spawning again without askpass
             self.vte.spawn_async(
                 Vte.PtyFlags.DEFAULT,
                 os.path.expanduser('~') or '/',
@@ -920,9 +925,8 @@ class TerminalWidget(Gtk.Box):
                 self._on_spawn_complete,
                 ()
             )
-            
         except Exception as e:
-            logger.error(f"Fallback to askpass also failed: {e}")
+            logger.error(f"Fallback to interactive prompt failed: {e}")
             self._on_connection_failed(str(e))
     
     def _on_spawn_complete(self, terminal, pid, error, user_data=None):
@@ -959,6 +963,10 @@ class TerminalWidget(Gtk.Box):
             # Get and store process group ID
             self.process_pgid = os.getpgid(pid)
             logger.debug(f"Process group ID: {self.process_pgid}")
+            
+            # Store shell PGID for job detection (this is the shell's process group)
+            self._shell_pgid = self.process_pgid
+            logger.debug(f"Shell PGID stored for job detection: {self._shell_pgid}")
             
             # Store process info for cleanup
             with process_manager.lock:
@@ -1678,6 +1686,9 @@ class TerminalWidget(Gtk.Box):
                 if hasattr(self, '_title_changed_handler'):
                     self.vte.disconnect(self._title_changed_handler)
                     logger.debug("Disconnected title-changed signal handler")
+                if hasattr(self, '_termprops_changed_handler'):
+                    self.vte.disconnect(self._termprops_changed_handler)
+                    logger.debug("Disconnected termprops-changed signal handler")
             except Exception as e:
                 logger.error(f"Error disconnecting VTE signals: {e}")
         
@@ -1738,7 +1749,7 @@ class TerminalWidget(Gtk.Box):
         """Clean up a process by PID"""
         if not pid:
             return False
-            
+
         try:
             # Try to get process info from manager first
             pgid = None
@@ -1756,35 +1767,51 @@ class TerminalWidget(Gtk.Box):
             
             # First try a clean termination
             try:
+                if pgid:
+                    try:
+                        os.killpg(pgid, signal.SIGTERM)
+                        logger.debug(
+                            f"Sent SIGTERM to process group {pgid}"
+                        )
+                    except ProcessLookupError:
+                        logger.debug(
+                            f"Process group {pgid} already terminated"
+                        )
                 os.kill(pid, signal.SIGTERM)
                 logger.debug(f"Sent SIGTERM to process {pid} (PGID: {pgid})")
-                
-                # Wait for clean termination
-                for _ in range(5):  # Wait up to 0.5 seconds
+
+
+                # Wait for clean termination (shorter timeout for faster cleanup)
+                for _ in range(2):  # Wait up to 0.2 seconds (reduced from 0.5 seconds)
                     try:
                         os.kill(pid, 0)
                         time.sleep(0.1)
                     except ProcessLookupError:
                         logger.debug(f"Process {pid} terminated cleanly")
-                        return True
-                
-                # If still running, force kill
-                try:
-                    os.kill(pid, 0)  # Check if still exists
-                    logger.debug(f"Process {pid} still running, sending SIGKILL")
-                    if pgid:
-                        try:
-                            os.killpg(pgid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                    os.kill(pid, signal.SIGKILL)
-                    return True
-                except ProcessLookupError:
-                    return True
-                    
+                        break
+                else:
+                    # If still running, force kill
+                    try:
+                        os.kill(pid, 0)  # Check if still exists
+                        logger.debug(f"Process {pid} still running, sending SIGKILL")
+                        if pgid:
+                            try:
+                                os.killpg(pgid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
             except ProcessLookupError:
-                return True
-                
+                pass
+
+            try:
+                os.waitpid(pid, os.WNOHANG)
+            except (ChildProcessError, OSError):
+                pass
+            return True
+
         except Exception as e:
             logger.error(f"Error terminating process {pid}: {e}")
             return False
@@ -2169,3 +2196,149 @@ class TerminalWidget(Gtk.Box):
                 'connected': self.is_connected
             }
         return None
+
+    def _is_local_terminal(self):
+        """Check if this is a local terminal (not SSH)"""
+        try:
+            if not hasattr(self, 'connection') or not self.connection:
+                return False
+            return (hasattr(self.connection, 'host') and 
+                   self.connection.host == 'localhost')
+        except Exception:
+            return False
+
+    def _on_termprops_changed(self, terminal, ids, user_data=None):
+        """Handle terminal properties changes for job detection (local terminals only)"""
+        # Only enable job detection for local terminals
+        if not self._is_local_terminal():
+            return
+            
+        try:
+            # Check which properties changed - ids should be a list of VteTerminalProp values
+            if not ids:
+                return
+                
+            # Convert ids to a set for efficient lookup if it's not already
+            changed_props = set(ids) if hasattr(ids, '__iter__') else {ids}
+            
+            # Check if job finished (also gives exit status)
+            if Vte.TERMPROP_SHELL_POSTEXEC in changed_props:
+                ok, code = terminal.get_termprop_uint(Vte.TERMPROP_SHELL_POSTEXEC)
+                if ok:
+                    self._job_status = "IDLE"
+                    logger.debug(f"Local terminal job finished with exit code: {code}")
+                    return
+            
+            # Check if job is running
+            if Vte.TERMPROP_SHELL_PREEXEC in changed_props:
+                ok, _ = terminal.get_termprop_value(Vte.TERMPROP_SHELL_PREEXEC)
+                if ok:
+                    self._job_status = "RUNNING"
+                    logger.debug("Local terminal job is running")
+                    return
+            
+            # Check if prompt is visible
+            if Vte.TERMPROP_SHELL_PRECMD in changed_props:
+                ok, _ = terminal.get_termprop_value(Vte.TERMPROP_SHELL_PRECMD)
+                if ok:
+                    self._job_status = "PROMPT"
+                    logger.debug("Local terminal prompt is visible")
+                    return
+                
+        except Exception as e:
+            logger.debug(f"Error in termprops changed handler: {e}")
+
+    def is_terminal_idle(self):
+        """
+        Check if the terminal is idle (no active job running).
+        Only works for local terminals.
+        
+        Returns:
+            bool: True if terminal is idle, False if job is running or unknown.
+                  For SSH terminals, always returns False.
+        """
+        # Only enable job detection for local terminals
+        if not self._is_local_terminal():
+            logger.debug("Job detection not available for SSH terminals")
+            return False
+            
+        try:
+            # First try VTE termprops method (shell-specific)
+            if self._job_status in ["IDLE", "PROMPT"]:
+                return True
+            elif self._job_status == "RUNNING":
+                return False
+            
+            # Fall back to shell-agnostic PTY method
+            return self._is_terminal_idle_pty()
+            
+        except Exception as e:
+            logger.debug(f"Error checking terminal idle state: {e}")
+            return False
+
+    def _is_terminal_idle_pty(self):
+        """
+        Shell-agnostic check using PTY FD and POSIX job control.
+        Only works for local terminals.
+        
+        Returns:
+            bool: True if terminal is idle (at prompt), False if job is running
+        """
+        # Only enable job detection for local terminals
+        if not self._is_local_terminal():
+            return False
+            
+        try:
+            if not hasattr(self, 'vte') or not self.vte:
+                return False
+                
+            pty = self.vte.get_pty()
+            if not pty:
+                return False
+                
+            fd = pty.get_fd()
+            if fd < 0:
+                return False
+            
+            # Get foreground process group
+            fg_pgid = os.tcgetpgrp(fd)
+            
+            # If we have stored shell PGID, compare with foreground PGID
+            if self._shell_pgid is not None:
+                idle = (fg_pgid == self._shell_pgid)
+                logger.debug(f"Local terminal PTY job detection: fg_pgid={fg_pgid}, shell_pgid={self._shell_pgid}, idle={idle}")
+                return idle
+            
+            # If no shell PGID stored, assume idle (conservative approach)
+            logger.debug(f"Local terminal PTY job detection: fg_pgid={fg_pgid}, no shell_pgid stored, assuming idle")
+            return True
+            
+        except Exception as e:
+            logger.debug(f"Error in PTY job detection: {e}")
+            return False
+
+    def get_job_status(self):
+        """
+        Get the current job status of the terminal.
+        Only works for local terminals.
+        
+        Returns:
+            str: Current status - "IDLE", "RUNNING", "PROMPT", "UNKNOWN", or "SSH_TERMINAL"
+        """
+        if not self._is_local_terminal():
+            return "SSH_TERMINAL"
+        return self._job_status
+
+    def has_active_job(self):
+        """
+        Check if the terminal has an active job running.
+        Only works for local terminals.
+        
+        Returns:
+            bool: True if job is running, False if idle or unknown.
+                  For SSH terminals, always returns False.
+        """
+        if not self._is_local_terminal():
+            logger.debug("Job detection not available for SSH terminals")
+            return False
+        return self._job_status == "RUNNING" or (self._job_status == "UNKNOWN" and not self._is_terminal_idle_pty())
