@@ -41,3 +41,4 @@ def test_get_data_dir(monkeypatch, tmp_path):
     )
     expected = os.path.join(str(tmp_path / "data"), "sshpilot")
     assert platform_utils.get_data_dir() == expected
+

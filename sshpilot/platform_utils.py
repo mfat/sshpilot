@@ -27,3 +27,4 @@ def get_config_dir() -> str:
 def get_data_dir() -> str:
     """Return the per-user data directory for sshPilot."""
     return os.path.join(GLib.get_user_data_dir(), APP_NAME)
+

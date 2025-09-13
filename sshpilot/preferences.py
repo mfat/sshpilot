@@ -7,6 +7,7 @@ import shutil
 
 from .platform_utils import is_macos, is_flatpak, get_config_dir
 
+
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Gdk', '4.0')
