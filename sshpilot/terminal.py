@@ -217,6 +217,10 @@ class TerminalWidget(Gtk.Box):
         self.last_error_message = None  # Store last SSH error for reporting
         self._fallback_timer_id = None  # GLib timeout ID for spawn fallback
         
+        # Job detection state
+        self._job_status = "UNKNOWN"  # IDLE, RUNNING, PROMPT, UNKNOWN
+        self._shell_pgid = None  # Store shell process group ID for shell-agnostic detection
+        
         # Register with process manager
         process_manager.register_terminal(self)
         
@@ -381,6 +385,7 @@ class TerminalWidget(Gtk.Box):
         # Connect terminal signals and store handler IDs for cleanup
         self._child_exited_handler = self.vte.connect('child-exited', self.on_child_exited)
         self._title_changed_handler = self.vte.connect('window-title-changed', self.on_title_changed)
+        self._termprops_changed_handler = self.vte.connect('termprops-changed', self._on_termprops_changed)
         
         # Apply theme
         self.force_style_refresh()
@@ -953,6 +958,10 @@ class TerminalWidget(Gtk.Box):
             # Get and store process group ID
             self.process_pgid = os.getpgid(pid)
             logger.debug(f"Process group ID: {self.process_pgid}")
+            
+            # Store shell PGID for job detection (this is the shell's process group)
+            self._shell_pgid = self.process_pgid
+            logger.debug(f"Shell PGID stored for job detection: {self._shell_pgid}")
             
             # Store process info for cleanup
             with process_manager.lock:
@@ -1672,6 +1681,9 @@ class TerminalWidget(Gtk.Box):
                 if hasattr(self, '_title_changed_handler'):
                     self.vte.disconnect(self._title_changed_handler)
                     logger.debug("Disconnected title-changed signal handler")
+                if hasattr(self, '_termprops_changed_handler'):
+                    self.vte.disconnect(self._termprops_changed_handler)
+                    logger.debug("Disconnected termprops-changed signal handler")
             except Exception as e:
                 logger.error(f"Error disconnecting VTE signals: {e}")
         
@@ -2163,3 +2175,139 @@ class TerminalWidget(Gtk.Box):
                 'connected': self.is_connected
             }
         return None
+
+    def _is_local_terminal(self):
+        """Check if this is a local terminal (not SSH)"""
+        try:
+            if not hasattr(self, 'connection') or not self.connection:
+                return False
+            return (hasattr(self.connection, 'host') and 
+                   self.connection.host == 'localhost')
+        except Exception:
+            return False
+
+    def _on_termprops_changed(self, terminal, ids):
+        """Handle terminal properties changes for job detection (local terminals only)"""
+        # Only enable job detection for local terminals
+        if not self._is_local_terminal():
+            return
+            
+        try:
+            # Check if job finished (also gives exit status)
+            ok, code = terminal.get_termprop_uint(Vte.TERMPROP_SHELL_POSTEXEC)
+            if ok:
+                self._job_status = "IDLE"
+                logger.debug(f"Local terminal job finished with exit code: {code}")
+                return
+            
+            # Check if job is running
+            ok, _ = terminal.get_termprop_value(Vte.TERMPROP_SHELL_PREEXEC)
+            if ok:
+                self._job_status = "RUNNING"
+                logger.debug("Local terminal job is running")
+                return
+            
+            # Check if prompt is visible
+            ok, _ = terminal.get_termprop_value(Vte.TERMPROP_SHELL_PRECMD)
+            if ok:
+                self._job_status = "PROMPT"
+                logger.debug("Local terminal prompt is visible")
+                return
+                
+        except Exception as e:
+            logger.debug(f"Error in termprops changed handler: {e}")
+
+    def is_terminal_idle(self):
+        """
+        Check if the terminal is idle (no active job running).
+        Only works for local terminals.
+        
+        Returns:
+            bool: True if terminal is idle, False if job is running or unknown.
+                  For SSH terminals, always returns False.
+        """
+        # Only enable job detection for local terminals
+        if not self._is_local_terminal():
+            logger.debug("Job detection not available for SSH terminals")
+            return False
+            
+        try:
+            # First try VTE termprops method (shell-specific)
+            if self._job_status in ["IDLE", "PROMPT"]:
+                return True
+            elif self._job_status == "RUNNING":
+                return False
+            
+            # Fall back to shell-agnostic PTY method
+            return self._is_terminal_idle_pty()
+            
+        except Exception as e:
+            logger.debug(f"Error checking terminal idle state: {e}")
+            return False
+
+    def _is_terminal_idle_pty(self):
+        """
+        Shell-agnostic check using PTY FD and POSIX job control.
+        Only works for local terminals.
+        
+        Returns:
+            bool: True if terminal is idle (at prompt), False if job is running
+        """
+        # Only enable job detection for local terminals
+        if not self._is_local_terminal():
+            return False
+            
+        try:
+            if not hasattr(self, 'vte') or not self.vte:
+                return False
+                
+            pty = self.vte.get_pty()
+            if not pty:
+                return False
+                
+            fd = pty.get_fd()
+            if fd < 0:
+                return False
+            
+            # Get foreground process group
+            fg_pgid = os.tcgetpgrp(fd)
+            
+            # If we have stored shell PGID, compare with foreground PGID
+            if self._shell_pgid is not None:
+                idle = (fg_pgid == self._shell_pgid)
+                logger.debug(f"Local terminal PTY job detection: fg_pgid={fg_pgid}, shell_pgid={self._shell_pgid}, idle={idle}")
+                return idle
+            
+            # If no shell PGID stored, assume idle (conservative approach)
+            logger.debug(f"Local terminal PTY job detection: fg_pgid={fg_pgid}, no shell_pgid stored, assuming idle")
+            return True
+            
+        except Exception as e:
+            logger.debug(f"Error in PTY job detection: {e}")
+            return False
+
+    def get_job_status(self):
+        """
+        Get the current job status of the terminal.
+        Only works for local terminals.
+        
+        Returns:
+            str: Current status - "IDLE", "RUNNING", "PROMPT", "UNKNOWN", or "SSH_TERMINAL"
+        """
+        if not self._is_local_terminal():
+            return "SSH_TERMINAL"
+        return self._job_status
+
+    def has_active_job(self):
+        """
+        Check if the terminal has an active job running.
+        Only works for local terminals.
+        
+        Returns:
+            bool: True if job is running, False if idle or unknown.
+                  For SSH terminals, always returns False.
+        """
+        if not self._is_local_terminal():
+            logger.debug("Job detection not available for SSH terminals")
+            return False
+        return self._job_status == "RUNNING" or (self._job_status == "UNKNOWN" and not self._is_terminal_idle_pty())

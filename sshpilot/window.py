@@ -3819,15 +3819,39 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
         # Check for active connections across all tabs
         actually_connected = {}
+        local_terminals = []
+        ssh_terminals = []
+        
         for conn, terms in self.connection_to_terminals.items():
             for term in terms:
                 if getattr(term, 'is_connected', False):
                     actually_connected.setdefault(conn, []).append(term)
-        if actually_connected:
+                    # Categorize terminals
+                    if hasattr(term, '_is_local_terminal') and term._is_local_terminal():
+                        local_terminals.append(term)
+                    else:
+                        ssh_terminals.append(term)
+        
+        # If there are SSH terminals, always show warning
+        if ssh_terminals:
             self.show_quit_confirmation_dialog()
             return True  # Prevent close, let dialog handle it
         
-        # No active connections, safe to close
+        # If there are only local terminals, check their job status
+        if local_terminals:
+            # Check if any local terminal has an active job
+            has_active_jobs = False
+            for term in local_terminals:
+                if hasattr(term, 'has_active_job') and term.has_active_job():
+                    has_active_jobs = True
+                    break
+            
+            # If any local terminal has an active job, show warning
+            if has_active_jobs:
+                self.show_quit_confirmation_dialog()
+                return True  # Prevent close, let dialog handle it
+        
+        # No active connections or all local terminals are idle, safe to close
         return False  # Allow close
 
     def show_quit_confirmation_dialog(self):
@@ -3838,24 +3862,45 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.debug(f"Failed to bring window to foreground: {e}")
         
-        # Only count terminals that are actually connected across all tabs
+        # Categorize connected terminals
         connected_items = []
+        local_terminals = []
+        ssh_terminals = []
+        
         for conn, terms in self.connection_to_terminals.items():
             for term in terms:
                 if getattr(term, 'is_connected', False):
                     connected_items.append((conn, term))
-        active_count = len(connected_items)
-        connection_names = [conn.nickname for conn, _ in connected_items]
+                    # Categorize terminals
+                    if hasattr(term, '_is_local_terminal') and term._is_local_terminal():
+                        local_terminals.append((conn, term))
+                    else:
+                        ssh_terminals.append((conn, term))
         
-        if active_count == 1:
-            message = f"You have 1 open terminal tab."
-            detail = "Closing the application will disconnect this connection."
+        active_count = len(connected_items)
+        
+        # Determine dialog content based on terminal types
+        if ssh_terminals:
+            # SSH terminals present - use original messaging
+            if active_count == 1:
+                message = f"You have 1 open terminal tab."
+                detail = "Closing the application will disconnect this connection."
+            else:
+                message = f"You have {active_count} open terminal tabs."
+                detail = f"Closing the application will disconnect all connections."
+            heading = "Active SSH Connections"
         else:
-            message = f"You have {active_count} open terminal tabs."
-            detail = f"Closing the application will disconnect all connections."
+            # Only local terminals with active jobs
+            if active_count == 1:
+                message = f"You have 1 local terminal with an active job."
+                detail = "Closing the application will terminate the running process."
+            else:
+                message = f"You have {active_count} local terminals with active jobs."
+                detail = f"Closing the application will terminate all running processes."
+            heading = "Active Local Terminal Jobs"
         
         dialog = Adw.AlertDialog()
-        dialog.set_heading("Active SSH Connections")
+        dialog.set_heading(heading)
         dialog.set_body(f"{message}\n\n{detail}")
         
         dialog.add_response('cancel', 'Cancel')
