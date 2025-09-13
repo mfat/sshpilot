@@ -447,16 +447,18 @@ class SshPilotApplication(Adw.Application):
                 css_rules.append(f"@define-color secondary_sidebar_bg_color {app_color};")
             
             if accent_color:
-                # Override only accent-related colors (not background colors)
+                # Override accent colors regardless of app color
                 css_rules.append(f"@define-color accent_color {accent_color};")
-                # If no app color is set, also set accent background colors
-                if not app_color:
-                    css_rules.append(f"@define-color accent_bg_color {accent_color};")
-                    css_rules.append(f"@define-color accent_fg_color white;")
-                    css_rules.append(f"@define-color theme_selected_bg_color {accent_color};")
-                    css_rules.append(f"@define-color theme_selected_fg_color white;")
-                    css_rules.append(f"@define-color theme_unfocused_selected_bg_color {accent_color};")
-                    css_rules.append(f"@define-color theme_unfocused_selected_fg_color white;")
+                css_rules.append(f"@define-color accent_bg_color {accent_color};")
+                css_rules.append(f"@define-color accent_fg_color white;")
+                css_rules.append(f"@define-color theme_selected_bg_color {accent_color};")
+                css_rules.append(f"@define-color theme_selected_fg_color white;")
+                css_rules.append(
+                    f"@define-color theme_unfocused_selected_bg_color {accent_color};"
+                )
+                css_rules.append(
+                    f"@define-color theme_unfocused_selected_fg_color white;"
+                )
             
             if sidebar_color:
                 # Override sidebar colors independently
