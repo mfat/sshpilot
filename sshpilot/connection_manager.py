@@ -15,7 +15,7 @@ import re
 from typing import Dict, List, Optional, Any, Tuple, Union
 
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
-from .platform_utils import is_macos
+from .platform_utils import is_macos, get_config_dir
 
 try:
     import secretstorage
@@ -672,7 +672,7 @@ class ConnectionManager(GObject.Object):
         """Switch between standard and isolated SSH configuration"""
         self.isolated_mode = bool(isolated)
         if self.isolated_mode:
-            base = os.path.expanduser('~/.config/sshpilot')
+            base = get_config_dir()
             self.ssh_config_path = os.path.join(base, 'ssh_config')
             self.known_hosts_path = os.path.join(base, 'known_hosts')
             os.makedirs(base, exist_ok=True)

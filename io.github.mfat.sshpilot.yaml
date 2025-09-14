@@ -5,22 +5,26 @@ sdk: org.gnome.Sdk
 command: sshpilot
 finish-args:
   - --share=network
-  - --share=ipc
+  # - --share=ipc
+  - --filesystem=~/.ssh
+  - --filesystem=~/.config/sshpilot
   - --socket=fallback-x11
   - --socket=wayland
-  - --device=dri
-  - --filesystem=home
-  - --filesystem=/tmp
+  - --socket=ssh-auth
+  #- --device=dri
+  - --persist=.ssh
+  - --persist=.config
+  #- --filesystem=/tmp
   - --filesystem=xdg-run/gvfs:rw
   - --filesystem=xdg-run/gvfsd
   - --talk-name=org.freedesktop.secrets
   - --talk-name=org.freedesktop.Flatpak
-  - --talk-name=org.freedesktop.portal.*
+  #- --talk-name=org.freedesktop.portal.*
   - --talk-name=org.gtk.vfs.*
-  - --system-talk-name=org.freedesktop.login1
-  - --env=TERM=xterm-256color
-  - --env=SHELL=/bin/bash
-  - --env=PATH=/app/bin:/usr/bin:/bin
+  #- --system-talk-name=org.freedesktop.login1
+  #- --env=TERM=xterm-256color
+  #- --env=SHELL=/bin/bash
+  #- --env=PATH=/app/bin:/usr/bin:/bin
 
 cleanup:
   - '/include'
@@ -150,7 +154,6 @@ modules:
       - install -d /app/lib/python3/site-packages/sshpilot
       - cp -a sshpilot/*.py /app/lib/python3/site-packages/sshpilot/
       - cp -a sshpilot/resources /app/lib/python3/site-packages/sshpilot/
-      - cp -a sshpilot/ui /app/lib/python3/site-packages/sshpilot/
       
       # Install desktop files
       - install -Dm644 sshpilot/resources/sshpilot.svg /app/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
@@ -161,9 +164,12 @@ modules:
       - mkdir -p /app/bin
       - install -Dm755 sshpilot-launcher.sh /app/bin/sshpilot
 
+
     sources:
-      - type: dir
-        path: .
+      - type: git
+        url: "https://github.com/mfat/sshpilot.git"
+        tag: v3.8.3
+        commit: 9537d3ffac2372a6dd8f8f1adbb747690bf154be
       - type: file
         path: sshpilot-launcher.sh
 

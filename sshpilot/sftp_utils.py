@@ -10,7 +10,7 @@ from typing import Optional, Tuple, Callable
 
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk
 
-from .preferences import is_running_in_flatpak
+from .platform_utils import is_flatpak
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def open_remote_in_file_manager(
     if host in ("localhost", "127.0.0.1"):
         logger.info("Localhost detected, skipping SSH verification")
         progress_dialog.update_progress(0.3, "Mounting...")
-        if is_running_in_flatpak():
+        if is_flatpak():
             _open_sftp_flatpak_compatible(
                 uri, user, host, port, error_callback, progress_dialog
             )
@@ -66,7 +66,7 @@ def open_remote_in_file_manager(
 
         logger.info(f"SSH connection verified for {user}@{host}")
         progress_dialog.update_progress(0.3, "SSH verified, mounting...")
-        if is_running_in_flatpak():
+        if is_flatpak():
             _open_sftp_flatpak_compatible(
                 uri, user, host, port, error_callback, progress_dialog
             )
@@ -151,7 +151,7 @@ def _mount_and_open_sftp(
                     progress_dialog.show_error(error_msg)
 
                     # Try Flatpak-compatible methods as fallback
-                    if is_running_in_flatpak():
+                    if is_flatpak():
                         logger.info("Falling back to Flatpak-compatible methods")
                         GLib.idle_add(progress_dialog.close)
                         success, msg = _try_flatpak_compatible_mount(
@@ -195,7 +195,7 @@ def _mount_and_open_sftp(
         GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
 
         # Try Flatpak-compatible methods as fallback
-        if is_running_in_flatpak():
+        if is_flatpak():
             logger.info(
                 "Primary mount failed, trying Flatpak-compatible methods"
             )
