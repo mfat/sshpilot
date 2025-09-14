@@ -16,10 +16,20 @@ env:
 
 jobs:
   build-and-release:
-    runs-on: ubuntu-latest
+    name: "Flatpak"
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      options: --privileged
     strategy:
       matrix:
-        arch: [x86_64, aarch64]
+        variant:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+      # Don't fail the whole workflow if one architecture fails
+      fail-fast: false
+    runs-on: ${{ matrix.variant.runner }}
     
     steps:
     - name: Checkout code
@@ -27,51 +37,15 @@ jobs:
       with:
         fetch-depth: 0
 
-    - name: Setup Flatpak
-      uses: flatpak/actions/flatpak-setup@v1
+    - name: Build Flatpak
+      uses: flatpak/flatpak-github-actions/flatpak-builder@v6
       with:
-        runtime: org.gnome.Platform
-        runtime-version: '48'
-        sdk: org.gnome.Sdk
-        sdk-version: '48'
-
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y flatpak-builder
-
-    - name: Build for ${{ matrix.arch }}
-      run: |
-        flatpak-builder --arch=${{ matrix.arch }} \
-          --force-clean \
-          --install-deps-from=flathub \
-          --repo=repo-${{ matrix.arch }} \
-          build-dir-${{ matrix.arch }} \
-          io.github.mfat.sshpilot.yaml
-
-    - name: Create bundle for ${{ matrix.arch }}
-      run: |
-        TAG_NAME="${{ github.ref_name || github.event.inputs.tag || 'latest' }}"
-        flatpak build-bundle \
-          --arch=${{ matrix.arch }} \
-          --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
-          repo-${{ matrix.arch }} \
-          sshpilot-${TAG_NAME}-${{ matrix.arch }}.flatpak \
-          ${{ env.FLATPAK_APP_ID }}
-
-    - name: Upload x86_64 bundle
-      if: matrix.arch == 'x86_64'
-      uses: actions/upload-artifact@v4
-      with:
-        name: sshpilot-${{ matrix.arch }}
-        path: sshpilot-*-${{ matrix.arch }}.flatpak
-
-    - name: Upload aarch64 bundle
-      if: matrix.arch == 'aarch64'
-      uses: actions/upload-artifact@v4
-      with:
-        name: sshpilot-${{ matrix.arch }}
-        path: sshpilot-*-${{ matrix.arch }}.flatpak
+        bundle: sshpilot-${{ github.ref_name || github.event.inputs.tag || 'latest' }}-${{ matrix.variant.arch }}.flatpak
+        manifest-path: io.github.mfat.sshpilot.yaml
+        cache-key: flatpak-builder-${{ matrix.variant.arch }}-${{ github.sha }}
+        arch: ${{ matrix.variant.arch }}
+        verbose: true
+        upload-artifact: true
 
   create-release:
     runs-on: ubuntu-latest
@@ -82,32 +56,17 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Download bundles
+    - name: Download x86_64 bundle
       uses: actions/download-artifact@v4
       with:
-        name: sshpilot-x86_64
+        name: sshpilot-${{ github.ref_name || github.event.inputs.tag || 'latest' }}-x86_64.flatpak
         path: ./bundles
 
     - name: Download aarch64 bundle
       uses: actions/download-artifact@v4
       with:
-        name: sshpilot-aarch64
+        name: sshpilot-${{ github.ref_name || github.event.inputs.tag || 'latest' }}-aarch64.flatpak
         path: ./bundles
-
-    - name: Create universal bundle
-      run: |
-        TAG_NAME="${{ github.ref_name || github.event.inputs.tag || 'latest' }}"
-        # Use x86_64 repo as base for universal bundle
-        flatpak build-bundle \
-          --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
-          ./bundles/repo-x86_64 \
-          ./bundles/sshpilot-${TAG_NAME}-universal.flatpak \
-          ${{ env.FLATPAK_APP_ID }} || \
-        flatpak build-bundle \
-          --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
-          ./bundles/sshpilot-${TAG_NAME}-x86_64.flatpak \
-          ./bundles/sshpilot-${TAG_NAME}-universal.flatpak \
-          ${{ env.FLATPAK_APP_ID }} || echo "Universal bundle creation skipped"
 
     - name: Generate checksums
       run: |
@@ -138,11 +97,6 @@ jobs:
           flatpak install --user sshpilot-${{ github.ref_name || github.event.inputs.tag || 'latest' }}-aarch64.flatpak
           ```
           
-          **Universal (auto-detects architecture):**
-          ```bash
-          flatpak install --user sshpilot-${{ github.ref_name || github.event.inputs.tag || 'latest' }}-universal.flatpak
-          ```
-          
           ### Run the application
           ```bash
           flatpak run io.github.mfat.sshpilot
@@ -151,12 +105,10 @@ jobs:
           ### Files
           - `sshpilot-${{ github.ref_name || github.event.inputs.tag || 'latest' }}-x86_64.flatpak` - Intel/AMD 64-bit
           - `sshpilot-${{ github.ref_name || github.event.inputs.tag || 'latest' }}-aarch64.flatpak` - ARM64
-          - `sshpilot-${{ github.ref_name || github.event.inputs.tag || 'latest' }}-universal.flatpak` - Universal
           - `checksums.txt` - SHA256 checksums
         files: |
           bundles/sshpilot-*-x86_64.flatpak
           bundles/sshpilot-*-aarch64.flatpak
-          bundles/sshpilot-*-universal.flatpak
           bundles/checksums.txt
         draft: false
         prerelease: false
