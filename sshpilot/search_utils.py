@@ -8,6 +8,7 @@ def connection_matches(connection: Any, query: str) -> bool:
 
     The search checks the connection's nickname, host, and IP address in a
     case-insensitive manner.
+
     """
     if not query:
         return True

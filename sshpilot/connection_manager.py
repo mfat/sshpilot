@@ -83,10 +83,9 @@ class Connection:
         self.connection = None
         self.forwarders: List[asyncio.Task] = []
         self.listeners: List[asyncio.Server] = []
-        
+
         self.nickname = data.get('nickname', data.get('host', 'Unknown'))
         self.host = data.get('host', '')
-        self.aliases = data.get('aliases', [])
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         # previously: self.keyfile = data.get('keyfile', '')
@@ -627,7 +626,6 @@ class Connection:
         """Update instance properties from data dictionary"""
         self.nickname = data.get('nickname', data.get('host', 'Unknown'))
         self.host = data.get('host', '')
-        self.aliases = data.get('aliases', [])
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
@@ -763,6 +761,31 @@ class ConnectionManager(GObject.Object):
             for cfg_file in config_files:
                 current_hosts: List[str] = []
                 current_config: Dict[str, Any] = {}
+
+                def process_host_block(hosts: List[str], config: Dict[str, Any]):
+                    cleaned_hosts = [token.strip() for token in hosts if token and token.strip()]
+                    if not cleaned_hosts:
+                        return
+
+                    if any('*' in token or '?' in token or token.startswith('!') for token in cleaned_hosts):
+                        host_cfg = dict(config)
+                        host_cfg['host'] = cleaned_hosts[0]
+                        self.parse_host_config(host_cfg, source=cfg_file)
+                        return
+
+                    for token in cleaned_hosts:
+                        host_cfg = dict(config)
+                        host_cfg['host'] = token
+                        connection_data = self.parse_host_config(host_cfg, source=cfg_file)
+                        if connection_data:
+                            connection_data['source'] = cfg_file
+                            nickname = connection_data.get('nickname', '')
+                            existing = existing_by_nickname.get(nickname)
+                            if existing:
+                                existing.update_data(connection_data)
+                                self.connections.append(existing)
+                            else:
+                                self.connections.append(Connection(connection_data))
                 try:
                     with open(cfg_file, 'r') as f:
                         lines = f.readlines()
@@ -782,33 +805,7 @@ class ConnectionManager(GObject.Object):
                         continue
                     if lowered.startswith('match '):
                         if current_hosts and current_config:
-                            tokens = current_hosts
-                            if any('*' in t or '?' in t or t.startswith('!') for t in tokens):
-                                host_cfg = dict(current_config)
-                                host_cfg['host'] = tokens[0]
-                                if len(tokens) > 1 and 'hostname' in current_config:
-
-                                    host_cfg['aliases'] = tokens[1:]
-                                self.parse_host_config(host_cfg, source=cfg_file)
-                            else:
-                                for token in tokens:
-                                    host_cfg = dict(current_config)
-                                    host_cfg['host'] = token
-                                    if 'hostname' in current_config:
-                                        others = [t for t in tokens if t != token]
-                                        if others:
-                                            host_cfg['aliases'] = others
-
-                                    connection_data = self.parse_host_config(host_cfg, source=cfg_file)
-                                    if connection_data:
-                                        connection_data['source'] = cfg_file
-                                        nickname = connection_data.get('nickname', '')
-                                        existing = existing_by_nickname.get(nickname)
-                                        if existing:
-                                            existing.update_data(connection_data)
-                                            self.connections.append(existing)
-                                        else:
-                                            self.connections.append(Connection(connection_data))
+                            process_host_block(current_hosts, current_config)
                         current_hosts = []
                         current_config = {}
                         block_lines = [raw_line.rstrip('\n')]
@@ -826,33 +823,7 @@ class ConnectionManager(GObject.Object):
                             i += 1
                             continue
                         if current_hosts and current_config:
-                            prev_tokens = current_hosts
-                            if any('*' in t or '?' in t or t.startswith('!') for t in prev_tokens):
-                                host_cfg = dict(current_config)
-                                host_cfg['host'] = prev_tokens[0]
-                                if len(prev_tokens) > 1 and 'hostname' in current_config:
-
-                                    host_cfg['aliases'] = prev_tokens[1:]
-                                self.parse_host_config(host_cfg, source=cfg_file)
-                            else:
-                                for token in prev_tokens:
-                                    host_cfg = dict(current_config)
-                                    host_cfg['host'] = token
-                                    if 'hostname' in current_config:
-                                        others = [t for t in prev_tokens if t != token]
-                                        if others:
-                                            host_cfg['aliases'] = others
-
-                                    connection_data = self.parse_host_config(host_cfg, source=cfg_file)
-                                    if connection_data:
-                                        connection_data['source'] = cfg_file
-                                        nickname = connection_data.get('nickname', '')
-                                        existing = existing_by_nickname.get(nickname)
-                                        if existing:
-                                            existing.update_data(connection_data)
-                                            self.connections.append(existing)
-                                        else:
-                                            self.connections.append(Connection(connection_data))
+                            process_host_block(current_hosts, current_config)
                         current_hosts = tokens
                         current_config = {}
                         i += 1
@@ -868,33 +839,7 @@ class ConnectionManager(GObject.Object):
                             current_config[key] = value
                     i += 1
                 if current_hosts and current_config:
-                    tokens = current_hosts
-                    if any('*' in t or '?' in t or t.startswith('!') for t in tokens):
-                        host_cfg = dict(current_config)
-                        host_cfg['host'] = tokens[0]
-                        if len(tokens) > 1 and 'hostname' in current_config:
-
-                            host_cfg['aliases'] = tokens[1:]
-                        self.parse_host_config(host_cfg, source=cfg_file)
-                    else:
-                        for token in tokens:
-                            host_cfg = dict(current_config)
-                            host_cfg['host'] = token
-                            if 'hostname' in current_config:
-                                others = [t for t in tokens if t != token]
-                                if others:
-                                    host_cfg['aliases'] = others
-
-                            connection_data = self.parse_host_config(host_cfg, source=cfg_file)
-                            if connection_data:
-                                connection_data['source'] = cfg_file
-                                nickname = connection_data.get('nickname', '')
-                                existing = existing_by_nickname.get(nickname)
-                                if existing:
-                                    existing.update_data(connection_data)
-                                    self.connections.append(existing)
-                                else:
-                                    self.connections.append(Connection(connection_data))
+                    process_host_block(current_hosts, current_config)
             logger.info(f"Loaded {len(self.connections)} connections from SSH config")
         except Exception as e:
             logger.error(f"Failed to load SSH config: {e}", exc_info=True)
@@ -912,17 +857,12 @@ class ConnectionManager(GObject.Object):
             if not host_token:
                 return None
 
-            aliases = [_unwrap(a) for a in (config.get('aliases', []) or [])]
-
             # Detect wildcard or negated host tokens (e.g., '*', '?', '!pattern')
-            tokens = [host_token] + aliases
-            if any('*' in t or '?' in t or t.startswith('!') for t in tokens):
+            if '*' in host_token or '?' in host_token or host_token.startswith('!'):
                 if not hasattr(self, 'rules'):
                     self.rules = []
                 rule_block = dict(config)
                 rule_block['host'] = host_token
-                if aliases:
-                    rule_block['aliases'] = aliases
                 if source:
                     rule_block['source'] = source
                 self.rules.append(rule_block)
@@ -933,7 +873,6 @@ class ConnectionManager(GObject.Object):
             # Extract relevant configuration
             parsed = {
                 'nickname': host,
-                'aliases': aliases,
                 'host': _unwrap(config.get('hostname', host)),
 
                 'port': int(_unwrap(config.get('port', 22))),
@@ -1398,9 +1337,7 @@ class ConnectionManager(GObject.Object):
 
         host = data.get('host', '')
         nickname = data.get('nickname', '')
-        aliases = data.get('aliases', []) or []
-        host_tokens = [_quote_token(nickname)] + [_quote_token(a) for a in aliases]
-        lines = ["Host " + " ".join(host_tokens)]
+        lines = ["Host " + _quote_token(nickname)]
 
         # Add basic connection info
         if host and host != nickname:
@@ -1636,9 +1573,6 @@ class ConnectionManager(GObject.Object):
             updated_lines = []
             i = 0
             removed = False
-            # Alias-aware and indentation-robust deletion
-            # Only match exact full value or exact alias token equal to the nickname
-            candidate_names = {host_nickname}
 
             while i < len(lines):
                 raw_line = lines[i]
@@ -1647,8 +1581,9 @@ class ConnectionManager(GObject.Object):
                 if lowered.startswith('host '):
                     parts = lstripped.split(None, 1)
                     full_value = parts[1].strip() if len(parts) > 1 else ''
-                    current_names = shlex.split(full_value)
-                    if any(name in candidate_names for name in current_names):
+                    current_names = shlex.split(full_value) if full_value else []
+                    primary_name = current_names[0] if current_names else ''
+                    if primary_name == host_nickname:
                         removed = True
                         i += 1
                         while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):

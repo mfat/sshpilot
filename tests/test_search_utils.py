@@ -29,6 +29,7 @@ def test_matches_ip():
 
 
 def test_ignores_aliases():
+
     conn = Connection({"nickname": "srv", "host": "host", "username": "user", "aliases": ["alias1", "alias2"]})
     assert not connection_matches(conn, "alias1")
     assert not connection_matches(conn, "alias2")
