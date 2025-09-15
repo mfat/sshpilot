@@ -5324,7 +5324,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if not terminal:
             logger.warning("No terminal instance found for reconnection")
             return
-            
+
+        # Ensure the tab for this connection is focused so the user can
+        # observe the reconnection process even if another tab was
+        # previously active.
+        try:
+            self._focus_most_recent_tab(connection)
+        except Exception:
+            pass
+
         # Set controlled reconnect flag
         self._is_controlled_reconnect = True
 
