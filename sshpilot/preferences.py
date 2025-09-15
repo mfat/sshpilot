@@ -686,9 +686,12 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.isolated_mode_row.set_activatable_widget(self.isolated_mode_radio)
             operation_group.add(self.isolated_mode_row)
 
-            use_isolated = bool(self.config.get_setting('ssh.use_isolated_config', False))
+            flatpak = is_flatpak()
+            use_isolated = True if flatpak else bool(self.config.get_setting('ssh.use_isolated_config', False))
             self.isolated_mode_radio.set_active(use_isolated)
             self.default_mode_radio.set_active(not use_isolated)
+            if flatpak:
+                self.default_mode_row.set_sensitive(False)
 
             self.default_mode_radio.connect('toggled', self.on_operation_mode_toggled)
             self.isolated_mode_radio.connect('toggled', self.on_operation_mode_toggled)
