@@ -46,8 +46,8 @@ from sshpilot.connection_dialog import SSHConfigAdvancedTab
 from sshpilot.connection_manager import ConnectionManager
 
 
-def test_host_aliases_added_via_advanced_tab():
-    """Host entries in advanced tab populate alias list without stray directives."""
+def test_host_directives_ignored_in_advanced_tab():
+    """Host entries in advanced tab are ignored without touching connection aliases."""
 
     asyncio.set_event_loop(asyncio.new_event_loop())
 
@@ -61,17 +61,15 @@ def test_host_aliases_added_via_advanced_tab():
         def set_text(self, text):
             self._text = text
 
-    alias_row = DummyEntryRow()
-
     connection = types.SimpleNamespace(
         nickname='primary',
         host='primary',
         aliases=[],
-        data={'nickname': 'primary', 'host': 'primary', 'aliases': [], 'username': '', 'port': 22, 'extra_ssh_config': ''},
+        data={'nickname': 'primary', 'host': 'primary', 'username': '', 'port': 22, 'extra_ssh_config': ''},
         extra_ssh_config=''
     )
 
-    parent_dialog = types.SimpleNamespace(connection=connection, aliases_row=alias_row)
+    parent_dialog = types.SimpleNamespace(connection=connection)
 
     row_grid = types.SimpleNamespace()
     row_grid.key_dropdown = 'Host'
@@ -86,9 +84,8 @@ def test_host_aliases_added_via_advanced_tab():
 
     extra = tab.get_extra_ssh_config()
     assert extra == ''
-    assert alias_row.get_text() == 'foo bar'
-    assert connection.aliases == ['foo', 'bar']
-    assert connection.data['aliases'] == ['foo', 'bar']
+    assert connection.aliases == []
+    assert 'aliases' not in connection.data
     assert tab.config_entries == []
 
     connection.data['extra_ssh_config'] = extra
