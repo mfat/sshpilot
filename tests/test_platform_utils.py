@@ -42,3 +42,27 @@ def test_get_data_dir(monkeypatch, tmp_path):
     expected = os.path.join(str(tmp_path / "data"), "sshpilot")
     assert platform_utils.get_data_dir() == expected
 
+
+def test_get_ssh_dir_default(monkeypatch, tmp_path):
+    monkeypatch.delenv("SSHPILOT_SSH_DIR", raising=False)
+    monkeypatch.setattr(
+        platform_utils.GLib,
+        "get_home_dir",
+        lambda: str(tmp_path),
+        raising=False,
+    )
+    expected = os.path.join(str(tmp_path), ".ssh")
+    assert platform_utils.get_ssh_dir() == expected
+
+
+def test_get_ssh_dir_override(monkeypatch, tmp_path):
+    override = tmp_path / "custom_ssh"
+    monkeypatch.setenv("SSHPILOT_SSH_DIR", str(override))
+    monkeypatch.setattr(
+        platform_utils.GLib,
+        "get_home_dir",
+        lambda: "ignored",
+        raising=False,
+    )
+    assert platform_utils.get_ssh_dir() == str(override)
+

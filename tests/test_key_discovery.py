@@ -61,7 +61,7 @@ def test_connection_manager_loads_keys_standard(tmp_path, monkeypatch):
     key = ssh_dir / "id_test"
     _write_dummy_key(key)
 
-    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("SSHPILOT_SSH_DIR", str(ssh_dir))
     cm = ConnectionManager.__new__(ConnectionManager)
     cm.isolated_mode = False
     keys = ConnectionManager.load_ssh_keys(cm)
@@ -81,7 +81,7 @@ def test_connection_manager_loads_keys_isolated(tmp_path, monkeypatch):
 
     cm = ConnectionManager.__new__(ConnectionManager)
     cm.isolated_mode = True
-    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("SSHPILOT_SSH_DIR", str(home_ssh))
     monkeypatch.setattr(
         "sshpilot.connection_manager.get_config_dir",
         lambda: str(config_dir),
