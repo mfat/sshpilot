@@ -8,7 +8,8 @@ import logging
 import shlex
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
+
 
 import gi
 gi.require_version('Gtk', '4.0')
