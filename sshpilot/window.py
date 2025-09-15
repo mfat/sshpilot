@@ -709,7 +709,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         pass
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         return
-                    row = self.connection_list.get_row_at_y(int(y))
+                    adjusted_y = y
+                    vadjustment = scrolled.get_vadjustment()
+                    if vadjustment is not None:
+                        try:
+                            adjusted_y += vadjustment.get_value()
+                        except Exception:
+                            pass
+                    row = self.connection_list.get_row_at_y(int(adjusted_y))
                     if not row:
                         return
                     self.connection_list.select_row(row)
@@ -813,7 +820,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     try:
                         rect = Gdk.Rectangle()
                         rect.x = int(x)
-                        rect.y = int(y)
+                        rect.y = int(adjusted_y)
                         rect.width = 1
                         rect.height = 1
                         pop.set_pointing_to(rect)
