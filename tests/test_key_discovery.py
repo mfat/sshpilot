@@ -3,6 +3,7 @@ import subprocess
 import textwrap
 
 import pytest
+from sshpilot.connection_manager import ConnectionManager
 
 
 def _write_dummy_key(path):
@@ -52,3 +53,38 @@ def test_discover_keys_recurses(tmp_path):
     paths = set(proc.stdout.strip().splitlines())
     assert str(root_key) in paths
     assert str(nested_key) in paths
+
+
+def test_connection_manager_loads_keys_standard(tmp_path, monkeypatch):
+    ssh_dir = tmp_path / ".ssh"
+    ssh_dir.mkdir()
+    key = ssh_dir / "id_test"
+    _write_dummy_key(key)
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cm = ConnectionManager.__new__(ConnectionManager)
+    cm.isolated_mode = False
+    keys = ConnectionManager.load_ssh_keys(cm)
+    assert keys == [str(key)]
+
+
+def test_connection_manager_loads_keys_isolated(tmp_path, monkeypatch):
+    home_ssh = tmp_path / ".ssh"
+    home_ssh.mkdir()
+    home_key = home_ssh / "id_home"
+    _write_dummy_key(home_key)
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    config_key = config_dir / "id_iso"
+    _write_dummy_key(config_key)
+
+    cm = ConnectionManager.__new__(ConnectionManager)
+    cm.isolated_mode = True
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "sshpilot.connection_manager.get_config_dir",
+        lambda: str(config_dir),
+    )
+    keys = ConnectionManager.load_ssh_keys(cm)
+    assert sorted(keys) == sorted([str(config_key), str(home_key)])
