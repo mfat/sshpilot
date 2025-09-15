@@ -124,7 +124,17 @@ def ensure_passphrase_askpass() -> str:
     logger.debug(f"Generating askpass script at {path}")
 
     script_body = r'''#!/usr/bin/env python3
-import sys, re, os, platform
+import sys, re, os, platform, tempfile
+LOG_DIR = (
+    os.environ.get("SSHPILOT_ASKPASS_LOG_DIR")
+    or os.environ.get("XDG_RUNTIME_DIR")
+    or tempfile.gettempdir()
+)
+try:
+    os.makedirs(LOG_DIR, exist_ok=True)
+except Exception:
+    pass
+LOG_PATH = os.path.join(LOG_DIR, "sshpilot-askpass.log")
 try:
 
     from gi.repository import Secret
@@ -137,7 +147,7 @@ except Exception:
 
 # Log availability of keyring and libsecret
 try:
-    with open("/tmp/sshpilot-askpass.log", "a") as f:
+    with open(LOG_PATH, "a") as f:
         f.write(f"ASKPASS: keyring {'available' if keyring else 'unavailable'}, libsecret {'available' if Secret else 'unavailable'}\n")
 except Exception:
     pass
@@ -147,25 +157,25 @@ def get_passphrase(key_path: str) -> str:
     # Try keyring first (macOS)
     if keyring and platform.system() == 'Darwin':
         try:
-            with open("/tmp/sshpilot-askpass.log", "a") as f:
+            with open(LOG_PATH, "a") as f:
                 f.write(f"ASKPASS: Trying keyring for {key_path}\n")
             passphrase = keyring.get_password('sshPilot', key_path)
             if passphrase:
                 try:
-                    with open("/tmp/sshpilot-askpass.log", "a") as f:
+                    with open(LOG_PATH, "a") as f:
                         f.write("ASKPASS: Retrieved passphrase from keyring\n")
                 except Exception:
                     pass
                 return passphrase
             else:
                 try:
-                    with open("/tmp/sshpilot-askpass.log", "a") as f:
+                    with open(LOG_PATH, "a") as f:
                         f.write("ASKPASS: No passphrase in keyring\n")
                 except Exception:
                     pass
         except Exception as e:
             try:
-                with open("/tmp/sshpilot-askpass.log", "a") as f:
+                with open(LOG_PATH, "a") as f:
                     f.write(f"ASKPASS: keyring error: {e}\n")
             except Exception:
                 pass
@@ -173,13 +183,13 @@ def get_passphrase(key_path: str) -> str:
     # Fall back to libsecret (Linux)
     if Secret is None:
         try:
-            with open("/tmp/sshpilot-askpass.log", "a") as f:
+            with open(LOG_PATH, "a") as f:
                 f.write("ASKPASS: libsecret module not available\n")
         except Exception:
             pass
         return ""
     try:
-        with open("/tmp/sshpilot-askpass.log", "a") as f:
+        with open(LOG_PATH, "a") as f:
             f.write("ASKPASS: Trying libsecret\n")
         schema = Secret.Schema.new("sshPilot", Secret.SchemaFlags.NONE, {
             "application": Secret.SchemaAttributeType.STRING,
@@ -196,20 +206,20 @@ def get_passphrase(key_path: str) -> str:
         if secret is not None:
 
             try:
-                with open("/tmp/sshpilot-askpass.log", "a") as f:
+                with open(LOG_PATH, "a") as f:
                     f.write("ASKPASS: Retrieved passphrase from libsecret\n")
             except Exception:
                 pass
             return secret
         else:
             try:
-                with open("/tmp/sshpilot-askpass.log", "a") as f:
+                with open(LOG_PATH, "a") as f:
                     f.write("ASKPASS: No matching libsecret item found\n")
             except Exception:
                 pass
     except Exception as e:
         try:
-            with open("/tmp/sshpilot-askpass.log", "a") as f:
+            with open(LOG_PATH, "a") as f:
                 f.write(f"ASKPASS: libsecret error: {e}\n")
         except Exception:
             pass
@@ -254,7 +264,7 @@ if __name__ == "__main__":
     
     # Debug logging
     try:
-        with open("/tmp/sshpilot-askpass.log", "a") as f:
+        with open(LOG_PATH, "a") as f:
             f.write(f"ASKPASS called with prompt: {prompt}\n")
     except Exception:
         pass
@@ -262,7 +272,7 @@ if __name__ == "__main__":
     # Never handle password prompts in this helper
     if "password" in pl and "passphrase" not in pl:
         try:
-            with open("/tmp/sshpilot-askpass.log", "a") as f:
+            with open(LOG_PATH, "a") as f:
                 f.write("ASKPASS: Ignoring password prompt\n")
         except Exception:
             pass
@@ -272,7 +282,7 @@ if __name__ == "__main__":
         key_path = extract_key_path(prompt)
         if key_path:
             try:
-                with open("/tmp/sshpilot-askpass.log", "a") as f:
+                with open(LOG_PATH, "a") as f:
                     f.write(f"ASKPASS: Extracted key path: {key_path}\n")
             except Exception:
                 pass
@@ -288,27 +298,27 @@ if __name__ == "__main__":
                 passphrase = get_passphrase(candidate)
                 if passphrase:
                     try:
-                        with open("/tmp/sshpilot-askpass.log", "a") as f:
+                        with open(LOG_PATH, "a") as f:
                             f.write(f"ASKPASS: Found passphrase for {candidate}\n")
                     except Exception:
                         pass
                     print(passphrase)
                     try:
-                        with open("/tmp/sshpilot-askpass.log", "a") as f:
+                        with open(LOG_PATH, "a") as f:
                             f.write("ASKPASS: Returning passphrase and exiting with code 0\n")
                     except Exception:
                         pass
                     sys.exit(0)
                 else:
                     try:
-                        with open("/tmp/sshpilot-askpass.log", "a") as f:
+                        with open(LOG_PATH, "a") as f:
                             f.write(f"ASKPASS: No passphrase found for {candidate}\n")
                     except Exception:
                         pass
     
     # Not a passphrase prompt or not found
     try:
-        with open("/tmp/sshpilot-askpass.log", "a") as f:
+        with open(LOG_PATH, "a") as f:
             f.write("ASKPASS: No passphrase found, exiting with code 1\n")
     except Exception:
         pass
