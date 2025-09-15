@@ -46,6 +46,40 @@ def test_include_directives_parsed(tmp_path):
     assert "Port 2222" not in main_cfg.read_text()
 
 
+def test_nested_include_sources(tmp_path):
+    main_cfg = tmp_path / "config"
+    level1_cfg = tmp_path / "level1.conf"
+    level2_dir = tmp_path / "level2"
+    level2_dir.mkdir()
+    level2_cfg = level2_dir / "level2.conf"
+
+    level2_cfg.write_text("\n".join([
+        "Host nested",
+        "    HostName nested.example.com",
+    ]))
+
+    level1_cfg.write_text("\n".join([
+        "Host mid",
+        "    HostName mid.example.com",
+        f"Include {level2_dir}/*.conf",
+    ]))
+
+    main_cfg.write_text("\n".join([
+        "Host top",
+        "    HostName top.example.com",
+        f"Include {level1_cfg}",
+    ]))
+
+    cm = ConnectionManager.__new__(ConnectionManager)
+    cm.connections = []
+    cm.ssh_config_path = str(main_cfg)
+    cm.load_ssh_config()
+
+    sources = {c.nickname: c.source for c in cm.connections}
+    assert sources["top"] == str(main_cfg)
+    assert sources["mid"] == str(level1_cfg)
+    assert sources["nested"] == str(level2_cfg)
+
 def test_include_cycle_detected(tmp_path, caplog):
     a_cfg = tmp_path / "a.conf"
     b_cfg = tmp_path / "b.conf"
