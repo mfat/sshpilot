@@ -2191,15 +2191,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 return
             connection = self.terminal_to_connection.get(child)
             if connection:
-                # Regular connection terminal - select the corresponding row
-                self.active_terminals[connection] = child
-                row = self.connection_rows.get(connection)
-                if row:
+                # Check if this is a local terminal
+                if hasattr(connection, 'host') and connection.host == 'localhost':
+                    # Local terminal - clear selection
                     current = self.connection_list.get_selected_row()
-                    if current != row:
-                        self.connection_list.select_row(row)
+                    if current is not None:
+                        self.connection_list.unselect_row(current)
+                else:
+                    # Regular connection terminal - select the corresponding row
+                    self.active_terminals[connection] = child
+                    row = self.connection_rows.get(connection)
+                    if row:
+                        current = self.connection_list.get_selected_row()
+                        if current != row:
+                            self.connection_list.select_row(row)
             else:
-                # Local terminal or other non-connection terminal - clear selection
+                # Other non-connection terminal - clear selection
                 current = self.connection_list.get_selected_row()
                 if current is not None:
                     self.connection_list.unselect_row(current)
