@@ -96,6 +96,9 @@ class Connection:
         self.key_passphrase = data.get('key_passphrase', '')
         # Source file of this configuration block
         self.source = data.get('source', '')
+        # Provide friendly accessor for UI components that wish to display
+        # the originating config file for this connection.
+        
         # Proxy settings
         self.proxy_command = data.get('proxy_command', '')
         pj = data.get('proxy_jump', [])
@@ -131,6 +134,11 @@ class Connection:
 
     def __str__(self):
         return f"{self.nickname} ({self.username}@{self.host})"
+
+    @property
+    def source_file(self) -> str:
+        """Return path to the config file where this host is defined."""
+        return self.source
         
     async def connect(self):
         """Prepare SSH command for later use (no preflight echo)."""
@@ -776,6 +784,8 @@ class ConnectionManager(GObject.Object):
                         if current_host and current_config:
                             connection_data = self.parse_host_config(current_config, source=cfg_file)
                             if connection_data:
+                                # track which file defined this host
+                                connection_data['source'] = cfg_file
                                 nickname = connection_data.get('nickname', '')
                                 existing = existing_by_nickname.get(nickname)
                                 if existing:
@@ -802,6 +812,8 @@ class ConnectionManager(GObject.Object):
                         if current_host and current_config:
                             connection_data = self.parse_host_config(current_config, source=cfg_file)
                             if connection_data:
+                                # attach file path for UI/source tracking
+                                connection_data['source'] = cfg_file
                                 nickname = connection_data.get('nickname', '')
                                 existing = existing_by_nickname.get(nickname)
                                 if existing:
@@ -828,6 +840,8 @@ class ConnectionManager(GObject.Object):
                 if current_host and current_config:
                     connection_data = self.parse_host_config(current_config, source=cfg_file)
                     if connection_data:
+                        # ensure source file recorded for final host block
+                        connection_data['source'] = cfg_file
                         nickname = connection_data.get('nickname', '')
                         existing = existing_by_nickname.get(nickname)
                         if existing:
