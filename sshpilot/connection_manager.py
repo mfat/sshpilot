@@ -18,9 +18,9 @@ from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
 from .platform_utils import is_macos, get_config_dir
 
 try:
-    import secretstorage
+    from gi.repository import Secret
 except Exception:
-    secretstorage = None
+    Secret = None
 try:
     import keyring
 except Exception:
@@ -28,6 +28,20 @@ except Exception:
 import socket
 import time
 from gi.repository import GObject, GLib
+
+if Secret is not None:
+    _SECRET_SCHEMA = Secret.Schema.new(
+        "sshPilot",
+        Secret.SchemaFlags.NONE,
+        {
+            "application": Secret.SchemaAttributeType.STRING,
+            "type": Secret.SchemaAttributeType.STRING,
+            "key_path": Secret.SchemaAttributeType.STRING,
+            "key_id": Secret.SchemaAttributeType.STRING,
+        },
+    )
+else:
+    _SECRET_SCHEMA = None
 
 # Set up asyncio event loop for GTK integration
 if os.name == 'posix':
@@ -695,51 +709,25 @@ class ConnectionManager(GObject.Object):
             logger.debug(f"SSH key scan skipped/failed: {e}")
         
         # Initialize secure storage (can be slow)
-        self.collection = None
-        if secretstorage:
+        self.libsecret_available = False
+        if not is_macos() and Secret is not None:
             try:
-                self.bus = secretstorage.dbus_init()
-                self.collection = secretstorage.get_default_collection(self.bus)
+                Secret.Service.get_sync(Secret.ServiceFlags.NONE)
+                self.libsecret_available = True
                 logger.info("Secure storage initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize secure storage: {e}")
+        elif keyring is not None:
+            try:
+                backend = keyring.get_keyring()
+                logger.info("Using system keyring backend: %s", backend.__class__.__name__)
+            except Exception:
+                logger.info("Keyring module present but no usable backend; passwords will not be stored")
         else:
-            # SecretStorage not available (e.g., macOS). Fall back to system keyring if present
-            if keyring is not None:
-                try:
-                    backend = keyring.get_keyring()
-                    logger.info("Using system keyring backend: %s", backend.__class__.__name__)
-                except Exception:
-                    logger.info("Keyring module present but no usable backend; passwords will not be stored")
-            else:
-                logger.info("No SecretStorage or keyring available; password storage disabled")
+            logger.info("No secure storage backend available; password storage disabled")
         return False  # run once
 
-    def _ensure_collection(self) -> bool:
-        """Ensure secretstorage collection is initialized and unlocked."""
-        if not secretstorage:
-            return False
-        try:
-            if getattr(self, 'collection', None) is None:
-                try:
-                    self.bus = secretstorage.dbus_init()
-                    self.collection = secretstorage.get_default_collection(self.bus)
-                except Exception as e:
-                    logger.warning(f"Secret storage init failed: {e}")
-                    self.collection = None
-                    return False
-            # Attempt to unlock if locked
-            try:
-                if hasattr(self.collection, 'is_locked') and self.collection.is_locked():
-                    unlocked, _ = self.collection.unlock()
-                    if not unlocked:
-                        logger.warning("Secret storage collection remains locked")
-                        return False
-            except Exception as e:
-                logger.debug(f"Could not unlock collection: {e}")
-            return self.collection is not None
-        except Exception:
-            return False
+    # No _ensure_collection needed with libsecret's high-level API
         
     def load_ssh_config(self):
         """Load connections from SSH config file"""
@@ -1095,29 +1083,26 @@ class ConnectionManager(GObject.Object):
 
     def store_password(self, host: str, username: str, password: str):
         """Store password securely in system keyring"""
-        # Prefer SecretStorage on Linux when available
-        if self._ensure_collection():
+        # Prefer libsecret on Linux when available
+        if not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
             try:
                 attributes = {
                     'application': _SERVICE_NAME,
                     'host': host,
-                    'username': username
+                    'username': username,
                 }
-                # Delete existing password if any
-                existing_items = list(self.collection.search_items(attributes))
-                for item in existing_items:
-                    item.delete()
-                # Store new password
-                self.collection.create_item(
-                    f'{_SERVICE_NAME}: {username}@{host}',
+                Secret.password_store_sync(
+                    _SECRET_SCHEMA,
                     attributes,
-                    password.encode()
+                    Secret.COLLECTION_DEFAULT,
+                    f'{_SERVICE_NAME}: {username}@{host}',
+                    password,
+                    None,
                 )
-                logger.debug(f"Password stored for {username}@{host} via SecretStorage")
+                logger.debug(f"Password stored for {username}@{host} via libsecret")
                 return True
             except Exception as e:
-                logger.error(f"Failed to store password (SecretStorage): {e}")
-                # Fall through to keyring attempt
+                logger.error(f"Failed to store password (libsecret): {e}")
         # Fallback to cross-platform keyring (macOS Keychain, etc.)
         if keyring is not None:
             try:
@@ -1131,21 +1116,20 @@ class ConnectionManager(GObject.Object):
 
     def get_password(self, host: str, username: str) -> Optional[str]:
         """Retrieve password from system keyring"""
-        # Try SecretStorage first
-        if self._ensure_collection():
+        # Try libsecret first
+        if not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
             try:
                 attributes = {
                     'application': _SERVICE_NAME,
                     'host': host,
-                    'username': username
+                    'username': username,
                 }
-                items = list(self.collection.search_items(attributes))
-                if items:
-                    password = items[0].get_secret().decode()
-                    logger.debug(f"Password retrieved for {username}@{host} via SecretStorage")
+                password = Secret.password_lookup_sync(_SECRET_SCHEMA, attributes, None)
+                if password is not None:
+                    logger.debug(f"Password retrieved for {username}@{host} via libsecret")
                     return password
             except Exception as e:
-                logger.error(f"Error retrieving password (SecretStorage) for {username}@{host}: {e}")
+                logger.error(f"Error retrieving password (libsecret) for {username}@{host}: {e}")
         # Fallback to keyring
         if keyring is not None:
             try:
@@ -1160,23 +1144,17 @@ class ConnectionManager(GObject.Object):
     def delete_password(self, host: str, username: str) -> bool:
         """Delete stored password for host/user from system keyring"""
         removed_any = False
-        # Try SecretStorage first
-        if self._ensure_collection():
+        # Try libsecret first
+        if not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
             try:
                 attributes = {
                     'application': _SERVICE_NAME,
                     'host': host,
-                    'username': username
+                    'username': username,
                 }
-                items = list(self.collection.search_items(attributes))
-                for item in items:
-                    try:
-                        item.delete()
-                        removed_any = True
-                    except Exception:
-                        pass
+                removed_any = Secret.password_clear_sync(_SECRET_SCHEMA, attributes, None) or removed_any
             except Exception as e:
-                logger.error(f"Error deleting password (SecretStorage) for {username}@{host}: {e}")
+                logger.error(f"Error deleting password (libsecret) for {username}@{host}: {e}")
         # Also attempt keyring cleanup so both stores are cleared if both were used
         if keyring is not None:
             try:
@@ -1191,31 +1169,30 @@ class ConnectionManager(GObject.Object):
     def store_key_passphrase(self, key_path: str, passphrase: str) -> bool:
         """Store key passphrase securely in system keyring"""
         try:
-            # Use keyring on macOS, secretstorage on Linux
+            # Use keyring on macOS, libsecret on Linux
             if keyring and is_macos():
                 # macOS: use keyring
                 keyring.set_password('sshPilot', key_path, passphrase)
                 logger.debug(f"Stored key passphrase for {key_path} using keyring")
                 return True
-            elif self._ensure_collection():
-                # Linux: use secretstorage
-                key_id = f"key_passphrase_{os.path.basename(key_path)}_{hash(key_path)}"
-                
+            elif not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
+                # Linux: use libsecret
                 attributes = {
                     'application': 'sshPilot',
                     'type': 'key_passphrase',
                     'key_path': key_path,
-                    'key_id': key_id
+                    'key_id': f"key_passphrase_{os.path.basename(key_path)}_{hash(key_path)}",
                 }
-                
-                # Store the passphrase
-                self.collection.create_item(
-                    f"SSH Key Passphrase: {os.path.basename(key_path)}",
+
+                Secret.password_store_sync(
+                    _SECRET_SCHEMA,
                     attributes,
-                    passphrase.encode('utf-8'),
-                    replace=True
+                    Secret.COLLECTION_DEFAULT,
+                    f"SSH Key Passphrase: {os.path.basename(key_path)}",
+                    passphrase,
+                    None,
                 )
-                logger.debug(f"Stored key passphrase for {key_path} using secretstorage")
+                logger.debug(f"Stored key passphrase for {key_path} using libsecret")
                 return True
             else:
                 logger.warning("No keyring backend available for storing passphrase")
@@ -1227,25 +1204,24 @@ class ConnectionManager(GObject.Object):
     def get_key_passphrase(self, key_path: str) -> Optional[str]:
         """Retrieve key passphrase from system keyring"""
         try:
-            # Use keyring on macOS, secretstorage on Linux
+            # Use keyring on macOS, libsecret on Linux
             if keyring and is_macos():
                 # macOS: use keyring
                 passphrase = keyring.get_password('sshPilot', key_path)
                 if passphrase:
                     logger.debug(f"Retrieved key passphrase for {key_path} using keyring")
                 return passphrase
-            elif self._ensure_collection():
-                # Linux: use secretstorage
+            elif not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
+                # Linux: use libsecret
                 attributes = {
                     'application': 'sshPilot',
                     'type': 'key_passphrase',
-                    'key_path': key_path
+                    'key_path': key_path,
                 }
-                
-                items = list(self.collection.search_items(attributes))
-                if items:
-                    passphrase = items[0].get_secret().decode('utf-8')
-                    logger.debug(f"Retrieved key passphrase for {key_path} using secretstorage")
+
+                passphrase = Secret.password_lookup_sync(_SECRET_SCHEMA, attributes, None)
+                if passphrase is not None:
+                    logger.debug(f"Retrieved key passphrase for {key_path} using libsecret")
                     return passphrase
             return None
         except Exception as e:
@@ -1255,7 +1231,7 @@ class ConnectionManager(GObject.Object):
     def delete_key_passphrase(self, key_path: str) -> bool:
         """Delete stored key passphrase from system keyring"""
         try:
-            # Use keyring on macOS, secretstorage on Linux
+            # Use keyring on macOS, libsecret on Linux
             if keyring and is_macos():
                 # macOS: use keyring
                 try:
@@ -1265,25 +1241,18 @@ class ConnectionManager(GObject.Object):
                 except keyring.errors.PasswordDeleteError:
                     # Password doesn't exist, which is fine
                     return True
-            elif self._ensure_collection():
-                # Linux: use secretstorage
+            elif not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
+                # Linux: use libsecret
                 attributes = {
                     'application': 'sshPilot',
                     'type': 'key_passphrase',
-                    'key_path': key_path
+                    'key_path': key_path,
                 }
-                
-                items = list(self.collection.search_items(attributes))
-                removed_any = False
-                for item in items:
-                    try:
-                        item.delete()
-                        removed_any = True
-                    except Exception:
-                        pass
+
+                removed_any = Secret.password_clear_sync(_SECRET_SCHEMA, attributes, None)
                 if removed_any:
-                    logger.debug(f"Deleted stored key passphrase for {key_path} using secretstorage")
-                return removed_any
+                    logger.debug(f"Deleted stored key passphrase for {key_path} using libsecret")
+                return bool(removed_any)
             return False
         except Exception as e:
             logger.error(f"Error deleting key passphrase for {key_path}: {e}")

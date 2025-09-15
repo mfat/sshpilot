@@ -3,7 +3,6 @@ import sys
 import types
 
 # Stub external dependencies required by connection_manager
-sys.modules['secretstorage'] = types.ModuleType('secretstorage')
 
 gi_repo = types.ModuleType('gi.repository')
 gi_repo.GObject = types.SimpleNamespace(

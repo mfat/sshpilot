@@ -4,7 +4,6 @@ import types
 import asyncio
 
 # Stub external dependencies required by connection_dialog/manager
-sys.modules['secretstorage'] = types.ModuleType('secretstorage')
 
 gi_repo = types.ModuleType('gi.repository')
 gi_repo.GObject = types.SimpleNamespace(

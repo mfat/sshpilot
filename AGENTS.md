@@ -19,12 +19,12 @@ Install GTK4/libadwaita/VTE system packages
 
 **Debian/Ubuntu:**
 ```bash
-sudo apt install python3-gi python3-gi-cairo libgtk-4-1 gir1.2-gtk-4.0 libadwaita-1-0 gir1.2-adw-1 libvte-2.91-gtk4-0 gir1.2-vte-3.91 python3-paramiko python3-cryptography python3-secretstorage sshpass ssh-askpass
+sudo apt install python3-gi python3-gi-cairo libgtk-4-1 gir1.2-gtk-4.0 libadwaita-1-0 gir1.2-adw-1 libvte-2.91-gtk4-0 gir1.2-vte-3.91 libsecret-1-0 gir1.2-secret-1 python3-paramiko python3-cryptography sshpass ssh-askpass
 ```
 
 **Fedora/RHEL/CentOS:**
 ```bash
-sudo dnf install python3-gobject gtk4 libadwaita vte291-gtk4 libsecret python3-paramiko python3-cryptography python3-secretstorage sshpass openssh-askpass
+sudo dnf install python3-gobject gtk4 libadwaita vte291-gtk4 libsecret python3-paramiko python3-cryptography sshpass openssh-askpass
 ```
 
 ### Python Dependencies
@@ -33,7 +33,7 @@ sudo dnf install python3-gobject gtk4 libadwaita vte291-gtk4 libsecret python3-p
 - pycairo >= 1.20.0
 - paramiko >= 3.4
 - cryptography >= 42.0
-- secretstorage >= 3.3 (Linux only)
+- libsecret (via PyGObject) for credential storage on Linux
 - keyring >= 24.3
 - psutil >= 5.9.0
 
@@ -63,7 +63,7 @@ sudo dnf install python3-gobject gtk4 libadwaita vte291-gtk4 libsecret python3-p
 ## Security Guidelines
 
 - Never store passwords in plain text
-- Use `secretstorage` on Linux for credential storage
+- Use `libsecret` (via PyGObject) on Linux for credential storage
 - Use `keyring` for cross-platform credential management
 - The app uses askpass for private key passphrases and sshpass for ssh passwords
 ## Build and Packaging

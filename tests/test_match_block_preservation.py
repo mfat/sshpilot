@@ -4,7 +4,6 @@ import types
 import asyncio
 
 # Stub external dependencies required by connection_manager
-sys.modules['secretstorage'] = types.ModuleType('secretstorage')
 
 # Minimal gi stub
 gi_repo = types.ModuleType('gi.repository')

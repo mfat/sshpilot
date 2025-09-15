@@ -35,13 +35,6 @@ if 'gi' not in sys.modules:
     sys.modules['gi.repository.GObject'] = repository.GObject
     sys.modules['gi.repository.Gtk'] = repository.Gtk
 
-# Stub 'secretstorage' module
-if 'secretstorage' not in sys.modules:
-    secretstorage = types.ModuleType('secretstorage')
-    secretstorage.dbus_init = lambda: None
-    secretstorage.get_default_collection = lambda bus: None
-    sys.modules['secretstorage'] = secretstorage
-
 # Ensure the project root is on sys.path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
