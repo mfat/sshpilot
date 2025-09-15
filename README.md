@@ -32,6 +32,7 @@
 - Light/Dark interface themes
 - Customizable terminal font and color schemes
 - Load/save standard .ssh/config entries (Or use dedicated configuration file)
+- Configurable SSH directory via `SSHPILOT_SSH_DIR` environment variable
 - Free software (GPL v3 license)
 
 
