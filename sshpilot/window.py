@@ -56,6 +56,7 @@ from . import shutdown
 from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos, get_config_dir
+from .ssh_utils import ensure_writable_ssh_home
 
 logger = logging.getLogger(__name__)
 
@@ -2658,6 +2659,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 askpass_env = get_ssh_env_with_askpass()
                 logger.debug(f"Main window: Askpass environment variables: {list(askpass_env.keys())}")
                 env.update(askpass_env)
+
+            ensure_writable_ssh_home(env)
 
             # Ensure /app/bin is first in PATH for Flatpak compatibility
             logger.debug("Main window: Setting up PATH for Flatpak compatibility")
