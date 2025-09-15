@@ -60,8 +60,11 @@ def should_hide_external_terminal_options() -> bool:
 
 
 def should_hide_file_manager_options() -> bool:
-    """Check if file manager options should be hidden (macOS)"""
-    return is_macos()
+    """Check if file manager options should be hidden.
+
+    Returns True on macOS or when running inside a Flatpak sandbox.
+    """
+    return is_macos() or is_flatpak()
 
 class MonospaceFontDialog(Adw.Window):
     def __init__(self, parent=None, current_font="Monospace 12"):
