@@ -786,19 +786,13 @@ class ConnectionManager(GObject.Object):
                             if any('*' in t or '?' in t or t.startswith('!') for t in tokens):
                                 host_cfg = dict(current_config)
                                 host_cfg['host'] = tokens[0]
-                                if len(tokens) > 1 and 'hostname' in current_config:
-
-                                    host_cfg['aliases'] = tokens[1:]
+                                host_cfg['__host_tokens'] = list(tokens)
                                 self.parse_host_config(host_cfg, source=cfg_file)
                             else:
                                 for token in tokens:
                                     host_cfg = dict(current_config)
                                     host_cfg['host'] = token
-                                    if 'hostname' in current_config:
-                                        others = [t for t in tokens if t != token]
-                                        if others:
-                                            host_cfg['aliases'] = others
-
+                                    host_cfg['__host_tokens'] = list(tokens)
                                     connection_data = self.parse_host_config(host_cfg, source=cfg_file)
                                     if connection_data:
                                         connection_data['source'] = cfg_file
@@ -830,19 +824,13 @@ class ConnectionManager(GObject.Object):
                             if any('*' in t or '?' in t or t.startswith('!') for t in prev_tokens):
                                 host_cfg = dict(current_config)
                                 host_cfg['host'] = prev_tokens[0]
-                                if len(prev_tokens) > 1 and 'hostname' in current_config:
-
-                                    host_cfg['aliases'] = prev_tokens[1:]
+                                host_cfg['__host_tokens'] = list(prev_tokens)
                                 self.parse_host_config(host_cfg, source=cfg_file)
                             else:
                                 for token in prev_tokens:
                                     host_cfg = dict(current_config)
                                     host_cfg['host'] = token
-                                    if 'hostname' in current_config:
-                                        others = [t for t in prev_tokens if t != token]
-                                        if others:
-                                            host_cfg['aliases'] = others
-
+                                    host_cfg['__host_tokens'] = list(prev_tokens)
                                     connection_data = self.parse_host_config(host_cfg, source=cfg_file)
                                     if connection_data:
                                         connection_data['source'] = cfg_file
@@ -872,19 +860,13 @@ class ConnectionManager(GObject.Object):
                     if any('*' in t or '?' in t or t.startswith('!') for t in tokens):
                         host_cfg = dict(current_config)
                         host_cfg['host'] = tokens[0]
-                        if len(tokens) > 1 and 'hostname' in current_config:
-
-                            host_cfg['aliases'] = tokens[1:]
+                        host_cfg['__host_tokens'] = list(tokens)
                         self.parse_host_config(host_cfg, source=cfg_file)
                     else:
                         for token in tokens:
                             host_cfg = dict(current_config)
                             host_cfg['host'] = token
-                            if 'hostname' in current_config:
-                                others = [t for t in tokens if t != token]
-                                if others:
-                                    host_cfg['aliases'] = others
-
+                            host_cfg['__host_tokens'] = list(tokens)
                             connection_data = self.parse_host_config(host_cfg, source=cfg_file)
                             if connection_data:
                                 connection_data['source'] = cfg_file
@@ -912,17 +894,19 @@ class ConnectionManager(GObject.Object):
             if not host_token:
                 return None
 
-            aliases = [_unwrap(a) for a in (config.get('aliases', []) or [])]
+            raw_tokens = config.get('__host_tokens')
+            tokens = [_unwrap(t) for t in raw_tokens] if raw_tokens else [host_token]
+
+            config = dict(config)
+            config.pop('__host_tokens', None)
+            config.pop('aliases', None)
 
             # Detect wildcard or negated host tokens (e.g., '*', '?', '!pattern')
-            tokens = [host_token] + aliases
             if any('*' in t or '?' in t or t.startswith('!') for t in tokens):
                 if not hasattr(self, 'rules'):
                     self.rules = []
                 rule_block = dict(config)
                 rule_block['host'] = host_token
-                if aliases:
-                    rule_block['aliases'] = aliases
                 if source:
                     rule_block['source'] = source
                 self.rules.append(rule_block)
@@ -933,7 +917,7 @@ class ConnectionManager(GObject.Object):
             # Extract relevant configuration
             parsed = {
                 'nickname': host,
-                'aliases': aliases,
+                'aliases': [],
                 'host': _unwrap(config.get('hostname', host)),
 
                 'port': int(_unwrap(config.get('port', 22))),
@@ -1397,10 +1381,9 @@ class ConnectionManager(GObject.Object):
             return token
 
         host = data.get('host', '')
-        nickname = data.get('nickname', '')
-        aliases = data.get('aliases', []) or []
-        host_tokens = [_quote_token(nickname)] + [_quote_token(a) for a in aliases]
-        lines = ["Host " + " ".join(host_tokens)]
+        nickname = data.get('nickname') or host
+        primary_token = _quote_token(nickname)
+        lines = [f"Host {primary_token}"]
 
         # Add basic connection info
         if host and host != nickname:
