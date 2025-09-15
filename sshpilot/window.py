@@ -2538,7 +2538,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             # Build ssh-copy-id command with options derived from connection settings
             logger.debug("Main window: Building ssh-copy-id command arguments")
-            argv = self._build_ssh_copy_id_argv(connection, ssh_key, force)
+            argv = self._build_ssh_copy_id_argv(
+                connection,
+                ssh_key,
+                force,
+                known_hosts_path=self.connection_manager.known_hosts_path,
+            )
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
             logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
             logger.info("Full command line: %s", cmdline)
@@ -2807,7 +2812,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
 
 
-    def _build_ssh_copy_id_argv(self, connection, ssh_key, force=False):
+    def _build_ssh_copy_id_argv(
+        self,
+        connection,
+        ssh_key,
+        force: bool = False,
+        known_hosts_path: Optional[str] = None,
+    ):
         """Construct argv for ssh-copy-id honoring saved UI auth preferences."""
         logger.info(f"Building ssh-copy-id argv for key: {getattr(ssh_key, 'public_path', 'unknown')}")
         logger.debug(f"Main window: Building ssh-copy-id command arguments")
@@ -2861,6 +2872,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.debug(f"Main window: Error loading SSH config: {e}")
             argv += ['-o', 'StrictHostKeyChecking=accept-new']
             logger.debug("Main window: Using default strict host key checking: accept-new")
+
+        if known_hosts_path:
+            argv += ['-o', f'UserKnownHostsFile={known_hosts_path}']
+
         # Derive auth prefs from saved config and connection
         logger.debug("Main window: Determining authentication preferences")
         prefer_password = False
@@ -3076,7 +3091,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             cancel_btn.connect('clicked', _on_cancel)
 
             # Build and run scp command in the terminal
-            argv = self._build_scp_argv(connection, local_paths, remote_dir)
+            argv = self._build_scp_argv(
+                connection,
+                local_paths,
+                remote_dir,
+                known_hosts_path=self.connection_manager.known_hosts_path,
+            )
 
             # Handle environment variables for authentication
             env = os.environ.copy()
@@ -3215,7 +3235,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f'Failed to open scp terminal window: {e}')
 
-    def _build_scp_argv(self, connection, local_paths, remote_dir):
+    def _build_scp_argv(
+        self,
+        connection,
+        local_paths,
+        remote_dir,
+        known_hosts_path: Optional[str] = None,
+    ):
         argv = ['scp', '-v']
         # Port
         try:
@@ -3235,6 +3261,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 argv += ['-o', 'StrictHostKeyChecking=accept-new']
         except Exception:
             argv += ['-o', 'StrictHostKeyChecking=accept-new']
+
+        if known_hosts_path:
+            argv += ['-o', f'UserKnownHostsFile={known_hosts_path}']
         # Prefer password if selected
         prefer_password = False
         key_mode = 0
