@@ -15,7 +15,7 @@ import re
 from typing import Dict, List, Optional, Any, Tuple, Union
 
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
-from .platform_utils import is_macos, get_config_dir
+from .platform_utils import is_macos, get_config_dir, get_ssh_dir
 
 try:
     import secretstorage
@@ -680,8 +680,9 @@ class ConnectionManager(GObject.Object):
                 if not os.path.exists(path):
                     open(path, 'a').close()
         else:
-            self.ssh_config_path = os.path.expanduser('~/.ssh/config')
-            self.known_hosts_path = os.path.expanduser('~/.ssh/known_hosts')
+            ssh_dir = get_ssh_dir()
+            self.ssh_config_path = os.path.join(ssh_dir, 'config')
+            self.known_hosts_path = os.path.join(ssh_dir, 'known_hosts')
 
         # Reload SSH config to reflect new paths
         self.load_ssh_config()
@@ -1069,10 +1070,10 @@ class ConnectionManager(GObject.Object):
             return None
 
     def load_ssh_keys(self):
-        """Auto-detect SSH keys in ~/.ssh/"""
-        ssh_dir = os.path.expanduser('~/.ssh')
-        if not os.path.exists(ssh_dir):
-            return
+        """Auto-detect SSH keys in the SSH directory."""
+        ssh_dir = get_ssh_dir()
+        if not os.path.isdir(ssh_dir):
+            return []
         
         try:
             keys = []

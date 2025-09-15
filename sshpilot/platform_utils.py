@@ -28,3 +28,18 @@ def get_data_dir() -> str:
     """Return the per-user data directory for sshPilot."""
     return os.path.join(GLib.get_user_data_dir(), APP_NAME)
 
+
+SSH_DIR_ENV = "SSHPILOT_SSH_DIR"
+
+
+def get_ssh_dir() -> str:
+    """Return the SSH directory path.
+
+    Defaults to ``GLib.get_home_dir()/.ssh`` but can be overridden by the
+    ``SSHPILOT_SSH_DIR`` environment variable.
+    """
+    override = os.environ.get(SSH_DIR_ENV)
+    if override:
+        return os.path.expanduser(override)
+    return os.path.join(GLib.get_home_dir(), ".ssh")
+
