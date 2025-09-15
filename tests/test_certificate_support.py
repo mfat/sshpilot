@@ -28,19 +28,21 @@ if 'gi' not in sys.modules:
     repository.GLib = DummyGLib
     repository.GObject = DummyGObject
     repository.Gtk = types.SimpleNamespace()
+    repository.Secret = types.SimpleNamespace(
+        Schema=types.SimpleNamespace(new=lambda *a, **k: object()),
+        SchemaFlags=types.SimpleNamespace(NONE=0),
+        password_store_sync=lambda *a, **k: True,
+        password_lookup_sync=lambda *a, **k: None,
+        password_clear_sync=lambda *a, **k: None,
+        COLLECTION_DEFAULT=None,
+    )
     gi.repository = repository
     sys.modules['gi'] = gi
     sys.modules['gi.repository'] = repository
     sys.modules['gi.repository.GLib'] = repository.GLib
     sys.modules['gi.repository.GObject'] = repository.GObject
     sys.modules['gi.repository.Gtk'] = repository.Gtk
-
-# Stub 'secretstorage' module
-if 'secretstorage' not in sys.modules:
-    secretstorage = types.ModuleType('secretstorage')
-    secretstorage.dbus_init = lambda: None
-    secretstorage.get_default_collection = lambda bus: None
-    sys.modules['secretstorage'] = secretstorage
+    sys.modules['gi.repository.Secret'] = repository.Secret
 
 # Ensure the project root is on sys.path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
