@@ -622,7 +622,7 @@ def register_window_actions(window):
     window.open_new_connection_tab_action.connect('activate', window.on_open_new_connection_tab_action)
     window.add_action(window.open_new_connection_tab_action)
 
-    # Action for managing files on remote server (skip on macOS)
+    # Action for managing files on remote server (skip on macOS and Flatpak)
     if not should_hide_file_manager_options():
         window.manage_files_action = Gio.SimpleAction.new('manage-files', None)
         window.manage_files_action.connect('activate', window.on_manage_files_action)
