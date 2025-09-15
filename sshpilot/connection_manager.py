@@ -20,6 +20,7 @@ from .platform_utils import is_macos, get_config_dir
 try:
     from gi.repository import Secret
 except Exception:
+
     Secret = None
 try:
     import keyring
@@ -28,6 +29,12 @@ except Exception:
 import socket
 import time
 from gi.repository import GObject, GLib
+from .askpass_utils import (
+    clear_passphrase,
+    get_secret_schema,
+    lookup_passphrase,
+    store_passphrase,
+)
 
 if Secret is not None:
     _SECRET_SCHEMA = Secret.Schema.new(
@@ -714,6 +721,7 @@ class ConnectionManager(GObject.Object):
             try:
                 Secret.Service.get_sync(Secret.ServiceFlags.NONE)
                 self.libsecret_available = True
+
                 logger.info("Secure storage initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize secure storage: {e}")
@@ -728,6 +736,7 @@ class ConnectionManager(GObject.Object):
         return False  # run once
 
     # No _ensure_collection needed with libsecret's high-level API
+
         
     def load_ssh_config(self):
         """Load connections from SSH config file"""
@@ -1103,6 +1112,7 @@ class ConnectionManager(GObject.Object):
                 return True
             except Exception as e:
                 logger.error(f"Failed to store password (libsecret): {e}")
+
         # Fallback to cross-platform keyring (macOS Keychain, etc.)
         if keyring is not None:
             try:
@@ -1130,6 +1140,7 @@ class ConnectionManager(GObject.Object):
                     return password
             except Exception as e:
                 logger.error(f"Error retrieving password (libsecret) for {username}@{host}: {e}")
+
         # Fallback to keyring
         if keyring is not None:
             try:
@@ -1138,7 +1149,9 @@ class ConnectionManager(GObject.Object):
                     logger.debug(f"Password retrieved for {username}@{host} via keyring")
                 return pw
             except Exception as e:
-                logger.error(f"Error retrieving password (keyring) for {username}@{host}: {e}")
+                logger.error(
+                    f"Error retrieving password (keyring) for {username}@{host}: {e}"
+                )
         return None
 
     def delete_password(self, host: str, username: str) -> bool:
@@ -1155,6 +1168,7 @@ class ConnectionManager(GObject.Object):
                 removed_any = Secret.password_clear_sync(_SECRET_SCHEMA, attributes, None) or removed_any
             except Exception as e:
                 logger.error(f"Error deleting password (libsecret) for {username}@{host}: {e}")
+
         # Also attempt keyring cleanup so both stores are cleared if both were used
         if keyring is not None:
             try:
@@ -1171,8 +1185,7 @@ class ConnectionManager(GObject.Object):
         try:
             # Use keyring on macOS, libsecret on Linux
             if keyring and is_macos():
-                # macOS: use keyring
-                keyring.set_password('sshPilot', key_path, passphrase)
+                keyring.set_password("sshPilot", key_path, passphrase)
                 logger.debug(f"Stored key passphrase for {key_path} using keyring")
                 return True
             elif not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
@@ -1194,6 +1207,7 @@ class ConnectionManager(GObject.Object):
                 )
                 logger.debug(f"Stored key passphrase for {key_path} using libsecret")
                 return True
+
             else:
                 logger.warning("No keyring backend available for storing passphrase")
                 return False
@@ -1206,10 +1220,11 @@ class ConnectionManager(GObject.Object):
         try:
             # Use keyring on macOS, libsecret on Linux
             if keyring and is_macos():
-                # macOS: use keyring
-                passphrase = keyring.get_password('sshPilot', key_path)
+                passphrase = keyring.get_password("sshPilot", key_path)
                 if passphrase:
-                    logger.debug(f"Retrieved key passphrase for {key_path} using keyring")
+                    logger.debug(
+                        f"Retrieved key passphrase for {key_path} using keyring"
+                    )
                 return passphrase
             elif not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
                 # Linux: use libsecret
@@ -1223,6 +1238,7 @@ class ConnectionManager(GObject.Object):
                 if passphrase is not None:
                     logger.debug(f"Retrieved key passphrase for {key_path} using libsecret")
                     return passphrase
+
             return None
         except Exception as e:
             logger.error(f"Error retrieving key passphrase for {key_path}: {e}")
@@ -1233,13 +1249,13 @@ class ConnectionManager(GObject.Object):
         try:
             # Use keyring on macOS, libsecret on Linux
             if keyring and is_macos():
-                # macOS: use keyring
                 try:
-                    keyring.delete_password('sshPilot', key_path)
-                    logger.debug(f"Deleted stored key passphrase for {key_path} using keyring")
+                    keyring.delete_password("sshPilot", key_path)
+                    logger.debug(
+                        f"Deleted stored key passphrase for {key_path} using keyring"
+                    )
                     return True
                 except keyring.errors.PasswordDeleteError:
-                    # Password doesn't exist, which is fine
                     return True
             elif not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
                 # Linux: use libsecret
@@ -1252,6 +1268,7 @@ class ConnectionManager(GObject.Object):
                 removed_any = Secret.password_clear_sync(_SECRET_SCHEMA, attributes, None)
                 if removed_any:
                     logger.debug(f"Deleted stored key passphrase for {key_path} using libsecret")
+
                 return bool(removed_any)
             return False
         except Exception as e:

@@ -1,10 +1,103 @@
 # askpass_utils.py
-import os, tempfile, atexit, shutil, subprocess, logging
+import atexit
+import logging
+import os
+import shutil
+import subprocess
+import tempfile
+
+try:
+    import gi
+
+    gi.require_version("Secret", "1")
+    from gi.repository import Secret
+except Exception:  # pragma: no cover - optional dependency
+    Secret = None
 
 logger = logging.getLogger(__name__)
 
 _ASKPASS_DIR = None
 _ASKPASS_SCRIPT = None
+
+_SCHEMA = None
+
+
+def get_secret_schema() -> "Secret.Schema":
+    """Return the shared Secret.Schema for stored secrets."""
+
+    global _SCHEMA
+    if _SCHEMA is None and Secret is not None:
+        _SCHEMA = Secret.Schema.new(
+            "io.github.mfat.sshpilot",
+            Secret.SchemaFlags.NONE,
+            {
+                "application": Secret.SchemaAttributeType.STRING,
+                "type": Secret.SchemaAttributeType.STRING,
+                "key_path": Secret.SchemaAttributeType.STRING,
+                "host": Secret.SchemaAttributeType.STRING,
+                "username": Secret.SchemaAttributeType.STRING,
+            },
+        )
+    return _SCHEMA
+
+
+def store_passphrase(key_path: str, passphrase: str) -> bool:
+    """Store a key passphrase using libsecret."""
+
+    schema = get_secret_schema()
+    if not schema:
+        return False
+    attributes = {
+        "application": "sshPilot",
+        "type": "key_passphrase",
+        "key_path": key_path,
+    }
+    try:
+        Secret.password_store_sync(
+            schema,
+            attributes,
+            Secret.COLLECTION_DEFAULT,
+            f"SSH Key Passphrase: {os.path.basename(key_path)}",
+            passphrase,
+            None,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def lookup_passphrase(key_path: str) -> str:
+    """Look up a key passphrase using libsecret."""
+
+    schema = get_secret_schema()
+    if not schema:
+        return ""
+    attributes = {
+        "application": "sshPilot",
+        "type": "key_passphrase",
+        "key_path": key_path,
+    }
+    try:
+        return Secret.password_lookup_sync(schema, attributes, None) or ""
+    except Exception:
+        return ""
+
+
+def clear_passphrase(key_path: str) -> bool:
+    """Remove a stored key passphrase using libsecret."""
+
+    schema = get_secret_schema()
+    if not schema:
+        return False
+    attributes = {
+        "application": "sshPilot",
+        "type": "key_passphrase",
+        "key_path": key_path,
+    }
+    try:
+        return bool(Secret.password_clear_sync(schema, attributes, None))
+    except Exception:
+        return False
 
 def ensure_passphrase_askpass() -> str:
     """Ensure the askpass script exists and return its path"""
@@ -33,6 +126,7 @@ def ensure_passphrase_askpass() -> str:
     script_body = r'''#!/usr/bin/env python3
 import sys, re, os, platform
 try:
+
     from gi.repository import Secret
 except Exception:
     Secret = None
@@ -92,6 +186,7 @@ def get_passphrase(key_path: str) -> str:
             "type": Secret.SchemaAttributeType.STRING,
             "key_path": Secret.SchemaAttributeType.STRING,
         })
+
         attributes = {
             "application": "sshPilot",
             "type": "key_passphrase",
@@ -99,6 +194,7 @@ def get_passphrase(key_path: str) -> str:
         }
         secret = Secret.password_lookup_sync(schema, attributes, None)
         if secret is not None:
+
             try:
                 with open("/tmp/sshpilot-askpass.log", "a") as f:
                     f.write("ASKPASS: Retrieved passphrase from libsecret\n")
