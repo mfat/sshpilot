@@ -3,18 +3,17 @@ This document outlines the various scenarios and complexities involved in parsin
 
 ## 1. Core Concepts
 ### 🎯 Connectable Hosts
-These are specific, named entries that a user can directly connect to. They represent a single, actionable server alias.
+These are specific, named entries that a user can directly connect to. Each `Host` block is expected to declare a single label, and the parser treats each label as its own connection. Multi-label alias lists (for example, `Host webapp webapp-backup`) are unsupported.
 
 ### 📜 Configuration Rules
 These are patterns or conditional blocks that apply settings to a class of connections. They are not directly connectable and should be hidden from a primary server list.
 
 ## 2. Scenarios for Connectable Hosts
-These entries should be parsed and presented to the user as valid connection targets.
+These entries should be parsed and presented to the user as valid connection targets. Each `Host` block should contain exactly one label; alias lists are unsupported and must be split into discrete entries.
 
-### Scenario: Simple Host Alias
-The most common use case. An alias (webapp) maps to a HostName.
+> ⚠️ Unsupported: `Host webapp webapp-backup` (alias list). Create separate blocks for each label so that every connection can be listed individually.
 
-Code snippet
+**Example: Single Host Label**
 
 Host webapp
   HostName 192.168.1.50
@@ -22,24 +21,18 @@ Host webapp
   Port 2222
 Classification: Connectable
 
-Key Info: The alias is webapp. The actual host to connect to is 192.168.1.50.
+Key Info: The label `webapp` identifies the connection. Use additional `Host` blocks if you need `webapp-backup` or other names.
 
-### Scenario: Implicit Hostname
-When HostName is not specified, the Host alias itself is the resolvable hostname.
-
-Code snippet
+**Example: Implicit Hostname**
 
 Host prod-server.example.com
   User ubuntu
   IdentityFile ~/.ssh/prod.key
 Classification: Connectable
 
-Key Info: The alias and hostname are both prod-server.example.com. A parser that requires HostName to be present will incorrectly classify this as a rule.
+Key Info: The label and hostname are both prod-server.example.com. A parser that requires HostName to be present will incorrectly classify this as a rule.
 
-### Scenario: Host with a Proxy or Bastion
-These are connectable hosts that are only reachable through another server. The presence of ProxyJump or ProxyCommand does not make it a rule.
-
-Code snippet
+**Example: Host with a Proxy or Bastion**
 
 Host private-db
   HostName 10.0.50.15
@@ -47,18 +40,6 @@ Host private-db
 Classification: Connectable
 
 Key Info: The user wants to connect to private-db. The SSH client handles the jump through bastion-host automatically.
-
-### Scenario: Quoted Hostname
-Host aliases can be quoted to include spaces or special characters.
-
-Code snippet
-
-Host "My Web Server"
-  HostName web.internal
-  User webadmin
-Classification: Connectable
-
-Key Info: The alias is "My Web Server". The parser must correctly handle the quotes.
 
 ## 3. Scenarios for Configuration Rules
 These entries should be parsed to apply their settings but hidden from the main UI list.
@@ -85,7 +66,7 @@ Host server* *.dev *.staging !prod
   StrictHostKeyChecking no
 Classification: Rule
 
-Reason: It defines a set of conditions for applying settings, not a single destination. The parser must split the line into individual patterns.
+Reason: It defines a set of conditions for applying settings, not a single destination. The parser must split the line into individual patterns, and alias lists (multiple plain labels) should be considered unsupported for connectable hosts.
 
 ### Scenario: Negated Patterns
 A pattern starting with ! is an exception. It matches everything except the pattern.
@@ -140,9 +121,9 @@ Process Include: Recursively read and parse included files.
 ### ⭐ The Gold Standard: Offload to ssh -G
 The most robust and accurate method is to avoid writing a complex custom parser.
 
-Discover Hosts: Use a simple regex like ^\s*Host\s+([^\s*?!]+)$ to find candidate aliases for your UI. This is a "best-effort" discovery step.
+Discover Hosts: Use a simple regex like ^\s*Host\s+([^\s*?!]+)$ to find candidate labels for your UI. This is a "best-effort" discovery step that intentionally ignores `Host` lines with multiple labels because alias lists are unsupported.
 
-Evaluate Configuration: For a selected alias (e.g., webapp), run the command ssh -G webapp.
+Evaluate Configuration: For a selected label (e.g., webapp), run the command ssh -G webapp.
 
 Parse the Output: The command produces a simple, definitive key value list of the final, effective configuration for that host. This output accounts for all Host blocks, Match blocks, Include files, and precedence rules.
 
