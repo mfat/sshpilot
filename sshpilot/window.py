@@ -5,11 +5,10 @@ Primary UI with connection list, tabs, and terminal management
 
 import os
 import logging
-import math
 import shlex
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple, Callable
+from typing import Optional, Dict, Any, List, Tuple
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -700,6 +699,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         try:
             context_click = Gtk.GestureClick()
             context_click.set_button(0)  # handle any button; filter inside
+            context_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
             def _on_list_pressed(gesture, n_press, x, y):
                 try:
                     btn = 0
@@ -709,7 +709,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         pass
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         return
-                    row = self.connection_list.get_row_at_y(int(y))
+                    try:
+                        adjusted_y = float(y)
+                    except (TypeError, ValueError):
+                        adjusted_y = 0.0
+                    vadjustment = None
+                    vadjust_value = 0.0
+                    try:
+                        vadjustment = scrolled.get_vadjustment()
+                    except Exception:
+                        vadjustment = None
+                    if vadjustment is not None:
+                        try:
+                            vadjust_value = float(vadjustment.get_value())
+                        except Exception:
+                            vadjust_value = 0.0
+                        else:
+                            adjusted_y += vadjust_value
+                    row = self.connection_list.get_row_at_y(int(adjusted_y))
                     if not row:
                         return
                     self.connection_list.select_row(row)
@@ -813,7 +830,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     try:
                         rect = Gdk.Rectangle()
                         rect.x = int(x)
-                        rect.y = int(y)
+                        rect.y = int(adjusted_y)
                         rect.width = 1
                         rect.height = 1
                         pop.set_pointing_to(rect)
