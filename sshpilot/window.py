@@ -2350,18 +2350,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 dlg.close()
                 if response != 'choose':
                     return
-                # Choose local files
-                file_chooser = Gtk.FileChooserDialog(
-                    title=_('Select files to upload'),
-                    action=Gtk.FileChooserAction.OPEN,
-                )
-                file_chooser.set_transient_for(self)
-                file_chooser.set_modal(True)
-                file_chooser.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-                file_chooser.add_button(_('Open'), Gtk.ResponseType.ACCEPT)
-                file_chooser.set_select_multiple(True)
-                file_chooser.connect('response', lambda fc, resp: self._on_files_chosen(fc, resp, connection))
-                file_chooser.show()
+                # Choose local files using portal-aware API
+                file_dialog = Gtk.FileDialog(title=_('Select files to upload'))
+                file_dialog.open_multiple(self, None,
+                                          lambda fd, res: self._on_files_chosen(fd, res, connection))
 
             intro.connect('response', _on_intro)
             intro.present()
@@ -2947,15 +2939,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         logger.debug(f"Main window: Final argv: {argv}")
         return argv
 
-    def _on_files_chosen(self, chooser, response, connection):
+    def _on_files_chosen(self, dialog, result, connection):
         try:
-            if response != Gtk.ResponseType.ACCEPT:
-                chooser.destroy()
+            files_model = dialog.open_multiple_finish(result)
+            if not files_model or files_model.get_n_items() == 0:
                 return
-            files = chooser.get_files()
-            chooser.destroy()
-            if not files:
-                return
+            files = [files_model.get_item(i) for i in range(files_model.get_n_items())]
+
             # Ask remote destination path
             prompt = Adw.MessageDialog(
                 transient_for=self,
