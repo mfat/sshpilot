@@ -711,6 +711,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         return
                     row, pointer_x, pointer_y = self._resolve_connection_list_event(x, y, scrolled)
+
                     if not row:
                         return
                     self.connection_list.select_row(row)
@@ -815,6 +816,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         rect = Gdk.Rectangle()
                         rect.x = int(pointer_x)
                         rect.y = int(pointer_y)
+
                         rect.width = 1
                         rect.height = 1
                         pop.set_pointing_to(rect)
@@ -969,6 +971,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         scrolled_window: Optional[Gtk.ScrolledWindow] = None,
     ) -> Tuple[Optional[Gtk.ListBoxRow], float, float]:
         """Resolve the target row and viewport coordinates for a pointer event on the connection list."""
+
         try:
             event_x = float(x)
             event_y = float(y)
@@ -979,6 +982,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         adjusted_y = event_y
         hadjust_value = 0.0
         vadjust_value = 0.0
+
 
         if scrolled_window is None:
             try:
@@ -1000,6 +1004,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     else:
                         adjusted_x = event_x + hadjust_value
 
+
             try:
                 vadjustment = scrolled_window.get_vadjustment()
             except Exception:
@@ -1013,6 +1018,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     else:
                         adjusted_y = event_y + vadjust_value
 
+
         x_candidates: List[float] = [adjusted_x]
         if not math.isclose(adjusted_x, event_x):
             x_candidates.append(event_x)
@@ -1024,6 +1030,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         row: Optional[Gtk.ListBoxRow] = None
         pointer_y_source_index = 0
         for idx, candidate in enumerate(y_candidates):
+
             try:
                 row = self.connection_list.get_row_at_y(int(candidate))
             except Exception:
@@ -1034,6 +1041,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             row = self._connection_row_for_coordinate(candidate)
             if row:
                 pointer_y_source_index = idx
+
                 break
 
         if not row:
@@ -1059,6 +1067,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 row_left = row_top = 0.0
                 row_right = row_bottom = 0.0
+
 
             if row_right < row_left:
                 row_right = row_left
@@ -1118,6 +1127,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     pointer_y_viewport = midpoint_y
 
         return row, pointer_x_viewport, pointer_y_viewport
+
 
     def _connection_row_for_coordinate(self, coord: float) -> Optional[Gtk.ListBoxRow]:
         """Return the listbox row whose allocation includes the given list-space coordinate."""
