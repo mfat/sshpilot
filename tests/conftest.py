@@ -14,10 +14,19 @@ if 'gi' not in sys.modules:
     repository = types.ModuleType('gi.repository')
     gi.repository = repository
     repository.GObject = types.SimpleNamespace(Object=object, SignalFlags=types.SimpleNamespace(RUN_FIRST=None))
-    repository.GLib = types.SimpleNamespace()
+    repository.GLib = types.SimpleNamespace(idle_add=lambda *a, **k: None)
     repository.Gtk = types.SimpleNamespace()
+    repository.Secret = types.SimpleNamespace(
+        Schema=types.SimpleNamespace(new=lambda *a, **k: object()),
+        SchemaFlags=types.SimpleNamespace(NONE=0),
+        password_store_sync=lambda *a, **k: True,
+        password_lookup_sync=lambda *a, **k: None,
+        password_clear_sync=lambda *a, **k: None,
+        COLLECTION_DEFAULT=None,
+    )
     sys.modules['gi'] = gi
     sys.modules['gi.repository'] = repository
     sys.modules['gi.repository.GObject'] = repository.GObject
     sys.modules['gi.repository.GLib'] = repository.GLib
     sys.modules['gi.repository.Gtk'] = repository.Gtk
+    sys.modules['gi.repository.Secret'] = repository.Secret
