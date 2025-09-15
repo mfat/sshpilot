@@ -9,7 +9,7 @@ import os
 from typing import Dict, Any, Optional
 
 from gi.repository import Gio, GLib, GObject
-from .platform_utils import get_config_dir
+from .platform_utils import get_config_dir, is_flatpak
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,7 @@ class Config(GObject.Object):
                 'auto_add_host_keys': True,
                 'verbosity': 0,
                 'debug_enabled': False,
-                'use_isolated_config': False,
+                'use_isolated_config': is_flatpak(),
             },
             'security': {
                 'store_passwords': True,
