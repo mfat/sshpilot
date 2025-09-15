@@ -15,7 +15,7 @@ from typing import Optional, Dict, Any
 
 from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
 from .port_utils import get_port_checker
-from .platform_utils import is_macos
+from .platform_utils import is_macos, get_ssh_dir
 
 # Initialize gettext
 try:
@@ -1840,8 +1840,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             names = []
             paths = []
             
-            # Look for certificate files in ~/.ssh directory
-            ssh_dir = os.path.expanduser("~/.ssh")
+            # Look for certificate files in the SSH directory
+            ssh_dir = get_ssh_dir()
             if os.path.exists(ssh_dir) and os.path.isdir(ssh_dir):
                 for filename in os.listdir(ssh_dir):
                     if filename.endswith('-cert.pub'):
@@ -2662,9 +2662,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
             dialog.add_button(_("Open"), Gtk.ResponseType.ACCEPT)
 
-            # Default to ~/.ssh directory when available
+            # Default to SSH directory when available
             try:
-                ssh_dir = os.path.expanduser('~/.ssh')
+                ssh_dir = get_ssh_dir()
                 if os.path.isdir(ssh_dir):
                     try:
                         dialog.set_current_folder(Gio.File.new_for_path(ssh_dir))
@@ -2679,7 +2679,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             except Exception:
                 pass
 
-            # No filters: list all files in ~/.ssh
+            # No filters: list all files in SSH directory
 
             dialog.connect("response", self.on_key_file_selected)
             dialog.show()
@@ -2704,9 +2704,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
             dialog.add_button(_("Open"), Gtk.ResponseType.ACCEPT)
 
-            # Default to ~/.ssh directory when available
+            # Default to SSH directory when available
             try:
-                ssh_dir = os.path.expanduser('~/.ssh')
+                ssh_dir = get_ssh_dir()
                 if os.path.isdir(ssh_dir):
                     try:
                         dialog.set_current_folder(Gio.File.new_for_path(ssh_dir))

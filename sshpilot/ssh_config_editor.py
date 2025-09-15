@@ -5,6 +5,8 @@ from gettext import gettext as _
 
 from gi.repository import Gtk, Adw
 
+from .platform_utils import get_ssh_dir
+
 logger = logging.getLogger(__name__)
 
 class SSHConfigEditorWindow(Adw.Window):
@@ -19,7 +21,7 @@ class SSHConfigEditorWindow(Adw.Window):
 
         self._cm = connection_manager
         self._on_saved = on_saved
-        self._config_path = getattr(connection_manager, 'ssh_config_path', os.path.expanduser('~/.ssh/config'))
+        self._config_path = getattr(connection_manager, 'ssh_config_path', os.path.join(get_ssh_dir(), 'config'))
 
         # Toolbar view with header bar
         tv = Adw.ToolbarView()

@@ -15,7 +15,7 @@ import re
 from typing import Dict, List, Optional, Any, Tuple, Union
 
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
-from .platform_utils import is_macos, get_config_dir
+from .platform_utils import is_macos, get_config_dir, get_ssh_dir
 
 try:
     from gi.repository import Secret
@@ -701,8 +701,9 @@ class ConnectionManager(GObject.Object):
                 if not os.path.exists(path):
                     open(path, 'a').close()
         else:
-            self.ssh_config_path = os.path.expanduser('~/.ssh/config')
-            self.known_hosts_path = os.path.expanduser('~/.ssh/known_hosts')
+            ssh_dir = get_ssh_dir()
+            self.ssh_config_path = os.path.join(ssh_dir, 'config')
+            self.known_hosts_path = os.path.join(ssh_dir, 'known_hosts')
 
         # Reload SSH config to reflect new paths
         self.load_ssh_config()
@@ -1070,7 +1071,7 @@ class ConnectionManager(GObject.Object):
         search_dirs = []
         if getattr(self, 'isolated_mode', False):
             search_dirs.append(get_config_dir())
-        search_dirs.append(os.path.expanduser('~/.ssh'))
+        search_dirs.append(get_ssh_dir())
 
         keys: List[str] = []
         seen = set()

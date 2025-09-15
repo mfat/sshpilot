@@ -5,6 +5,8 @@ from typing import Callable, Optional
 from gettext import gettext as _
 from gi.repository import Gtk, Adw, GLib
 
+from .platform_utils import get_ssh_dir
+
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,7 @@ class KnownHostsEditorWindow(Adw.Window):
         self._known_hosts_path = getattr(
             connection_manager,
             'known_hosts_path',
-            os.path.expanduser('~/.ssh/known_hosts'),
+            os.path.join(get_ssh_dir(), 'known_hosts'),
         )
         self._all_entries = []  # Store all entries for filtering
 
