@@ -18,11 +18,9 @@ from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
 from .platform_utils import is_macos, get_config_dir
 
 try:
-    import gi
-
-    gi.require_version("Secret", "1")
     from gi.repository import Secret
-except Exception:  # pragma: no cover - optional dependency
+except Exception:
+
     Secret = None
 try:
     import keyring
@@ -37,6 +35,20 @@ from .askpass_utils import (
     lookup_passphrase,
     store_passphrase,
 )
+
+if Secret is not None:
+    _SECRET_SCHEMA = Secret.Schema.new(
+        "sshPilot",
+        Secret.SchemaFlags.NONE,
+        {
+            "application": Secret.SchemaAttributeType.STRING,
+            "type": Secret.SchemaAttributeType.STRING,
+            "key_path": Secret.SchemaAttributeType.STRING,
+            "key_id": Secret.SchemaAttributeType.STRING,
+        },
+    )
+else:
+    _SECRET_SCHEMA = None
 
 # Set up asyncio event loop for GTK integration
 if os.name == 'posix':
@@ -704,48 +716,27 @@ class ConnectionManager(GObject.Object):
             logger.debug(f"SSH key scan skipped/failed: {e}")
         
         # Initialize secure storage (can be slow)
-        self.service = None
-        if Secret:
+        self.libsecret_available = False
+        if not is_macos() and Secret is not None:
             try:
-                self.service = Secret.Service.get_sync(
-                    Secret.ServiceFlags.OPEN_SESSION, None
-                )
+                Secret.Service.get_sync(Secret.ServiceFlags.NONE)
+                self.libsecret_available = True
+
                 logger.info("Secure storage initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize secure storage: {e}")
+        elif keyring is not None:
+            try:
+                backend = keyring.get_keyring()
+                logger.info("Using system keyring backend: %s", backend.__class__.__name__)
+            except Exception:
+                logger.info("Keyring module present but no usable backend; passwords will not be stored")
         else:
-            # libsecret not available (e.g., macOS). Fall back to system keyring if present
-            if keyring is not None:
-                try:
-                    backend = keyring.get_keyring()
-                    logger.info(
-                        "Using system keyring backend: %s", backend.__class__.__name__
-                    )
-                except Exception:
-                    logger.info(
-                        "Keyring module present but no usable backend; passwords will not be stored"
-                    )
-            else:
-                logger.info("No libsecret or keyring available; password storage disabled")
+            logger.info("No secure storage backend available; password storage disabled")
         return False  # run once
 
-    def _ensure_collection(self) -> bool:
-        """Ensure libsecret service is initialized and default collection unlocked."""
-        if not Secret:
-            return False
-        try:
-            if getattr(self, "service", None) is None:
-                self.service = Secret.Service.get_sync(
-                    Secret.ServiceFlags.OPEN_SESSION, None
-                )
-            collection = self.service.get_collection_by_alias_sync("default", None)
-            if collection and collection.get_locked():
-                collection.unlock_sync(None)
-            return collection is not None
-        except Exception as e:
-            logger.warning(f"Secret service init failed: {e}")
-            self.service = None
-            return False
+    # No _ensure_collection needed with libsecret's high-level API
+
         
     def load_ssh_config(self):
         """Load connections from SSH config file"""
@@ -1102,19 +1093,18 @@ class ConnectionManager(GObject.Object):
     def store_password(self, host: str, username: str, password: str):
         """Store password securely in system keyring"""
         # Prefer libsecret on Linux when available
-        if self._ensure_collection():
+        if not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
             try:
                 attributes = {
-                    "application": _SERVICE_NAME,
-                    "type": "host_password",
-                    "host": host,
-                    "username": username,
+                    'application': _SERVICE_NAME,
+                    'host': host,
+                    'username': username,
                 }
                 Secret.password_store_sync(
-                    get_secret_schema(),
+                    _SECRET_SCHEMA,
                     attributes,
                     Secret.COLLECTION_DEFAULT,
-                    f"{_SERVICE_NAME}: {username}@{host}",
+                    f'{_SERVICE_NAME}: {username}@{host}',
                     password,
                     None,
                 )
@@ -1122,7 +1112,7 @@ class ConnectionManager(GObject.Object):
                 return True
             except Exception as e:
                 logger.error(f"Failed to store password (libsecret): {e}")
-                # Fall through to keyring attempt
+
         # Fallback to cross-platform keyring (macOS Keychain, etc.)
         if keyring is not None:
             try:
@@ -1137,26 +1127,20 @@ class ConnectionManager(GObject.Object):
     def get_password(self, host: str, username: str) -> Optional[str]:
         """Retrieve password from system keyring"""
         # Try libsecret first
-        if self._ensure_collection():
+        if not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
             try:
                 attributes = {
-                    "application": _SERVICE_NAME,
-                    "type": "host_password",
-                    "host": host,
-                    "username": username,
+                    'application': _SERVICE_NAME,
+                    'host': host,
+                    'username': username,
                 }
-                password = Secret.password_lookup_sync(
-                    get_secret_schema(), attributes, None
-                )
-                if password:
-                    logger.debug(
-                        f"Password retrieved for {username}@{host} via libsecret"
-                    )
+                password = Secret.password_lookup_sync(_SECRET_SCHEMA, attributes, None)
+                if password is not None:
+                    logger.debug(f"Password retrieved for {username}@{host} via libsecret")
                     return password
             except Exception as e:
-                logger.error(
-                    f"Error retrieving password (libsecret) for {username}@{host}: {e}"
-                )
+                logger.error(f"Error retrieving password (libsecret) for {username}@{host}: {e}")
+
         # Fallback to keyring
         if keyring is not None:
             try:
@@ -1174,22 +1158,17 @@ class ConnectionManager(GObject.Object):
         """Delete stored password for host/user from system keyring"""
         removed_any = False
         # Try libsecret first
-        if self._ensure_collection():
+        if not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
             try:
                 attributes = {
-                    "application": _SERVICE_NAME,
-                    "type": "host_password",
-                    "host": host,
-                    "username": username,
+                    'application': _SERVICE_NAME,
+                    'host': host,
+                    'username': username,
                 }
-                if Secret.password_clear_sync(
-                    get_secret_schema(), attributes, None
-                ):
-                    removed_any = True
+                removed_any = Secret.password_clear_sync(_SECRET_SCHEMA, attributes, None) or removed_any
             except Exception as e:
-                logger.error(
-                    f"Error deleting password (libsecret) for {username}@{host}: {e}"
-                )
+                logger.error(f"Error deleting password (libsecret) for {username}@{host}: {e}")
+
         # Also attempt keyring cleanup so both stores are cleared if both were used
         if keyring is not None:
             try:
@@ -1209,12 +1188,26 @@ class ConnectionManager(GObject.Object):
                 keyring.set_password("sshPilot", key_path, passphrase)
                 logger.debug(f"Stored key passphrase for {key_path} using keyring")
                 return True
-            elif self._ensure_collection():
-                if store_passphrase(key_path, passphrase):
-                    logger.debug(
-                        f"Stored key passphrase for {key_path} using libsecret"
-                    )
-                    return True
+            elif not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
+                # Linux: use libsecret
+                attributes = {
+                    'application': 'sshPilot',
+                    'type': 'key_passphrase',
+                    'key_path': key_path,
+                    'key_id': f"key_passphrase_{os.path.basename(key_path)}_{hash(key_path)}",
+                }
+
+                Secret.password_store_sync(
+                    _SECRET_SCHEMA,
+                    attributes,
+                    Secret.COLLECTION_DEFAULT,
+                    f"SSH Key Passphrase: {os.path.basename(key_path)}",
+                    passphrase,
+                    None,
+                )
+                logger.debug(f"Stored key passphrase for {key_path} using libsecret")
+                return True
+
             else:
                 logger.warning("No keyring backend available for storing passphrase")
                 return False
@@ -1233,13 +1226,19 @@ class ConnectionManager(GObject.Object):
                         f"Retrieved key passphrase for {key_path} using keyring"
                     )
                 return passphrase
-            elif self._ensure_collection():
-                passphrase = lookup_passphrase(key_path)
-                if passphrase:
-                    logger.debug(
-                        f"Retrieved key passphrase for {key_path} using libsecret"
-                    )
-                return passphrase or None
+            elif not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
+                # Linux: use libsecret
+                attributes = {
+                    'application': 'sshPilot',
+                    'type': 'key_passphrase',
+                    'key_path': key_path,
+                }
+
+                passphrase = Secret.password_lookup_sync(_SECRET_SCHEMA, attributes, None)
+                if passphrase is not None:
+                    logger.debug(f"Retrieved key passphrase for {key_path} using libsecret")
+                    return passphrase
+
             return None
         except Exception as e:
             logger.error(f"Error retrieving key passphrase for {key_path}: {e}")
@@ -1258,12 +1257,18 @@ class ConnectionManager(GObject.Object):
                     return True
                 except keyring.errors.PasswordDeleteError:
                     return True
-            elif self._ensure_collection():
-                removed_any = clear_passphrase(key_path)
+            elif not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
+                # Linux: use libsecret
+                attributes = {
+                    'application': 'sshPilot',
+                    'type': 'key_passphrase',
+                    'key_path': key_path,
+                }
+
+                removed_any = Secret.password_clear_sync(_SECRET_SCHEMA, attributes, None)
                 if removed_any:
-                    logger.debug(
-                        f"Deleted stored key passphrase for {key_path} using libsecret"
-                    )
+                    logger.debug(f"Deleted stored key passphrase for {key_path} using libsecret")
+
                 return bool(removed_any)
             return False
         except Exception as e:

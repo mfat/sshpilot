@@ -36,7 +36,6 @@ Requires-Dist: paramiko>=3.4
 Requires-Dist: cryptography>=42.0
 Requires-Dist: keyring>=24.3
 Requires-Dist: psutil>=5.9.0
-Requires-Dist: secretstorage>=3.3; sys_platform == "linux"
 Provides-Extra: dev
 Requires-Dist: pytest>=7.0.0; extra == "dev"
 Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
@@ -129,7 +128,8 @@ sudo apt install \
   libgtk-4-1 (>= 4.6) gir1.2-gtk-4.0 (>= 4.6) \
   libadwaita-1-0 (>= 1.4) gir1.2-adw-1 (>= 1.4) \
   libvte-2.91-gtk4-0 (>= 0.70) gir1.2-vte-3.91 (>= 0.70) \
-  python3-paramiko python3-cryptography python3-secretstorage sshpass ssh-askpass
+  libsecret-1-0 gir1.2-secret-1 \
+  python3-paramiko python3-cryptography sshpass ssh-askpass
 ```
 
 Fedora / RHEL / CentOS
@@ -141,7 +141,7 @@ sudo dnf install \
   gtk4 libadwaita \
   vte291-gtk4 \
   libsecret \
-  python3-paramiko python3-cryptography python3-secretstorage sshpass openssh-askpass
+  python3-paramiko python3-cryptography sshpass openssh-askpass
 ```
 
 Run from source

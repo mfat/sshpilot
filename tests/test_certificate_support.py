@@ -42,7 +42,7 @@ if 'gi' not in sys.modules:
     sys.modules['gi.repository.GLib'] = repository.GLib
     sys.modules['gi.repository.GObject'] = repository.GObject
     sys.modules['gi.repository.Gtk'] = repository.Gtk
-    sys.modules['gi.repository.Secret'] = repository.Secret
+
 
 # Ensure the project root is on sys.path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))

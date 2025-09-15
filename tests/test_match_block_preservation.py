@@ -3,7 +3,10 @@ import sys
 import types
 import asyncio
 
-# Minimal gi stub with Secret mock
+# Stub external dependencies required by connection_manager
+
+# Minimal gi stub
+
 gi_repo = types.ModuleType('gi.repository')
 gi_repo.GObject = types.SimpleNamespace(
     SignalFlags=types.SimpleNamespace(RUN_FIRST=0),

@@ -126,8 +126,7 @@ def ensure_passphrase_askpass() -> str:
     script_body = r'''#!/usr/bin/env python3
 import sys, re, os, platform
 try:
-    import gi
-    gi.require_version("Secret", "1")
+
     from gi.repository import Secret
 except Exception:
     Secret = None
@@ -182,24 +181,20 @@ def get_passphrase(key_path: str) -> str:
     try:
         with open("/tmp/sshpilot-askpass.log", "a") as f:
             f.write("ASKPASS: Trying libsecret\n")
-        schema = Secret.Schema.new(
-            "io.github.mfat.sshpilot",
-            Secret.SchemaFlags.NONE,
-            {
-                "application": Secret.SchemaAttributeType.STRING,
-                "type": Secret.SchemaAttributeType.STRING,
-                "key_path": Secret.SchemaAttributeType.STRING,
-                "host": Secret.SchemaAttributeType.STRING,
-                "username": Secret.SchemaAttributeType.STRING,
-            },
-        )
+        schema = Secret.Schema.new("sshPilot", Secret.SchemaFlags.NONE, {
+            "application": Secret.SchemaAttributeType.STRING,
+            "type": Secret.SchemaAttributeType.STRING,
+            "key_path": Secret.SchemaAttributeType.STRING,
+        })
+
         attributes = {
             "application": "sshPilot",
             "type": "key_passphrase",
             "key_path": key_path,
         }
         secret = Secret.password_lookup_sync(schema, attributes, None)
-        if secret:
+        if secret is not None:
+
             try:
                 with open("/tmp/sshpilot-askpass.log", "a") as f:
                     f.write("ASKPASS: Retrieved passphrase from libsecret\n")

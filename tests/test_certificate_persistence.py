@@ -2,7 +2,9 @@ import os
 import sys
 import types
 
-# Provide minimal gi.repository.Secret mock
+# Stub external dependencies required by connection_manager
+
+
 gi_repo = types.ModuleType('gi.repository')
 gi_repo.GObject = types.SimpleNamespace(
     SignalFlags=types.SimpleNamespace(RUN_FIRST=0),
