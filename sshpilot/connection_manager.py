@@ -85,6 +85,8 @@ class Connection:
         self.listeners: List[asyncio.Server] = []
 
         self.nickname = data.get('nickname', data.get('host', 'Unknown'))
+        if 'aliases' in data:
+            self.aliases = data.get('aliases', [])
         self.host = data.get('host', '')
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
@@ -625,6 +627,8 @@ class Connection:
     def _update_properties_from_data(self, data: Dict[str, Any]):
         """Update instance properties from data dictionary"""
         self.nickname = data.get('nickname', data.get('host', 'Unknown'))
+        if 'aliases' in data:
+            self.aliases = data.get('aliases', getattr(self, 'aliases', []))
         self.host = data.get('host', '')
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
@@ -940,7 +944,6 @@ class ConnectionManager(GObject.Object):
             # Extract relevant configuration
             parsed = {
                 'nickname': host,
-                'aliases': [],
                 'host': _unwrap(config.get('hostname', host)),
 
                 'port': int(_unwrap(config.get('port', 22))),
@@ -951,6 +954,8 @@ class ConnectionManager(GObject.Object):
                 'certificate': os.path.expanduser(_unwrap(config.get('certificatefile'))) if config.get('certificatefile') else '',
                 'forwarding_rules': []
             }
+            if 'hostname' in config:
+                parsed['aliases'] = []
             if source:
                 parsed['source'] = source
             
@@ -1526,6 +1531,122 @@ class ConnectionManager(GObject.Object):
 
         return '\n'.join(cleaned_lines)
 
+    def get_host_block_details(self, host_identifier: str, source: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Return details for the first Host block matching *host_identifier*."""
+        try:
+            host_identifier = (host_identifier or '').strip()
+            if not host_identifier:
+                return None
+
+            target_path = source or self.ssh_config_path
+            if not target_path or not os.path.exists(target_path):
+                return None
+
+            with open(target_path, 'r') as f:
+                lines = f.readlines()
+
+            i = 0
+            while i < len(lines):
+                raw_line = lines[i]
+                lstripped = raw_line.lstrip()
+                lowered = lstripped.lower()
+                if lowered.startswith('host '):
+                    parts = lstripped.split(None, 1)
+                    full_value = parts[1].strip() if len(parts) > 1 else ''
+                    try:
+                        host_names = shlex.split(full_value)
+                    except ValueError:
+                        host_names = [h for h in full_value.split() if h]
+
+                    if host_identifier in host_names:
+                        start_index = i
+                        i += 1
+                        while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
+                            i += 1
+                        end_index = i
+                        block_lines = [lines[j].rstrip('\n') for j in range(start_index, end_index)]
+                        return {
+                            'source': target_path,
+                            'hosts': host_names,
+                            'start': start_index,
+                            'end': end_index,
+                            'lines': block_lines,
+                        }
+                i += 1
+        except Exception as e:
+            logger.debug(f"Failed to inspect host block for '{host_identifier}': {e}")
+        return None
+
+    def _split_host_block(self, original_host: str, new_data: Dict[str, Any], target_path: str) -> bool:
+        """Remove *original_host* from its group and append a new block."""
+        try:
+            if not target_path:
+                target_path = self.ssh_config_path
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+
+            try:
+                with open(target_path, 'r') as f:
+                    lines = f.readlines()
+            except FileNotFoundError:
+                lines = []
+
+            updated_lines: List[str] = []
+            i = 0
+            found = False
+            while i < len(lines):
+                raw_line = lines[i]
+                lstripped = raw_line.lstrip()
+                lowered = lstripped.lower()
+                if lowered.startswith('host '):
+                    parts = lstripped.split(None, 1)
+                    full_value = parts[1].strip() if len(parts) > 1 else ''
+                    try:
+                        host_names = shlex.split(full_value)
+                    except ValueError:
+                        host_names = [h for h in full_value.split() if h]
+
+                    if not found and original_host in host_names:
+                        found = True
+                        remaining_hosts = [h for h in host_names if h != original_host]
+                        indent_len = len(raw_line) - len(lstripped)
+                        indent = raw_line[:indent_len]
+                        if remaining_hosts:
+                            updated_lines.append(f"{indent}Host {' '.join(remaining_hosts)}\n")
+                            i += 1
+                            while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
+                                updated_lines.append(lines[i])
+                                i += 1
+                        else:
+                            i += 1
+                            while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
+                                i += 1
+                        continue
+                updated_lines.append(raw_line)
+                i += 1
+
+            formatted_block = self.format_ssh_config_entry(new_data).rstrip('\n')
+            if updated_lines:
+                if not updated_lines[-1].endswith('\n'):
+                    updated_lines[-1] = updated_lines[-1] + '\n'
+                if updated_lines[-1].strip():
+                    updated_lines.append('\n')
+
+            updated_lines.append(formatted_block + '\n')
+
+            with open(target_path, 'w') as f:
+                f.writelines(updated_lines)
+
+            logger.info(
+                "Split host block for '%s' (found=%s) and appended dedicated entry to %s",
+                original_host,
+                found,
+                target_path,
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to split host block for '{original_host}': {e}")
+            return False
+
     def update_ssh_config_file(self, connection: Connection, new_data: Dict[str, Any], original_nickname: str = None):
         """Update SSH config file with new connection data"""
         try:
@@ -1677,7 +1798,11 @@ class ConnectionManager(GObject.Object):
     def update_connection(self, connection: Connection, new_data: Dict[str, Any]) -> bool:
         """Update an existing connection"""
         try:
-            target_path = new_data.get('source') or getattr(connection, 'source', self.ssh_config_path)
+            split_from_group = bool(new_data.pop('__split_from_group', False))
+            split_source_override = new_data.pop('__split_source', None)
+            split_original_host = new_data.pop('__split_original_nickname', None)
+
+            target_path = split_source_override or new_data.get('source') or getattr(connection, 'source', self.ssh_config_path)
             logger.info(
                 "Updating connection '%s' → writing to %s (rules=%d)",
                 connection.nickname,
@@ -1688,13 +1813,19 @@ class ConnectionManager(GObject.Object):
             prev_host = getattr(connection, 'host', '')
             prev_user = getattr(connection, 'username', '')
             original_nickname = getattr(connection, 'nickname', '')
-            
+
             # Update existing object IN-PLACE instead of creating new ones
             connection.update_data(new_data)
-            
+
             # Update the SSH config file with original nickname for proper matching
-            self.update_ssh_config_file(connection, new_data, original_nickname)
-            
+            if split_from_group:
+                original_token = split_original_host or original_nickname
+                if not self._split_host_block(original_token, new_data, target_path):
+                    logger.error("Failed to split host block for %s", original_token)
+                    return False
+            else:
+                self.update_ssh_config_file(connection, new_data, original_nickname)
+
             # Handle password storage/removal
             if 'password' in new_data:
                 pwd = new_data.get('password') or ''

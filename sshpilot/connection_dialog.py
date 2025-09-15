@@ -722,13 +722,22 @@ class ConnectionDialog(Adw.Window):
         'connection-saved': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
     }
     
-    def __init__(self, parent, connection=None, connection_manager=None):
+    def __init__(self, parent, connection=None, connection_manager=None, force_split_from_group=False, split_group_source=None, split_original_nickname=None):
         super().__init__()
         
         self.parent_window = parent
         self.connection = connection
         self.connection_manager = connection_manager
         self.is_editing = connection is not None
+
+        self.force_split_from_group = bool(force_split_from_group)
+        self.split_group_source = split_group_source or (getattr(connection, 'source', None) if connection else None)
+        if split_original_nickname:
+            self.split_original_nickname = split_original_nickname
+        elif connection is not None:
+            self.split_original_nickname = getattr(connection, 'nickname', '')
+        else:
+            self.split_original_nickname = ''
         
         self.set_title('Edit Connection' if self.is_editing else 'New Connection')
         # Set modal and transient parent to ensure dialog stays on top
@@ -3314,6 +3323,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'password_changed': bool(password_changed),
         }
         
+        if getattr(self, 'force_split_from_group', False):
+            connection_data['__split_from_group'] = True
+            if getattr(self, 'split_group_source', None):
+                connection_data['__split_source'] = self.split_group_source
+            if getattr(self, 'split_original_nickname', None):
+                connection_data['__split_original_nickname'] = self.split_original_nickname
+
         # Update the connection object locally when editing (do not persist here; window handles persistence)
         if self.is_editing and self.connection:
             try:
