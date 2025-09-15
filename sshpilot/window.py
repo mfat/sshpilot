@@ -710,6 +710,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         return
                     row, pointer_x, pointer_y = self._resolve_connection_list_event(x, y, scrolled)
+
                     if not row:
                         return
                     self.connection_list.select_row(row)
@@ -814,6 +815,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         rect = Gdk.Rectangle()
                         rect.x = int(pointer_x)
                         rect.y = int(pointer_y)
+
                         rect.width = 1
                         rect.height = 1
                         pop.set_pointing_to(rect)
