@@ -9,20 +9,19 @@ def test_parse_host_with_quotes():
     cm = make_cm()
     config = {
         "host": "nick name",
-        "aliases": ["alias1", "alias two"],
         "hostname": "example.com",
         "user": "user",
     }
     parsed = ConnectionManager.parse_host_config(cm, config)
     assert parsed["nickname"] == "nick name"
-    assert "aliases" not in parsed
+    assert parsed["host"] == "example.com"
+    assert parsed["aliases"] == []
 
 
 def test_format_host_requotes():
     cm = make_cm()
     data = {
         "nickname": "nick name",
-        "aliases": ["alias1", "alias two"],
         "host": "example.com",
         "username": "user",
     }
