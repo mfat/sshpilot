@@ -787,6 +787,7 @@ class ConnectionManager(GObject.Object):
                                 host_cfg = dict(current_config)
                                 host_cfg['host'] = tokens[0]
                                 if len(tokens) > 1 and 'hostname' in current_config:
+
                                     host_cfg['aliases'] = tokens[1:]
                                 self.parse_host_config(host_cfg, source=cfg_file)
                             else:
@@ -797,6 +798,7 @@ class ConnectionManager(GObject.Object):
                                         others = [t for t in tokens if t != token]
                                         if others:
                                             host_cfg['aliases'] = others
+
                                     connection_data = self.parse_host_config(host_cfg, source=cfg_file)
                                     if connection_data:
                                         connection_data['source'] = cfg_file
@@ -829,6 +831,7 @@ class ConnectionManager(GObject.Object):
                                 host_cfg = dict(current_config)
                                 host_cfg['host'] = prev_tokens[0]
                                 if len(prev_tokens) > 1 and 'hostname' in current_config:
+
                                     host_cfg['aliases'] = prev_tokens[1:]
                                 self.parse_host_config(host_cfg, source=cfg_file)
                             else:
@@ -839,6 +842,7 @@ class ConnectionManager(GObject.Object):
                                         others = [t for t in prev_tokens if t != token]
                                         if others:
                                             host_cfg['aliases'] = others
+
                                     connection_data = self.parse_host_config(host_cfg, source=cfg_file)
                                     if connection_data:
                                         connection_data['source'] = cfg_file
@@ -869,6 +873,7 @@ class ConnectionManager(GObject.Object):
                         host_cfg = dict(current_config)
                         host_cfg['host'] = tokens[0]
                         if len(tokens) > 1 and 'hostname' in current_config:
+
                             host_cfg['aliases'] = tokens[1:]
                         self.parse_host_config(host_cfg, source=cfg_file)
                     else:
@@ -879,6 +884,7 @@ class ConnectionManager(GObject.Object):
                                 others = [t for t in tokens if t != token]
                                 if others:
                                     host_cfg['aliases'] = others
+
                             connection_data = self.parse_host_config(host_cfg, source=cfg_file)
                             if connection_data:
                                 connection_data['source'] = cfg_file
