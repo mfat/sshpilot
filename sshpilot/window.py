@@ -709,14 +709,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         pass
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         return
-                    adjusted_y = y
-                    vadjustment = scrolled.get_vadjustment()
-                    if vadjustment is not None:
-                        try:
-                            adjusted_y += vadjustment.get_value()
-                        except Exception:
-                            pass
-                    row = self.connection_list.get_row_at_y(int(adjusted_y))
+                    row, pointer_x, pointer_y = self._resolve_connection_list_event(x, y, scrolled)
+
                     if not row:
                         return
                     self.connection_list.select_row(row)
@@ -819,8 +813,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     pop.set_parent(self.connection_list)
                     try:
                         rect = Gdk.Rectangle()
-                        rect.x = int(x)
-                        rect.y = int(adjusted_y)
+                        rect.x = int(pointer_x)
+                        rect.y = int(pointer_y)
+
                         rect.width = 1
                         rect.height = 1
                         pop.set_pointing_to(rect)
@@ -964,9 +959,146 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         toolbar.append(spacer)
         
         sidebar_box.append(toolbar)
-        
+
         self._set_sidebar_widget(sidebar_box)
         logger.debug("Set sidebar widget")
+
+    def _resolve_connection_list_event(
+        self,
+        x: float,
+        y: float,
+        scrolled_window: Optional[Gtk.ScrolledWindow] = None,
+    ) -> Tuple[Optional[Gtk.ListBoxRow], float, float]:
+        """Resolve the row and list coordinates for a pointer event on the connection list."""
+        try:
+            event_x = float(x)
+            event_y = float(y)
+        except (TypeError, ValueError):
+            return None, 0.0, 0.0
+
+        adjusted_x = event_x
+        adjusted_y = event_y
+
+        if scrolled_window is None:
+            try:
+                scrolled_window = self.connection_list.get_ancestor(Gtk.ScrolledWindow)
+            except Exception:
+                scrolled_window = None
+
+        if scrolled_window is not None:
+            try:
+                hadjustment = scrolled_window.get_hadjustment()
+            except Exception:
+                hadjustment = None
+            else:
+                if hadjustment is not None:
+                    try:
+                        adjusted_x = event_x + hadjustment.get_value()
+                    except Exception:
+                        adjusted_x = event_x
+
+            try:
+                vadjustment = scrolled_window.get_vadjustment()
+            except Exception:
+                vadjustment = None
+            else:
+                if vadjustment is not None:
+                    try:
+                        adjusted_y = event_y + vadjustment.get_value()
+                    except Exception:
+                        adjusted_y = event_y
+
+        x_candidates: List[float] = [adjusted_x]
+        if not math.isclose(adjusted_x, event_x):
+            x_candidates.append(event_x)
+
+        y_candidates: List[float] = [adjusted_y]
+        if not math.isclose(adjusted_y, event_y):
+            y_candidates.append(event_y)
+
+        row: Optional[Gtk.ListBoxRow] = None
+        pointer_y_source = y_candidates[0]
+        for candidate in y_candidates:
+            try:
+                row = self.connection_list.get_row_at_y(int(candidate))
+            except Exception:
+                row = None
+            if row:
+                pointer_y_source = candidate
+                break
+            row = self._connection_row_for_coordinate(candidate)
+            if row:
+                pointer_y_source = candidate
+                break
+
+        if not row:
+            return None, x_candidates[0], y_candidates[0]
+
+        pointer_x = x_candidates[0]
+        pointer_y = pointer_y_source
+
+        try:
+            allocation = row.get_allocation()
+            row_left = allocation.x
+            row_right = allocation.x + max(allocation.width - 1, 0)
+            row_top = allocation.y
+            row_bottom = allocation.y + max(allocation.height - 1, 0)
+
+            if row_right < row_left:
+                row_right = row_left
+            if row_bottom < row_top:
+                row_bottom = row_top
+
+            if not (row_left <= pointer_x <= row_right):
+                for candidate in x_candidates:
+                    if row_left <= candidate <= row_right:
+                        pointer_x = candidate
+                        break
+                else:
+                    pointer_x = max(row_left, min(pointer_x, row_right))
+
+            if not (row_top <= pointer_y <= row_bottom):
+                for candidate in y_candidates:
+                    if row_top <= candidate <= row_bottom:
+                        pointer_y = candidate
+                        break
+                else:
+                    pointer_y = max(row_top, min(pointer_y, row_bottom))
+        except Exception:
+            pass
+
+        return row, pointer_x, pointer_y
+
+    def _connection_row_for_coordinate(self, coord: float) -> Optional[Gtk.ListBoxRow]:
+        """Return the listbox row whose allocation includes the given list-space coordinate."""
+        try:
+            target = float(coord)
+        except (TypeError, ValueError):
+            return None
+
+        try:
+            child = self.connection_list.get_first_child()
+        except Exception:
+            return None
+
+        while child is not None:
+            try:
+                if isinstance(child, Gtk.ListBoxRow):
+                    allocation = child.get_allocation()
+                    row_top = allocation.y
+                    row_bottom = allocation.y + max(allocation.height - 1, 0)
+                    if row_bottom < row_top:
+                        row_bottom = row_top
+                    if row_top <= target <= row_bottom:
+                        return child
+            except Exception:
+                pass
+            try:
+                child = child.get_next_sibling()
+            except Exception:
+                break
+
+        return None
 
     def setup_content_area(self):
         """Set up the main content area with stack for tabs and welcome view"""
@@ -2103,10 +2235,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_connection_click(self, gesture, n_press, x, y):
         """Handle clicks on the connection list"""
         # Get the row that was clicked
-        row = self.connection_list.get_row_at_y(int(y))
+        row, _, _ = self._resolve_connection_list_event(x, y)
         if row is None:
             return
-        
+
         if n_press == 1:  # Single click - just select
             self.connection_list.select_row(row)
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
