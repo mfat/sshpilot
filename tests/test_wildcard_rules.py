@@ -69,6 +69,6 @@ def test_wildcard_and_negated_hosts_are_stored_as_rules(tmp_path):
     assert len(cm.rules) == 2
     first, second = cm.rules
     assert first['host'] == '*.example.com'
-    assert first.get('aliases') == ['alias?']
+    assert 'aliases' not in first
     assert second['host'] == '!blocked'
 
