@@ -10,7 +10,6 @@ import re
 import ipaddress
 import socket
 import subprocess
-import shlex
 from typing import Optional, Dict, Any
 
 from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
@@ -487,7 +486,6 @@ class SSHConfigAdvancedTab(Gtk.Box):
                         
                         config_data = {
                             'nickname': getattr(connection, 'nickname', 'your-host-name'),
-                            'aliases': getattr(connection, 'aliases', []),
                             'host': getattr(connection, 'host', ''),
                             'username': getattr(connection, 'username', ''),
                             'port': getattr(connection, 'port', 22),
@@ -642,7 +640,6 @@ class SSHConfigAdvancedTab(Gtk.Box):
     def get_extra_ssh_config(self):
         """Get extra SSH config as a string for saving"""
         config_lines: list[str] = []
-        alias_tokens: list[str] = []
         host_rows = []
 
         for row_grid in self.config_entries.copy():
@@ -656,43 +653,22 @@ class SSHConfigAdvancedTab(Gtk.Box):
                 continue
 
             if key.lower() == "host":
-                try:
-                    alias_tokens.extend(shlex.split(value))
-                except ValueError:
-                    alias_tokens.extend(value.split())
                 host_rows.append(row_grid)
                 continue
 
             config_lines.append(f"{key} {value}")
 
-        if alias_tokens:
-            try:
-                parent_dialog = self.get_ancestor(Adw.Window)
-                if parent_dialog:
-                    existing = []
-                    if hasattr(parent_dialog, 'aliases_row'):
-                        existing = parent_dialog.aliases_row.get_text().split()
-                    merged = existing + [a for a in alias_tokens if a not in existing]
-                    if hasattr(parent_dialog, 'aliases_row'):
-                        parent_dialog.aliases_row.set_text(" ".join(merged))
-                    if hasattr(parent_dialog, 'connection') and parent_dialog.connection:
-                        parent_dialog.connection.aliases = merged
-                        if hasattr(parent_dialog.connection, 'data'):
-                            parent_dialog.connection.data['aliases'] = merged
-            except Exception as e:
-                logger.error(f"Error merging Host aliases: {e}")
+        if host_rows:
+            def _remove_rows():
+                for row in host_rows:
+                    try:
+                        self.on_remove_option(None, row)
+                    except Exception:
+                        pass
+                self.update_config_preview()
+                return False
 
-            if host_rows:
-                def _remove_rows():
-                    for row in host_rows:
-                        try:
-                            self.on_remove_option(None, row)
-                        except Exception:
-                            pass
-                    self.update_config_preview()
-                    return False
-
-                GLib.idle_add(_remove_rows)
+            GLib.idle_add(_remove_rows)
 
         return "\n".join(config_lines)
 
@@ -705,13 +681,8 @@ class SSHConfigAdvancedTab(Gtk.Box):
                 parent_dialog.connection.extra_ssh_config = extra_config
                 if hasattr(parent_dialog.connection, 'data'):
                     parent_dialog.connection.data['extra_ssh_config'] = extra_config
-                if hasattr(parent_dialog, 'aliases_row'):
-                    aliases = parent_dialog.aliases_row.get_text().split()
-                    parent_dialog.connection.aliases = aliases
-                    if hasattr(parent_dialog.connection, 'data'):
-                        parent_dialog.connection.data['aliases'] = aliases
                 logger.debug(
-                    f"Updated parent connection with extra SSH config: {extra_config} and aliases: {parent_dialog.connection.aliases}"
+                    f"Updated parent connection with extra SSH config: {extra_config}"
                 )
         except Exception as e:
             logger.error(f"Error updating parent connection: {e}")
@@ -725,7 +696,6 @@ class SSHConfigAdvancedTab(Gtk.Box):
             return
 
         entries = []
-        alias_tokens: list[str] = []
         for line in config_string.split('\n'):
             line = line.strip()
             if line and not line.startswith('#'):
@@ -733,29 +703,8 @@ class SSHConfigAdvancedTab(Gtk.Box):
                 key = parts[0].strip()
                 value = parts[1].strip() if len(parts) == 2 else "yes"
                 if key.lower() == 'host':
-                    try:
-                        alias_tokens.extend(shlex.split(value))
-                    except ValueError:
-                        alias_tokens.extend(value.split())
-                else:
-                    entries.append((key, value))
-
-        if alias_tokens:
-            try:
-                parent_dialog = self.get_ancestor(Adw.Window)
-                if parent_dialog:
-                    existing = []
-                    if hasattr(parent_dialog, 'aliases_row'):
-                        existing = parent_dialog.aliases_row.get_text().split()
-                    merged = existing + [a for a in alias_tokens if a not in existing]
-                    if hasattr(parent_dialog, 'aliases_row'):
-                        parent_dialog.aliases_row.set_text(" ".join(merged))
-                    if hasattr(parent_dialog, 'connection') and parent_dialog.connection:
-                        parent_dialog.connection.aliases = merged
-                        if hasattr(parent_dialog.connection, 'data'):
-                            parent_dialog.connection.data['aliases'] = merged
-            except Exception as e:
-                logger.error(f"Error setting Host aliases: {e}")
+                    continue
+                entries.append((key, value))
 
         logger.debug(f"Parsed entries: {entries}")
         self.set_config_entries(entries)
@@ -1213,7 +1162,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         try:
             # Ensure UI controls exist
             required_attrs = [
-                'nickname_row', 'host_row', 'aliases_row', 'username_row', 'port_row',
+                'nickname_row', 'host_row', 'username_row', 'port_row',
                 'proxy_jump_row', 'forward_agent_row',
                 'auth_method_row', 'keyfile_row', 'password_row', 'key_passphrase_row',
                 'pubkey_auth_row'
@@ -1226,8 +1175,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self.nickname_row.set_text(self.connection.nickname or "")
             if hasattr(self.connection, 'host'):
                 self.host_row.set_text(self.connection.host or "")
-            if hasattr(self.connection, 'aliases'):
-                self.aliases_row.set_text(" ".join(self.connection.aliases or []))
             if hasattr(self.connection, 'username'):
                 self.username_row.set_text(self.connection.username or "")
             if hasattr(self.connection, 'port'):
@@ -2060,10 +2007,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Host
         self.host_row = Adw.EntryRow(title=_("Host/IP address"))
         basic_group.add(self.host_row)
-
-        # Aliases
-        self.aliases_row = Adw.EntryRow(title=_("Aliases"))
-        basic_group.add(self.aliases_row)
 
         # Username
         self.username_row = Adw.EntryRow(title=_("Username"))
@@ -3351,7 +3294,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         connection_data = {
             'nickname': self.nickname_row.get_text().strip(),
             'host': self.host_row.get_text().strip(),
-            'aliases': self.aliases_row.get_text().split(),
             'username': self.username_row.get_text().strip(),
             'port': int(self.port_row.get_text().strip() or '22'),
             'auth_method': self.auth_method_row.get_selected(),
@@ -3376,9 +3318,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if self.is_editing and self.connection:
             try:
                 self.connection.data.update(connection_data)
+                self.connection.data.pop('aliases', None)
             except Exception:
                 pass
-            self.connection.aliases = connection_data.get('aliases', [])
+            if hasattr(self.connection, 'aliases'):
+                self.connection.aliases = []
             self.connection.proxy_jump = connection_data.get('proxy_jump', [])
             self.connection.forward_agent = connection_data.get('forward_agent', False)
             # Explicitly update forwarding rules to ensure they're fresh
