@@ -1,10 +1,103 @@
 # askpass_utils.py
-import os, tempfile, atexit, shutil, subprocess, logging
+import atexit
+import logging
+import os
+import shutil
+import subprocess
+import tempfile
+
+try:
+    import gi
+
+    gi.require_version("Secret", "1")
+    from gi.repository import Secret
+except Exception:  # pragma: no cover - optional dependency
+    Secret = None
 
 logger = logging.getLogger(__name__)
 
 _ASKPASS_DIR = None
 _ASKPASS_SCRIPT = None
+
+_SCHEMA = None
+
+
+def get_secret_schema() -> "Secret.Schema":
+    """Return the shared Secret.Schema for stored secrets."""
+
+    global _SCHEMA
+    if _SCHEMA is None and Secret is not None:
+        _SCHEMA = Secret.Schema.new(
+            "io.github.mfat.sshpilot",
+            Secret.SchemaFlags.NONE,
+            {
+                "application": Secret.SchemaAttributeType.STRING,
+                "type": Secret.SchemaAttributeType.STRING,
+                "key_path": Secret.SchemaAttributeType.STRING,
+                "host": Secret.SchemaAttributeType.STRING,
+                "username": Secret.SchemaAttributeType.STRING,
+            },
+        )
+    return _SCHEMA
+
+
+def store_passphrase(key_path: str, passphrase: str) -> bool:
+    """Store a key passphrase using libsecret."""
+
+    schema = get_secret_schema()
+    if not schema:
+        return False
+    attributes = {
+        "application": "sshPilot",
+        "type": "key_passphrase",
+        "key_path": key_path,
+    }
+    try:
+        Secret.password_store_sync(
+            schema,
+            attributes,
+            Secret.COLLECTION_DEFAULT,
+            f"SSH Key Passphrase: {os.path.basename(key_path)}",
+            passphrase,
+            None,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def lookup_passphrase(key_path: str) -> str:
+    """Look up a key passphrase using libsecret."""
+
+    schema = get_secret_schema()
+    if not schema:
+        return ""
+    attributes = {
+        "application": "sshPilot",
+        "type": "key_passphrase",
+        "key_path": key_path,
+    }
+    try:
+        return Secret.password_lookup_sync(schema, attributes, None) or ""
+    except Exception:
+        return ""
+
+
+def clear_passphrase(key_path: str) -> bool:
+    """Remove a stored key passphrase using libsecret."""
+
+    schema = get_secret_schema()
+    if not schema:
+        return False
+    attributes = {
+        "application": "sshPilot",
+        "type": "key_passphrase",
+        "key_path": key_path,
+    }
+    try:
+        return bool(Secret.password_clear_sync(schema, attributes, None))
+    except Exception:
+        return False
 
 def ensure_passphrase_askpass() -> str:
     """Ensure the askpass script exists and return its path"""
@@ -33,23 +126,25 @@ def ensure_passphrase_askpass() -> str:
     script_body = r'''#!/usr/bin/env python3
 import sys, re, os, platform
 try:
-    import secretstorage
+    import gi
+    gi.require_version("Secret", "1")
+    from gi.repository import Secret
 except Exception:
-    secretstorage = None
+    Secret = None
 try:
     import keyring
 except Exception:
     keyring = None
 
-# Log availability of keyring and secretstorage
+# Log availability of keyring and libsecret
 try:
     with open("/tmp/sshpilot-askpass.log", "a") as f:
-        f.write(f"ASKPASS: keyring {'available' if keyring else 'unavailable'}, secretstorage {'available' if secretstorage else 'unavailable'}\n")
+        f.write(f"ASKPASS: keyring {'available' if keyring else 'unavailable'}, libsecret {'available' if Secret else 'unavailable'}\n")
 except Exception:
     pass
 
 def get_passphrase(key_path: str) -> str:
-    """Retrieve passphrase from keyring or secretstorage"""
+    """Retrieve passphrase from keyring or libsecret"""
     # Try keyring first (macOS)
     if keyring and platform.system() == 'Darwin':
         try:
@@ -76,70 +171,51 @@ def get_passphrase(key_path: str) -> str:
             except Exception:
                 pass
 
-    # Fall back to secretstorage (Linux)
-    if secretstorage is None:
+    # Fall back to libsecret (Linux)
+    if Secret is None:
         try:
             with open("/tmp/sshpilot-askpass.log", "a") as f:
-                f.write("ASKPASS: secretstorage module not available\n")
+                f.write("ASKPASS: libsecret module not available\n")
         except Exception:
             pass
         return ""
     try:
         with open("/tmp/sshpilot-askpass.log", "a") as f:
-            f.write("ASKPASS: Trying secretstorage\n")
-        bus = secretstorage.dbus_init()
-        try:
-            with open("/tmp/sshpilot-askpass.log", "a") as f:
-                f.write("ASKPASS: Initialized D-Bus for secretstorage\n")
-        except Exception:
-            pass
-        collection = secretstorage.get_default_collection(bus)
-        if not collection:
-            try:
-                with open("/tmp/sshpilot-askpass.log", "a") as f:
-                    f.write("ASKPASS: No default secretstorage collection\n")
-            except Exception:
-                pass
-            return ""
-        if collection.is_locked():
-            try:
-                with open("/tmp/sshpilot-askpass.log", "a") as f:
-                    f.write("ASKPASS: Secretstorage collection locked, unlocking\n")
-            except Exception:
-                pass
-            collection.unlock()
-        items = list(collection.search_items({
+            f.write("ASKPASS: Trying libsecret\n")
+        schema = Secret.Schema.new(
+            "io.github.mfat.sshpilot",
+            Secret.SchemaFlags.NONE,
+            {
+                "application": Secret.SchemaAttributeType.STRING,
+                "type": Secret.SchemaAttributeType.STRING,
+                "key_path": Secret.SchemaAttributeType.STRING,
+                "host": Secret.SchemaAttributeType.STRING,
+                "username": Secret.SchemaAttributeType.STRING,
+            },
+        )
+        attributes = {
             "application": "sshPilot",
             "type": "key_passphrase",
-            "key_path": key_path
-        }))
-        try:
-            with open("/tmp/sshpilot-askpass.log", "a") as f:
-                f.write(f"ASKPASS: secretstorage search found {len(items)} items\n")
-        except Exception:
-            pass
-        if items:
+            "key_path": key_path,
+        }
+        secret = Secret.password_lookup_sync(schema, attributes, None)
+        if secret:
             try:
-                secret = items[0].get_secret().decode("utf-8")
                 with open("/tmp/sshpilot-askpass.log", "a") as f:
-                    f.write("ASKPASS: Retrieved passphrase from secretstorage\n")
-                return secret
-            except Exception as e:
-                try:
-                    with open("/tmp/sshpilot-askpass.log", "a") as f:
-                        f.write(f"ASKPASS: Error retrieving secret: {e}\n")
-                except Exception:
-                    pass
+                    f.write("ASKPASS: Retrieved passphrase from libsecret\n")
+            except Exception:
+                pass
+            return secret
         else:
             try:
                 with open("/tmp/sshpilot-askpass.log", "a") as f:
-                    f.write("ASKPASS: No matching secretstorage item found\n")
+                    f.write("ASKPASS: No matching libsecret item found\n")
             except Exception:
                 pass
     except Exception as e:
         try:
             with open("/tmp/sshpilot-askpass.log", "a") as f:
-                f.write(f"ASKPASS: secretstorage error: {e}\n")
+                f.write(f"ASKPASS: libsecret error: {e}\n")
         except Exception:
             pass
     return ""
@@ -172,11 +248,11 @@ def extract_key_path(prompt: str) -> str:
     return ""
 
 if __name__ == "__main__":
-    # Disable GNOME keyring interference but keep D-Bus for secretstorage
+    # Disable GNOME keyring interference but keep D-Bus for libsecret
     os.environ["GNOME_KEYRING_CONTROL"] = ""
     os.environ["GNOME_KEYRING_PID"] = ""
     os.environ["GNOME_KEYRING_SOCKET"] = ""
-    # Don't disable DBUS_SESSION_BUS_ADDRESS - secretstorage needs it
+    # Don't disable DBUS_SESSION_BUS_ADDRESS - libsecret needs it
     
     prompt = sys.argv[1] if len(sys.argv) > 1 else ""
     pl = prompt.lower()
@@ -281,11 +357,11 @@ def get_ssh_env_with_askpass(require: str = "prefer") -> dict:
     # Ensure DISPLAY is set for SSH_ASKPASS to work properly
     if "DISPLAY" not in env:
         env["DISPLAY"] = ":0"
-    # Disable GNOME keyring interference with SSH but keep D-Bus for secretstorage
+    # Disable GNOME keyring interference with SSH but keep D-Bus for libsecret
     env["GNOME_KEYRING_CONTROL"] = ""
     env["GNOME_KEYRING_PID"] = ""
     env["GNOME_KEYRING_SOCKET"] = ""
-    # Don't disable DBUS_SESSION_BUS_ADDRESS - secretstorage needs it
+    # Don't disable DBUS_SESSION_BUS_ADDRESS - libsecret needs it
     return env
 
 def get_ssh_env_with_askpass_for_password(host: str, username: str) -> dict:
