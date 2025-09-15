@@ -2645,79 +2645,36 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.rules_list.show()
     
     def browse_for_key_file(self):
-        """Open file chooser to browse for SSH key file (Gtk.FileChooserDialog)."""
+        """Open file chooser to browse for SSH key file using portal-aware API."""
         try:
-            dialog = Gtk.FileChooserDialog(
-                title=_("Select SSH Key File"),
-                action=Gtk.FileChooserAction.OPEN,
-            )
-            # Parent must be a Gtk.Window; PreferencesDialog is not one. Try to set if available
-            try:
-                parent_win = self.get_transient_for()
-                if isinstance(parent_win, Gtk.Window):
-                    dialog.set_transient_for(parent_win)
-            except Exception:
-                pass
-            dialog.set_modal(True)
-            dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
-            dialog.add_button(_("Open"), Gtk.ResponseType.ACCEPT)
+            dialog = Gtk.FileDialog(title=_("Select SSH Key File"))
 
             # Default to SSH directory when available
             try:
                 ssh_dir = get_ssh_dir()
                 if os.path.isdir(ssh_dir):
-                    try:
-                        dialog.set_current_folder(Gio.File.new_for_path(ssh_dir))
-                    except Exception:
-                        try:
-                            dialog.set_current_folder(ssh_dir)
-                        except Exception:
-                            try:
-                                dialog.set_current_folder_uri(Gio.File.new_for_path(ssh_dir).get_uri())
-                            except Exception:
-                                pass
+                    dialog.set_initial_folder(Gio.File.new_for_path(ssh_dir))
             except Exception:
                 pass
 
-            # No filters: list all files in SSH directory
+            parent = self.get_transient_for()
+            if not isinstance(parent, Gtk.Window):
+                parent = None
 
-            dialog.connect("response", self.on_key_file_selected)
-            dialog.show()
+            dialog.open(parent, None, self.on_key_file_selected)
         except Exception as e:
             logger.error(f"Failed to open key file chooser: {e}")
 
     def browse_for_certificate_file(self):
-        """Open file chooser to browse for SSH certificate file."""
+        """Open file chooser to browse for SSH certificate file using portal-aware API."""
         try:
-            dialog = Gtk.FileChooserDialog(
-                title=_("Select SSH Certificate File"),
-                action=Gtk.FileChooserAction.OPEN,
-            )
-            # Parent must be a Gtk.Window; PreferencesDialog is not one. Try to set if available
-            try:
-                parent_win = self.get_transient_for()
-                if isinstance(parent_win, Gtk.Window):
-                    dialog.set_transient_for(parent_win)
-            except Exception:
-                pass
-            dialog.set_modal(True)
-            dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
-            dialog.add_button(_("Open"), Gtk.ResponseType.ACCEPT)
+            dialog = Gtk.FileDialog(title=_("Select SSH Certificate File"))
 
             # Default to SSH directory when available
             try:
                 ssh_dir = get_ssh_dir()
                 if os.path.isdir(ssh_dir):
-                    try:
-                        dialog.set_current_folder(Gio.File.new_for_path(ssh_dir))
-                    except Exception:
-                        try:
-                            dialog.set_current_folder(ssh_dir)
-                        except Exception:
-                            try:
-                                dialog.set_current_folder_uri(Gio.File.new_for_path(ssh_dir).get_uri())
-                            except Exception:
-                                pass
+                    dialog.set_initial_folder(Gio.File.new_for_path(ssh_dir))
             except Exception:
                 pass
 
@@ -2726,70 +2683,76 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             cert_filter.set_name(_("SSH Certificate Files"))
             cert_filter.add_pattern("*-cert.pub")
             cert_filter.add_pattern("*.pub")
-            dialog.add_filter(cert_filter)
-
-            # Add filter for all files
             all_filter = Gtk.FileFilter()
             all_filter.set_name(_("All Files"))
             all_filter.add_pattern("*")
-            dialog.add_filter(all_filter)
 
-            dialog.connect("response", self.on_certificate_file_selected)
-            dialog.show()
+            filters = Gio.ListStore.new(Gtk.FileFilter)
+            filters.append(cert_filter)
+            filters.append(all_filter)
+            dialog.set_filters(filters)
+            dialog.set_default_filter(cert_filter)
+
+            parent = self.get_transient_for()
+            if not isinstance(parent, Gtk.Window):
+                parent = None
+            dialog.open(parent, None, self.on_certificate_file_selected)
         except Exception as e:
             logger.error(f"Failed to open certificate file chooser: {e}")
 
 
     
-    def on_key_file_selected(self, dialog, response):
+    def on_key_file_selected(self, dialog, result):
         """Handle selected key file from file chooser"""
-        if response == Gtk.ResponseType.ACCEPT:
-            key_file = dialog.get_file()
-            if key_file:
-                key_path = key_file.get_path()
-                self.keyfile_row.set_subtitle(key_path)
-                
-                # Add the browsed key to the dropdown if it's not already there
-                if hasattr(self, '_key_paths') and key_path not in self._key_paths:
-                    self._key_paths.append(key_path)
-                    # Update the dropdown model with just the filename
-                    if hasattr(self, 'key_dropdown'):
-                        model = self.key_dropdown.get_model()
-                        if model:
-                            filename = os.path.basename(key_path)
-                            model.append(filename)
-                
-                # Set the selected keyfile path
-                self._selected_keyfile_path = key_path
-                
-                # Sync the dropdown to select the browsed key
-                self._sync_key_dropdown_with_current_keyfile()
-        dialog.destroy()
+        try:
+            key_file = dialog.open_finish(result)
+        except GLib.Error:
+            return
+        if key_file:
+            key_path = key_file.get_path()
+            self.keyfile_row.set_subtitle(key_path)
+
+            # Add the browsed key to the dropdown if it's not already there
+            if hasattr(self, '_key_paths') and key_path not in self._key_paths:
+                self._key_paths.append(key_path)
+                # Update the dropdown model with just the filename
+                if hasattr(self, 'key_dropdown'):
+                    model = self.key_dropdown.get_model()
+                    if model:
+                        filename = os.path.basename(key_path)
+                        model.append(filename)
+
+            # Set the selected keyfile path
+            self._selected_keyfile_path = key_path
+
+            # Sync the dropdown to select the browsed key
+            self._sync_key_dropdown_with_current_keyfile()
     
-    def on_certificate_file_selected(self, dialog, response):
+    def on_certificate_file_selected(self, dialog, result):
         """Handle selected certificate file from file chooser"""
-        if response == Gtk.ResponseType.ACCEPT:
-            cert_file = dialog.get_file()
-            if cert_file:
-                cert_path = cert_file.get_path()
-                self.certificate_row.set_subtitle(cert_path)
-                
-                # Add the browsed certificate to the dropdown if it's not already there
-                if hasattr(self, '_cert_paths') and cert_path not in self._cert_paths:
-                    self._cert_paths.append(cert_path)
-                    # Update the dropdown model with just the filename
-                    if hasattr(self, 'cert_dropdown'):
-                        model = self.cert_dropdown.get_model()
-                        if model:
-                            filename = os.path.basename(cert_path)
-                            model.append(filename)
-                
-                # Set the selected certificate path
-                self._selected_cert_path = cert_path
-                
-                # Sync the dropdown to select the browsed certificate
-                self._sync_cert_dropdown_with_current_cert()
-        dialog.destroy()
+        try:
+            cert_file = dialog.open_finish(result)
+        except GLib.Error:
+            return
+        if cert_file:
+            cert_path = cert_file.get_path()
+            self.certificate_row.set_subtitle(cert_path)
+
+            # Add the browsed certificate to the dropdown if it's not already there
+            if hasattr(self, '_cert_paths') and cert_path not in self._cert_paths:
+                self._cert_paths.append(cert_path)
+                # Update the dropdown model with just the filename
+                if hasattr(self, 'cert_dropdown'):
+                    model = self.cert_dropdown.get_model()
+                    if model:
+                        filename = os.path.basename(cert_path)
+                        model.append(filename)
+
+            # Set the selected certificate path
+            self._selected_cert_path = cert_path
+
+            # Sync the dropdown to select the browsed certificate
+            self._sync_cert_dropdown_with_current_cert()
     
     def _sync_cert_dropdown_with_current_cert(self):
         """Sync the certificate dropdown selection with the current certificate path"""
