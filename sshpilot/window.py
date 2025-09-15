@@ -1466,7 +1466,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         logger.info("Showing tab view")
 
-    def show_connection_dialog(self, connection: Connection = None):
+    def show_connection_dialog(
+            self,
+            connection: Connection = None,
+            *,
+            skip_group_warning: bool = False,
+            force_split_from_group: bool = False,
+            split_group_source: Optional[str] = None,
+            split_original_nickname: Optional[str] = None,
+    ):
         """Show connection dialog for adding/editing connections"""
         logger.info(f"Show connection dialog for: {connection}")
 
@@ -1480,10 +1488,85 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 pass
 
+        if connection is not None and not skip_group_warning:
+            block_info = None
+            try:
+                source_path = split_group_source or getattr(connection, 'source', None)
+                block_info = self.connection_manager.get_host_block_details(connection.nickname, source_path)
+            except Exception as e:
+                logger.debug(f"Failed to inspect host block for {connection.nickname}: {e}")
+            if block_info and len(block_info.get('hosts') or []) > 1:
+                self._prompt_group_edit_options(connection, block_info)
+                return
+
+        split_source_for_dialog = split_group_source or (getattr(connection, 'source', None) if connection else None)
+        original_token = split_original_nickname or (connection.nickname if connection else None)
+
         # Create connection dialog
-        dialog = ConnectionDialog(self, connection, self.connection_manager)
+        dialog = ConnectionDialog(
+            self,
+            connection,
+            self.connection_manager,
+            force_split_from_group=force_split_from_group,
+            split_group_source=split_source_for_dialog,
+            split_original_nickname=original_token,
+        )
         dialog.connect('connection-saved', self.on_connection_saved)
         dialog.present()
+
+
+
+    def _prompt_group_edit_options(self, connection: Connection, block_info: Dict[str, Any]):
+        """Present options when editing a grouped host"""
+        try:
+            host_label = getattr(connection, 'nickname', '')
+            other_hosts = max(0, len(block_info.get('hosts') or []) - 1)
+            message = _("\"{host}\" is part of a configuration block with [{count}] other hosts. How would you like to apply your changes?").format(host=host_label, count=other_hosts)
+
+            dialog = Adw.MessageDialog.new(self, _("Warnin"), message)
+            dialog.add_response('manual', _('Manually Edit SSH Configuration'))
+            dialog.add_response('split', _('Edit as Separate Connection'))
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.set_response_appearance('manual', Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response('manual')
+            dialog.set_close_response('cancel')
+
+            source_path = block_info.get('source') or getattr(connection, 'source', None)
+            original_name = getattr(connection, 'nickname', None)
+
+            def on_response(dlg, response):
+                dlg.destroy()
+                if response == 'manual':
+                    self._open_ssh_config_editor()
+                elif response == 'split':
+                    self.show_connection_dialog(
+                        connection,
+                        skip_group_warning=True,
+                        force_split_from_group=True,
+                        split_group_source=source_path,
+                        split_original_nickname=original_name,
+                    )
+
+            dialog.connect('response', on_response)
+            dialog.present()
+        except Exception as e:
+            logger.error(f"Failed to present group edit options: {e}")
+            self.show_connection_dialog(connection, skip_group_warning=True)
+
+    def _open_ssh_config_editor(self):
+        try:
+            from .ssh_config_editor import SSHConfigEditorWindow
+            editor = SSHConfigEditorWindow(self, self.connection_manager, on_saved=self._on_ssh_config_editor_saved)
+            editor.present()
+        except Exception as e:
+            logger.error(f"Failed to open SSH config editor: {e}")
+
+    def _on_ssh_config_editor_saved(self):
+        try:
+            self.connection_manager.load_ssh_config()
+            self.rebuild_connection_list()
+        except Exception as e:
+            logger.error(f"Failed to refresh connections after SSH config save: {e}")
 
     def show_connection_selection_for_ssh_copy(self):
         """Show a dialog to select a connection for SSH key copy"""
