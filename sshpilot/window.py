@@ -5,11 +5,10 @@ Primary UI with connection list, tabs, and terminal management
 
 import os
 import logging
-import math
 import shlex
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple, Callable
+from typing import Optional, Dict, Any, List
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -710,7 +709,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         pass
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         return
-                    row, pointer_x, pointer_y = self._resolve_connection_list_event(x, y, scrolled)
+                    try:
+                        adjusted_y = float(y)
+                    except (TypeError, ValueError):
+                        adjusted_y = 0.0
+                    vadjustment = None
+                    vadjust_value = 0.0
+                    try:
+                        vadjustment = scrolled.get_vadjustment()
+                    except Exception:
+                        vadjustment = None
+                    if vadjustment is not None:
+                        try:
+                            vadjust_value = float(vadjustment.get_value())
+                        except Exception:
+                            vadjust_value = 0.0
+                        else:
+                            adjusted_y += vadjust_value
+                    row = self.connection_list.get_row_at_y(int(adjusted_y))
 
                     if not row:
                         return
@@ -814,8 +830,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     pop.set_parent(self.connection_list)
                     try:
                         rect = Gdk.Rectangle()
-                        rect.x = int(pointer_x)
-                        rect.y = int(pointer_y)
+                        rect.x = int(x)
+                        rect.y = int(adjusted_y)
 
                         rect.width = 1
                         rect.height = 1
