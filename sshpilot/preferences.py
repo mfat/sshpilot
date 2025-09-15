@@ -670,7 +670,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.isolated_mode_row.set_title("Isolated Mode")
             config_path = get_config_dir()
             self.isolated_mode_row.set_subtitle(
-                f"sshPilot stores its own configuration file in {config_path}/"
+                f"sshPilot stores its configuration file in {config_path}/"
             )
             self.isolated_mode_radio = Gtk.CheckButton()
 
