@@ -55,8 +55,8 @@ def test_host_token_used_when_hostname_missing(tmp_path):
     assert conn.host == 'example.com'
 
 
-def test_alias_list_without_hostname(tmp_path):
-    """Alias groups without HostName should not gain HostName when formatted."""
+def test_multiple_labels_without_hostname_have_no_aliases(tmp_path):
+    """Multiple labels without HostName produce separate entries without aliases."""
     asyncio.set_event_loop(asyncio.new_event_loop())
 
     manager = ConnectionManager.__new__(ConnectionManager)
@@ -74,13 +74,41 @@ def test_alias_list_without_hostname(tmp_path):
     assert sorted(c.nickname for c in manager.connections) == ['alias1', 'alias2', 'primary']
     for c in manager.connections:
         assert c.host == c.nickname
+        assert c.aliases == []
 
     primary = next(c for c in manager.connections if c.nickname == 'primary')
-    assert primary.aliases == ['alias1', 'alias2']
 
     entry = manager.format_ssh_config_entry(primary.data)
     assert 'HostName' not in entry
-    assert entry.splitlines()[0] == 'Host primary alias1 alias2'
+    assert entry.splitlines()[0] == 'Host primary'
+    assert 'alias1' not in entry and 'alias2' not in entry
+
+
+def test_alias_labels_with_hostname(tmp_path):
+    """Alias groups with HostName create entries for each label."""
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+    manager = ConnectionManager.__new__(ConnectionManager)
+    manager.connections = []
+
+    cfg = """Host app1 app2
+    HostName 192.168.1.50
+    User testuser
+"""
+    config_path = tmp_path / 'config'
+    config_path.write_text(cfg)
+    manager.ssh_config_path = str(config_path)
+
+    manager.load_ssh_config()
+
+    assert sorted(c.nickname for c in manager.connections) == ['app1', 'app2']
+    for c in manager.connections:
+        assert c.host == '192.168.1.50'
+        assert c.username == 'testuser'
+        if c.nickname == 'app1':
+            assert c.aliases == ['app2']
+        else:
+            assert c.aliases == ['app1']
 
 
 def test_alias_labels_with_hostname(tmp_path):
