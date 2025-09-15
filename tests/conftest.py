@@ -19,6 +19,7 @@ if 'gi' not in sys.modules:
     repository.Secret = types.SimpleNamespace(
         Schema=types.SimpleNamespace(new=lambda *a, **k: object()),
         SchemaFlags=types.SimpleNamespace(NONE=0),
+        SchemaAttributeType=types.SimpleNamespace(STRING=0),
         password_store_sync=lambda *a, **k: True,
         password_lookup_sync=lambda *a, **k: None,
         password_clear_sync=lambda *a, **k: None,
