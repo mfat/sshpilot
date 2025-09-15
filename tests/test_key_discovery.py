@@ -88,3 +88,4 @@ def test_connection_manager_loads_keys_isolated(tmp_path, monkeypatch):
     )
     keys = ConnectionManager.load_ssh_keys(cm)
     assert sorted(keys) == sorted([str(config_key), str(home_key)])
+

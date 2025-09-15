@@ -8,6 +8,7 @@ import logging
 import math
 import shlex
 import time
+from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple, Callable
 
 import gi
@@ -54,7 +55,7 @@ from .actions import WindowActions, register_window_actions
 from . import shutdown
 from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
-from .platform_utils import is_macos
+from .platform_utils import is_macos, get_config_dir
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +72,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Initialize managers
         self.config = Config()
         effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
+        key_dir = Path(get_config_dir()) if effective_isolated else None
         self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
-        self.key_manager = KeyManager()
+        self.key_manager = KeyManager(key_dir)
         self.group_manager = GroupManager(self.config)
         
         # UI state
