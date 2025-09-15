@@ -1069,25 +1069,29 @@ class ConnectionManager(GObject.Object):
             return None
 
     def load_ssh_keys(self):
-        """Auto-detect SSH keys in ~/.ssh/"""
-        ssh_dir = os.path.expanduser('~/.ssh')
-        if not os.path.exists(ssh_dir):
-            return
-        
-        try:
-            keys = []
-            for filename in os.listdir(ssh_dir):
-                if filename.endswith('.pub'):
-                    private_key = os.path.join(ssh_dir, filename[:-4])
-                    if os.path.exists(private_key):
-                        keys.append(private_key)
-            
-            logger.info(f"Found {len(keys)} SSH keys: {keys}")
-            return keys
-            
-        except Exception as e:
-            logger.error(f"Failed to load SSH keys: {e}")
-            return []
+        """Auto-detect SSH keys in configured SSH directories."""
+        search_dirs = []
+        if getattr(self, 'isolated_mode', False):
+            search_dirs.append(get_config_dir())
+        search_dirs.append(os.path.expanduser('~/.ssh'))
+
+        keys: List[str] = []
+        seen = set()
+        for ssh_dir in search_dirs:
+            if not os.path.exists(ssh_dir):
+                continue
+            try:
+                for filename in os.listdir(ssh_dir):
+                    if filename.endswith('.pub'):
+                        private_key = os.path.join(ssh_dir, filename[:-4])
+                        if os.path.exists(private_key) and private_key not in seen:
+                            keys.append(private_key)
+                            seen.add(private_key)
+            except Exception as e:
+                logger.error(f"Failed to load SSH keys from {ssh_dir}: {e}")
+
+        logger.info(f"Found {len(keys)} SSH keys: {keys}")
+        return keys
 
     def store_password(self, host: str, username: str, password: str):
         """Store password securely in system keyring"""
