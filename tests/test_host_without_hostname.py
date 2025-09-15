@@ -74,7 +74,7 @@ def test_multiple_labels_without_hostname_have_no_aliases(tmp_path):
     assert sorted(c.nickname for c in manager.connections) == ['alias1', 'alias2', 'primary']
     for c in manager.connections:
         assert c.host == c.nickname
-        assert c.aliases == []
+        assert not hasattr(c, 'aliases')
 
     primary = next(c for c in manager.connections if c.nickname == 'primary')
 
@@ -105,10 +105,7 @@ def test_alias_labels_with_hostname(tmp_path):
     for c in manager.connections:
         assert c.host == '192.168.1.50'
         assert c.username == 'testuser'
-        if c.nickname == 'app1':
-            assert c.aliases == ['app2']
-        else:
-            assert c.aliases == ['app1']
+        assert not hasattr(c, 'aliases')
 
 
 def test_alias_labels_with_hostname(tmp_path):
@@ -132,4 +129,5 @@ def test_alias_labels_with_hostname(tmp_path):
     for c in manager.connections:
         assert c.host == '192.168.1.50'
         assert c.username == 'testuser'
+        assert not hasattr(c, 'aliases')
 

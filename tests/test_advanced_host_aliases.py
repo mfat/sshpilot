@@ -96,7 +96,7 @@ def test_host_aliases_added_via_advanced_tab():
     entry = cm.format_ssh_config_entry(connection.data)
 
     lines = entry.splitlines()
-    assert lines[0] == 'Host primary foo bar'
+    assert lines[0] == 'Host primary'
     assert 'HostName' not in entry
     assert sum(1 for line in lines if line.startswith('Host ')) == 1
 
