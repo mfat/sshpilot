@@ -71,13 +71,37 @@ def test_alias_list_without_hostname(tmp_path):
 
     manager.load_ssh_config()
 
-    assert len(manager.connections) == 1
-    conn = manager.connections[0]
-    assert conn.nickname == 'primary'
-    assert conn.aliases == ['alias1', 'alias2']
-    assert conn.host == 'primary'
+    assert sorted(c.nickname for c in manager.connections) == ['alias1', 'alias2', 'primary']
+    for c in manager.connections:
+        assert c.host == c.nickname
 
-    entry = manager.format_ssh_config_entry(conn.data)
+    primary = next(c for c in manager.connections if c.nickname == 'primary')
+    assert primary.aliases == ['alias1', 'alias2']
+
+    entry = manager.format_ssh_config_entry(primary.data)
     assert 'HostName' not in entry
     assert entry.splitlines()[0] == 'Host primary alias1 alias2'
+
+
+def test_alias_labels_with_hostname(tmp_path):
+    """Alias groups with HostName create entries for each label."""
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+    manager = ConnectionManager.__new__(ConnectionManager)
+    manager.connections = []
+
+    cfg = """Host app1 app2
+    HostName 192.168.1.50
+    User testuser
+"""
+    config_path = tmp_path / 'config'
+    config_path.write_text(cfg)
+    manager.ssh_config_path = str(config_path)
+
+    manager.load_ssh_config()
+
+    assert sorted(c.nickname for c in manager.connections) == ['app1', 'app2']
+    for c in manager.connections:
+        assert c.host == '192.168.1.50'
+        assert c.username == 'testuser'
 
