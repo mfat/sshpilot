@@ -537,6 +537,15 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 pass
 
+            # Use custom known hosts file when available
+            try:
+                if getattr(self, 'connection_manager', None):
+                    kh_path = getattr(self.connection_manager, 'known_hosts_path', '')
+                    if kh_path and os.path.exists(kh_path):
+                        ssh_cmd.extend(['-o', f'UserKnownHostsFile={kh_path}'])
+            except Exception:
+                logger.debug('Failed to set UserKnownHostsFile option', exc_info=True)
+
             # Ensure SSH exits immediately on failure rather than waiting in background
             ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
 
