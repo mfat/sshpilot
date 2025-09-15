@@ -15,7 +15,7 @@ def test_parse_host_with_quotes():
     }
     parsed = ConnectionManager.parse_host_config(cm, config)
     assert parsed["nickname"] == "nick name"
-    assert parsed["aliases"] == ["alias1", "alias two"]
+    assert "aliases" not in parsed
 
 
 def test_format_host_requotes():
@@ -27,4 +27,4 @@ def test_format_host_requotes():
         "username": "user",
     }
     entry = ConnectionManager.format_ssh_config_entry(cm, data)
-    assert entry.splitlines()[0] == 'Host "nick name" alias1 "alias two"'
+    assert entry.splitlines()[0] == 'Host "nick name"'

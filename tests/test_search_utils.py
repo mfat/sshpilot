@@ -27,8 +27,7 @@ def test_matches_alias():
     assert connection_matches(conn, "myalias")
 
 
-def test_matches_alias_list():
+def test_alias_list_is_ignored():
     conn = Connection({"nickname": "srv", "host": "host", "username": "user", "aliases": ["alias1", "alias2"]})
-    assert connection_matches(conn, "alias1")
-    assert connection_matches(conn, "alias2")
-    assert not connection_matches(conn, "alias3")
+    assert not connection_matches(conn, "alias1")
+    assert not connection_matches(conn, "alias2")
