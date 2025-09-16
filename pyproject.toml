@@ -4,9 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sshpilot"
-version = "3.8.3"
+version = "3.8.5"
+authors = [
+  { name="mFat", email="newmfat@gmail.com" },
+]
+readme = "README.md"
 requires-python = ">=3.9"
 description = "SSH connection manager and terminal"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
 dependencies = [
     "PyGObject>=3.42",
     "pycairo>=1.20.0",
@@ -19,3 +27,6 @@ dependencies = [
 [tool.setuptools.packages.find]
 include = ["sshpilot*"]
 exclude = ["packaging*", "screenshots*"]
+[project.urls]
+Homepage = "https://github.com/mfat/sshpilot"
+Issues = "https://github.com/mfat/sshpilot/issues"
