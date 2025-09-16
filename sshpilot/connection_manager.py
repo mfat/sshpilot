@@ -37,16 +37,7 @@ from .askpass_utils import (
 )
 
 if Secret is not None:
-    _SECRET_SCHEMA = Secret.Schema.new(
-        "sshPilot",
-        Secret.SchemaFlags.NONE,
-        {
-            "application": Secret.SchemaAttributeType.STRING,
-            "type": Secret.SchemaAttributeType.STRING,
-            "key_path": Secret.SchemaAttributeType.STRING,
-            "key_id": Secret.SchemaAttributeType.STRING,
-        },
-    )
+    _SECRET_SCHEMA = get_secret_schema()
 else:
     _SECRET_SCHEMA = None
 
@@ -1170,6 +1161,7 @@ class ConnectionManager(GObject.Object):
             try:
                 attributes = {
                     'application': _SERVICE_NAME,
+                    'type': 'ssh_password',
                     'host': host,
                     'username': username,
                 }
@@ -1204,6 +1196,7 @@ class ConnectionManager(GObject.Object):
             try:
                 attributes = {
                     'application': _SERVICE_NAME,
+                    'type': 'ssh_password',
                     'host': host,
                     'username': username,
                 }
@@ -1235,6 +1228,7 @@ class ConnectionManager(GObject.Object):
             try:
                 attributes = {
                     'application': _SERVICE_NAME,
+                    'type': 'ssh_password',
                     'host': host,
                     'username': username,
                 }

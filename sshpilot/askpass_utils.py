@@ -191,10 +191,12 @@ def get_passphrase(key_path: str) -> str:
     try:
         with open(LOG_PATH, "a") as f:
             f.write("ASKPASS: Trying libsecret\n")
-        schema = Secret.Schema.new("sshPilot", Secret.SchemaFlags.NONE, {
+        schema = Secret.Schema.new("io.github.mfat.sshpilot", Secret.SchemaFlags.NONE, {
             "application": Secret.SchemaAttributeType.STRING,
             "type": Secret.SchemaAttributeType.STRING,
             "key_path": Secret.SchemaAttributeType.STRING,
+            "host": Secret.SchemaAttributeType.STRING,
+            "username": Secret.SchemaAttributeType.STRING,
         })
 
         attributes = {
