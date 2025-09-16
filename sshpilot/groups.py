@@ -4,7 +4,7 @@ This module provides the :class:`GroupManager`, which handles creation,
 deletion and organisation of hierarchical connection groups.
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 import logging
 
 from .config import Config
@@ -47,6 +47,74 @@ class GroupManager:
         seen = set()
         self.root_connections = [n for n in self.root_connections if not (n in seen or seen.add(n))]
 
+    def _get_sibling_ids(self, parent_id: Optional[str], exclude: Optional[str] = None) -> List[str]:
+        """Return ordered list of sibling group IDs for a parent."""
+        siblings = [
+            group_id
+            for group_id, group in self.groups.items()
+            if group.get('parent_id') == parent_id and group_id != exclude
+        ]
+        siblings.sort(key=lambda gid: self.groups[gid].get('order', 0))
+        return siblings
+
+    def _next_group_order(self, parent_id: Optional[str], exclude: Optional[str] = None) -> int:
+        """Return the next order index for a parent's children."""
+        return len(self._get_sibling_ids(parent_id, exclude=exclude))
+
+    def refresh_group_order(self, parent_id: Optional[str], save: bool = False) -> List[str]:
+        """Recalculate order values for children of ``parent_id``."""
+        siblings = self._get_sibling_ids(parent_id)
+        for index, group_id in enumerate(siblings):
+            self.groups[group_id]['order'] = index
+        if parent_id and parent_id in self.groups:
+            self.groups[parent_id]['children'] = siblings.copy()
+        if save:
+            self._save_groups()
+        return siblings
+
+    def reorder_group(
+        self,
+        group_id: str,
+        target_group_id: Optional[str],
+        position: str,
+        parent_id: Optional[str] = None,
+    ) -> bool:
+        """Reorder ``group_id`` relative to ``target_group_id`` within ``parent_id``."""
+
+        if group_id not in self.groups:
+            return False
+
+        if parent_id is None:
+            parent_id = self.groups[group_id].get('parent_id')
+
+        siblings = self._get_sibling_ids(parent_id, exclude=group_id)
+
+        position = position or 'end'
+
+        if position == 'above':
+            if target_group_id and target_group_id in siblings:
+                index = siblings.index(target_group_id)
+                siblings.insert(index, group_id)
+            else:
+                siblings.insert(0, group_id)
+        elif position == 'below':
+            if target_group_id and target_group_id in siblings:
+                index = siblings.index(target_group_id)
+                siblings.insert(index + 1, group_id)
+            else:
+                siblings.append(group_id)
+        else:  # 'end' or unspecified positions
+            siblings.append(group_id)
+
+        for index, sibling_id in enumerate(siblings):
+            self.groups[sibling_id]['order'] = index
+
+        if parent_id and parent_id in self.groups:
+            self.groups[parent_id]['children'] = siblings.copy()
+
+        self._save_groups()
+        return True
+
     def _save_groups(self):
         """Save groups to configuration"""
         try:
@@ -82,7 +150,7 @@ class GroupManager:
             'children': [],
             'connections': [],
             'expanded': True,
-            'order': len(self.groups)
+            'order': self._next_group_order(parent_id)
         }
 
         if parent_id and parent_id in self.groups:
@@ -120,6 +188,7 @@ class GroupManager:
 
         # Delete the group
         del self.groups[group_id]
+        self.refresh_group_order(parent_id)
         self._save_groups()
 
     def move_connection(self, connection_nickname: str, target_group_id: str = None):

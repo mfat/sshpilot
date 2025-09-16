@@ -62,7 +62,12 @@ class GroupRow(Gtk.ListBoxRow):
         self.group_id = group_info["id"]
         self.connections_dict = connections_dict or {}
 
-        # Main content
+        # Main content with drop indicators
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+
+        self.drop_indicator_top = DragIndicator()
+        main_box.append(self.drop_indicator_top)
+
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         content.set_margin_start(12)
         content.set_margin_end(12)
@@ -95,10 +100,16 @@ class GroupRow(Gtk.ListBoxRow):
         self.expand_button.connect("clicked", self._on_expand_clicked)
         content.append(self.expand_button)
 
-        self.set_child(content)
+        main_box.append(content)
+
+        self.drop_indicator_bottom = DragIndicator()
+        main_box.append(self.drop_indicator_bottom)
+
+        self.set_child(main_box)
         self.set_selectable(True)
         self.set_can_focus(True)
 
+        self.hide_drop_indicators()
         self._update_display()
         self._setup_drag_source()
         self._setup_double_click_gesture()
@@ -130,6 +141,8 @@ class GroupRow(Gtk.ListBoxRow):
         drag_source = Gtk.DragSource()
         drag_source.set_actions(Gdk.DragAction.MOVE)
         drag_source.connect("prepare", self._on_drag_prepare)
+        drag_source.connect("drag-begin", self._on_drag_begin)
+        drag_source.connect("drag-end", self._on_drag_end)
         self.add_controller(drag_source)
         # Store reference for cleanup
         self._drag_source = drag_source
@@ -139,6 +152,22 @@ class GroupRow(Gtk.ListBoxRow):
         return Gdk.ContentProvider.new_for_value(
             GObject.Value(GObject.TYPE_PYOBJECT, data)
         )
+
+    def _on_drag_begin(self, source, drag):
+        try:
+            window = self.get_root()
+            if window:
+                window._dragged_group = self.group_id
+        except Exception as e:
+            logger.error(f"Error in group drag begin: {e}")
+
+    def _on_drag_end(self, source, drag, delete_data):
+        try:
+            window = self.get_root()
+            if window and hasattr(window, "_dragged_group"):
+                delattr(window, "_dragged_group")
+        except Exception as e:
+            logger.error(f"Error in group drag end: {e}")
 
     def _setup_double_click_gesture(self):
         gesture = Gtk.GestureClick()
@@ -156,6 +185,17 @@ class GroupRow(Gtk.ListBoxRow):
         self.group_manager.set_group_expanded(self.group_id, expanded)
         self._update_display()
         self.emit("group-toggled", self.group_id, expanded)
+
+    def show_drop_indicator(self, top: bool):
+        self.hide_drop_indicators()
+        if top:
+            self.drop_indicator_top.set_visible(True)
+        else:
+            self.drop_indicator_bottom.set_visible(True)
+
+    def hide_drop_indicators(self):
+        self.drop_indicator_top.set_visible(False)
+        self.drop_indicator_bottom.set_visible(False)
 
 
 class ConnectionRow(Gtk.ListBoxRow):
@@ -445,7 +485,7 @@ def _on_connection_list_motion(window, target, x, y):
         if not hasattr(window, '_drag_in_progress'):
             window._drag_in_progress = True
             window.connection_list.set_selection_mode(Gtk.SelectionMode.NONE)
-        
+
         # Throttle motion events to improve performance
         current_time = GLib.get_monotonic_time()
         if hasattr(window, '_last_motion_time'):
@@ -453,30 +493,44 @@ def _on_connection_list_motion(window, target, x, y):
                 return Gdk.DragAction.MOVE
         window._last_motion_time = current_time
 
-        _show_ungrouped_area(window)
+        dragging_connection = getattr(window, "_dragged_connection", None)
+        dragging_group = getattr(window, "_dragged_group", None)
+
+        if dragging_connection:
+            _show_ungrouped_area(window)
+        else:
+            _hide_ungrouped_area(window)
 
         row = window.connection_list.get_row_at_y(int(y))
         if not row:
             _clear_drop_indicator(window)
+            if dragging_group:
+                window._drop_indicator_position = "root"
             return Gdk.DragAction.MOVE
 
         if getattr(row, "ungrouped_area", False):
             # For ungrouped area, we don't need special highlighting
             _clear_drop_indicator(window)
-            window._drop_indicator_row = row
-            window._drop_indicator_position = "ungrouped"
+            if dragging_connection:
+                window._drop_indicator_row = row
+                window._drop_indicator_position = "ungrouped"
+            elif dragging_group:
+                window._drop_indicator_row = None
+                window._drop_indicator_position = "root"
             return Gdk.DragAction.MOVE
 
         # Only show indicators on connection rows that are valid drop targets
-        if (hasattr(row, "connection") and 
-            hasattr(row, "show_drop_indicator") and 
-            hasattr(window, "_dragged_connection")):
-            
+        if (
+            dragging_connection
+            and hasattr(row, "connection")
+            and hasattr(row, "show_drop_indicator")
+        ):
+
             # Don't show indicators on the row being dragged
             if row.connection == window._dragged_connection:
                 _clear_drop_indicator(window)
                 return Gdk.DragAction.MOVE
-            
+
             # Only show indicator if this is a different connection
             row_y = row.get_allocation().y
             row_height = row.get_allocation().height
@@ -484,6 +538,38 @@ def _on_connection_list_motion(window, target, x, y):
             position = "above" if relative_y < row_height / 2 else "below"
 
             _show_drop_indicator(window, row, position)
+        elif dragging_group and hasattr(row, "group_id"):
+            if row.group_id == window._dragged_group:
+                if (
+                    window._drop_indicator_row
+                    and hasattr(window._drop_indicator_row, "hide_drop_indicators")
+                ):
+                    window._drop_indicator_row.hide_drop_indicators()
+                window._drop_indicator_row = None
+                window._drop_indicator_position = None
+                return Gdk.DragAction.MOVE
+
+            allocation = row.get_allocation()
+            row_y = allocation.y
+            row_height = allocation.height or 1
+            relative_y = y - row_y
+            upper_threshold = row_height * 0.25
+            lower_threshold = row_height * 0.75
+
+            if relative_y < upper_threshold:
+                _show_drop_indicator(window, row, "above")
+            elif relative_y > lower_threshold:
+                _show_drop_indicator(window, row, "below")
+            else:
+                if (
+                    window._drop_indicator_row
+                    and window._drop_indicator_row is not row
+                    and hasattr(window._drop_indicator_row, "hide_drop_indicators")
+                ):
+                    window._drop_indicator_row.hide_drop_indicators()
+                row.hide_drop_indicators()
+                window._drop_indicator_row = row
+                window._drop_indicator_position = "child"
         else:
             # Clear indicators if we're over a non-valid target
             _clear_drop_indicator(window)
@@ -673,17 +759,96 @@ def _on_connection_list_drop(window, target, value, x, y):
 
         elif drop_type == "group":
             group_id = value.get("group_id")
-            if group_id:
-                target_row = window.connection_list.get_row_at_y(int(y))
-                if target_row and hasattr(target_row, "group_id"):
-                    target_group_id = target_row.group_id
-                    if target_group_id != group_id:
-                        # Validate that the target group exists
-                        if target_group_id in window.group_manager.groups:
-                            if _move_group(window, group_id, target_group_id):
-                                changes_made = True
-                        else:
-                            logger.warning(f"Target group '{target_group_id}' does not exist")
+            if not group_id:
+                return False
+
+            if group_id not in window.group_manager.groups:
+                logger.warning(f"Dropped group '{group_id}' does not exist")
+                return False
+
+            current_parent_id = window.group_manager.groups[group_id].get("parent_id")
+
+            target_row = window.connection_list.get_row_at_y(int(y))
+            drop_position = None
+            new_parent_id = None
+            reference_group_id = None
+
+            if target_row and hasattr(target_row, "group_id"):
+                target_group_id = target_row.group_id
+
+                if target_group_id == group_id:
+                    return False
+
+                allocation = target_row.get_allocation()
+                row_y = allocation.y
+                row_height = allocation.height or 1
+                relative_y = y - row_y
+                upper_threshold = row_height * 0.25
+                lower_threshold = row_height * 0.75
+
+                if relative_y < upper_threshold:
+                    drop_position = "above"
+                    new_parent_id = window.group_manager.groups[target_group_id].get("parent_id")
+                    reference_group_id = target_group_id
+                elif relative_y > lower_threshold:
+                    drop_position = "below"
+                    new_parent_id = window.group_manager.groups[target_group_id].get("parent_id")
+                    reference_group_id = target_group_id
+                else:
+                    drop_position = "child"
+                    new_parent_id = target_group_id
+            else:
+                drop_position = "root"
+                new_parent_id = None
+
+            if drop_position == "child":
+                parent_changed = False
+                if current_parent_id != new_parent_id:
+                    if not _move_group(window, group_id, new_parent_id):
+                        return False
+                    parent_changed = True
+
+                reorder_done = window.group_manager.reorder_group(
+                    group_id,
+                    None,
+                    "end",
+                    parent_id=new_parent_id,
+                )
+                if parent_changed or reorder_done:
+                    changes_made = True
+
+            elif drop_position == "root":
+                parent_changed = False
+                if current_parent_id is not None:
+                    if not _move_group(window, group_id, None):
+                        return False
+                    parent_changed = True
+
+                reorder_done = window.group_manager.reorder_group(
+                    group_id,
+                    None,
+                    "end",
+                    parent_id=None,
+                )
+                if parent_changed or reorder_done:
+                    changes_made = True
+
+            elif drop_position in {"above", "below"} and reference_group_id:
+                parent_changed = False
+                if current_parent_id != new_parent_id:
+                    if not _move_group(window, group_id, new_parent_id):
+                        return False
+                    parent_changed = True
+
+                reorder_done = window.group_manager.reorder_group(
+                    group_id,
+                    reference_group_id,
+                    drop_position,
+                    parent_id=new_parent_id,
+                )
+
+                if parent_changed or reorder_done:
+                    changes_made = True
 
         # Only rebuild the connection list once if changes were made
         if changes_made:
@@ -718,7 +883,7 @@ def _move_group(window, group_id, target_parent_id):
         if target_parent_id == group_id:
             logger.warning(f"Cannot move group '{group_id}' to itself")
             return False
-        
+
         # Check if target_parent_id is a descendant of group_id (would create circular reference)
         current_parent = target_parent_id
         while current_parent:
@@ -730,18 +895,32 @@ def _move_group(window, group_id, target_parent_id):
         group = window.group_manager.groups[group_id]
         old_parent_id = group.get("parent_id")
 
+        if old_parent_id == target_parent_id:
+            return True
+
         # Remove from old parent's children
         if old_parent_id and old_parent_id in window.group_manager.groups:
-            if group_id in window.group_manager.groups[old_parent_id]["children"]:
-                window.group_manager.groups[old_parent_id]["children"].remove(group_id)
+            children = window.group_manager.groups[old_parent_id].get("children", [])
+            if group_id in children:
+                children.remove(group_id)
 
         # Update parent reference
         group["parent_id"] = target_parent_id
-        
+
+        # Assign default order at the end of the new parent's list
+        group["order"] = window.group_manager._next_group_order(
+            target_parent_id, exclude=group_id
+        )
+
         # Add to new parent's children
         if target_parent_id and target_parent_id in window.group_manager.groups:
-            if group_id not in window.group_manager.groups[target_parent_id]["children"]:
-                window.group_manager.groups[target_parent_id]["children"].append(group_id)
+            children = window.group_manager.groups[target_parent_id].setdefault("children", [])
+            if group_id not in children:
+                children.append(group_id)
+
+        # Refresh ordering for affected parents
+        window.group_manager.refresh_group_order(old_parent_id)
+        window.group_manager.refresh_group_order(target_parent_id)
 
         window.group_manager._save_groups()
         return True
