@@ -713,6 +713,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         return
                     row, pointer_x, pointer_y = self._resolve_connection_list_event(x, y, scrolled)
 
+
                     if not row:
                         return
                     self.connection_list.select_row(row)
@@ -722,11 +723,23 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     pop = Gtk.Popover.new()
                     pop.set_has_arrow(True)
 
+
                     # Create listbox for menu items
                     listbox = Gtk.ListBox(margin_top=2, margin_bottom=2, margin_start=2, margin_end=2)
                     listbox.set_selection_mode(Gtk.SelectionMode.NONE)
                     pop.set_child(listbox)
                     
+                    def _clear_selection_on_close(*_args):
+                        try:
+                            if hasattr(self, "connection_list") and self.connection_list:
+                                self.connection_list.unselect_all()
+                        except Exception as err:
+                            logger.debug(
+                                f"Failed to clear connection list selection after context menu closed: {err}"
+                            )
+
+                    pop.connect("closed", _clear_selection_on_close)
+
                     # Add menu items based on row type
                     if hasattr(row, 'group_id'):
                         # Group row context menu
@@ -817,6 +830,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         rect = Gdk.Rectangle()
                         rect.x = int(pointer_x)
                         rect.y = int(pointer_y)
+
                         rect.width = 1
                         rect.height = 1
                         pop.set_pointing_to(rect)
