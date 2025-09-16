@@ -5,6 +5,7 @@ Primary UI with connection list, tabs, and terminal management
 
 import os
 import logging
+import math
 import shlex
 import time
 from pathlib import Path
@@ -710,24 +711,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         pass
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         return
-                    try:
-                        adjusted_y = float(y)
-                    except (TypeError, ValueError):
-                        adjusted_y = 0.0
-                    vadjustment = None
-                    vadjust_value = 0.0
-                    try:
-                        vadjustment = scrolled.get_vadjustment()
-                    except Exception:
-                        vadjustment = None
-                    if vadjustment is not None:
-                        try:
-                            vadjust_value = float(vadjustment.get_value())
-                        except Exception:
-                            vadjust_value = 0.0
-                        else:
-                            adjusted_y += vadjust_value
-                    row = self.connection_list.get_row_at_y(int(adjusted_y))
+                    row, pointer_x, pointer_y = self._resolve_connection_list_event(x, y, scrolled)
 
                     if not row:
                         return
@@ -737,7 +721,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Create popover menu
                     pop = Gtk.Popover.new()
                     pop.set_has_arrow(True)
-                    
+
                     # Create listbox for menu items
                     listbox = Gtk.ListBox(margin_top=2, margin_bottom=2, margin_start=2, margin_end=2)
                     listbox.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -831,9 +815,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     pop.set_parent(self.connection_list)
                     try:
                         rect = Gdk.Rectangle()
-                        rect.x = int(x)
-                        rect.y = int(adjusted_y)
-
+                        rect.x = int(pointer_x)
+                        rect.y = int(pointer_y)
                         rect.width = 1
                         rect.height = 1
                         pop.set_pointing_to(rect)
