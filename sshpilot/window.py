@@ -715,18 +715,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     except (TypeError, ValueError):
                         adjusted_y = 0.0
                     vadjustment = None
-                    vadjust_value = 0.0
+                    saved_scroll_value = None
                     try:
                         vadjustment = scrolled.get_vadjustment()
                     except Exception:
                         vadjustment = None
                     if vadjustment is not None:
                         try:
-                            vadjust_value = float(vadjustment.get_value())
+                            saved_scroll_value = float(vadjustment.get_value())
                         except Exception:
-                            vadjust_value = 0.0
+                            saved_scroll_value = None
                         else:
-                            adjusted_y += vadjust_value
+                            adjusted_y += saved_scroll_value
                     row = self.connection_list.get_row_at_y(int(adjusted_y))
 
                     if not row:
@@ -737,7 +737,25 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Create popover menu
                     pop = Gtk.Popover.new()
                     pop.set_has_arrow(True)
-                    
+                    if saved_scroll_value is not None and vadjustment is not None:
+                        def _restore_scroll(_popover, *_args, adjustment=vadjustment, value=saved_scroll_value):
+                            try:
+                                adjustment.set_value(value)
+                            except Exception as e:
+                                logger.debug(f"Failed to restore scroll position: {e}")
+
+                        connected = False
+                        try:
+                            pop.connect('closed', _restore_scroll)
+                            connected = True
+                        except Exception as e:
+                            logger.debug(f"Failed to connect popover closed handler: {e}")
+                        if not connected:
+                            try:
+                                pop.connect('hide', _restore_scroll)
+                            except Exception as e:
+                                logger.debug(f"Failed to connect popover hide handler: {e}")
+
                     # Create listbox for menu items
                     listbox = Gtk.ListBox(margin_top=2, margin_bottom=2, margin_start=2, margin_end=2)
                     listbox.set_selection_mode(Gtk.SelectionMode.NONE)
