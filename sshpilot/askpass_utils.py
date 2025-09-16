@@ -136,7 +136,8 @@ except Exception:
     pass
 LOG_PATH = os.path.join(LOG_DIR, "sshpilot-askpass.log")
 try:
-
+    import gi
+    gi.require_version('Secret', '1')
     from gi.repository import Secret
 except Exception:
     Secret = None

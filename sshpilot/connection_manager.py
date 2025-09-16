@@ -1249,98 +1249,19 @@ class ConnectionManager(GObject.Object):
 
     def store_key_passphrase(self, key_path: str, passphrase: str) -> bool:
         """Store key passphrase securely in system keyring"""
-        try:
-            # Use keyring on macOS, libsecret on Linux
-            if keyring and is_macos():
-                keyring.set_password("sshPilot", key_path, passphrase)
-                logger.debug(f"Stored key passphrase for {key_path} using keyring")
-                return True
-            elif not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
-                # Linux: use libsecret
-                attributes = {
-                    'application': 'sshPilot',
-                    'type': 'key_passphrase',
-                    'key_path': key_path,
-                    'key_id': f"key_passphrase_{os.path.basename(key_path)}_{hash(key_path)}",
-                }
-
-                Secret.password_store_sync(
-                    _SECRET_SCHEMA,
-                    attributes,
-                    Secret.COLLECTION_DEFAULT,
-                    f"SSH Key Passphrase: {os.path.basename(key_path)}",
-                    passphrase,
-                    None,
-                )
-                logger.debug(f"Stored key passphrase for {key_path} using libsecret")
-                return True
-
-            else:
-                logger.warning("No keyring backend available for storing passphrase")
-                return False
-        except Exception as e:
-            logger.error(f"Error storing key passphrase for {key_path}: {e}")
-            return False
+        # Use the unified passphrase storage from askpass_utils
+        return store_passphrase(key_path, passphrase)
 
     def get_key_passphrase(self, key_path: str) -> Optional[str]:
         """Retrieve key passphrase from system keyring"""
-        try:
-            # Use keyring on macOS, libsecret on Linux
-            if keyring and is_macos():
-                passphrase = keyring.get_password("sshPilot", key_path)
-                if passphrase:
-                    logger.debug(
-                        f"Retrieved key passphrase for {key_path} using keyring"
-                    )
-                return passphrase
-            elif not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
-                # Linux: use libsecret
-                attributes = {
-                    'application': 'sshPilot',
-                    'type': 'key_passphrase',
-                    'key_path': key_path,
-                }
-
-                passphrase = Secret.password_lookup_sync(_SECRET_SCHEMA, attributes, None)
-                if passphrase is not None:
-                    logger.debug(f"Retrieved key passphrase for {key_path} using libsecret")
-                    return passphrase
-
-            return None
-        except Exception as e:
-            logger.error(f"Error retrieving key passphrase for {key_path}: {e}")
-            return None
+        # Use the unified passphrase lookup from askpass_utils
+        passphrase = lookup_passphrase(key_path)
+        return passphrase if passphrase else None
 
     def delete_key_passphrase(self, key_path: str) -> bool:
         """Delete stored key passphrase from system keyring"""
-        try:
-            # Use keyring on macOS, libsecret on Linux
-            if keyring and is_macos():
-                try:
-                    keyring.delete_password("sshPilot", key_path)
-                    logger.debug(
-                        f"Deleted stored key passphrase for {key_path} using keyring"
-                    )
-                    return True
-                except keyring.errors.PasswordDeleteError:
-                    return True
-            elif not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
-                # Linux: use libsecret
-                attributes = {
-                    'application': 'sshPilot',
-                    'type': 'key_passphrase',
-                    'key_path': key_path,
-                }
-
-                removed_any = Secret.password_clear_sync(_SECRET_SCHEMA, attributes, None)
-                if removed_any:
-                    logger.debug(f"Deleted stored key passphrase for {key_path} using libsecret")
-
-                return bool(removed_any)
-            return False
-        except Exception as e:
-            logger.error(f"Error deleting key passphrase for {key_path}: {e}")
-            return False
+        # Use the unified passphrase clearing from askpass_utils
+        return clear_passphrase(key_path)
 
     def _ensure_ssh_agent(self) -> bool:
         """Ensure ssh-agent is running and export environment variables"""
