@@ -14,6 +14,20 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     Secret = None
 
+try:
+    import keyring
+except Exception:  # pragma: no cover - optional dependency
+    keyring = None
+
+try:
+    from .platform_utils import is_macos
+except ImportError:
+    try:
+        from platform_utils import is_macos
+    except ImportError:
+        def is_macos():
+            return False
+
 logger = logging.getLogger(__name__)
 
 _ASKPASS_DIR = None
@@ -42,8 +56,18 @@ def get_secret_schema() -> "Secret.Schema":
 
 
 def store_passphrase(key_path: str, passphrase: str) -> bool:
-    """Store a key passphrase using libsecret."""
+    """Store a key passphrase using keyring (macOS) or libsecret (Linux)."""
 
+    # Try keyring first (macOS)
+    if keyring and is_macos():
+        try:
+            keyring.set_password('sshPilot', key_path, passphrase)
+            return True
+        except Exception as e:
+            logger.debug(f"Failed to store passphrase in keyring: {e}")
+            return False
+
+    # Fall back to libsecret (Linux)
     schema = get_secret_schema()
     if not schema:
         return False
@@ -67,8 +91,18 @@ def store_passphrase(key_path: str, passphrase: str) -> bool:
 
 
 def lookup_passphrase(key_path: str) -> str:
-    """Look up a key passphrase using libsecret."""
+    """Look up a key passphrase using keyring (macOS) or libsecret (Linux)."""
 
+    # Try keyring first (macOS)
+    if keyring and is_macos():
+        try:
+            passphrase = keyring.get_password('sshPilot', key_path)
+            return passphrase or ""
+        except Exception as e:
+            logger.debug(f"Failed to retrieve passphrase from keyring: {e}")
+            return ""
+
+    # Fall back to libsecret (Linux)
     schema = get_secret_schema()
     if not schema:
         return ""
@@ -84,8 +118,18 @@ def lookup_passphrase(key_path: str) -> str:
 
 
 def clear_passphrase(key_path: str) -> bool:
-    """Remove a stored key passphrase using libsecret."""
+    """Remove a stored key passphrase using keyring (macOS) or libsecret (Linux)."""
 
+    # Try keyring first (macOS)
+    if keyring and is_macos():
+        try:
+            keyring.delete_password('sshPilot', key_path)
+            return True
+        except Exception as e:
+            logger.debug(f"Failed to delete passphrase from keyring: {e}")
+            return False
+
+    # Fall back to libsecret (Linux)
     schema = get_secret_schema()
     if not schema:
         return False
