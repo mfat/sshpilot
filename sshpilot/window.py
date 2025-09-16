@@ -697,26 +697,39 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Set up drag and drop for reordering
         build_sidebar(self)
 
-        # Right-click context menu to open multiple connections
+        # Right-click context menu using simple gesture without coordinate detection
         try:
+            # Use a simple gesture but avoid all coordinate-based operations
             context_click = Gtk.GestureClick()
-            context_click.set_button(0)  # handle any button; filter inside
-            context_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-            def _on_list_pressed(gesture, n_press, x, y):
+            context_click.set_button(Gdk.BUTTON_SECONDARY)  # Only handle right-click
+            
+            def _on_right_click(gesture, n_press, x, y):
                 try:
-                    btn = 0
+                    logger.debug("Simple right-click detected - showing context menu for selected row")
+                    
+                    # Clear any existing pulse effects to prevent multiple highlights
+                    self._stop_pulse_on_interaction(None)
+                    
+                    # Use the currently selected row - completely ignore click coordinates
+                    row = None
                     try:
-                        btn = gesture.get_current_button()
-                    except Exception:
-                        pass
-                    if btn not in (Gdk.BUTTON_SECONDARY, 3):
-                        return
-                    row, pointer_x, pointer_y = self._resolve_connection_list_event(x, y, scrolled)
-
+                        row = self.connection_list.get_selected_row()
+                        if row:
+                            logger.debug("Using currently selected row for context menu")
+                        else:
+                            # If no selection, use first row
+                            first_visible = self.connection_list.get_row_at_index(0)
+                            if first_visible:
+                                row = first_visible
+                                logger.debug("Using first row for context menu (no selection)")
+                    except Exception as e:
+                        logger.debug(f"Failed to get selected row: {e}")
 
                     if not row:
+                        logger.debug("No row available for context menu")
                         return
-                    self.connection_list.select_row(row)
+                    
+                    # Set context menu data
                     self._context_menu_connection = getattr(row, 'connection', None)
                     self._context_menu_group_row = row if hasattr(row, 'group_id') else None
                     # Create popover menu
@@ -729,16 +742,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     listbox.set_selection_mode(Gtk.SelectionMode.NONE)
                     pop.set_child(listbox)
                     
-                    def _clear_selection_on_close(*_args):
-                        try:
-                            if hasattr(self, "connection_list") and self.connection_list:
-                                self.connection_list.unselect_all()
-                        except Exception as err:
-                            logger.debug(
-                                f"Failed to clear connection list selection after context menu closed: {err}"
-                            )
-
-                    pop.connect("closed", _clear_selection_on_close)
+                    # Simple popover close handler
+                    def _on_popover_closed(*args):
+                        logger.debug("Context menu closed")
+                    
+                    pop.connect("closed", _on_popover_closed)
 
                     # Add menu items based on row type
                     if hasattr(row, 'group_id'):
@@ -777,6 +785,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         edit_icon = Gtk.Image.new_from_icon_name('document-edit-symbolic')
                         edit_row.add_prefix(edit_icon)
                         edit_row.set_activatable(True)
+                        
                         edit_row.connect('activated', lambda *_: (self.on_edit_connection_action(None, None), pop.popdown()))
                         listbox.append(edit_row)
 
@@ -825,21 +834,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         delete_row.set_activatable(True)
                         delete_row.connect('activated', lambda *_: (self.on_delete_connection_action(None, None), pop.popdown()))
                         listbox.append(delete_row)
-                    pop.set_parent(self.connection_list)
-                    try:
-                        rect = Gdk.Rectangle()
-                        rect.x = int(pointer_x)
-                        rect.y = int(pointer_y)
-
-                        rect.width = 1
-                        rect.height = 1
-                        pop.set_pointing_to(rect)
-                    except Exception as e:
-                        logger.debug(f"Failed to set popover pointing: {e}")
-                    pop.popup()
+                    # Set popover parent to the selected row for proper anchoring
+                    pop.set_parent(row)
+                    
+                    # Add a small delay to ensure proper display
+                    def show_menu():
+                        try:
+                            pop.popup()
+                            logger.debug("Context menu popup called")
+                        except Exception as e:
+                            logger.error(f"Failed to popup context menu: {e}")
+                        return False
+                    
+                    GLib.idle_add(show_menu)
+                    
                 except Exception as e:
                     logger.error(f"Failed to create context menu: {e}")
-            context_click.connect('pressed', _on_list_pressed)
+            
+            context_click.connect('pressed', _on_right_click)
             self.connection_list.add_controller(context_click)
         except Exception:
             pass
