@@ -390,7 +390,16 @@ class TerminalWidget(Gtk.Box):
         # Connect terminal signals and store handler IDs for cleanup
         self._child_exited_handler = self.vte.connect('child-exited', self.on_child_exited)
         self._title_changed_handler = self.vte.connect('window-title-changed', self.on_title_changed)
-        self._termprops_changed_handler = self.vte.connect('termprops-changed', self._on_termprops_changed)
+        
+        # Connect termprops-changed signal if available (VTE 0.78+)
+        # This signal is used for job detection in local terminals
+        self._termprops_changed_handler = None
+        try:
+            self._termprops_changed_handler = self.vte.connect('termprops-changed', self._on_termprops_changed)
+            logger.debug("Connected termprops-changed signal (VTE 0.78+ feature)")
+        except Exception as e:
+            logger.debug(f"termprops-changed signal not available (older VTE version): {e}")
+            # Job detection will be disabled for local terminals on older VTE versions
         
         # Apply theme
         self.force_style_refresh()
@@ -1695,7 +1704,7 @@ class TerminalWidget(Gtk.Box):
                 if hasattr(self, '_title_changed_handler'):
                     self.vte.disconnect(self._title_changed_handler)
                     logger.debug("Disconnected title-changed signal handler")
-                if hasattr(self, '_termprops_changed_handler'):
+                if hasattr(self, '_termprops_changed_handler') and self._termprops_changed_handler is not None:
                     self.vte.disconnect(self._termprops_changed_handler)
                     logger.debug("Disconnected termprops-changed signal handler")
             except Exception as e:
@@ -2222,6 +2231,12 @@ class TerminalWidget(Gtk.Box):
         if not self._is_local_terminal():
             return
             
+        # This method should only be called if the signal was successfully connected
+        # (i.e., on VTE 0.78+), but add a safety check anyway
+        if self._termprops_changed_handler is None:
+            logger.debug("termprops-changed handler called but signal was not connected")
+            return
+            
         try:
             # Check which properties changed - ids should be a list of VteTerminalProp values
             if not ids:
@@ -2231,7 +2246,8 @@ class TerminalWidget(Gtk.Box):
             changed_props = set(ids) if hasattr(ids, '__iter__') else {ids}
             
             # Check if job finished (also gives exit status)
-            if Vte.TERMPROP_SHELL_POSTEXEC in changed_props:
+            # These constants are only available in VTE 0.78+
+            if hasattr(Vte, 'TERMPROP_SHELL_POSTEXEC') and Vte.TERMPROP_SHELL_POSTEXEC in changed_props:
                 ok, code = terminal.get_termprop_uint(Vte.TERMPROP_SHELL_POSTEXEC)
                 if ok:
                     self._job_status = "IDLE"
@@ -2239,7 +2255,7 @@ class TerminalWidget(Gtk.Box):
                     return
             
             # Check if job is running
-            if Vte.TERMPROP_SHELL_PREEXEC in changed_props:
+            if hasattr(Vte, 'TERMPROP_SHELL_PREEXEC') and Vte.TERMPROP_SHELL_PREEXEC in changed_props:
                 ok, _ = terminal.get_termprop_value(Vte.TERMPROP_SHELL_PREEXEC)
                 if ok:
                     self._job_status = "RUNNING"
@@ -2247,7 +2263,7 @@ class TerminalWidget(Gtk.Box):
                     return
             
             # Check if prompt is visible
-            if Vte.TERMPROP_SHELL_PRECMD in changed_props:
+            if hasattr(Vte, 'TERMPROP_SHELL_PRECMD') and Vte.TERMPROP_SHELL_PRECMD in changed_props:
                 ok, _ = terminal.get_termprop_value(Vte.TERMPROP_SHELL_PRECMD)
                 if ok:
                     self._job_status = "PROMPT"
