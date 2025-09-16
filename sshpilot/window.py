@@ -711,9 +711,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         return
                     try:
-                        adjusted_y = float(y)
+                        original_y = float(y)
                     except (TypeError, ValueError):
-                        adjusted_y = 0.0
+                        original_y = 0.0
+                    adjusted_y = original_y
                     vadjustment = None
                     saved_scroll_value = None
                     try:
@@ -726,7 +727,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         except Exception:
                             saved_scroll_value = None
                         else:
-                            adjusted_y += saved_scroll_value
+
+                            adjusted_y = original_y + vadjust_value
+
                     row = self.connection_list.get_row_at_y(int(adjusted_y))
 
                     if not row:
@@ -861,7 +864,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     try:
                         rect = Gdk.Rectangle()
                         rect.x = int(x)
-                        rect.y = int(adjusted_y)
+                        rect.y = int(original_y)
 
                         rect.width = 1
                         rect.height = 1
