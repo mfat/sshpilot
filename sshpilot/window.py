@@ -5,6 +5,7 @@ Primary UI with connection list, tabs, and terminal management
 
 import os
 import logging
+import math
 import shlex
 import time
 from pathlib import Path
@@ -710,27 +711,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         pass
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         return
-                    try:
-                        original_y = float(y)
-                    except (TypeError, ValueError):
-                        original_y = 0.0
-                    adjusted_y = original_y
-                    vadjustment = None
-                    saved_scroll_value = None
-                    try:
-                        vadjustment = scrolled.get_vadjustment()
-                    except Exception:
-                        vadjustment = None
-                    if vadjustment is not None:
-                        try:
-                            saved_scroll_value = float(vadjustment.get_value())
-                        except Exception:
-                            saved_scroll_value = None
-                        else:
+                    row, pointer_x, pointer_y = self._resolve_connection_list_event(x, y, scrolled)
 
-                            adjusted_y = original_y + vadjust_value
-
-                    row = self.connection_list.get_row_at_y(int(adjusted_y))
 
                     if not row:
                         return
@@ -740,24 +722,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Create popover menu
                     pop = Gtk.Popover.new()
                     pop.set_has_arrow(True)
-                    if saved_scroll_value is not None and vadjustment is not None:
-                        def _restore_scroll(_popover, *_args, adjustment=vadjustment, value=saved_scroll_value):
-                            try:
-                                adjustment.set_value(value)
-                            except Exception as e:
-                                logger.debug(f"Failed to restore scroll position: {e}")
 
-                        connected = False
-                        try:
-                            pop.connect('closed', _restore_scroll)
-                            connected = True
-                        except Exception as e:
-                            logger.debug(f"Failed to connect popover closed handler: {e}")
-                        if not connected:
-                            try:
-                                pop.connect('hide', _restore_scroll)
-                            except Exception as e:
-                                logger.debug(f"Failed to connect popover hide handler: {e}")
 
                     # Create listbox for menu items
                     listbox = Gtk.ListBox(margin_top=2, margin_bottom=2, margin_start=2, margin_end=2)
@@ -863,8 +828,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     pop.set_parent(self.connection_list)
                     try:
                         rect = Gdk.Rectangle()
-                        rect.x = int(x)
-                        rect.y = int(original_y)
+                        rect.x = int(pointer_x)
+                        rect.y = int(pointer_y)
 
                         rect.width = 1
                         rect.height = 1
