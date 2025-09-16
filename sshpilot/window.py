@@ -710,20 +710,38 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Clear any existing pulse effects to prevent multiple highlights
                     self._stop_pulse_on_interaction(None)
                     
-                    # Use the currently selected row - completely ignore click coordinates
+                    # Try to detect the clicked row, but fall back to selected row if detection fails
                     row = None
                     try:
-                        row = self.connection_list.get_selected_row()
-                        if row:
-                            logger.debug("Using currently selected row for context menu")
-                        else:
-                            # If no selection, use first row
-                            first_visible = self.connection_list.get_row_at_index(0)
-                            if first_visible:
-                                row = first_visible
-                                logger.debug("Using first row for context menu (no selection)")
+                        # First try to find the row that was actually clicked using pick method
+                        # This is safe now because we're not doing any selection operations
+                        picked_widget = self.connection_list.pick(x, y, Gtk.PickFlags.DEFAULT)
+                        widget = picked_widget
+                        while widget is not None:
+                            if isinstance(widget, Gtk.ListBoxRow):
+                                row = widget
+                                logger.debug("Using clicked row for context menu")
+                                break
+                            widget = widget.get_parent()
+                            if widget == self.connection_list:
+                                break
                     except Exception as e:
-                        logger.debug(f"Failed to get selected row: {e}")
+                        logger.debug(f"Failed to detect clicked row: {e}")
+                    
+                    # Fallback to selected row if click detection failed
+                    if not row:
+                        try:
+                            row = self.connection_list.get_selected_row()
+                            if row:
+                                logger.debug("Using currently selected row for context menu (fallback)")
+                            else:
+                                # If no selection, use first row
+                                first_visible = self.connection_list.get_row_at_index(0)
+                                if first_visible:
+                                    row = first_visible
+                                    logger.debug("Using first row for context menu (no selection)")
+                        except Exception as e:
+                            logger.debug(f"Failed to get selected row: {e}")
 
                     if not row:
                         logger.debug("No row available for context menu")
