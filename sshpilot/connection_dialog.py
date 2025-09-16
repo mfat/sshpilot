@@ -10,12 +10,11 @@ import re
 import ipaddress
 import socket
 import subprocess
-import shlex
 from typing import Optional, Dict, Any
 
 from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
 from .port_utils import get_port_checker
-from .platform_utils import is_macos
+from .platform_utils import is_macos, get_ssh_dir
 
 # Initialize gettext
 try:
@@ -487,7 +486,6 @@ class SSHConfigAdvancedTab(Gtk.Box):
                         
                         config_data = {
                             'nickname': getattr(connection, 'nickname', 'your-host-name'),
-                            'aliases': getattr(connection, 'aliases', []),
                             'host': getattr(connection, 'host', ''),
                             'username': getattr(connection, 'username', ''),
                             'port': getattr(connection, 'port', 22),
@@ -642,7 +640,6 @@ class SSHConfigAdvancedTab(Gtk.Box):
     def get_extra_ssh_config(self):
         """Get extra SSH config as a string for saving"""
         config_lines: list[str] = []
-        alias_tokens: list[str] = []
         host_rows = []
 
         for row_grid in self.config_entries.copy():
@@ -656,43 +653,22 @@ class SSHConfigAdvancedTab(Gtk.Box):
                 continue
 
             if key.lower() == "host":
-                try:
-                    alias_tokens.extend(shlex.split(value))
-                except ValueError:
-                    alias_tokens.extend(value.split())
                 host_rows.append(row_grid)
                 continue
 
             config_lines.append(f"{key} {value}")
 
-        if alias_tokens:
-            try:
-                parent_dialog = self.get_ancestor(Adw.Window)
-                if parent_dialog:
-                    existing = []
-                    if hasattr(parent_dialog, 'aliases_row'):
-                        existing = parent_dialog.aliases_row.get_text().split()
-                    merged = existing + [a for a in alias_tokens if a not in existing]
-                    if hasattr(parent_dialog, 'aliases_row'):
-                        parent_dialog.aliases_row.set_text(" ".join(merged))
-                    if hasattr(parent_dialog, 'connection') and parent_dialog.connection:
-                        parent_dialog.connection.aliases = merged
-                        if hasattr(parent_dialog.connection, 'data'):
-                            parent_dialog.connection.data['aliases'] = merged
-            except Exception as e:
-                logger.error(f"Error merging Host aliases: {e}")
+        if host_rows:
+            def _remove_rows():
+                for row in host_rows:
+                    try:
+                        self.on_remove_option(None, row)
+                    except Exception:
+                        pass
+                self.update_config_preview()
+                return False
 
-            if host_rows:
-                def _remove_rows():
-                    for row in host_rows:
-                        try:
-                            self.on_remove_option(None, row)
-                        except Exception:
-                            pass
-                    self.update_config_preview()
-                    return False
-
-                GLib.idle_add(_remove_rows)
+            GLib.idle_add(_remove_rows)
 
         return "\n".join(config_lines)
 
@@ -705,13 +681,8 @@ class SSHConfigAdvancedTab(Gtk.Box):
                 parent_dialog.connection.extra_ssh_config = extra_config
                 if hasattr(parent_dialog.connection, 'data'):
                     parent_dialog.connection.data['extra_ssh_config'] = extra_config
-                if hasattr(parent_dialog, 'aliases_row'):
-                    aliases = parent_dialog.aliases_row.get_text().split()
-                    parent_dialog.connection.aliases = aliases
-                    if hasattr(parent_dialog.connection, 'data'):
-                        parent_dialog.connection.data['aliases'] = aliases
                 logger.debug(
-                    f"Updated parent connection with extra SSH config: {extra_config} and aliases: {parent_dialog.connection.aliases}"
+                    f"Updated parent connection with extra SSH config: {extra_config}"
                 )
         except Exception as e:
             logger.error(f"Error updating parent connection: {e}")
@@ -725,7 +696,6 @@ class SSHConfigAdvancedTab(Gtk.Box):
             return
 
         entries = []
-        alias_tokens: list[str] = []
         for line in config_string.split('\n'):
             line = line.strip()
             if line and not line.startswith('#'):
@@ -733,29 +703,8 @@ class SSHConfigAdvancedTab(Gtk.Box):
                 key = parts[0].strip()
                 value = parts[1].strip() if len(parts) == 2 else "yes"
                 if key.lower() == 'host':
-                    try:
-                        alias_tokens.extend(shlex.split(value))
-                    except ValueError:
-                        alias_tokens.extend(value.split())
-                else:
-                    entries.append((key, value))
-
-        if alias_tokens:
-            try:
-                parent_dialog = self.get_ancestor(Adw.Window)
-                if parent_dialog:
-                    existing = []
-                    if hasattr(parent_dialog, 'aliases_row'):
-                        existing = parent_dialog.aliases_row.get_text().split()
-                    merged = existing + [a for a in alias_tokens if a not in existing]
-                    if hasattr(parent_dialog, 'aliases_row'):
-                        parent_dialog.aliases_row.set_text(" ".join(merged))
-                    if hasattr(parent_dialog, 'connection') and parent_dialog.connection:
-                        parent_dialog.connection.aliases = merged
-                        if hasattr(parent_dialog.connection, 'data'):
-                            parent_dialog.connection.data['aliases'] = merged
-            except Exception as e:
-                logger.error(f"Error setting Host aliases: {e}")
+                    continue
+                entries.append((key, value))
 
         logger.debug(f"Parsed entries: {entries}")
         self.set_config_entries(entries)
@@ -773,13 +722,22 @@ class ConnectionDialog(Adw.Window):
         'connection-saved': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
     }
     
-    def __init__(self, parent, connection=None, connection_manager=None):
+    def __init__(self, parent, connection=None, connection_manager=None, force_split_from_group=False, split_group_source=None, split_original_nickname=None):
         super().__init__()
         
         self.parent_window = parent
         self.connection = connection
         self.connection_manager = connection_manager
         self.is_editing = connection is not None
+
+        self.force_split_from_group = bool(force_split_from_group)
+        self.split_group_source = split_group_source or (getattr(connection, 'source', None) if connection else None)
+        if split_original_nickname:
+            self.split_original_nickname = split_original_nickname
+        elif connection is not None:
+            self.split_original_nickname = getattr(connection, 'nickname', '')
+        else:
+            self.split_original_nickname = ''
         
         self.set_title('Edit Connection' if self.is_editing else 'New Connection')
         # Set modal and transient parent to ensure dialog stays on top
@@ -1213,7 +1171,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         try:
             # Ensure UI controls exist
             required_attrs = [
-                'nickname_row', 'host_row', 'aliases_row', 'username_row', 'port_row',
+                'nickname_row', 'host_row', 'username_row', 'port_row',
                 'proxy_jump_row', 'forward_agent_row',
                 'auth_method_row', 'keyfile_row', 'password_row', 'key_passphrase_row',
                 'pubkey_auth_row'
@@ -1226,8 +1184,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self.nickname_row.set_text(self.connection.nickname or "")
             if hasattr(self.connection, 'host'):
                 self.host_row.set_text(self.connection.host or "")
-            if hasattr(self.connection, 'aliases'):
-                self.aliases_row.set_text(" ".join(self.connection.aliases or []))
             if hasattr(self.connection, 'username'):
                 self.username_row.set_text(self.connection.username or "")
             if hasattr(self.connection, 'port'):
@@ -1840,8 +1796,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             names = []
             paths = []
             
-            # Look for certificate files in ~/.ssh directory
-            ssh_dir = os.path.expanduser("~/.ssh")
+            # Look for certificate files in the SSH directory
+            ssh_dir = get_ssh_dir()
             if os.path.exists(ssh_dir) and os.path.isdir(ssh_dir):
                 for filename in os.listdir(ssh_dir):
                     if filename.endswith('-cert.pub'):
@@ -2060,10 +2016,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Host
         self.host_row = Adw.EntryRow(title=_("Host/IP address"))
         basic_group.add(self.host_row)
-
-        # Aliases
-        self.aliases_row = Adw.EntryRow(title=_("Aliases"))
-        basic_group.add(self.aliases_row)
 
         # Username
         self.username_row = Adw.EntryRow(title=_("Username"))
@@ -2645,79 +2597,36 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.rules_list.show()
     
     def browse_for_key_file(self):
-        """Open file chooser to browse for SSH key file (Gtk.FileChooserDialog)."""
+        """Open file chooser to browse for SSH key file using portal-aware API."""
         try:
-            dialog = Gtk.FileChooserDialog(
-                title=_("Select SSH Key File"),
-                action=Gtk.FileChooserAction.OPEN,
-            )
-            # Parent must be a Gtk.Window; PreferencesDialog is not one. Try to set if available
-            try:
-                parent_win = self.get_transient_for()
-                if isinstance(parent_win, Gtk.Window):
-                    dialog.set_transient_for(parent_win)
-            except Exception:
-                pass
-            dialog.set_modal(True)
-            dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
-            dialog.add_button(_("Open"), Gtk.ResponseType.ACCEPT)
+            dialog = Gtk.FileDialog(title=_("Select SSH Key File"))
 
-            # Default to ~/.ssh directory when available
+            # Default to SSH directory when available
             try:
-                ssh_dir = os.path.expanduser('~/.ssh')
+                ssh_dir = get_ssh_dir()
                 if os.path.isdir(ssh_dir):
-                    try:
-                        dialog.set_current_folder(Gio.File.new_for_path(ssh_dir))
-                    except Exception:
-                        try:
-                            dialog.set_current_folder(ssh_dir)
-                        except Exception:
-                            try:
-                                dialog.set_current_folder_uri(Gio.File.new_for_path(ssh_dir).get_uri())
-                            except Exception:
-                                pass
+                    dialog.set_initial_folder(Gio.File.new_for_path(ssh_dir))
             except Exception:
                 pass
 
-            # No filters: list all files in ~/.ssh
+            parent = self.get_transient_for()
+            if not isinstance(parent, Gtk.Window):
+                parent = None
 
-            dialog.connect("response", self.on_key_file_selected)
-            dialog.show()
+            dialog.open(parent, None, self.on_key_file_selected)
         except Exception as e:
             logger.error(f"Failed to open key file chooser: {e}")
 
     def browse_for_certificate_file(self):
-        """Open file chooser to browse for SSH certificate file."""
+        """Open file chooser to browse for SSH certificate file using portal-aware API."""
         try:
-            dialog = Gtk.FileChooserDialog(
-                title=_("Select SSH Certificate File"),
-                action=Gtk.FileChooserAction.OPEN,
-            )
-            # Parent must be a Gtk.Window; PreferencesDialog is not one. Try to set if available
-            try:
-                parent_win = self.get_transient_for()
-                if isinstance(parent_win, Gtk.Window):
-                    dialog.set_transient_for(parent_win)
-            except Exception:
-                pass
-            dialog.set_modal(True)
-            dialog.add_button(_("Cancel"), Gtk.ResponseType.CANCEL)
-            dialog.add_button(_("Open"), Gtk.ResponseType.ACCEPT)
+            dialog = Gtk.FileDialog(title=_("Select SSH Certificate File"))
 
-            # Default to ~/.ssh directory when available
+            # Default to SSH directory when available
             try:
-                ssh_dir = os.path.expanduser('~/.ssh')
+                ssh_dir = get_ssh_dir()
                 if os.path.isdir(ssh_dir):
-                    try:
-                        dialog.set_current_folder(Gio.File.new_for_path(ssh_dir))
-                    except Exception:
-                        try:
-                            dialog.set_current_folder(ssh_dir)
-                        except Exception:
-                            try:
-                                dialog.set_current_folder_uri(Gio.File.new_for_path(ssh_dir).get_uri())
-                            except Exception:
-                                pass
+                    dialog.set_initial_folder(Gio.File.new_for_path(ssh_dir))
             except Exception:
                 pass
 
@@ -2726,70 +2635,76 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             cert_filter.set_name(_("SSH Certificate Files"))
             cert_filter.add_pattern("*-cert.pub")
             cert_filter.add_pattern("*.pub")
-            dialog.add_filter(cert_filter)
-
-            # Add filter for all files
             all_filter = Gtk.FileFilter()
             all_filter.set_name(_("All Files"))
             all_filter.add_pattern("*")
-            dialog.add_filter(all_filter)
 
-            dialog.connect("response", self.on_certificate_file_selected)
-            dialog.show()
+            filters = Gio.ListStore.new(Gtk.FileFilter)
+            filters.append(cert_filter)
+            filters.append(all_filter)
+            dialog.set_filters(filters)
+            dialog.set_default_filter(cert_filter)
+
+            parent = self.get_transient_for()
+            if not isinstance(parent, Gtk.Window):
+                parent = None
+            dialog.open(parent, None, self.on_certificate_file_selected)
         except Exception as e:
             logger.error(f"Failed to open certificate file chooser: {e}")
 
 
     
-    def on_key_file_selected(self, dialog, response):
+    def on_key_file_selected(self, dialog, result):
         """Handle selected key file from file chooser"""
-        if response == Gtk.ResponseType.ACCEPT:
-            key_file = dialog.get_file()
-            if key_file:
-                key_path = key_file.get_path()
-                self.keyfile_row.set_subtitle(key_path)
-                
-                # Add the browsed key to the dropdown if it's not already there
-                if hasattr(self, '_key_paths') and key_path not in self._key_paths:
-                    self._key_paths.append(key_path)
-                    # Update the dropdown model with just the filename
-                    if hasattr(self, 'key_dropdown'):
-                        model = self.key_dropdown.get_model()
-                        if model:
-                            filename = os.path.basename(key_path)
-                            model.append(filename)
-                
-                # Set the selected keyfile path
-                self._selected_keyfile_path = key_path
-                
-                # Sync the dropdown to select the browsed key
-                self._sync_key_dropdown_with_current_keyfile()
-        dialog.destroy()
+        try:
+            key_file = dialog.open_finish(result)
+        except GLib.Error:
+            return
+        if key_file:
+            key_path = key_file.get_path()
+            self.keyfile_row.set_subtitle(key_path)
+
+            # Add the browsed key to the dropdown if it's not already there
+            if hasattr(self, '_key_paths') and key_path not in self._key_paths:
+                self._key_paths.append(key_path)
+                # Update the dropdown model with just the filename
+                if hasattr(self, 'key_dropdown'):
+                    model = self.key_dropdown.get_model()
+                    if model:
+                        filename = os.path.basename(key_path)
+                        model.append(filename)
+
+            # Set the selected keyfile path
+            self._selected_keyfile_path = key_path
+
+            # Sync the dropdown to select the browsed key
+            self._sync_key_dropdown_with_current_keyfile()
     
-    def on_certificate_file_selected(self, dialog, response):
+    def on_certificate_file_selected(self, dialog, result):
         """Handle selected certificate file from file chooser"""
-        if response == Gtk.ResponseType.ACCEPT:
-            cert_file = dialog.get_file()
-            if cert_file:
-                cert_path = cert_file.get_path()
-                self.certificate_row.set_subtitle(cert_path)
-                
-                # Add the browsed certificate to the dropdown if it's not already there
-                if hasattr(self, '_cert_paths') and cert_path not in self._cert_paths:
-                    self._cert_paths.append(cert_path)
-                    # Update the dropdown model with just the filename
-                    if hasattr(self, 'cert_dropdown'):
-                        model = self.cert_dropdown.get_model()
-                        if model:
-                            filename = os.path.basename(cert_path)
-                            model.append(filename)
-                
-                # Set the selected certificate path
-                self._selected_cert_path = cert_path
-                
-                # Sync the dropdown to select the browsed certificate
-                self._sync_cert_dropdown_with_current_cert()
-        dialog.destroy()
+        try:
+            cert_file = dialog.open_finish(result)
+        except GLib.Error:
+            return
+        if cert_file:
+            cert_path = cert_file.get_path()
+            self.certificate_row.set_subtitle(cert_path)
+
+            # Add the browsed certificate to the dropdown if it's not already there
+            if hasattr(self, '_cert_paths') and cert_path not in self._cert_paths:
+                self._cert_paths.append(cert_path)
+                # Update the dropdown model with just the filename
+                if hasattr(self, 'cert_dropdown'):
+                    model = self.cert_dropdown.get_model()
+                    if model:
+                        filename = os.path.basename(cert_path)
+                        model.append(filename)
+
+            # Set the selected certificate path
+            self._selected_cert_path = cert_path
+
+            # Sync the dropdown to select the browsed certificate
+            self._sync_cert_dropdown_with_current_cert()
     
     def _sync_cert_dropdown_with_current_cert(self):
         """Sync the certificate dropdown selection with the current certificate path"""
@@ -3388,7 +3303,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         connection_data = {
             'nickname': self.nickname_row.get_text().strip(),
             'host': self.host_row.get_text().strip(),
-            'aliases': self.aliases_row.get_text().split(),
             'username': self.username_row.get_text().strip(),
             'port': int(self.port_row.get_text().strip() or '22'),
             'auth_method': self.auth_method_row.get_selected(),
@@ -3409,13 +3323,22 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'password_changed': bool(password_changed),
         }
         
+        if getattr(self, 'force_split_from_group', False):
+            connection_data['__split_from_group'] = True
+            if getattr(self, 'split_group_source', None):
+                connection_data['__split_source'] = self.split_group_source
+            if getattr(self, 'split_original_nickname', None):
+                connection_data['__split_original_nickname'] = self.split_original_nickname
+
         # Update the connection object locally when editing (do not persist here; window handles persistence)
         if self.is_editing and self.connection:
             try:
                 self.connection.data.update(connection_data)
+                self.connection.data.pop('aliases', None)
             except Exception:
                 pass
-            self.connection.aliases = connection_data.get('aliases', [])
+            if hasattr(self.connection, 'aliases'):
+                self.connection.aliases = []
             self.connection.proxy_jump = connection_data.get('proxy_jump', [])
             self.connection.forward_agent = connection_data.get('forward_agent', False)
             # Explicitly update forwarding rules to ensure they're fresh

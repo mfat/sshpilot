@@ -27,7 +27,7 @@
 - SCP support for quicly uploading a file to remote server
 - Keypair generation and copying to remote servers (ssh-copy-id)
 - Support for running remote and local commands upon login
-- Secure storage for credentials, no secret (password or passphrase) is copied to clipboard or saved to plain text
+- Secure storage for credentials via libsecret on Linux; no secret (password or passphrase) is copied to clipboard or saved to plain text
 - Privacy toggle to show/hide ip addresses/hostnames in the main window
 - Light/Dark interface themes
 - Customizable terminal font and color schemes
@@ -80,7 +80,8 @@ sudo apt install \
   libgtk-4-1 (>= 4.6) gir1.2-gtk-4.0 (>= 4.6) \
   libadwaita-1-0 (>= 1.4) gir1.2-adw-1 (>= 1.4) \
   libvte-2.91-gtk4-0 (>= 0.70) gir1.2-vte-3.91 (>= 0.70) \
-  python3-paramiko python3-cryptography python3-secretstorage sshpass ssh-askpass
+  libsecret-1-0 gir1.2-secret-1 \
+  python3-paramiko python3-cryptography sshpass ssh-askpass
 ```
 
 Fedora / RHEL / CentOS
@@ -92,8 +93,10 @@ sudo dnf install \
   gtk4 libadwaita \
   vte291-gtk4 \
   libsecret \
-  python3-paramiko python3-cryptography python3-secretstorage sshpass openssh-askpass
+  python3-paramiko python3-cryptography sshpass openssh-askpass
 ```
+
+libsecret handles secure credential storage on Linux via the Secret Service API.
 
 Run from source
 

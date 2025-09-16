@@ -2,11 +2,9 @@ from sshpilot.connection_manager import Connection
 from sshpilot.search_utils import connection_matches
 
 
-def make_connection(nickname, host, hname=None):
+def make_connection(nickname, host):
     data = {"nickname": nickname, "host": host, "username": "user"}
     conn = Connection(data)
-    if hname:
-        setattr(conn, "hname", hname)
     return conn
 
 
@@ -22,13 +20,10 @@ def test_matches_host():
     assert connection_matches(conn, "10.0")
 
 
-def test_matches_alias():
-    conn = make_connection("alias", "host", hname="myalias")
-    assert connection_matches(conn, "myalias")
-
-
-def test_matches_alias_list():
-    conn = Connection({"nickname": "srv", "host": "host", "username": "user", "aliases": ["alias1", "alias2"]})
-    assert connection_matches(conn, "alias1")
-    assert connection_matches(conn, "alias2")
-    assert not connection_matches(conn, "alias3")
+def test_does_not_match_aliases_or_hname():
+    conn = make_connection("alias", "host")
+    setattr(conn, "hname", "myalias")
+    setattr(conn, "aliases", ["alias1", "alias2"])
+    assert not connection_matches(conn, "myalias")
+    assert not connection_matches(conn, "alias1")
+    assert not connection_matches(conn, "alias2")

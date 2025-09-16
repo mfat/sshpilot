@@ -42,7 +42,7 @@ if not load_resources():
     sys.exit(1)
 
 from .window import MainWindow
-from .platform_utils import is_macos, get_data_dir
+from .platform_utils import is_macos, get_data_dir, is_flatpak
 
 class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
@@ -74,10 +74,17 @@ class SshPilotApplication(Adw.Application):
             
             # Apply color overrides
             self.apply_color_overrides(cfg)
-            
-            self.isolated_mode = isolated or bool(cfg.get_setting('ssh.use_isolated_config', False))
+
+            flatpak = is_flatpak()
+            self.isolated_mode = (
+                True
+                if flatpak
+                else isolated or bool(cfg.get_setting('ssh.use_isolated_config', False))
+            )
+            if flatpak:
+                cfg.set_setting('ssh.use_isolated_config', True)
         except Exception:
-            self.isolated_mode = isolated
+            self.isolated_mode = True if is_flatpak() else isolated
         
         # Create actions with keyboard shortcuts
         # Use platform-specific shortcuts for better macOS compatibility
