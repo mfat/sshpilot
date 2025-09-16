@@ -1841,9 +1841,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             message = _("\"{host}\" is part of a configuration block with [{count}] other hosts. How would you like to apply your changes?").format(host=host_label, count=other_hosts)
 
             dialog = Adw.MessageDialog.new(self, _("Warning"), message)
+            dialog.add_response('cancel', _('Cancel'))
             dialog.add_response('manual', _('Manually Edit SSH Configuration'))
             dialog.add_response('split', _('Edit as Separate Connection'))
-            dialog.add_response('cancel', _('Cancel'))
             dialog.set_response_appearance('manual', Adw.ResponseAppearance.SUGGESTED)
             dialog.set_default_response('manual')
             dialog.set_close_response('cancel')
