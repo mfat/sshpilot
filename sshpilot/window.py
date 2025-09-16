@@ -761,6 +761,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     listbox.set_selection_mode(Gtk.SelectionMode.NONE)
                     pop.set_child(listbox)
                     
+                    def _clear_selection_on_close(*_args):
+                        try:
+                            if hasattr(self, "connection_list") and self.connection_list:
+                                self.connection_list.unselect_all()
+                        except Exception as err:
+                            logger.debug(
+                                f"Failed to clear connection list selection after context menu closed: {err}"
+                            )
+
+                    pop.connect("closed", _clear_selection_on_close)
+
                     # Add menu items based on row type
                     if hasattr(row, 'group_id'):
                         # Group row context menu
