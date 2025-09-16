@@ -1840,7 +1840,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             other_hosts = max(0, len(block_info.get('hosts') or []) - 1)
             message = _("\"{host}\" is part of a configuration block with [{count}] other hosts. How would you like to apply your changes?").format(host=host_label, count=other_hosts)
 
-            dialog = Adw.MessageDialog.new(self, _("Warnin"), message)
+            dialog = Adw.MessageDialog.new(self, _("Warning"), message)
             dialog.add_response('manual', _('Manually Edit SSH Configuration'))
             dialog.add_response('split', _('Edit as Separate Connection'))
             dialog.add_response('cancel', _('Cancel'))
