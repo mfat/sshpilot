@@ -66,6 +66,7 @@ datas += [
     (os.path.join(hb_share, "gtk-4.0"),               "Resources/share/gtk-4.0"),
     ("sshpilot", "sshpilot"),
     ("sshpilot/resources/sshpilot.gresource", "Resources/sshpilot"),
+    ("sshpilot/io.github.mfat.sshpilot.svg", "share/icons"),
 ]
 
 # Add keyring package files explicitly
@@ -74,11 +75,6 @@ if os.path.exists(keyring_package):
     datas.append((keyring_package, "keyring"))
     print(f"Added keyring package: {keyring_package}")
 
-# Add secretstorage package files if available
-secretstorage_package = f"{homebrew}/lib/python3.13/site-packages/secretstorage"
-if os.path.exists(secretstorage_package):
-    datas.append((secretstorage_package, "secretstorage"))
-    print(f"Added secretstorage package: {secretstorage_package}")
 
 # Optional helper binaries
 sshpass = f"{homebrew}/bin/sshpass"
@@ -92,8 +88,8 @@ if os.path.exists(cairo_gi_binding):
 
 hiddenimports = collect_submodules("gi")
 hiddenimports += ["gi._gi_cairo", "gi.repository.cairo", "cairo"]
-# Add keyring and secretstorage for askpass functionality
-hiddenimports += ["keyring", "secretstorage"]
+# Add keyring for askpass functionality
+hiddenimports += ["keyring"]
 # Add all keyring backends
 hiddenimports += ["keyring.backends", "keyring.backends.macOS", "keyring.backends.libsecret", "keyring.backends.SecretService"]
 

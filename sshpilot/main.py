@@ -42,7 +42,7 @@ if not load_resources():
     sys.exit(1)
 
 from .window import MainWindow
-from .platform_utils import is_macos
+from .platform_utils import is_macos, get_data_dir, is_flatpak
 
 class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
@@ -74,10 +74,17 @@ class SshPilotApplication(Adw.Application):
             
             # Apply color overrides
             self.apply_color_overrides(cfg)
-            
-            self.isolated_mode = isolated or bool(cfg.get_setting('ssh.use_isolated_config', False))
+
+            flatpak = is_flatpak()
+            self.isolated_mode = (
+                True
+                if flatpak
+                else isolated or bool(cfg.get_setting('ssh.use_isolated_config', False))
+            )
+            if flatpak:
+                cfg.set_setting('ssh.use_isolated_config', True)
         except Exception:
-            self.isolated_mode = isolated
+            self.isolated_mode = True if is_flatpak() else isolated
         
         # Create actions with keyboard shortcuts
         # Use platform-specific shortcuts for better macOS compatibility
@@ -187,7 +194,7 @@ class SshPilotApplication(Adw.Application):
     def setup_logging(self):
         """Set up logging configuration"""
         # Create log directory if it doesn't exist
-        log_dir = os.path.expanduser('~/.local/share/sshPilot')
+        log_dir = get_data_dir()
         os.makedirs(log_dir, exist_ok=True)
 
         # Default log level is INFO for cleaner logs
@@ -447,16 +454,18 @@ class SshPilotApplication(Adw.Application):
                 css_rules.append(f"@define-color secondary_sidebar_bg_color {app_color};")
             
             if accent_color:
-                # Override only accent-related colors (not background colors)
+                # Override accent colors regardless of app color
                 css_rules.append(f"@define-color accent_color {accent_color};")
-                # If no app color is set, also set accent background colors
-                if not app_color:
-                    css_rules.append(f"@define-color accent_bg_color {accent_color};")
-                    css_rules.append(f"@define-color accent_fg_color white;")
-                    css_rules.append(f"@define-color theme_selected_bg_color {accent_color};")
-                    css_rules.append(f"@define-color theme_selected_fg_color white;")
-                    css_rules.append(f"@define-color theme_unfocused_selected_bg_color {accent_color};")
-                    css_rules.append(f"@define-color theme_unfocused_selected_fg_color white;")
+                css_rules.append(f"@define-color accent_bg_color {accent_color};")
+                css_rules.append(f"@define-color accent_fg_color white;")
+                css_rules.append(f"@define-color theme_selected_bg_color {accent_color};")
+                css_rules.append(f"@define-color theme_selected_fg_color white;")
+                css_rules.append(
+                    f"@define-color theme_unfocused_selected_bg_color {accent_color};"
+                )
+                css_rules.append(
+                    f"@define-color theme_unfocused_selected_fg_color white;"
+                )
             
             if sidebar_color:
                 # Override sidebar colors independently

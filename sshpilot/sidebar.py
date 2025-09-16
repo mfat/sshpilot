@@ -396,7 +396,7 @@ class ConnectionRow(Gtk.ListBoxRow):
             if has_active_terminal:
                 self.status_icon.set_from_icon_name("network-idle-symbolic")
                 self.status_icon.set_tooltip_text(
-                    f"Connected to {getattr(self.connection, 'hname', '') or self.connection.host}"
+                    f"Connected to {self.connection.host}"
                 )
             else:
                 self.status_icon.set_from_icon_name("network-offline-symbolic")

@@ -8,7 +8,9 @@ import logging
 import math
 import shlex
 import time
-from typing import Optional, Dict, Any, List, Tuple, Callable
+from pathlib import Path
+from typing import Optional, Dict, Any, List, Tuple
+
 
 import gi
 gi.require_version('Gtk', '4.0')
@@ -39,10 +41,8 @@ from .config import Config
 from .key_manager import KeyManager, SSHKey
 # Port forwarding UI is now integrated into connection_dialog.py
 from .connection_dialog import ConnectionDialog
-from .askpass_utils import ensure_askpass_script
 from .preferences import (
     PreferencesWindow,
-    is_running_in_flatpak,
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
 )
@@ -56,7 +56,8 @@ from .actions import WindowActions, register_window_actions
 from . import shutdown
 from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
-from .platform_utils import is_macos
+from .platform_utils import is_macos, get_config_dir
+from .ssh_utils import ensure_writable_ssh_home
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +74,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Initialize managers
         self.config = Config()
         effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
+        key_dir = Path(get_config_dir()) if effective_isolated else None
         self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
-        self.key_manager = KeyManager()
+        self.key_manager = KeyManager(key_dir)
         self.group_manager = GroupManager(self.config)
         
         # UI state
@@ -695,34 +697,149 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Set up drag and drop for reordering
         build_sidebar(self)
 
-        # Right-click context menu to open multiple connections
+        # Right-click context menu using simple gesture without coordinate detection
         try:
+            # Use a simple gesture but avoid all coordinate-based operations
             context_click = Gtk.GestureClick()
-            context_click.set_button(0)  # handle any button; filter inside
-            def _on_list_pressed(gesture, n_press, x, y):
+            context_click.set_button(Gdk.BUTTON_SECONDARY)  # Only handle right-click
+            
+            def _on_right_click(gesture, n_press, x, y):
                 try:
-                    btn = 0
+                    logger.debug("Simple right-click detected - showing context menu for selected row")
+                    
+                    # Clear any existing pulse effects to prevent multiple highlights
+                    self._stop_pulse_on_interaction(None)
+                    
+                    # Try to detect the clicked row, but fall back to selected row if detection fails
+                    row = None
                     try:
-                        btn = gesture.get_current_button()
-                    except Exception:
-                        pass
-                    if btn not in (Gdk.BUTTON_SECONDARY, 3):
-                        return
-                    row = self.connection_list.get_row_at_y(int(y))
+                        # First try to find the row that was actually clicked using pick method
+                        # This is safe now because we're not doing any selection operations
+                        picked_widget = self.connection_list.pick(x, y, Gtk.PickFlags.DEFAULT)
+                        widget = picked_widget
+                        while widget is not None:
+                            if isinstance(widget, Gtk.ListBoxRow):
+                                row = widget
+                                logger.debug("Using clicked row for context menu")
+                                break
+                            widget = widget.get_parent()
+                            if widget == self.connection_list:
+                                break
+                    except Exception as e:
+                        logger.debug(f"Failed to detect clicked row: {e}")
+                    
+                    # Fallback to selected row if click detection failed
                     if not row:
+                        try:
+                            row = self.connection_list.get_selected_row()
+                            if row:
+                                logger.debug("Using currently selected row for context menu (fallback)")
+                            else:
+                                # If no selection, use first row
+                                first_visible = self.connection_list.get_row_at_index(0)
+                                if first_visible:
+                                    row = first_visible
+                                    logger.debug("Using first row for context menu (no selection)")
+                        except Exception as e:
+                            logger.debug(f"Failed to get selected row: {e}")
+
+                    if not row:
+                        logger.debug("No row available for context menu")
                         return
-                    self.connection_list.select_row(row)
+                    
+                    # Set context menu data
                     self._context_menu_connection = getattr(row, 'connection', None)
                     self._context_menu_group_row = row if hasattr(row, 'group_id') else None
-                    # Create popover menu
+                    # Create popover menu with disabled autohide for manual control
                     pop = Gtk.Popover.new()
                     pop.set_has_arrow(True)
-                    
+                    pop.set_autohide(False)  # Disable automatic hiding to control it manually
+                    logger.debug("Created popover with autohide disabled")
+
+
                     # Create listbox for menu items
                     listbox = Gtk.ListBox(margin_top=2, margin_bottom=2, margin_start=2, margin_end=2)
                     listbox.set_selection_mode(Gtk.SelectionMode.NONE)
                     pop.set_child(listbox)
                     
+                    # Simple popover close handler with cleanup
+                    def _on_popover_closed(*args):
+                        # Clean up the window focus handler when popover closes
+                        if hasattr(pop, '_focus_handler_id') and hasattr(pop, '_window') and pop._window:
+                            try:
+                                pop._window.disconnect(pop._focus_handler_id)
+                                logger.debug("Cleaned up window focus handler")
+                            except Exception as e:
+                                logger.debug(f"Error cleaning up focus handler: {e}")
+                        
+                        # Clean up the click controller
+                        if hasattr(pop, '_click_controller') and pop._click_controller:
+                            try:
+                                self.remove_controller(pop._click_controller)
+                                logger.debug("Cleaned up click controller")
+                            except Exception as e:
+                                logger.debug(f"Error cleaning up click controller: {e}")
+                        
+                        logger.debug("Context menu closed")
+                    
+                    pop.connect("closed", _on_popover_closed)
+                    
+                    # Close context menu when window becomes inactive (with delay to prevent immediate closure)
+                    def _on_window_active_changed(window, pspec):
+                        try:
+                            # Add a small delay to avoid immediate closure when popover is first shown
+                            def delayed_check():
+                                try:
+                                    # Only close if window is actually inactive and popover is still visible
+                                    if not self.is_active() and pop and pop.get_visible():
+                                        pop.popdown()
+                                        logger.debug("Context menu closed due to window becoming inactive")
+                                except Exception as e:
+                                    logger.debug(f"Error in delayed focus check: {e}")
+                                return False
+                            GLib.timeout_add(50, delayed_check)
+                        except Exception as e:
+                            logger.debug(f"Error in window active change handler: {e}")
+                    
+                    # Connect to the window's notify::is-active signal after a brief delay
+                    def connect_focus_handler():
+                        try:
+                            focus_handler_id = self.connect("notify::is-active", _on_window_active_changed)
+                            pop._focus_handler_id = focus_handler_id
+                            pop._window = self
+                            logger.debug("Connected window focus handler")
+                        except Exception as e:
+                            logger.debug(f"Error connecting focus handler: {e}")
+                        return False
+                    
+                    # Delay the connection slightly to avoid immediate triggering
+                    GLib.timeout_add(100, connect_focus_handler)
+                    
+                    # Add manual click-outside detection since autohide is disabled
+                    def setup_click_outside_detection():
+                        try:
+                            click_controller = Gtk.GestureClick()
+                            click_controller.set_button(0)  # Any button
+                            
+                            def _on_outside_click(gesture, n_press, x, y):
+                                try:
+                                    if pop and pop.get_visible():
+                                        pop.popdown()
+                                        logger.debug("Context menu closed due to outside click")
+                                except Exception as e:
+                                    logger.debug(f"Error handling outside click: {e}")
+                            
+                            click_controller.connect('pressed', _on_outside_click)
+                            self.add_controller(click_controller)
+                            pop._click_controller = click_controller
+                            logger.debug("Added click-outside detection")
+                        except Exception as e:
+                            logger.debug(f"Error setting up click-outside detection: {e}")
+                        return False
+                    
+                    # Set up click detection after popover is shown
+                    GLib.timeout_add(150, setup_click_outside_detection)
+
                     # Add menu items based on row type
                     if hasattr(row, 'group_id'):
                         # Group row context menu
@@ -760,6 +877,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         edit_icon = Gtk.Image.new_from_icon_name('document-edit-symbolic')
                         edit_row.add_prefix(edit_icon)
                         edit_row.set_activatable(True)
+                        
                         edit_row.connect('activated', lambda *_: (self.on_edit_connection_action(None, None), pop.popdown()))
                         listbox.append(edit_row)
 
@@ -808,20 +926,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         delete_row.set_activatable(True)
                         delete_row.connect('activated', lambda *_: (self.on_delete_connection_action(None, None), pop.popdown()))
                         listbox.append(delete_row)
-                    pop.set_parent(self.connection_list)
-                    try:
-                        rect = Gdk.Rectangle()
-                        rect.x = int(x)
-                        rect.y = int(y)
-                        rect.width = 1
-                        rect.height = 1
-                        pop.set_pointing_to(rect)
-                    except Exception as e:
-                        logger.debug(f"Failed to set popover pointing: {e}")
-                    pop.popup()
+                    # Set popover parent to the selected row for proper anchoring
+                    pop.set_parent(row)
+                    
+                    # Add a small delay to ensure proper display
+                    def show_menu():
+                        try:
+                            pop.popup()
+                            logger.debug("Context menu popup called")
+                        except Exception as e:
+                            logger.error(f"Failed to popup context menu: {e}")
+                        return False
+                    
+                    GLib.idle_add(show_menu)
+                    
                 except Exception as e:
                     logger.error(f"Failed to create context menu: {e}")
-            context_click.connect('pressed', _on_list_pressed)
+            
+            context_click.connect('pressed', _on_right_click)
             self.connection_list.add_controller(context_click)
         except Exception:
             pass
@@ -956,9 +1078,205 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         toolbar.append(spacer)
         
         sidebar_box.append(toolbar)
-        
+
         self._set_sidebar_widget(sidebar_box)
         logger.debug("Set sidebar widget")
+
+    def _resolve_connection_list_event(
+        self,
+        x: float,
+        y: float,
+        scrolled_window: Optional[Gtk.ScrolledWindow] = None,
+    ) -> Tuple[Optional[Gtk.ListBoxRow], float, float]:
+        """Resolve the target row and viewport coordinates for a pointer event on the connection list."""
+
+        try:
+            event_x = float(x)
+            event_y = float(y)
+        except (TypeError, ValueError):
+            return None, 0.0, 0.0
+
+        adjusted_x = event_x
+        adjusted_y = event_y
+        hadjust_value = 0.0
+        vadjust_value = 0.0
+
+
+        if scrolled_window is None:
+            try:
+                scrolled_window = self.connection_list.get_ancestor(Gtk.ScrolledWindow)
+            except Exception:
+                scrolled_window = None
+
+        if scrolled_window is not None:
+            try:
+                hadjustment = scrolled_window.get_hadjustment()
+            except Exception:
+                hadjustment = None
+            else:
+                if hadjustment is not None:
+                    try:
+                        hadjust_value = float(hadjustment.get_value())
+                    except Exception:
+                        hadjust_value = 0.0
+                    else:
+                        adjusted_x = event_x + hadjust_value
+
+
+            try:
+                vadjustment = scrolled_window.get_vadjustment()
+            except Exception:
+                vadjustment = None
+            else:
+                if vadjustment is not None:
+                    try:
+                        vadjust_value = float(vadjustment.get_value())
+                    except Exception:
+                        vadjust_value = 0.0
+                    else:
+                        adjusted_y = event_y + vadjust_value
+
+
+        x_candidates: List[float] = [adjusted_x]
+        if not math.isclose(adjusted_x, event_x):
+            x_candidates.append(event_x)
+
+        y_candidates: List[float] = [adjusted_y]
+        if not math.isclose(adjusted_y, event_y):
+            y_candidates.append(event_y)
+
+        row: Optional[Gtk.ListBoxRow] = None
+        pointer_y_source_index = 0
+        for idx, candidate in enumerate(y_candidates):
+
+            try:
+                row = self.connection_list.get_row_at_y(int(candidate))
+            except Exception:
+                row = None
+            if row:
+                pointer_y_source_index = idx
+                break
+            row = self._connection_row_for_coordinate(candidate)
+            if row:
+                pointer_y_source_index = idx
+
+                break
+
+        if not row:
+            return None, x_candidates[0], y_candidates[0]
+
+        pointer_x_list = x_candidates[0]
+        pointer_y_list = y_candidates[pointer_y_source_index]
+
+        pointer_x_viewport = event_x
+        pointer_y_viewport = event_y
+
+        try:
+            allocation = row.get_allocation()
+        except Exception:
+            allocation = None
+
+        if allocation is not None:
+            try:
+                row_left = float(allocation.x)
+                row_top = float(allocation.y)
+                row_right = row_left + max(float(allocation.width) - 1.0, 0.0)
+                row_bottom = row_top + max(float(allocation.height) - 1.0, 0.0)
+            except Exception:
+                row_left = row_top = 0.0
+                row_right = row_bottom = 0.0
+
+
+            if row_right < row_left:
+                row_right = row_left
+            if row_bottom < row_top:
+                row_bottom = row_top
+
+            row_left_viewport = row_left - hadjust_value
+            row_right_viewport = row_right - hadjust_value
+            row_top_viewport = row_top - vadjust_value
+            row_bottom_viewport = row_bottom - vadjust_value
+
+            if row_left_viewport > row_right_viewport:
+                row_left_viewport, row_right_viewport = row_right_viewport, row_left_viewport
+            if row_top_viewport > row_bottom_viewport:
+                row_top_viewport, row_bottom_viewport = row_bottom_viewport, row_top_viewport
+
+            pointer_x_candidates: List[float] = [pointer_x_viewport]
+            pointer_x_from_list = pointer_x_list - hadjust_value
+            if not math.isclose(pointer_x_from_list, pointer_x_viewport):
+                pointer_x_candidates.append(pointer_x_from_list)
+            event_x_minus_adjust = event_x - hadjust_value
+            if hadjust_value and not math.isclose(event_x_minus_adjust, pointer_x_from_list):
+                pointer_x_candidates.append(event_x_minus_adjust)
+
+            for candidate in pointer_x_candidates:
+                if row_left_viewport <= candidate <= row_right_viewport:
+                    pointer_x_viewport = candidate
+                    break
+            else:
+                midpoint_x = row_left_viewport + (row_right_viewport - row_left_viewport) / 2.0
+                if row_left_viewport <= row_right_viewport:
+                    pointer_x_viewport = max(
+                        row_left_viewport, min(pointer_x_viewport, row_right_viewport)
+                    )
+                else:
+                    pointer_x_viewport = midpoint_x
+
+            pointer_y_candidates: List[float] = [pointer_y_viewport]
+            pointer_y_from_list = pointer_y_list - vadjust_value
+            if not math.isclose(pointer_y_from_list, pointer_y_viewport):
+                pointer_y_candidates.append(pointer_y_from_list)
+            event_y_minus_adjust = event_y - vadjust_value
+            if vadjust_value and not math.isclose(event_y_minus_adjust, pointer_y_from_list):
+                pointer_y_candidates.append(event_y_minus_adjust)
+
+            for candidate in pointer_y_candidates:
+                if row_top_viewport <= candidate <= row_bottom_viewport:
+                    pointer_y_viewport = candidate
+                    break
+            else:
+                midpoint_y = row_top_viewport + (row_bottom_viewport - row_top_viewport) / 2.0
+                if row_top_viewport <= row_bottom_viewport:
+                    pointer_y_viewport = max(
+                        row_top_viewport, min(pointer_y_viewport, row_bottom_viewport)
+                    )
+                else:
+                    pointer_y_viewport = midpoint_y
+
+        return row, pointer_x_viewport, pointer_y_viewport
+
+
+    def _connection_row_for_coordinate(self, coord: float) -> Optional[Gtk.ListBoxRow]:
+        """Return the listbox row whose allocation includes the given list-space coordinate."""
+        try:
+            target = float(coord)
+        except (TypeError, ValueError):
+            return None
+
+        try:
+            child = self.connection_list.get_first_child()
+        except Exception:
+            return None
+
+        while child is not None:
+            try:
+                if isinstance(child, Gtk.ListBoxRow):
+                    allocation = child.get_allocation()
+                    row_top = allocation.y
+                    row_bottom = allocation.y + max(allocation.height - 1, 0)
+                    if row_bottom < row_top:
+                        row_bottom = row_top
+                    if row_top <= target <= row_bottom:
+                        return child
+            except Exception:
+                pass
+            try:
+                child = child.get_next_sibling()
+            except Exception:
+                break
+
+        return None
 
     def setup_content_area(self):
         """Set up the main content area with stack for tabs and welcome view"""
@@ -1026,11 +1344,29 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tab_overview.set_view(self.tab_view)
         self.tab_overview.set_enable_new_tab(False)
         self.tab_overview.set_enable_search(True)
+        # Hide window buttons in tab overview
+        self.tab_overview.set_show_start_title_buttons(False)
+        self.tab_overview.set_show_end_title_buttons(False)
         
         # Create tab bar
         self.tab_bar = Adw.TabBar()
         self.tab_bar.set_view(self.tab_view)
-        self.tab_bar.set_autohide(False)
+        self.tab_bar.set_autohide(True)
+        
+        # Add local terminal button before the tabs
+        self.local_terminal_button = Gtk.Button()
+        self.local_terminal_button.set_icon_name('utilities-terminal-symbolic')
+        self.local_terminal_button.add_css_class('flat')  # Make button flat
+        
+        # Set tooltip with keyboard shortcut
+        mac = is_macos()
+        primary = '⌘' if mac else 'Ctrl'
+        shift = '⇧' if mac else 'Shift'
+        shortcut_text = f'{primary}+{shift}+T'
+        self.local_terminal_button.set_tooltip_text(_('Open Local Terminal ({})').format(shortcut_text))
+        
+        self.local_terminal_button.connect('clicked', self.on_local_terminal_button_clicked)
+        self.tab_bar.set_start_action_widget(self.local_terminal_button)
         
         # Create tab content box
         tab_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -1447,7 +1783,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         logger.info("Showing tab view")
 
-    def show_connection_dialog(self, connection: Connection = None):
+    def show_connection_dialog(
+            self,
+            connection: Connection = None,
+            *,
+            skip_group_warning: bool = False,
+            force_split_from_group: bool = False,
+            split_group_source: Optional[str] = None,
+            split_original_nickname: Optional[str] = None,
+    ):
         """Show connection dialog for adding/editing connections"""
         logger.info(f"Show connection dialog for: {connection}")
 
@@ -1461,10 +1805,85 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 pass
 
+        if connection is not None and not skip_group_warning:
+            block_info = None
+            try:
+                source_path = split_group_source or getattr(connection, 'source', None)
+                block_info = self.connection_manager.get_host_block_details(connection.nickname, source_path)
+            except Exception as e:
+                logger.debug(f"Failed to inspect host block for {connection.nickname}: {e}")
+            if block_info and len(block_info.get('hosts') or []) > 1:
+                self._prompt_group_edit_options(connection, block_info)
+                return
+
+        split_source_for_dialog = split_group_source or (getattr(connection, 'source', None) if connection else None)
+        original_token = split_original_nickname or (connection.nickname if connection else None)
+
         # Create connection dialog
-        dialog = ConnectionDialog(self, connection, self.connection_manager)
+        dialog = ConnectionDialog(
+            self,
+            connection,
+            self.connection_manager,
+            force_split_from_group=force_split_from_group,
+            split_group_source=split_source_for_dialog,
+            split_original_nickname=original_token,
+        )
         dialog.connect('connection-saved', self.on_connection_saved)
         dialog.present()
+
+
+
+    def _prompt_group_edit_options(self, connection: Connection, block_info: Dict[str, Any]):
+        """Present options when editing a grouped host"""
+        try:
+            host_label = getattr(connection, 'nickname', '')
+            other_hosts = max(0, len(block_info.get('hosts') or []) - 1)
+            message = _("\"{host}\" is part of a configuration block with [{count}] other hosts. How would you like to apply your changes?").format(host=host_label, count=other_hosts)
+
+            dialog = Adw.MessageDialog.new(self, _("Warning"), message)
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('manual', _('Manually Edit SSH Configuration'))
+            dialog.add_response('split', _('Edit as Separate Connection'))
+            dialog.set_response_appearance('manual', Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response('manual')
+            dialog.set_close_response('cancel')
+
+            source_path = block_info.get('source') or getattr(connection, 'source', None)
+            original_name = getattr(connection, 'nickname', None)
+
+            def on_response(dlg, response):
+                dlg.destroy()
+                if response == 'manual':
+                    self._open_ssh_config_editor()
+                elif response == 'split':
+                    self.show_connection_dialog(
+                        connection,
+                        skip_group_warning=True,
+                        force_split_from_group=True,
+                        split_group_source=source_path,
+                        split_original_nickname=original_name,
+                    )
+
+            dialog.connect('response', on_response)
+            dialog.present()
+        except Exception as e:
+            logger.error(f"Failed to present group edit options: {e}")
+            self.show_connection_dialog(connection, skip_group_warning=True)
+
+    def _open_ssh_config_editor(self):
+        try:
+            from .ssh_config_editor import SSHConfigEditorWindow
+            editor = SSHConfigEditorWindow(self, self.connection_manager, on_saved=self._on_ssh_config_editor_saved)
+            editor.present()
+        except Exception as e:
+            logger.error(f"Failed to open SSH config editor: {e}")
+
+    def _on_ssh_config_editor_saved(self):
+        try:
+            self.connection_manager.load_ssh_config()
+            self.rebuild_connection_list()
+        except Exception as e:
+            logger.error(f"Failed to refresh connections after SSH config save: {e}")
 
     def show_connection_selection_for_ssh_copy(self):
         """Show a dialog to select a connection for SSH key copy"""
@@ -1828,73 +2247,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def show_about_dialog(self):
         """Show about dialog"""
-        # Use Gtk.AboutDialog so we can force a logo even without icon theme entries
-        about = Gtk.AboutDialog()
-        about.set_transient_for(self)
-        about.set_modal(True)
-        about.set_program_name('sshPilot')
+        # Use Adw.AboutDialog to get support-url and issue-url properties
+        about = Adw.AboutDialog()
+        about.set_application_name('sshPilot')
         try:
             from . import __version__ as APP_VERSION
         except Exception:
             APP_VERSION = "0.0.0"
         about.set_version(APP_VERSION)
-        about.set_comments('SSH connection manager with integrated terminal')
-        about.set_website('https://sshpilot.app')
-        # Gtk.AboutDialog in GTK4 has no set_issue_url; include issue link in website label
-        about.set_website_label('sshPilot Website')
+        about.set_application_icon('io.github.mfat.sshpilot')
         about.set_license_type(Gtk.License.GPL_3_0)
-        about.set_authors(['mFat <newmfat@gmail.com>'])
+        about.set_website('https://sshpilot.app')
+        about.set_issue_url('https://github.com/mfat/sshpilot/issues')
+        about.set_copyright('© 2025 mFat')
+        about.set_developers(['mFat <newmfat@gmail.com>'])
+        about.set_translator_credits('')
         
-        # Attempt to load logo from GResource; fall back to local files
-        logo_texture = None
-        # 1) From GResource bundle
-        for resource_path in (
-            '/io/github/mfat/sshpilot/sshpilot.svg',
-        ):
-            try:
-                logo_texture = Gdk.Texture.new_from_resource(resource_path)
-                if logo_texture:
-                    break
-            except Exception:
-                logo_texture = None
-        # 2) From project-local files
-        if logo_texture is None:
-            candidate_files = []
-            # repo root (user added io.github.mfat.sshpilot.png)
-            try:
-                path = os.path.abspath(os.path.dirname(__file__))
-                repo_root = path
-                while True:
-                    if os.path.exists(os.path.join(repo_root, '.git')):
-                        break
-                    parent = os.path.dirname(repo_root)
-                    if parent == repo_root:
-                        break
-                    repo_root = parent
-                candidate_files.extend([
-                    os.path.join(repo_root, 'io.github.mfat.sshpilot.svg'),
-                    os.path.join(repo_root, 'sshpilot.svg'),
-                ])
-                # package resources folder (when running from source)
-                candidate_files.append(os.path.join(os.path.dirname(__file__), 'resources', 'sshpilot.svg'))
-            except Exception:
-                pass
-            for png_path in candidate_files:
-                try:
-                    if os.path.exists(png_path):
-                        logo_texture = Gdk.Texture.new_from_filename(png_path)
-                        if logo_texture:
-                            break
-                except Exception:
-                    logo_texture = None
-        # Apply if loaded
-        if logo_texture is not None:
-            try:
-                about.set_logo(logo_texture)
-            except Exception:
-                pass
-        
-        about.present()
+        # Present the dialog as a child of this window
+        about.present(self)
 
     def open_help_url(self):
         """Open the SSH Pilot wiki in the default browser"""
@@ -1948,8 +2318,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_general = Gtk.ShortcutsGroup()
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Toggle Sidebar'), accelerator='F9'))
-        group_general.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Toggle Sidebar'), accelerator=f"{primary}b"))
+        if mac:
+            group_general.add_shortcut(Gtk.ShortcutsShortcut(
+                title=_('Toggle Sidebar'), accelerator=f"{primary}b"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Preferences'), accelerator=f"{primary}comma"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
@@ -2042,10 +2413,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_connection_click(self, gesture, n_press, x, y):
         """Handle clicks on the connection list"""
         # Get the row that was clicked
-        row = self.connection_list.get_row_at_y(int(y))
+        row, _, _ = self._resolve_connection_list_event(x, y)
         if row is None:
             return
-        
+
         if n_press == 1:  # Single click - just select
             self.connection_list.select_row(row)
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
@@ -2221,15 +2592,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 return
             connection = self.terminal_to_connection.get(child)
             if connection:
-                # Regular connection terminal - select the corresponding row
-                self.active_terminals[connection] = child
-                row = self.connection_rows.get(connection)
-                if row:
+                # Check if this is a local terminal
+                if hasattr(connection, 'host') and connection.host == 'localhost':
+                    # Local terminal - clear selection
                     current = self.connection_list.get_selected_row()
-                    if current != row:
-                        self.connection_list.select_row(row)
+                    if current is not None:
+                        self.connection_list.unselect_row(current)
+                else:
+                    # Regular connection terminal - select the corresponding row
+                    self.active_terminals[connection] = child
+                    row = self.connection_rows.get(connection)
+                    if row:
+                        current = self.connection_list.get_selected_row()
+                        if current != row:
+                            self.connection_list.select_row(row)
             else:
-                # Local terminal or other non-connection terminal - clear selection
+                # Other non-connection terminal - clear selection
                 current = self.connection_list.get_selected_row()
                 if current is not None:
                     self.connection_list.unselect_row(current)
@@ -2372,18 +2750,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 dlg.close()
                 if response != 'choose':
                     return
-                # Choose local files
-                file_chooser = Gtk.FileChooserDialog(
-                    title=_('Select files to upload'),
-                    action=Gtk.FileChooserAction.OPEN,
-                )
-                file_chooser.set_transient_for(self)
-                file_chooser.set_modal(True)
-                file_chooser.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-                file_chooser.add_button(_('Open'), Gtk.ResponseType.ACCEPT)
-                file_chooser.set_select_multiple(True)
-                file_chooser.connect('response', lambda fc, resp: self._on_files_chosen(fc, resp, connection))
-                file_chooser.show()
+                # Choose local files using portal-aware API
+                file_dialog = Gtk.FileDialog(title=_('Select files to upload'))
+                file_dialog.open_multiple(self, None,
+                                          lambda fd, res: self._on_files_chosen(fd, res, connection))
 
             intro.connect('response', _on_intro)
             intro.present()
@@ -2560,7 +2930,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             # Build ssh-copy-id command with options derived from connection settings
             logger.debug("Main window: Building ssh-copy-id command arguments")
-            argv = self._build_ssh_copy_id_argv(connection, ssh_key, force)
+            argv = self._build_ssh_copy_id_argv(
+                connection,
+                ssh_key,
+                force,
+                known_hosts_path=self.connection_manager.known_hosts_path,
+            )
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
             logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
             logger.info("Full command line: %s", cmdline)
@@ -2666,12 +3041,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     import atexit
                     atexit.register(cleanup_tmpdir)
                 else:
-                    # sshpass not available, fallback to askpass
-                    logger.debug("Main window: sshpass not available, falling back to askpass")
-                    from .askpass_utils import get_ssh_env_with_askpass
-                    askpass_env = get_ssh_env_with_askpass()
-                    logger.debug(f"Main window: Askpass environment variables: {list(askpass_env.keys())}")
-                    env.update(askpass_env)
+                    # sshpass not available – allow interactive password prompt
+                    logger.warning("Main window: sshpass not available, falling back to interactive prompt")
+                    env.pop("SSH_ASKPASS", None)
+                    env.pop("SSH_ASKPASS_REQUIRE", None)
             elif (prefer_password or combined_auth) and not has_saved_password:
                 # Password may be required but none saved - let SSH prompt interactively
                 # Don't set any askpass environment variables
@@ -2683,6 +3056,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 askpass_env = get_ssh_env_with_askpass()
                 logger.debug(f"Main window: Askpass environment variables: {list(askpass_env.keys())}")
                 env.update(askpass_env)
+
+            ensure_writable_ssh_home(env)
 
             # Ensure /app/bin is first in PATH for Flatpak compatibility
             logger.debug("Main window: Setting up PATH for Flatpak compatibility")
@@ -2829,7 +3204,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
 
 
-    def _build_ssh_copy_id_argv(self, connection, ssh_key, force=False):
+    def _build_ssh_copy_id_argv(
+        self,
+        connection,
+        ssh_key,
+        force: bool = False,
+        known_hosts_path: Optional[str] = None,
+    ):
         """Construct argv for ssh-copy-id honoring saved UI auth preferences."""
         logger.info(f"Building ssh-copy-id argv for key: {getattr(ssh_key, 'public_path', 'unknown')}")
         logger.debug(f"Main window: Building ssh-copy-id command arguments")
@@ -2883,6 +3264,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.debug(f"Main window: Error loading SSH config: {e}")
             argv += ['-o', 'StrictHostKeyChecking=accept-new']
             logger.debug("Main window: Using default strict host key checking: accept-new")
+
+        if known_hosts_path:
+            argv += ['-o', f'UserKnownHostsFile={known_hosts_path}']
+
         # Derive auth prefs from saved config and connection
         logger.debug("Main window: Determining authentication preferences")
         prefer_password = False
@@ -2954,15 +3339,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         logger.debug(f"Main window: Final argv: {argv}")
         return argv
 
-    def _on_files_chosen(self, chooser, response, connection):
+    def _on_files_chosen(self, dialog, result, connection):
         try:
-            if response != Gtk.ResponseType.ACCEPT:
-                chooser.destroy()
+            files_model = dialog.open_multiple_finish(result)
+            if not files_model or files_model.get_n_items() == 0:
                 return
-            files = chooser.get_files()
-            chooser.destroy()
-            if not files:
-                return
+            files = [files_model.get_item(i) for i in range(files_model.get_n_items())]
+
             # Ask remote destination path
             prompt = Adw.MessageDialog(
                 transient_for=self,
@@ -3098,17 +3481,29 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             cancel_btn.connect('clicked', _on_cancel)
 
             # Build and run scp command in the terminal
-            argv = self._build_scp_argv(connection, local_paths, remote_dir)
+            argv = self._build_scp_argv(
+                connection,
+                local_paths,
+                remote_dir,
+                known_hosts_path=self.connection_manager.known_hosts_path,
+            )
 
             # Handle environment variables for authentication
             env = os.environ.copy()
-            
+
             # Check if we have stored askpass environment from key passphrase handling
             if hasattr(self, '_scp_askpass_env') and self._scp_askpass_env:
                 env.update(self._scp_askpass_env)
                 logger.debug(f"SCP: Using askpass environment for key passphrase: {list(self._scp_askpass_env.keys())}")
                 # Clear the stored environment after use
                 self._scp_askpass_env = {}
+
+            # If sshpass was unavailable earlier, ensure askpass is cleared
+            if getattr(self, '_scp_strip_askpass', False):
+                env.pop("SSH_ASKPASS", None)
+                env.pop("SSH_ASKPASS_REQUIRE", None)
+                logger.debug("SCP: Removed SSH_ASKPASS variables for interactive password prompt")
+                self._scp_strip_askpass = False
                 
                 # For key-based auth, ensure the key is loaded in SSH agent first
                 try:
@@ -3230,7 +3625,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f'Failed to open scp terminal window: {e}')
 
-    def _build_scp_argv(self, connection, local_paths, remote_dir):
+    def _build_scp_argv(
+        self,
+        connection,
+        local_paths,
+        remote_dir,
+        known_hosts_path: Optional[str] = None,
+    ):
         argv = ['scp', '-v']
         # Port
         try:
@@ -3250,6 +3651,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 argv += ['-o', 'StrictHostKeyChecking=accept-new']
         except Exception:
             argv += ['-o', 'StrictHostKeyChecking=accept-new']
+
+        if known_hosts_path:
+            argv += ['-o', f'UserKnownHostsFile={known_hosts_path}']
         # Prefer password if selected
         prefer_password = False
         key_mode = 0
@@ -3353,14 +3757,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             import atexit
                             atexit.register(cleanup_tmpdir)
                         else:
-                            # sshpass not available → use askpass env (same pattern as in ssh-copy-id path)
-                            from .askpass_utils import get_ssh_env_with_askpass
-                            askpass_env = get_ssh_env_with_askpass("force")
-                            # Store for later use in the main execution
-                            if not hasattr(self, '_scp_askpass_env'):
-                                self._scp_askpass_env = {}
-                            self._scp_askpass_env.update(askpass_env)
-                            logger.debug("SCP: sshpass unavailable, using SSH_ASKPASS fallback")
+                            # sshpass not available – allow interactive password prompt
+                            logger.warning("SCP: sshpass unavailable, falling back to interactive prompt")
+                            self._scp_strip_askpass = True
                     else:
                         # No saved password - will use interactive prompt
                         logger.debug("SCP: Password auth selected but no saved password - using interactive prompt")
@@ -3630,6 +4029,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if hasattr(self, 'view_toggle_button'):
                 self.view_toggle_button.set_visible(True)
 
+    def on_local_terminal_button_clicked(self, button):
+        """Handle local terminal button click"""
+        try:
+            logger.info("Local terminal button clicked")
+            self.terminal_manager.show_local_terminal()
+        except Exception as e:
+            logger.error(f"Failed to open local terminal: {e}")
+
     def on_tab_button_clicked(self, button):
         """Handle tab button click to open/close tab overview and switch to tab view"""
         try:
@@ -3842,15 +4249,39 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
         # Check for active connections across all tabs
         actually_connected = {}
+        local_terminals = []
+        ssh_terminals = []
+        
         for conn, terms in self.connection_to_terminals.items():
             for term in terms:
                 if getattr(term, 'is_connected', False):
                     actually_connected.setdefault(conn, []).append(term)
-        if actually_connected:
+                    # Categorize terminals
+                    if hasattr(term, '_is_local_terminal') and term._is_local_terminal():
+                        local_terminals.append(term)
+                    else:
+                        ssh_terminals.append(term)
+        
+        # If there are SSH terminals, always show warning
+        if ssh_terminals:
             self.show_quit_confirmation_dialog()
             return True  # Prevent close, let dialog handle it
         
-        # No active connections, safe to close
+        # If there are only local terminals, check their job status
+        if local_terminals:
+            # Check if any local terminal has an active job
+            has_active_jobs = False
+            for term in local_terminals:
+                if hasattr(term, 'has_active_job') and term.has_active_job():
+                    has_active_jobs = True
+                    break
+            
+            # If any local terminal has an active job, show warning
+            if has_active_jobs:
+                self.show_quit_confirmation_dialog()
+                return True  # Prevent close, let dialog handle it
+        
+        # No active connections or all local terminals are idle, safe to close
         return False  # Allow close
 
     def show_quit_confirmation_dialog(self):
@@ -3861,24 +4292,45 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.debug(f"Failed to bring window to foreground: {e}")
         
-        # Only count terminals that are actually connected across all tabs
+        # Categorize connected terminals
         connected_items = []
+        local_terminals = []
+        ssh_terminals = []
+        
         for conn, terms in self.connection_to_terminals.items():
             for term in terms:
                 if getattr(term, 'is_connected', False):
                     connected_items.append((conn, term))
-        active_count = len(connected_items)
-        connection_names = [conn.nickname for conn, _ in connected_items]
+                    # Categorize terminals
+                    if hasattr(term, '_is_local_terminal') and term._is_local_terminal():
+                        local_terminals.append((conn, term))
+                    else:
+                        ssh_terminals.append((conn, term))
         
-        if active_count == 1:
-            message = f"You have 1 active SSH connection to '{connection_names[0]}'."
-            detail = "Closing the application will disconnect this connection."
+        active_count = len(connected_items)
+        
+        # Determine dialog content based on terminal types
+        if ssh_terminals:
+            # SSH terminals present - use original messaging
+            if active_count == 1:
+                message = f"You have 1 open terminal tab."
+                detail = "Closing the application will disconnect this connection."
+            else:
+                message = f"You have {active_count} open terminal tabs."
+                detail = f"Closing the application will disconnect all connections."
+            heading = "Active SSH Connections"
         else:
-            message = f"You have {active_count} active SSH connections."
-            detail = f"Closing the application will disconnect all connections:\n• " + "\n• ".join(connection_names)
+            # Only local terminals with active jobs
+            if active_count == 1:
+                message = f"You have 1 local terminal with an active job."
+                detail = "Closing the application will terminate the running process."
+            else:
+                message = f"You have {active_count} local terminals with active jobs."
+                detail = f"Closing the application will terminate all running processes."
+            heading = "Active Local Terminal Jobs"
         
         dialog = Adw.AlertDialog()
-        dialog.set_heading("Active SSH Connections")
+        dialog.set_heading(heading)
         dialog.set_body(f"{message}\n\n{detail}")
         
         dialog.add_response('cancel', 'Cancel')
@@ -5294,7 +5746,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if not terminal:
             logger.warning("No terminal instance found for reconnection")
             return
-            
+
+        # Ensure the tab for this connection is focused so the user can
+        # observe the reconnection process even if another tab was
+        # previously active.
+        try:
+            self._focus_most_recent_tab(connection)
+        except Exception:
+            pass
+
         # Set controlled reconnect flag
         self._is_controlled_reconnect = True
 

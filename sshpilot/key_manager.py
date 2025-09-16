@@ -9,6 +9,8 @@ from typing import Optional, List
 
 from gi.repository import GObject
 
+from .platform_utils import get_ssh_dir
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,12 +38,13 @@ class KeyManager(GObject.Object):
 
     def __init__(self, ssh_dir: Optional[Path] = None):
         super().__init__()
-        self.ssh_dir = Path(ssh_dir or Path.home() / ".ssh")
-        self.ssh_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            os.chmod(self.ssh_dir, 0o700)
-        except Exception:
-            pass
+        self.ssh_dir = Path(ssh_dir or get_ssh_dir())
+        if not self.ssh_dir.exists():
+            self.ssh_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                os.chmod(self.ssh_dir, 0o700)
+            except Exception:
+                pass
 
     # ---------------- Public API ----------------
 
@@ -49,10 +52,11 @@ class KeyManager(GObject.Object):
         """List keys that have a matching .pub next to the private key."""
         keys: List[SSHKey] = []
         try:
-            if not self.ssh_dir.exists():
+            ssh_dir = self.ssh_dir or Path(get_ssh_dir())
+            if not ssh_dir.exists():
                 return keys
-            # Recursively walk ~/.ssh for private keys that have a matching .pub
-            for file_path in self.ssh_dir.rglob("*"):
+            # Recursively walk SSH directory for private keys that have a matching .pub
+            for file_path in ssh_dir.rglob("*"):
                 if not file_path.is_file():
                     continue
                 name = file_path.name

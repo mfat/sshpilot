@@ -6,7 +6,6 @@ from gettext import gettext as _
 
 from .sftp_utils import open_remote_in_file_manager
 from .preferences import (
-    is_running_in_flatpak,
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
 )
@@ -623,7 +622,7 @@ def register_window_actions(window):
     window.open_new_connection_tab_action.connect('activate', window.on_open_new_connection_tab_action)
     window.add_action(window.open_new_connection_tab_action)
 
-    # Action for managing files on remote server (skip on macOS)
+    # Action for managing files on remote server (skip on macOS and Flatpak)
     if not should_hide_file_manager_options():
         window.manage_files_action = Gio.SimpleAction.new('manage-files', None)
         window.manage_files_action.connect('activate', window.on_manage_files_action)
@@ -687,7 +686,9 @@ def register_window_actions(window):
         window.add_action(sidebar_action)
         app = window.get_application()
         if app:
-            sidebar_shortcut = '<Meta>b' if is_macos() else '<Primary>b'
-            app.set_accels_for_action('win.toggle_sidebar', ['F9', sidebar_shortcut])
+            shortcuts = ['F9']
+            if is_macos():
+                shortcuts.append('<Meta>b')
+            app.set_accels_for_action('win.toggle_sidebar', shortcuts)
     except Exception as e:
         logger.error(f"Failed to register sidebar toggle action: {e}")

@@ -47,7 +47,6 @@ stub_modules = {
     "sshpilot.askpass_utils": types.SimpleNamespace(ensure_askpass_script=lambda: None),
     "sshpilot.preferences": types.SimpleNamespace(
         PreferencesWindow=object,
-        is_running_in_flatpak=lambda: False,
         should_hide_external_terminal_options=lambda: False,
         should_hide_file_manager_options=lambda: False,
     ),

@@ -23,8 +23,11 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
         'sshpilot.key_manager': types.SimpleNamespace(KeyManager=lambda: None, SSHKey=object),
         'sshpilot.connection_dialog': types.SimpleNamespace(ConnectionDialog=object),
         'sshpilot.askpass_utils': types.SimpleNamespace(ensure_askpass_script=lambda: None),
-        'sshpilot.preferences': types.SimpleNamespace(PreferencesWindow=object, is_running_in_flatpak=lambda: False,
-                                                      should_hide_external_terminal_options=lambda: False),
+        'sshpilot.preferences': types.SimpleNamespace(
+            PreferencesWindow=object,
+            should_hide_external_terminal_options=lambda: False,
+            should_hide_file_manager_options=lambda: False,
+        ),
         'sshpilot.sshcopyid_window': types.SimpleNamespace(SshCopyIdWindow=object),
         'sshpilot.groups': types.SimpleNamespace(GroupManager=lambda config: None),
         'sshpilot.sidebar': types.SimpleNamespace(GroupRow=object, ConnectionRow=object, build_sidebar=lambda *a, **k: None),

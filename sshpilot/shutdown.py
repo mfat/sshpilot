@@ -8,6 +8,7 @@ leaner and makes the quit logic reusable.
 
 from gettext import gettext as _
 import logging
+import time
 
 from gi.repository import Gtk, GLib, Adw
 
@@ -43,11 +44,12 @@ def cleanup_and_quit(window):
     total = len(connections_to_disconnect)
     _show_cleanup_progress(window, total)
 
-    GLib.idle_add(
+    # Use timeout instead of idle_add to allow UI updates between cleanup steps
+    GLib.timeout_add(
+        100,  # 100ms delay between steps
         _perform_cleanup_and_quit,
         window,
         connections_to_disconnect,
-        priority=GLib.PRIORITY_DEFAULT_IDLE,
     )
 
     try:
@@ -57,16 +59,23 @@ def cleanup_and_quit(window):
 
 
 def _perform_cleanup_and_quit(window, connections_to_disconnect):
-    """Disconnect terminals with UI progress, then quit. Runs on idle."""
+    """Disconnect terminals with UI progress, then quit. Processes one terminal per call."""
+
+    # Initialize cleanup state if not already done
+    if not hasattr(window, '_cleanup_index'):
+        window._cleanup_index = 0
+        window._cleanup_total = len(connections_to_disconnect)
+        window._cleanup_connections = connections_to_disconnect
 
     try:
-        total = len(connections_to_disconnect)
-        for index, (connection, terminal) in enumerate(
-            connections_to_disconnect, start=1
-        ):
+        # Process one terminal at a time
+        if window._cleanup_index < window._cleanup_total:
+            connection, terminal = window._cleanup_connections[window._cleanup_index]
+            index = window._cleanup_index + 1
+            
             try:
                 logger.debug(
-                    f"Disconnecting {connection.nickname} ({index}/{total})"
+                    f"Disconnecting {connection.nickname} ({index}/{window._cleanup_total})"
                 )
                 if hasattr(terminal, "process_pid") and terminal.process_pid:
                     try:
@@ -80,27 +89,49 @@ def _perform_cleanup_and_quit(window, connections_to_disconnect):
                 else:
                     _disconnect_terminal_safely(terminal)
             finally:
-                _update_cleanup_progress(window, index, total)
-                GLib.MainContext.default().iteration(False)
+                _update_cleanup_progress(window, index, window._cleanup_total)
+                window._cleanup_index += 1
+                
+            # Continue processing next terminal
+            return True
+            
+        else:
+            # All terminals processed, do final cleanup
+            try:
+                from .terminal import SSHProcessManager
+
+                process_manager = SSHProcessManager()
+                with process_manager.lock:
+                    pids = list(process_manager.processes.keys())
+                    for pid in pids:
+                        process_manager._terminate_process_by_pid(pid)
+                    process_manager.processes.clear()
+                    process_manager.terminals.clear()
+            except Exception as e:
+                logger.debug(f"Final SSH cleanup failed: {e}")
+            window.active_terminals.clear()
+
+            # Clean up state and quit
+            delattr(window, '_cleanup_index')
+            delattr(window, '_cleanup_total')
+            delattr(window, '_cleanup_connections')
+            
+            _hide_cleanup_progress(window)
+            GLib.idle_add(window._do_quit)
+            return False
+            
     except Exception as e:
         logger.error(f"Cleanup during quit encountered an error: {e}")
-    finally:
-        try:
-            from .terminal import SSHProcessManager
-
-            process_manager = SSHProcessManager()
-            with process_manager.lock:
-                pids = list(process_manager.processes.keys())
-                for pid in pids:
-                    process_manager._terminate_process_by_pid(pid)
-                process_manager.processes.clear()
-                process_manager.terminals.clear()
-        except Exception as e:
-            logger.debug(f"Final SSH cleanup failed: {e}")
-        window.active_terminals.clear()
+        # Clean up state and quit on error
+        if hasattr(window, '_cleanup_index'):
+            delattr(window, '_cleanup_index')
+        if hasattr(window, '_cleanup_total'):
+            delattr(window, '_cleanup_total')
+        if hasattr(window, '_cleanup_connections'):
+            delattr(window, '_cleanup_connections')
         _hide_cleanup_progress(window)
         GLib.idle_add(window._do_quit)
-    return False
+        return False
 
 
 def _show_cleanup_progress(window, total_connections):

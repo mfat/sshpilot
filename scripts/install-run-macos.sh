@@ -56,21 +56,6 @@ source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt || true
 
-# Ensure macOS-friendly secret storage fallback when running against upstream clone
-if ! python -c "import secretstorage" >/dev/null 2>&1; then
-  if grep -q "^import secretstorage$" sshpilot/connection_manager.py 2>/dev/null; then
-    echo "Patching secretstorage import for macOS..."
-    python - <<'PY'
-from pathlib import Path
-p = Path('sshpilot/connection_manager.py')
-s = p.read_text()
-s = s.replace('import secretstorage', 'try:\n    import secretstorage\nexcept Exception:\n    secretstorage = None')
-p.write_text(s)
-print('Patched', p)
-PY
-  fi
-fi
-
 echo "[5/6] Writing run wrapper (scripts/run-macos.sh)..."
 mkdir -p scripts
 cat > scripts/run-macos.sh <<'EOF'

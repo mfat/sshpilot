@@ -4,9 +4,21 @@ SSH utilities for building consistent SSH options across the application
 
 import os
 import logging
-from typing import List
+from typing import List, Dict
+
+from .platform_utils import is_flatpak
 
 logger = logging.getLogger(__name__)
+
+
+def ensure_writable_ssh_home(env: Dict[str, str]) -> None:
+    """Ensure ssh-copy-id has a writable HOME when running in Flatpak."""
+    if is_flatpak():
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+        alt_home = os.path.join(runtime_dir, "sshcopyid-home")
+        os.makedirs(os.path.join(alt_home, ".ssh"), exist_ok=True)
+        env["HOME"] = alt_home
+        logger.debug(f"Using temporary HOME for ssh-copy-id: {alt_home}")
 
 def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False):
     """Build SSH options that match the exact connection settings used for SSH.

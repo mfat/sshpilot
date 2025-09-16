@@ -15,12 +15,13 @@ import re
 from typing import Dict, List, Optional, Any, Tuple, Union
 
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
-from .platform_utils import is_macos
+from .platform_utils import is_macos, get_config_dir, get_ssh_dir
 
 try:
-    import secretstorage
+    from gi.repository import Secret
 except Exception:
-    secretstorage = None
+
+    Secret = None
 try:
     import keyring
 except Exception:
@@ -28,7 +29,17 @@ except Exception:
 import socket
 import time
 from gi.repository import GObject, GLib
-from .askpass_utils import get_ssh_env_with_askpass, get_ssh_env_with_askpass_for_password
+from .askpass_utils import (
+    clear_passphrase,
+    get_secret_schema,
+    lookup_passphrase,
+    store_passphrase,
+)
+
+if Secret is not None:
+    _SECRET_SCHEMA = get_secret_schema()
+else:
+    _SECRET_SCHEMA = None
 
 # Set up asyncio event loop for GTK integration
 if os.name == 'posix':
@@ -63,10 +74,11 @@ class Connection:
         self.connection = None
         self.forwarders: List[asyncio.Task] = []
         self.listeners: List[asyncio.Server] = []
-        
+
         self.nickname = data.get('nickname', data.get('host', 'Unknown'))
+        if 'aliases' in data:
+            self.aliases = data.get('aliases', [])
         self.host = data.get('host', '')
-        self.aliases = data.get('aliases', [])
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         # previously: self.keyfile = data.get('keyfile', '')
@@ -76,6 +88,9 @@ class Connection:
         self.key_passphrase = data.get('key_passphrase', '')
         # Source file of this configuration block
         self.source = data.get('source', '')
+        # Provide friendly accessor for UI components that wish to display
+        # the originating config file for this connection.
+        
         # Proxy settings
         self.proxy_command = data.get('proxy_command', '')
         pj = data.get('proxy_jump', [])
@@ -111,6 +126,11 @@ class Connection:
 
     def __str__(self):
         return f"{self.nickname} ({self.username}@{self.host})"
+
+    @property
+    def source_file(self) -> str:
+        """Return path to the config file where this host is defined."""
+        return self.source
         
     async def connect(self):
         """Prepare SSH command for later use (no preflight echo)."""
@@ -418,11 +438,10 @@ class Connection:
             # Log the full command (without sensitive data)
             logger.debug(f"SSH command: {' '.join(ssh_cmd[:10])}...")
             
-            # Set up askpass environment to prevent Flatpak from using system askpass
-            from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
-            ensure_askpass_script()
+            # Ensure ssh can prompt interactively by removing any askpass settings
             env = os.environ.copy()
-            env.update(get_ssh_env_with_askpass_for_password(self.host, self.username))
+            env.pop("SSH_ASKPASS", None)
+            env.pop("SSH_ASKPASS_REQUIRE", None)
             
             # Start the SSH process
             logger.info(f"Starting dynamic port forwarding with command: {' '.join(ssh_cmd)}")
@@ -502,11 +521,10 @@ class Connection:
                 '-L', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"
             ]
             
-            # Set up askpass environment to prevent Flatpak from using system askpass
-            from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
-            ensure_askpass_script()
+            # Ensure ssh can prompt interactively by removing any askpass settings
             env = os.environ.copy()
-            env.update(get_ssh_env_with_askpass_for_password(self.host, self.username))
+            env.pop("SSH_ASKPASS", None)
+            env.pop("SSH_ASKPASS_REQUIRE", None)
             
             # Start the SSH process
             self.process = await asyncio.create_subprocess_exec(
@@ -552,11 +570,10 @@ class Connection:
                 '-R', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"
             ]
             
-            # Set up askpass environment to prevent Flatpak from using system askpass
-            from .askpass_utils import ensure_askpass_script, get_ssh_env_with_askpass_for_password
-            ensure_askpass_script()
+            # Ensure ssh can prompt interactively by removing any askpass settings
             env = os.environ.copy()
-            env.update(get_ssh_env_with_askpass_for_password(self.host, self.username))
+            env.pop("SSH_ASKPASS", None)
+            env.pop("SSH_ASKPASS_REQUIRE", None)
             
             # Start the SSH process
             self.process = await asyncio.create_subprocess_exec(
@@ -601,8 +618,9 @@ class Connection:
     def _update_properties_from_data(self, data: Dict[str, Any]):
         """Update instance properties from data dictionary"""
         self.nickname = data.get('nickname', data.get('host', 'Unknown'))
+        if 'aliases' in data:
+            self.aliases = data.get('aliases', getattr(self, 'aliases', []))
         self.host = data.get('host', '')
-        self.aliases = data.get('aliases', [])
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
@@ -676,7 +694,7 @@ class ConnectionManager(GObject.Object):
         """Switch between standard and isolated SSH configuration"""
         self.isolated_mode = bool(isolated)
         if self.isolated_mode:
-            base = os.path.expanduser('~/.config/sshpilot')
+            base = get_config_dir()
             self.ssh_config_path = os.path.join(base, 'ssh_config')
             self.known_hosts_path = os.path.join(base, 'known_hosts')
             os.makedirs(base, exist_ok=True)
@@ -684,8 +702,9 @@ class ConnectionManager(GObject.Object):
                 if not os.path.exists(path):
                     open(path, 'a').close()
         else:
-            self.ssh_config_path = os.path.expanduser('~/.ssh/config')
-            self.known_hosts_path = os.path.expanduser('~/.ssh/known_hosts')
+            ssh_dir = get_ssh_dir()
+            self.ssh_config_path = os.path.join(ssh_dir, 'config')
+            self.known_hosts_path = os.path.join(ssh_dir, 'known_hosts')
 
         # Reload SSH config to reflect new paths
         self.load_ssh_config()
@@ -699,51 +718,27 @@ class ConnectionManager(GObject.Object):
             logger.debug(f"SSH key scan skipped/failed: {e}")
         
         # Initialize secure storage (can be slow)
-        self.collection = None
-        if secretstorage:
+        self.libsecret_available = False
+        if not is_macos() and Secret is not None:
             try:
-                self.bus = secretstorage.dbus_init()
-                self.collection = secretstorage.get_default_collection(self.bus)
+                Secret.Service.get_sync(Secret.ServiceFlags.NONE)
+                self.libsecret_available = True
+
                 logger.info("Secure storage initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize secure storage: {e}")
+        elif keyring is not None:
+            try:
+                backend = keyring.get_keyring()
+                logger.info("Using system keyring backend: %s", backend.__class__.__name__)
+            except Exception:
+                logger.info("Keyring module present but no usable backend; passwords will not be stored")
         else:
-            # SecretStorage not available (e.g., macOS). Fall back to system keyring if present
-            if keyring is not None:
-                try:
-                    backend = keyring.get_keyring()
-                    logger.info("Using system keyring backend: %s", backend.__class__.__name__)
-                except Exception:
-                    logger.info("Keyring module present but no usable backend; passwords will not be stored")
-            else:
-                logger.info("No SecretStorage or keyring available; password storage disabled")
+            logger.info("No secure storage backend available; password storage disabled")
         return False  # run once
 
-    def _ensure_collection(self) -> bool:
-        """Ensure secretstorage collection is initialized and unlocked."""
-        if not secretstorage:
-            return False
-        try:
-            if getattr(self, 'collection', None) is None:
-                try:
-                    self.bus = secretstorage.dbus_init()
-                    self.collection = secretstorage.get_default_collection(self.bus)
-                except Exception as e:
-                    logger.warning(f"Secret storage init failed: {e}")
-                    self.collection = None
-                    return False
-            # Attempt to unlock if locked
-            try:
-                if hasattr(self.collection, 'is_locked') and self.collection.is_locked():
-                    unlocked, _ = self.collection.unlock()
-                    if not unlocked:
-                        logger.warning("Secret storage collection remains locked")
-                        return False
-            except Exception as e:
-                logger.debug(f"Could not unlock collection: {e}")
-            return self.collection is not None
-        except Exception:
-            return False
+    # No _ensure_collection needed with libsecret's high-level API
+
         
     def load_ssh_config(self):
         """Load connections from SSH config file"""
@@ -759,8 +754,33 @@ class ConnectionManager(GObject.Object):
                 return
             config_files = resolve_ssh_config_files(self.ssh_config_path)
             for cfg_file in config_files:
-                current_host = None
+                current_hosts: List[str] = []
                 current_config: Dict[str, Any] = {}
+
+                def process_host_block(hosts: List[str], config: Dict[str, Any]):
+                    cleaned_hosts = [token.strip() for token in hosts if token and token.strip()]
+                    if not cleaned_hosts:
+                        return
+
+                    if any('*' in token or '?' in token or token.startswith('!') for token in cleaned_hosts):
+                        host_cfg = dict(config)
+                        host_cfg['host'] = cleaned_hosts[0]
+                        self.parse_host_config(host_cfg, source=cfg_file)
+                        return
+
+                    for token in cleaned_hosts:
+                        host_cfg = dict(config)
+                        host_cfg['host'] = token
+                        connection_data = self.parse_host_config(host_cfg, source=cfg_file)
+                        if connection_data:
+                            connection_data['source'] = cfg_file
+                            nickname = connection_data.get('nickname', '')
+                            existing = existing_by_nickname.get(nickname)
+                            if existing:
+                                existing.update_data(connection_data)
+                                self.connections.append(existing)
+                            else:
+                                self.connections.append(Connection(connection_data))
                 try:
                     with open(cfg_file, 'r') as f:
                         lines = f.readlines()
@@ -779,17 +799,29 @@ class ConnectionManager(GObject.Object):
                         i += 1
                         continue
                     if lowered.startswith('match '):
-                        if current_host and current_config:
-                            connection_data = self.parse_host_config(current_config, source=cfg_file)
-                            if connection_data:
-                                nickname = connection_data.get('nickname', '')
-                                existing = existing_by_nickname.get(nickname)
-                                if existing:
-                                    existing.update_data(connection_data)
-                                    self.connections.append(existing)
-                                else:
-                                    self.connections.append(Connection(connection_data))
-                        current_host = None
+                        if current_hosts and current_config:
+                            tokens = current_hosts
+                            if any('*' in t or '?' in t or t.startswith('!') for t in tokens):
+                                host_cfg = dict(current_config)
+                                host_cfg['host'] = tokens[0]
+                                host_cfg['__host_tokens'] = list(tokens)
+                                self.parse_host_config(host_cfg, source=cfg_file)
+                            else:
+                                for token in tokens:
+                                    host_cfg = dict(current_config)
+                                    host_cfg['host'] = token
+                                    host_cfg['__host_tokens'] = list(tokens)
+                                    connection_data = self.parse_host_config(host_cfg, source=cfg_file)
+                                    if connection_data:
+                                        connection_data['source'] = cfg_file
+                                        nickname = connection_data.get('nickname', '')
+                                        existing = existing_by_nickname.get(nickname)
+                                        if existing:
+                                            existing.update_data(connection_data)
+                                            self.connections.append(existing)
+                                        else:
+                                            self.connections.append(Connection(connection_data))
+                        current_hosts = []
                         current_config = {}
                         block_lines = [raw_line.rstrip('\n')]
                         i += 1
@@ -805,20 +837,30 @@ class ConnectionManager(GObject.Object):
                         if not tokens:
                             i += 1
                             continue
-                        if current_host and current_config:
-                            connection_data = self.parse_host_config(current_config, source=cfg_file)
-                            if connection_data:
-                                nickname = connection_data.get('nickname', '')
-                                existing = existing_by_nickname.get(nickname)
-                                if existing:
-                                    existing.update_data(connection_data)
-                                    self.connections.append(existing)
-                                else:
-                                    self.connections.append(Connection(connection_data))
-                        current_host = tokens[0]
-                        current_config = {'host': tokens[0]}
-                        if len(tokens) > 1:
-                            current_config['aliases'] = tokens[1:]
+                        if current_hosts and current_config:
+                            prev_tokens = current_hosts
+                            if any('*' in t or '?' in t or t.startswith('!') for t in prev_tokens):
+                                host_cfg = dict(current_config)
+                                host_cfg['host'] = prev_tokens[0]
+                                host_cfg['__host_tokens'] = list(prev_tokens)
+                                self.parse_host_config(host_cfg, source=cfg_file)
+                            else:
+                                for token in prev_tokens:
+                                    host_cfg = dict(current_config)
+                                    host_cfg['host'] = token
+                                    host_cfg['__host_tokens'] = list(prev_tokens)
+                                    connection_data = self.parse_host_config(host_cfg, source=cfg_file)
+                                    if connection_data:
+                                        connection_data['source'] = cfg_file
+                                        nickname = connection_data.get('nickname', '')
+                                        existing = existing_by_nickname.get(nickname)
+                                        if existing:
+                                            existing.update_data(connection_data)
+                                            self.connections.append(existing)
+                                        else:
+                                            self.connections.append(Connection(connection_data))
+                        current_hosts = tokens
+                        current_config = {}
                         i += 1
                         continue
                     if ' ' in line:
@@ -831,16 +873,28 @@ class ConnectionManager(GObject.Object):
                         else:
                             current_config[key] = value
                     i += 1
-                if current_host and current_config:
-                    connection_data = self.parse_host_config(current_config, source=cfg_file)
-                    if connection_data:
-                        nickname = connection_data.get('nickname', '')
-                        existing = existing_by_nickname.get(nickname)
-                        if existing:
-                            existing.update_data(connection_data)
-                            self.connections.append(existing)
-                        else:
-                            self.connections.append(Connection(connection_data))
+                if current_hosts and current_config:
+                    tokens = current_hosts
+                    if any('*' in t or '?' in t or t.startswith('!') for t in tokens):
+                        host_cfg = dict(current_config)
+                        host_cfg['host'] = tokens[0]
+                        host_cfg['__host_tokens'] = list(tokens)
+                        self.parse_host_config(host_cfg, source=cfg_file)
+                    else:
+                        for token in tokens:
+                            host_cfg = dict(current_config)
+                            host_cfg['host'] = token
+                            host_cfg['__host_tokens'] = list(tokens)
+                            connection_data = self.parse_host_config(host_cfg, source=cfg_file)
+                            if connection_data:
+                                connection_data['source'] = cfg_file
+                                nickname = connection_data.get('nickname', '')
+                                existing = existing_by_nickname.get(nickname)
+                                if existing:
+                                    existing.update_data(connection_data)
+                                    self.connections.append(existing)
+                                else:
+                                    self.connections.append(Connection(connection_data))
             logger.info(f"Loaded {len(self.connections)} connections from SSH config")
         except Exception as e:
             logger.error(f"Failed to load SSH config: {e}", exc_info=True)
@@ -858,17 +912,19 @@ class ConnectionManager(GObject.Object):
             if not host_token:
                 return None
 
-            aliases = [_unwrap(a) for a in (config.get('aliases', []) or [])]
+            raw_tokens = config.get('__host_tokens')
+            tokens = [_unwrap(t) for t in raw_tokens] if raw_tokens else [host_token]
+
+            config = dict(config)
+            config.pop('__host_tokens', None)
+            config.pop('aliases', None)
 
             # Detect wildcard or negated host tokens (e.g., '*', '?', '!pattern')
-            tokens = [host_token] + aliases
             if any('*' in t or '?' in t or t.startswith('!') for t in tokens):
                 if not hasattr(self, 'rules'):
                     self.rules = []
                 rule_block = dict(config)
                 rule_block['host'] = host_token
-                if aliases:
-                    rule_block['aliases'] = aliases
                 if source:
                     rule_block['source'] = source
                 self.rules.append(rule_block)
@@ -879,7 +935,6 @@ class ConnectionManager(GObject.Object):
             # Extract relevant configuration
             parsed = {
                 'nickname': host,
-                'aliases': aliases,
                 'host': _unwrap(config.get('hostname', host)),
 
                 'port': int(_unwrap(config.get('port', 22))),
@@ -890,6 +945,8 @@ class ConnectionManager(GObject.Object):
                 'certificate': os.path.expanduser(_unwrap(config.get('certificatefile'))) if config.get('certificatefile') else '',
                 'forwarding_rules': []
             }
+            if 'hostname' in config:
+                parsed['aliases'] = []
             if source:
                 parsed['source'] = source
             
@@ -1073,51 +1130,54 @@ class ConnectionManager(GObject.Object):
             return None
 
     def load_ssh_keys(self):
-        """Auto-detect SSH keys in ~/.ssh/"""
-        ssh_dir = os.path.expanduser('~/.ssh')
-        if not os.path.exists(ssh_dir):
-            return
-        
-        try:
-            keys = []
-            for filename in os.listdir(ssh_dir):
-                if filename.endswith('.pub'):
-                    private_key = os.path.join(ssh_dir, filename[:-4])
-                    if os.path.exists(private_key):
-                        keys.append(private_key)
-            
-            logger.info(f"Found {len(keys)} SSH keys: {keys}")
-            return keys
-            
-        except Exception as e:
-            logger.error(f"Failed to load SSH keys: {e}")
-            return []
+        """Auto-detect SSH keys in configured SSH directories."""
+        search_dirs = []
+        if getattr(self, 'isolated_mode', False):
+            search_dirs.append(get_config_dir())
+        search_dirs.append(get_ssh_dir())
+
+        keys: List[str] = []
+        seen = set()
+        for ssh_dir in search_dirs:
+            if not os.path.exists(ssh_dir):
+                continue
+            try:
+                for filename in os.listdir(ssh_dir):
+                    if filename.endswith('.pub'):
+                        private_key = os.path.join(ssh_dir, filename[:-4])
+                        if os.path.exists(private_key) and private_key not in seen:
+                            keys.append(private_key)
+                            seen.add(private_key)
+            except Exception as e:
+                logger.error(f"Failed to load SSH keys from {ssh_dir}: {e}")
+
+        logger.info(f"Found {len(keys)} SSH keys: {keys}")
+        return keys
 
     def store_password(self, host: str, username: str, password: str):
         """Store password securely in system keyring"""
-        # Prefer SecretStorage on Linux when available
-        if self._ensure_collection():
+        # Prefer libsecret on Linux when available
+        if not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
             try:
                 attributes = {
                     'application': _SERVICE_NAME,
+                    'type': 'ssh_password',
                     'host': host,
-                    'username': username
+                    'username': username,
                 }
-                # Delete existing password if any
-                existing_items = list(self.collection.search_items(attributes))
-                for item in existing_items:
-                    item.delete()
-                # Store new password
-                self.collection.create_item(
-                    f'{_SERVICE_NAME}: {username}@{host}',
+                Secret.password_store_sync(
+                    _SECRET_SCHEMA,
                     attributes,
-                    password.encode()
+                    Secret.COLLECTION_DEFAULT,
+                    f'{_SERVICE_NAME}: {username}@{host}',
+                    password,
+                    None,
                 )
-                logger.debug(f"Password stored for {username}@{host} via SecretStorage")
+                logger.debug(f"Password stored for {username}@{host} via libsecret")
                 return True
             except Exception as e:
-                logger.error(f"Failed to store password (SecretStorage): {e}")
-                # Fall through to keyring attempt
+                logger.error(f"Failed to store password (libsecret): {e}")
+
         # Fallback to cross-platform keyring (macOS Keychain, etc.)
         if keyring is not None:
             try:
@@ -1131,21 +1191,22 @@ class ConnectionManager(GObject.Object):
 
     def get_password(self, host: str, username: str) -> Optional[str]:
         """Retrieve password from system keyring"""
-        # Try SecretStorage first
-        if self._ensure_collection():
+        # Try libsecret first
+        if not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
             try:
                 attributes = {
                     'application': _SERVICE_NAME,
+                    'type': 'ssh_password',
                     'host': host,
-                    'username': username
+                    'username': username,
                 }
-                items = list(self.collection.search_items(attributes))
-                if items:
-                    password = items[0].get_secret().decode()
-                    logger.debug(f"Password retrieved for {username}@{host} via SecretStorage")
+                password = Secret.password_lookup_sync(_SECRET_SCHEMA, attributes, None)
+                if password is not None:
+                    logger.debug(f"Password retrieved for {username}@{host} via libsecret")
                     return password
             except Exception as e:
-                logger.error(f"Error retrieving password (SecretStorage) for {username}@{host}: {e}")
+                logger.error(f"Error retrieving password (libsecret) for {username}@{host}: {e}")
+
         # Fallback to keyring
         if keyring is not None:
             try:
@@ -1154,29 +1215,27 @@ class ConnectionManager(GObject.Object):
                     logger.debug(f"Password retrieved for {username}@{host} via keyring")
                 return pw
             except Exception as e:
-                logger.error(f"Error retrieving password (keyring) for {username}@{host}: {e}")
+                logger.error(
+                    f"Error retrieving password (keyring) for {username}@{host}: {e}"
+                )
         return None
 
     def delete_password(self, host: str, username: str) -> bool:
         """Delete stored password for host/user from system keyring"""
         removed_any = False
-        # Try SecretStorage first
-        if self._ensure_collection():
+        # Try libsecret first
+        if not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
             try:
                 attributes = {
                     'application': _SERVICE_NAME,
+                    'type': 'ssh_password',
                     'host': host,
-                    'username': username
+                    'username': username,
                 }
-                items = list(self.collection.search_items(attributes))
-                for item in items:
-                    try:
-                        item.delete()
-                        removed_any = True
-                    except Exception:
-                        pass
+                removed_any = Secret.password_clear_sync(_SECRET_SCHEMA, attributes, None) or removed_any
             except Exception as e:
-                logger.error(f"Error deleting password (SecretStorage) for {username}@{host}: {e}")
+                logger.error(f"Error deleting password (libsecret) for {username}@{host}: {e}")
+
         # Also attempt keyring cleanup so both stores are cleared if both were used
         if keyring is not None:
             try:
@@ -1190,104 +1249,19 @@ class ConnectionManager(GObject.Object):
 
     def store_key_passphrase(self, key_path: str, passphrase: str) -> bool:
         """Store key passphrase securely in system keyring"""
-        try:
-            # Use keyring on macOS, secretstorage on Linux
-            if keyring and is_macos():
-                # macOS: use keyring
-                keyring.set_password('sshPilot', key_path, passphrase)
-                logger.debug(f"Stored key passphrase for {key_path} using keyring")
-                return True
-            elif self._ensure_collection():
-                # Linux: use secretstorage
-                key_id = f"key_passphrase_{os.path.basename(key_path)}_{hash(key_path)}"
-                
-                attributes = {
-                    'application': 'sshPilot',
-                    'type': 'key_passphrase',
-                    'key_path': key_path,
-                    'key_id': key_id
-                }
-                
-                # Store the passphrase
-                self.collection.create_item(
-                    f"SSH Key Passphrase: {os.path.basename(key_path)}",
-                    attributes,
-                    passphrase.encode('utf-8'),
-                    replace=True
-                )
-                logger.debug(f"Stored key passphrase for {key_path} using secretstorage")
-                return True
-            else:
-                logger.warning("No keyring backend available for storing passphrase")
-                return False
-        except Exception as e:
-            logger.error(f"Error storing key passphrase for {key_path}: {e}")
-            return False
+        # Use the unified passphrase storage from askpass_utils
+        return store_passphrase(key_path, passphrase)
 
     def get_key_passphrase(self, key_path: str) -> Optional[str]:
         """Retrieve key passphrase from system keyring"""
-        try:
-            # Use keyring on macOS, secretstorage on Linux
-            if keyring and is_macos():
-                # macOS: use keyring
-                passphrase = keyring.get_password('sshPilot', key_path)
-                if passphrase:
-                    logger.debug(f"Retrieved key passphrase for {key_path} using keyring")
-                return passphrase
-            elif self._ensure_collection():
-                # Linux: use secretstorage
-                attributes = {
-                    'application': 'sshPilot',
-                    'type': 'key_passphrase',
-                    'key_path': key_path
-                }
-                
-                items = list(self.collection.search_items(attributes))
-                if items:
-                    passphrase = items[0].get_secret().decode('utf-8')
-                    logger.debug(f"Retrieved key passphrase for {key_path} using secretstorage")
-                    return passphrase
-            return None
-        except Exception as e:
-            logger.error(f"Error retrieving key passphrase for {key_path}: {e}")
-            return None
+        # Use the unified passphrase lookup from askpass_utils
+        passphrase = lookup_passphrase(key_path)
+        return passphrase if passphrase else None
 
     def delete_key_passphrase(self, key_path: str) -> bool:
         """Delete stored key passphrase from system keyring"""
-        try:
-            # Use keyring on macOS, secretstorage on Linux
-            if keyring and is_macos():
-                # macOS: use keyring
-                try:
-                    keyring.delete_password('sshPilot', key_path)
-                    logger.debug(f"Deleted stored key passphrase for {key_path} using keyring")
-                    return True
-                except keyring.errors.PasswordDeleteError:
-                    # Password doesn't exist, which is fine
-                    return True
-            elif self._ensure_collection():
-                # Linux: use secretstorage
-                attributes = {
-                    'application': 'sshPilot',
-                    'type': 'key_passphrase',
-                    'key_path': key_path
-                }
-                
-                items = list(self.collection.search_items(attributes))
-                removed_any = False
-                for item in items:
-                    try:
-                        item.delete()
-                        removed_any = True
-                    except Exception:
-                        pass
-                if removed_any:
-                    logger.debug(f"Deleted stored key passphrase for {key_path} using secretstorage")
-                return removed_any
-            return False
-        except Exception as e:
-            logger.error(f"Error deleting key passphrase for {key_path}: {e}")
-            return False
+        # Use the unified passphrase clearing from askpass_utils
+        return clear_passphrase(key_path)
 
     def _ensure_ssh_agent(self) -> bool:
         """Ensure ssh-agent is running and export environment variables"""
@@ -1350,10 +1324,9 @@ class ConnectionManager(GObject.Object):
             return token
 
         host = data.get('host', '')
-        nickname = data.get('nickname', '')
-        aliases = data.get('aliases', []) or []
-        host_tokens = [_quote_token(nickname)] + [_quote_token(a) for a in aliases]
-        lines = ["Host " + " ".join(host_tokens)]
+        nickname = data.get('nickname') or host
+        primary_token = _quote_token(nickname)
+        lines = [f"Host {primary_token}"]
 
         # Add basic connection info
         if host and host != nickname:
@@ -1473,6 +1446,122 @@ class ConnectionManager(GObject.Object):
 
         return '\n'.join(cleaned_lines)
 
+    def get_host_block_details(self, host_identifier: str, source: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Return details for the first Host block matching *host_identifier*."""
+        try:
+            host_identifier = (host_identifier or '').strip()
+            if not host_identifier:
+                return None
+
+            target_path = source or self.ssh_config_path
+            if not target_path or not os.path.exists(target_path):
+                return None
+
+            with open(target_path, 'r') as f:
+                lines = f.readlines()
+
+            i = 0
+            while i < len(lines):
+                raw_line = lines[i]
+                lstripped = raw_line.lstrip()
+                lowered = lstripped.lower()
+                if lowered.startswith('host '):
+                    parts = lstripped.split(None, 1)
+                    full_value = parts[1].strip() if len(parts) > 1 else ''
+                    try:
+                        host_names = shlex.split(full_value)
+                    except ValueError:
+                        host_names = [h for h in full_value.split() if h]
+
+                    if host_identifier in host_names:
+                        start_index = i
+                        i += 1
+                        while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
+                            i += 1
+                        end_index = i
+                        block_lines = [lines[j].rstrip('\n') for j in range(start_index, end_index)]
+                        return {
+                            'source': target_path,
+                            'hosts': host_names,
+                            'start': start_index,
+                            'end': end_index,
+                            'lines': block_lines,
+                        }
+                i += 1
+        except Exception as e:
+            logger.debug(f"Failed to inspect host block for '{host_identifier}': {e}")
+        return None
+
+    def _split_host_block(self, original_host: str, new_data: Dict[str, Any], target_path: str) -> bool:
+        """Remove *original_host* from its group and append a new block."""
+        try:
+            if not target_path:
+                target_path = self.ssh_config_path
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+
+            try:
+                with open(target_path, 'r') as f:
+                    lines = f.readlines()
+            except FileNotFoundError:
+                lines = []
+
+            updated_lines: List[str] = []
+            i = 0
+            found = False
+            while i < len(lines):
+                raw_line = lines[i]
+                lstripped = raw_line.lstrip()
+                lowered = lstripped.lower()
+                if lowered.startswith('host '):
+                    parts = lstripped.split(None, 1)
+                    full_value = parts[1].strip() if len(parts) > 1 else ''
+                    try:
+                        host_names = shlex.split(full_value)
+                    except ValueError:
+                        host_names = [h for h in full_value.split() if h]
+
+                    if not found and original_host in host_names:
+                        found = True
+                        remaining_hosts = [h for h in host_names if h != original_host]
+                        indent_len = len(raw_line) - len(lstripped)
+                        indent = raw_line[:indent_len]
+                        if remaining_hosts:
+                            updated_lines.append(f"{indent}Host {' '.join(remaining_hosts)}\n")
+                            i += 1
+                            while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
+                                updated_lines.append(lines[i])
+                                i += 1
+                        else:
+                            i += 1
+                            while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
+                                i += 1
+                        continue
+                updated_lines.append(raw_line)
+                i += 1
+
+            formatted_block = self.format_ssh_config_entry(new_data).rstrip('\n')
+            if updated_lines:
+                if not updated_lines[-1].endswith('\n'):
+                    updated_lines[-1] = updated_lines[-1] + '\n'
+                if updated_lines[-1].strip():
+                    updated_lines.append('\n')
+
+            updated_lines.append(formatted_block + '\n')
+
+            with open(target_path, 'w') as f:
+                f.writelines(updated_lines)
+
+            logger.info(
+                "Split host block for '%s' (found=%s) and appended dedicated entry to %s",
+                original_host,
+                found,
+                target_path,
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to split host block for '{original_host}': {e}")
+            return False
+
     def update_ssh_config_file(self, connection: Connection, new_data: Dict[str, Any], original_nickname: str = None):
         """Update SSH config file with new connection data"""
         try:
@@ -1589,9 +1678,6 @@ class ConnectionManager(GObject.Object):
             updated_lines = []
             i = 0
             removed = False
-            # Alias-aware and indentation-robust deletion
-            # Only match exact full value or exact alias token equal to the nickname
-            candidate_names = {host_nickname}
 
             while i < len(lines):
                 raw_line = lines[i]
@@ -1600,8 +1686,9 @@ class ConnectionManager(GObject.Object):
                 if lowered.startswith('host '):
                     parts = lstripped.split(None, 1)
                     full_value = parts[1].strip() if len(parts) > 1 else ''
-                    current_names = shlex.split(full_value)
-                    if any(name in candidate_names for name in current_names):
+                    current_names = shlex.split(full_value) if full_value else []
+                    primary_name = current_names[0] if current_names else ''
+                    if primary_name == host_nickname:
                         removed = True
                         i += 1
                         while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
@@ -1626,7 +1713,11 @@ class ConnectionManager(GObject.Object):
     def update_connection(self, connection: Connection, new_data: Dict[str, Any]) -> bool:
         """Update an existing connection"""
         try:
-            target_path = new_data.get('source') or getattr(connection, 'source', self.ssh_config_path)
+            split_from_group = bool(new_data.pop('__split_from_group', False))
+            split_source_override = new_data.pop('__split_source', None)
+            split_original_host = new_data.pop('__split_original_nickname', None)
+
+            target_path = split_source_override or new_data.get('source') or getattr(connection, 'source', self.ssh_config_path)
             logger.info(
                 "Updating connection '%s' → writing to %s (rules=%d)",
                 connection.nickname,
@@ -1637,13 +1728,19 @@ class ConnectionManager(GObject.Object):
             prev_host = getattr(connection, 'host', '')
             prev_user = getattr(connection, 'username', '')
             original_nickname = getattr(connection, 'nickname', '')
-            
+
             # Update existing object IN-PLACE instead of creating new ones
             connection.update_data(new_data)
-            
+
             # Update the SSH config file with original nickname for proper matching
-            self.update_ssh_config_file(connection, new_data, original_nickname)
-            
+            if split_from_group:
+                original_token = split_original_host or original_nickname
+                if not self._split_host_block(original_token, new_data, target_path):
+                    logger.error("Failed to split host block for %s", original_token)
+                    return False
+            else:
+                self.update_ssh_config_file(connection, new_data, original_nickname)
+
             # Handle password storage/removal
             if 'password' in new_data:
                 pwd = new_data.get('password') or ''

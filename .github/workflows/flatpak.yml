@@ -1,0 +1,116 @@
+name: Build and Release Flatpak
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (optional)'
+        required: false
+        type: string
+
+env:
+  FLATPAK_APP_ID: io.github.mfat.sshpilot
+
+jobs:
+  build-and-release:
+    name: "Flatpak"
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      options: --privileged
+    strategy:
+      matrix:
+        variant:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+      # Don't fail the whole workflow if one architecture fails
+      fail-fast: false
+    runs-on: ${{ matrix.variant.runner }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Build Flatpak
+      uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+      with:
+        bundle: sshpilot-${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}-${{ matrix.variant.arch }}.flatpak
+        manifest-path: io.github.mfat.sshpilot.yaml
+        cache-key: flatpak-builder-${{ matrix.variant.arch }}-${{ github.sha }}
+        arch: ${{ matrix.variant.arch }}
+        verbose: true
+        upload-artifact: true
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs: build-and-release
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download x86_64 bundle
+      uses: actions/download-artifact@v4
+      with:
+        name: sshpilot-${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}-x86_64.flatpak
+        path: ./bundles
+
+    - name: Download aarch64 bundle
+      uses: actions/download-artifact@v4
+      with:
+        name: sshpilot-${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}-aarch64.flatpak
+        path: ./bundles
+
+    - name: Generate checksums
+      run: |
+        TAG_NAME="${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}"
+        cd bundles
+        sha256sum sshpilot-${TAG_NAME}-*.flatpak > checksums.txt
+        cat checksums.txt
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}
+        name: "SSHPilot ${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}"
+        body: |
+          ## SSHPilot ${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}
+          
+          ### Installation Instructions
+          
+          Choose the bundle for your architecture:
+          
+          **For x86_64 (Intel/AMD):**
+          ```bash
+          flatpak install --user sshpilot-${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}-x86_64.flatpak
+          ```
+          
+          **For ARM64 (Apple Silicon, ARM servers):**
+          ```bash
+          flatpak install --user sshpilot-${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}-aarch64.flatpak
+          ```
+          
+          ### Run the application
+          ```bash
+          flatpak run io.github.mfat.sshpilot
+          ```
+          
+          ### Files
+          - `sshpilot-${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}-x86_64.flatpak` - Intel/AMD 64-bit
+          - `sshpilot-${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}-aarch64.flatpak` - ARM64
+          - `checksums.txt` - SHA256 checksums
+        files: |
+          bundles/sshpilot-*-x86_64.flatpak
+          bundles/sshpilot-*-aarch64.flatpak
+          bundles/checksums.txt
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
