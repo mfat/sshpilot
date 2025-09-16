@@ -1355,7 +1355,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Add local terminal button before the tabs
         self.local_terminal_button = Gtk.Button()
-        self.local_terminal_button.set_icon_name('utilities-terminal-symbolic')
+        self.local_terminal_button.set_icon_name('tab-new-symbolic')
         self.local_terminal_button.add_css_class('flat')  # Make button flat
         
         # Set tooltip with keyboard shortcut
