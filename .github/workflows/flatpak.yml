@@ -40,7 +40,7 @@ jobs:
     - name: Build Flatpak
       uses: flatpak/flatpak-github-actions/flatpak-builder@v6
       with:
-        bundle: sshpilot-${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}-${{ matrix.variant.arch }}.flatpak
+        bundle: sshpilot-${{ github.ref_name || github.event.inputs.tag || 'dev' }}-${{ matrix.variant.arch }}.flatpak
         manifest-path: io.github.mfat.sshpilot.yaml
         cache-key: flatpak-builder-${{ matrix.variant.arch }}-${{ github.sha }}
         arch: ${{ matrix.variant.arch }}
@@ -59,18 +59,18 @@ jobs:
     - name: Download x86_64 bundle
       uses: actions/download-artifact@v4
       with:
-        name: sshpilot-${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}-x86_64.flatpak
+        name: sshpilot-${{ github.ref_name || github.event.inputs.tag || 'dev' }}-x86_64.flatpak
         path: ./bundles
 
     - name: Download aarch64 bundle
       uses: actions/download-artifact@v4
       with:
-        name: sshpilot-${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}-aarch64.flatpak
+        name: sshpilot-${{ github.ref_name || github.event.inputs.tag || 'dev' }}-aarch64.flatpak
         path: ./bundles
 
     - name: Generate checksums
       run: |
-        TAG_NAME="${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}"
+        TAG_NAME="${{ github.ref_name || github.event.inputs.tag || 'dev' }}"
         cd bundles
         sha256sum sshpilot-${TAG_NAME}-*.flatpak > checksums.txt
         cat checksums.txt
@@ -78,10 +78,10 @@ jobs:
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: ${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}
-        name: "SSHPilot ${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}"
+        tag_name: ${{ github.ref_name || github.event.inputs.tag || 'dev' }}
+        name: "SSHPilot ${{ github.ref_name || github.event.inputs.tag || 'dev' }}"
         body: |
-          ## SSHPilot ${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}
+          ## SSHPilot ${{ github.ref_name || github.event.inputs.tag || 'dev' }}
           
           ### Installation Instructions
           
@@ -89,12 +89,12 @@ jobs:
           
           **For x86_64 (Intel/AMD):**
           ```bash
-          flatpak install --user sshpilot-${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}-x86_64.flatpak
+          flatpak install --user sshpilot-${{ github.ref_name || github.event.inputs.tag || 'dev' }}-x86_64.flatpak
           ```
           
           **For ARM64 (Apple Silicon, ARM servers):**
           ```bash
-          flatpak install --user sshpilot-${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}-aarch64.flatpak
+          flatpak install --user sshpilot-${{ github.ref_name || github.event.inputs.tag || 'dev' }}-aarch64.flatpak
           ```
           
           ### Run the application
@@ -103,8 +103,8 @@ jobs:
           ```
           
           ### Files
-          - `sshpilot-${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}-x86_64.flatpak` - Intel/AMD 64-bit
-          - `sshpilot-${{ github.ref_name || github.event.inputs.tag || github.ref_name || 'dev' }}-aarch64.flatpak` - ARM64
+          - `sshpilot-${{ github.ref_name || github.event.inputs.tag || 'dev' }}-x86_64.flatpak` - Intel/AMD 64-bit
+          - `sshpilot-${{ github.ref_name || github.event.inputs.tag || 'dev' }}-aarch64.flatpak` - ARM64
           - `checksums.txt` - SHA256 checksums
         files: |
           bundles/sshpilot-*-x86_64.flatpak
