@@ -386,27 +386,77 @@ class WindowActions:
             if not group_info:
                 return
 
-            # Show confirmation dialog
-            dialog = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_("Delete Group"),
-                body=_("Are you sure you want to delete the group '{}'?\n\nThis will move all connections in this group to the parent group or make them ungrouped.").format(group_info['name'])
-            )
-
-            dialog.add_response('cancel', _('Cancel'))
-            dialog.add_response('delete', _('Delete'))
-            dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response('cancel')
-
-            def on_response(dialog, response):
-                if response == 'delete':
-                    self.group_manager.delete_group(group_id)
-                    self.rebuild_connection_list()
-                dialog.destroy()
-
-            dialog.connect('response', on_response)
-            dialog.present()
+            # Check if group has connections (filter to only existing connections)
+            all_connections = self.connection_manager.get_connections()
+            connections_dict = {conn.nickname: conn for conn in all_connections}
+            
+            actual_connections = [
+                c
+                for c in group_info.get('connections', [])
+                if c in connections_dict
+            ]
+            connection_count = len(actual_connections)
+            
+            if connection_count > 0:
+                # Show dialog asking what to do with connections
+                dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("Delete Group"),
+                    body=_("The group '{}' contains {} connection(s).\n\nWhat would you like to do with the connections?").format(
+                        group_info['name'], connection_count
+                    )
+                )
+                
+                dialog.add_response('cancel', _('Cancel'))
+                dialog.add_response('move', _('Move to Parent/Ungrouped'))
+                dialog.add_response('delete_all', _('Delete All Connections'))
+                dialog.set_response_appearance('delete_all', Adw.ResponseAppearance.DESTRUCTIVE)
+                dialog.set_default_response('move')
+                
+                def on_response_with_connections(dialog, response):
+                    if response == 'move':
+                        # Just delete the group, connections will be moved
+                        self.group_manager.delete_group(group_id)
+                        self.rebuild_connection_list()
+                    elif response == 'delete_all':
+                        # Delete all connections in the group first
+                        connections_to_delete = list(actual_connections)  # Use filtered list
+                        for conn_nickname in connections_to_delete:
+                            # Find the connection object and delete it
+                            connection = connections_dict.get(conn_nickname)
+                            if connection:
+                                self.connection_manager.remove_connection(connection)
+                        
+                        # Then delete the group
+                        self.group_manager.delete_group(group_id)
+                        self.rebuild_connection_list()
+                    dialog.destroy()
+                
+                dialog.connect('response', on_response_with_connections)
+                dialog.present()
+            else:
+                # Group is empty, show simple confirmation
+                dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_("Delete Group"),
+                    body=_("Are you sure you want to delete the empty group '{}'?").format(group_info['name'])
+                )
+                
+                dialog.add_response('cancel', _('Cancel'))
+                dialog.add_response('delete', _('Delete'))
+                dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
+                dialog.set_default_response('cancel')
+                
+                def on_response_empty_group(dialog, response):
+                    if response == 'delete':
+                        self.group_manager.delete_group(group_id)
+                        self.rebuild_connection_list()
+                    dialog.destroy()
+                
+                dialog.connect('response', on_response_empty_group)
+                dialog.present()
 
         except Exception as e:
             logger.error(f"Failed to show delete group dialog: {e}")
