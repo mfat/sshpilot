@@ -1660,9 +1660,9 @@ class ConnectionManager(GObject.Object):
             raise
 
     def remove_ssh_config_entry(self, host_nickname: str, source: Optional[str] = None) -> bool:
-        """Remove a Host block from SSH config by nickname.
+        """Remove a host label from SSH config, or entire block if it's the only label.
 
-        Returns True if a block was removed, False if not found or on error.
+        Returns True if a modification was made, False if not found or on error.
         """
         try:
             target_path = source or self.ssh_config_path
@@ -1677,35 +1677,71 @@ class ConnectionManager(GObject.Object):
 
             updated_lines = []
             i = 0
-            removed = False
+            modified = False
 
             while i < len(lines):
                 raw_line = lines[i]
                 lstripped = raw_line.lstrip()
                 lowered = lstripped.lower()
+                
                 if lowered.startswith('host '):
                     parts = lstripped.split(None, 1)
                     full_value = parts[1].strip() if len(parts) > 1 else ''
-                    current_names = shlex.split(full_value) if full_value else []
-                    primary_name = current_names[0] if current_names else ''
-                    if primary_name == host_nickname:
-                        removed = True
-                        i += 1
-                        while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
+                    try:
+                        current_names = shlex.split(full_value) if full_value else []
+                    except ValueError:
+                        # Fallback to simple split if shlex fails
+                        current_names = [h for h in full_value.split() if h]
+                    
+                    # Check if our target host is in this Host directive
+                    if host_nickname in current_names:
+                        modified = True
+                        # Remove the target hostname from the list
+                        remaining_names = [name for name in current_names if name != host_nickname]
+                        
+                        if remaining_names:
+                            # Update the Host line with remaining names
+                            indent = raw_line[:len(raw_line) - len(lstripped)]
+                            # Use shlex.join if available (Python 3.8+), otherwise manual quoting
+                            try:
+                                remaining_hosts_str = shlex.join(remaining_names)
+                            except AttributeError:
+                                # Fallback for older Python versions
+                                remaining_hosts_str = ' '.join(
+                                    f'"{name}"' if ' ' in name or '"' in name else name 
+                                    for name in remaining_names
+                                )
+                            updated_line = f"{indent}Host {remaining_hosts_str}\n"
+                            updated_lines.append(updated_line)
+                            logger.info(f"Updated Host line: removed '{host_nickname}', remaining: {remaining_names}")
+                            
+                            # Keep the rest of the block
                             i += 1
+                            while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
+                                updated_lines.append(lines[i])
+                                i += 1
+                        else:
+                            # No remaining names, delete the entire block
+                            logger.info(f"Deleting entire Host block for '{host_nickname}' (was the only host)")
+                            i += 1
+                            # Skip the entire block
+                            while i < len(lines) and not lines[i].lstrip().lower().startswith(('host ', 'match ')):
+                                i += 1
                         continue
-                # Keep line
+                
+                # Keep line as-is
                 updated_lines.append(raw_line)
                 i += 1
 
-            if removed:
+            if modified:
                 try:
                     with open(target_path, 'w') as f:
                         f.writelines(updated_lines)
+                    logger.info(f"SSH config updated: {'removed' if host_nickname else 'modified'} entry for '{host_nickname}'")
                 except IOError as e:
                     logger.error(f"Failed to write SSH config after delete: {e}")
                     return False
-            return removed
+            return modified
         except Exception as e:
             logger.error(f"Error removing SSH config entry: {e}", exc_info=True)
             return False
