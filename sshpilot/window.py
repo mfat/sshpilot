@@ -622,17 +622,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
         header.append(hide_button)
 
-        # SSH Config Editor button
-        ssh_config_button = Gtk.Button.new_from_icon_name('text-editor-symbolic')
-        ssh_config_button.set_tooltip_text(
-            f'Raw SSH Configuration Editor ({get_primary_modifier_label()}+Shift+E)'
-        )
-        ssh_config_button.connect('clicked', lambda *_: self._open_ssh_config_editor())
-        try:
-            ssh_config_button.set_can_focus(False)
-        except Exception:
-            pass
-        header.append(ssh_config_button)
 
         # Add spacer to push menu button to far right
         spacer = Gtk.Box()
