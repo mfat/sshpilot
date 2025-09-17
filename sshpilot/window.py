@@ -206,6 +206,55 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               opacity: 0.7;
               transform: scale(0.98);
             }
+            
+            /* Group drop target highlight */
+            .drop-target-group {
+              background: alpha(@accent_bg_color, 0.25);
+              border-radius: 8px;
+              box-shadow: 0 0 0 2px @accent_bg_color inset,
+                          0 2px 8px alpha(@accent_bg_color, 0.4);
+              transform: scale(1.02);
+              transition: all 0.2s ease-in-out;
+              animation: group-drop-pulse 1.5s ease-in-out infinite;
+            }
+            
+            @keyframes group-drop-pulse {
+              0%, 100% { 
+                box-shadow: 0 0 0 2px @accent_bg_color inset,
+                           0 2px 8px alpha(@accent_bg_color, 0.4);
+              }
+              50% { 
+                box-shadow: 0 0 0 3px @accent_bg_color inset,
+                           0 4px 12px alpha(@accent_bg_color, 0.6);
+              }
+            }
+            
+            /* Drop target indicator styling */
+            .drop-target-indicator {
+              background: alpha(@accent_bg_color, 0.9);
+              color: white;
+              border-radius: 12px;
+              padding: 4px 12px;
+              margin: 4px 8px;
+              font-weight: bold;
+              font-size: 0.9em;
+              animation: drop-indicator-bounce 0.6s ease-in-out;
+            }
+            
+            @keyframes drop-indicator-bounce {
+              0% { 
+                transform: translateY(-10px) scale(0.8);
+                opacity: 0;
+              }
+              60% {
+                transform: translateY(2px) scale(1.05);
+                opacity: 1;
+              }
+              100% {
+                transform: translateY(0) scale(1);
+                opacity: 1;
+              }
+            }
 
             """
             provider.load_from_data(css.encode('utf-8'))

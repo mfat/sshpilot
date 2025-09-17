@@ -102,8 +102,27 @@ class GroupRow(Gtk.ListBoxRow):
         self.expand_button.connect("clicked", self._on_expand_clicked)
         content.append(self.expand_button)
 
+        # Add drop target indicator (initially hidden)
+        self.drop_target_indicator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.drop_target_indicator.set_halign(Gtk.Align.CENTER)
+        self.drop_target_indicator.set_margin_top(4)
+        self.drop_target_indicator.set_margin_bottom(4)
+        self.drop_target_indicator.add_css_class("drop-target-indicator")
+        
+        drop_icon = Gtk.Image.new_from_icon_name("list-add-symbolic")
+        drop_icon.set_icon_size(Gtk.IconSize.NORMAL)
+        self.drop_target_indicator.append(drop_icon)
+        
+        drop_label = Gtk.Label()
+        drop_label.set_markup("<b>Add to Group</b>")
+        drop_label.add_css_class("accent")
+        self.drop_target_indicator.append(drop_label)
+        
+        self.drop_target_indicator.set_visible(False)
+
         # Add content to main_box
         main_box.append(content)
+        main_box.append(self.drop_target_indicator)
         
         # Drop indicator (bottom)
         self.drop_indicator_bottom = DragIndicator()
@@ -207,6 +226,16 @@ class GroupRow(Gtk.ListBoxRow):
         """Hide all drop indicator lines"""
         self.drop_indicator_top.set_visible(False)
         self.drop_indicator_bottom.set_visible(False)
+        self.show_group_highlight(False)
+
+    def show_group_highlight(self, show: bool):
+        """Show/hide group highlight for 'add to group' drop indication"""
+        if show:
+            self.add_css_class("drop-target-group")
+            self.drop_target_indicator.set_visible(True)
+        else:
+            self.remove_css_class("drop-target-group")
+            self.drop_target_indicator.set_visible(False)
 
 
 class ConnectionRow(Gtk.ListBoxRow):
@@ -546,9 +575,13 @@ def _on_connection_list_motion(window, target, x, y):
                 _show_drop_indicator(window, row, position)
             
             # Handle mixed drag scenarios (dragging connection over group, etc.)
-            elif ((hasattr(row, "connection") and hasattr(window, "_dragged_group_id")) or
-                  (hasattr(row, "group_id") and hasattr(window, "_dragged_connection"))):
+            elif (hasattr(row, "connection") and hasattr(window, "_dragged_group_id")):
+                # Dragging group over connection - show indicator
                 _show_drop_indicator(window, row, position)
+            elif (hasattr(row, "group_id") and hasattr(window, "_dragged_connection")):
+                # Dragging connection over group - only show indicator on the group itself (not above/below)
+                # This indicates the connection will be added to the group
+                _show_drop_indicator_on_group(window, row)
             else:
                 _clear_drop_indicator(window)
         else:
@@ -591,6 +624,30 @@ def _show_drop_indicator(window, row, position):
             window._drop_indicator_position = position
     except Exception as e:
         logger.error(f"Error showing drop indicator: {e}")
+
+
+def _show_drop_indicator_on_group(window, row):
+    """Show a special indicator when dropping a connection onto a group (adds to group)"""
+    try:
+        # Only update if the indicator has changed
+        if (window._drop_indicator_row != row or
+            window._drop_indicator_position != "on_group"):
+            
+            # Clear any existing indicators
+            if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
+                window._drop_indicator_row.hide_drop_indicators()
+            
+            # Show group highlight indicator instead of line indicators
+            if hasattr(row, 'show_group_highlight'):
+                row.show_group_highlight(True)
+            elif hasattr(row, 'show_drop_indicator'):
+                # Fallback: show bottom indicator if group highlight not available
+                row.show_drop_indicator(False)
+
+            window._drop_indicator_row = row
+            window._drop_indicator_position = "on_group"
+    except Exception as e:
+        logger.error(f"Error showing group drop indicator: {e}")
 
 
 def _create_ungrouped_area(window):
