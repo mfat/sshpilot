@@ -2,17 +2,15 @@
 <img width="154" height="154" alt="logo" src="https://github.com/user-attachments/assets/42b73dbf-778c-45ff-9361-22a52988f1b3" />
 </p>
 
-**sshPilot** is a user-friendly, modern and lightweight SSH connection manager for Linux, with an integrated terminal. It's a free (as in freedom) alternative to Putty and Termius.
+**sshPilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal. 
 
-<img width="1057" height="705" alt="Screenshot From 2025-08-20 18-32-09" src="https://github.com/user-attachments/assets/f57b25a9-c3ce-4355-891e-caad17a906f9" />
+<img width="1167" height="744" alt="Screenshot From 2025-09-17 03-18-51" src="https://github.com/user-attachments/assets/c37cfc2a-c699-4911-b343-844d31ede169" />
 
-<img width="1212" height="778" alt="Screenshot From 2025-08-15 01-22-02" src="https://github.com/user-attachments/assets/6b79a06a-d900-49eb-969f-a8f7a4c31b02" />
+<img width="1167" height="744" alt="Screenshot From 2025-09-17 03-23-19" src="https://github.com/user-attachments/assets/244f0fe8-dc41-456e-a97c-3a9f611b68bc" />
 
-<img width="762" height="995" alt="Screenshot From 2025-08-15 01-18-57" src="https://github.com/user-attachments/assets/aec20f9a-1fb5-44bb-a13a-bb5a36445431" />
+<img width="1167" height="744" alt="Screenshot From 2025-09-17 03-18-56" src="https://github.com/user-attachments/assets/94fe192a-2b96-45ca-ab11-5cd38cba5387" />
 
-<img width="722" height="622" alt="Screenshot From 2025-08-15 01-17-38" src="https://github.com/user-attachments/assets/b72fe4df-f5ac-48e2-9ba0-af728901e1c8" />
-
-<img width="562" height="569" alt="Screenshot From 2025-08-20 13-49-59" src="https://github.com/user-attachments/assets/eb8de65b-ce0e-449e-a7e3-dcc6bf1e43bb" />
+<img width="622" height="589" alt="Screenshot From 2025-09-17 03-19-30" src="https://github.com/user-attachments/assets/0b8bc6cc-a231-4d13-bf59-b39954585fad" />
 
 
 ## Features
