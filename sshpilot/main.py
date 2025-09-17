@@ -98,6 +98,7 @@ class SshPilotApplication(Adw.Application):
             self.create_action('toggle-list', self.on_toggle_list, ['<Meta>l'])
             self.create_action('search', self.on_search, ['<Meta>f'])
             self.create_action('new-key', self.on_new_key, ['<Meta><Shift>k'])
+            self.create_action('edit-ssh-config', self.on_edit_ssh_config, ['<Meta><Shift>e'])
             logging.info("Using macOS-specific shortcuts (Meta key = Command key)")
         else:
             # Linux/Windows shortcuts using Primary key
@@ -107,6 +108,7 @@ class SshPilotApplication(Adw.Application):
             self.create_action('toggle-list', self.on_toggle_list, ['<primary>l'])
             self.create_action('search', self.on_search, ['<primary>f'])
             self.create_action('new-key', self.on_new_key, ['<primary><shift>k'])
+            self.create_action('edit-ssh-config', self.on_edit_ssh_config, ['<primary><shift>e'])
             logging.info("Using Linux/Windows shortcuts (Primary key = Ctrl key)")
         
         # Debug: Log registered shortcuts
@@ -274,6 +276,12 @@ class SshPilotApplication(Adw.Application):
     def on_quit_action(self, action=None, param=None):
         """Handle Ctrl (⌘ on macOS)+Q by routing through the application quit path."""
         self.quit()
+
+    def on_edit_ssh_config(self, action=None, param=None):
+        """Handle SSH config editor action."""
+        win = self.props.active_window
+        if win and hasattr(win, '_open_ssh_config_editor'):
+            win._open_ssh_config_editor()
 
     def do_activate(self):
         """Called when the application is activated"""

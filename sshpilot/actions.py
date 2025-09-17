@@ -617,6 +617,7 @@ def register_window_actions(window):
     window.open_new_connection_action.connect('activate', window.on_open_new_connection_action)
     window.add_action(window.open_new_connection_action)
 
+
     # Global action for opening new connection tab (Ctrl/⌘+Alt+N)
     window.open_new_connection_tab_action = Gio.SimpleAction.new('open-new-connection-tab', None)
     window.open_new_connection_tab_action.connect('activate', window.on_open_new_connection_tab_action)

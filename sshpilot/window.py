@@ -622,6 +622,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
         header.append(hide_button)
 
+        # SSH Config Editor button
+        ssh_config_button = Gtk.Button.new_from_icon_name('text-editor-symbolic')
+        ssh_config_button.set_tooltip_text(
+            f'Raw SSH Configuration Editor ({get_primary_modifier_label()}+Shift+E)'
+        )
+        ssh_config_button.connect('clicked', lambda *_: self._open_ssh_config_editor())
+        try:
+            ssh_config_button.set_can_focus(False)
+        except Exception:
+            pass
+        header.append(ssh_config_button)
+
         # Add spacer to push menu button to far right
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
@@ -1421,6 +1433,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         menu.append('Create Group', 'win.create-group')
         menu.append('Local Terminal', 'app.local-terminal')
         menu.append('Copy Key to Server', 'app.new-key')
+        menu.append('SSH Config Editor', 'app.edit-ssh-config')
         menu.append('Known Hosts Editor', 'win.edit-known-hosts')
         menu.append('Broadcast Command', 'app.broadcast-command')
         menu.append('Preferences', 'app.preferences')
@@ -2321,6 +2334,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if mac:
             group_general.add_shortcut(Gtk.ShortcutsShortcut(
                 title=_('Toggle Sidebar'), accelerator=f"{primary}b"))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('SSH Config Editor'), accelerator=f"{primary}<Shift>e"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Preferences'), accelerator=f"{primary}comma"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
