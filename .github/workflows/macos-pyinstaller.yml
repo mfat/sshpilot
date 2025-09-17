@@ -1,0 +1,83 @@
+name: Build macOS PyInstaller Bundle
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-arm64:
+    name: macOS aarch64 PyInstaller
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Homebrew dependencies
+        run: |
+          brew update
+          brew install python@3.13 gtk4 libadwaita vte3 adwaita-icon-theme gobject-introspection pygobject3 py3cairo create-dmg sshpass
+          brew link --overwrite libadwaita
+
+      - name: Prepare Homebrew virtual environment
+        run: |
+          PYTHON_PATH="$(brew --prefix python@3.13)/bin/python3.13"
+          "$PYTHON_PATH" -m venv .venv-homebrew --system-site-packages
+          source .venv-homebrew/bin/activate
+          python -m pip install --upgrade pip wheel
+          python -m pip install paramiko cryptography keyring psutil PyInstaller
+
+      - name: Build application bundle with PyInstaller
+        run: |
+          BREW_PREFIX="$(brew --prefix)"
+          export PATH="$BREW_PREFIX/bin:$PATH"
+          export GI_TYPELIB_PATH="$BREW_PREFIX/lib/girepository-1.0"
+          export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_LIBRARY_PATH"
+          export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+          chmod +x pyinstaller.sh
+          ./pyinstaller.sh
+
+      - name: Determine artifact names
+        id: artifact-info
+        run: |
+          VERSION=$(grep -o '__version__ = "[^"]*"' sshpilot/__init__.py | cut -d'"' -f2)
+          if [ -z "$VERSION" ]; then
+            VERSION=$(date +%Y%m%d)
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "dmg=sshPilot-${VERSION}.dmg" >> "$GITHUB_OUTPUT"
+
+      - name: Verify build outputs
+        run: |
+          ls -R dist
+
+      - name: Compress app bundle for artifact upload
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent dist/SSHPilot.app dist/SSHPilot.app.zip
+
+      - name: Generate DMG checksum
+        run: |
+          shasum -a 256 "dist/${{ steps.artifact-info.outputs.dmg }}" > "dist/${{ steps.artifact-info.outputs.dmg }}.sha256"
+          cat "dist/${{ steps.artifact-info.outputs.dmg }}.sha256"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshpilot-${{ steps.artifact-info.outputs.version }}-macos-arm64-dmg
+          path: dist/${{ steps.artifact-info.outputs.dmg }}
+
+      - name: Upload app bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshpilot-${{ steps.artifact-info.outputs.version }}-macos-arm64-app
+          path: dist/SSHPilot.app.zip
+
+      - name: Upload checksum artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshpilot-${{ steps.artifact-info.outputs.version }}-macos-arm64-checksum
+          path: dist/${{ steps.artifact-info.outputs.dmg }}.sha256
