@@ -622,6 +622,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
         header.append(hide_button)
 
+
         # Add spacer to push menu button to far right
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
@@ -1421,6 +1422,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         menu.append('Create Group', 'win.create-group')
         menu.append('Local Terminal', 'app.local-terminal')
         menu.append('Copy Key to Server', 'app.new-key')
+        menu.append('SSH Config Editor', 'app.edit-ssh-config')
         menu.append('Known Hosts Editor', 'win.edit-known-hosts')
         menu.append('Broadcast Command', 'app.broadcast-command')
         menu.append('Preferences', 'app.preferences')
@@ -2321,6 +2323,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if mac:
             group_general.add_shortcut(Gtk.ShortcutsShortcut(
                 title=_('Toggle Sidebar'), accelerator=f"{primary}b"))
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('SSH Config Editor'), accelerator=f"{primary}<Shift>e"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Preferences'), accelerator=f"{primary}comma"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
@@ -4786,45 +4790,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to show edit group dialog: {e}")
     
-    def on_delete_group_action(self, action, param=None):
-        """Handle delete group action"""
-        try:
-            # Get the group row from context menu or selected row
-            selected_row = getattr(self, '_context_menu_group_row', None)
-            if not selected_row:
-                selected_row = self.connection_list.get_selected_row()
-            if not selected_row or not hasattr(selected_row, 'group_id'):
-                return
-            
-            group_id = selected_row.group_id
-            group_info = self.group_manager.groups.get(group_id)
-            if not group_info:
-                return
-            
-            # Show confirmation dialog
-            dialog = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_("Delete Group"),
-                body=_("Are you sure you want to delete the group '{}'?\n\nThis will move all connections in this group to the parent group or make them ungrouped.").format(group_info['name'])
-            )
-            
-            dialog.add_response('cancel', _('Cancel'))
-            dialog.add_response('delete', _('Delete'))
-            dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response('cancel')
-            
-            def on_response(dialog, response):
-                if response == 'delete':
-                    self.group_manager.delete_group(group_id)
-                    self.rebuild_connection_list()
-                dialog.destroy()
-            
-            dialog.connect('response', on_response)
-            dialog.present()
-            
-        except Exception as e:
-            logger.error(f"Failed to show delete group dialog: {e}")
     
     def on_move_to_ungrouped_action(self, action, param=None):
         """Handle move to ungrouped action"""

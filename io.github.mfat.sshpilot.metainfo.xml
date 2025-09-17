@@ -32,7 +32,7 @@
 
   <releases>
 
-    <release version="3.8.5" date="2025-09-17">
+    <release version="3.8.6" date="2025-09-17">
 
       <description>
         <p>Latest stable release.</p>
@@ -48,8 +48,20 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/0693ac470dfaae93b975566fe8199289434f9dc2/screenshots/main-window.png</image>
-      <caption>Main window</caption>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/38e1a8a/screenshots/main-window-with-tabs.png</image>
+      <caption>Main Window with Tabs</caption>
+    </screenshot>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/38e1a8a/screenshots/tab-overview.png</image>
+      <caption>Tab Overview</caption>
+    </screenshot>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/38e1a8a/screenshots/start-page.png</image>
+      <caption>Tab Overview</caption>
+    </screenshot>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/38e1a8a/screenshots/ssh-copy-id.png</image>
+      <caption>ssh-copy-id Window</caption>
     </screenshot>
   </screenshots>
 
