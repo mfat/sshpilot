@@ -812,11 +812,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Set context menu data
                     self._context_menu_connection = getattr(row, 'connection', None)
                     self._context_menu_group_row = row if hasattr(row, 'group_id') else None
-                    # Create popover menu with disabled autohide for manual control
+                    # Create popover menu and rely on default autohide behavior
                     pop = Gtk.Popover.new()
                     pop.set_has_arrow(True)
-                    pop.set_autohide(False)  # Disable automatic hiding to control it manually
-                    logger.debug("Created popover with autohide disabled")
+                    logger.debug("Created popover with default autohide")
 
 
                     # Create listbox for menu items
@@ -833,15 +832,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                                 logger.debug("Cleaned up window focus handler")
                             except Exception as e:
                                 logger.debug(f"Error cleaning up focus handler: {e}")
-                        
-                        # Clean up the click controller
-                        if hasattr(pop, '_click_controller') and pop._click_controller:
-                            try:
-                                self.remove_controller(pop._click_controller)
-                                logger.debug("Cleaned up click controller")
-                            except Exception as e:
-                                logger.debug(f"Error cleaning up click controller: {e}")
-                        
+
                         logger.debug("Context menu closed")
                     
                     pop.connect("closed", _on_popover_closed)
@@ -877,31 +868,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Delay the connection slightly to avoid immediate triggering
                     GLib.timeout_add(100, connect_focus_handler)
                     
-                    # Add manual click-outside detection since autohide is disabled
-                    def setup_click_outside_detection():
-                        try:
-                            click_controller = Gtk.GestureClick()
-                            click_controller.set_button(0)  # Any button
-                            
-                            def _on_outside_click(gesture, n_press, x, y):
-                                try:
-                                    if pop and pop.get_visible():
-                                        pop.popdown()
-                                        logger.debug("Context menu closed due to outside click")
-                                except Exception as e:
-                                    logger.debug(f"Error handling outside click: {e}")
-                            
-                            click_controller.connect('pressed', _on_outside_click)
-                            self.add_controller(click_controller)
-                            pop._click_controller = click_controller
-                            logger.debug("Added click-outside detection")
-                        except Exception as e:
-                            logger.debug(f"Error setting up click-outside detection: {e}")
-                        return False
-                    
-                    # Set up click detection after popover is shown
-                    GLib.timeout_add(150, setup_click_outside_detection)
-
                     # Add menu items based on row type
                     if hasattr(row, 'group_id'):
                         # Group row context menu
