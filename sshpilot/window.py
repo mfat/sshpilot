@@ -4,8 +4,10 @@ Primary UI with connection list, tabs, and terminal management
 """
 
 import os
+import copy
 import logging
 import math
+import re
 import shlex
 import time
 from pathlib import Path
@@ -594,6 +596,205 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
         return 0
 
+    def _generate_duplicate_nickname(self, base_name: str) -> str:
+        """Return a unique nickname for a duplicated connection."""
+        try:
+            connections = self.connection_manager.get_connections()
+        except Exception:
+            connections = []
+
+        existing_names = {conn.nickname for conn in connections if getattr(conn, 'nickname', None)}
+        base_name = base_name or _('Connection')
+
+        candidate = f"{base_name} (copy)"
+        if candidate not in existing_names:
+            return candidate
+
+        pattern = re.compile(rf"^{re.escape(base_name)} \(copy(?: (\d+))?\)$", re.IGNORECASE)
+        max_suffix = 1
+        for name in existing_names:
+            match = pattern.match(name)
+            if not match:
+                continue
+            suffix = match.group(1)
+            if suffix:
+                try:
+                    max_suffix = max(max_suffix, int(suffix))
+                except (TypeError, ValueError):
+                    continue
+            else:
+                max_suffix = max(max_suffix, 1)
+
+        return f"{base_name} (copy {max_suffix + 1})"
+
+    def duplicate_connection(self, connection: Connection):
+        """Duplicate an existing connection and select the new copy."""
+        if connection is None:
+            return
+
+        try:
+            try:
+                source_data = copy.deepcopy(getattr(connection, 'data', {}))
+            except Exception:
+                source_data = dict(getattr(connection, 'data', {}) or {})
+
+            base_name = getattr(connection, 'nickname', None) or getattr(connection, 'host', None) or _('Connection')
+            new_nickname = self._generate_duplicate_nickname(base_name)
+
+            normalized_data: Dict[str, Any] = {}
+            if isinstance(source_data, dict):
+                normalized_data.update(source_data)
+
+            # Remove transient keys that shouldn't persist
+            for transient_key in (
+                'password_changed',
+                '__split_from_group',
+                '__split_source',
+                '__split_original_nickname',
+                '__host_tokens',
+            ):
+                normalized_data.pop(transient_key, None)
+
+            normalized_data['nickname'] = new_nickname
+            normalized_data['host'] = (
+                normalized_data.get('host')
+                or getattr(connection, 'host', '')
+                or ''
+            )
+            normalized_data['username'] = (
+                normalized_data.get('username')
+                or getattr(connection, 'username', '')
+                or ''
+            )
+
+            try:
+                normalized_data['port'] = int(normalized_data.get('port') or getattr(connection, 'port', 22) or 22)
+            except Exception:
+                normalized_data['port'] = 22
+
+            try:
+                normalized_data['auth_method'] = int(normalized_data.get('auth_method') or getattr(connection, 'auth_method', 0) or 0)
+            except Exception:
+                normalized_data['auth_method'] = 0
+
+            try:
+                normalized_data['key_select_mode'] = int(normalized_data.get('key_select_mode') or getattr(connection, 'key_select_mode', 0) or 0)
+            except Exception:
+                normalized_data['key_select_mode'] = 0
+
+            normalized_data['keyfile'] = normalized_data.get('keyfile') or getattr(connection, 'keyfile', '') or ''
+            normalized_data['certificate'] = normalized_data.get('certificate') or getattr(connection, 'certificate', '') or ''
+            normalized_data['password'] = normalized_data.get('password', '')
+            normalized_data['key_passphrase'] = normalized_data.get('key_passphrase', '')
+            normalized_data['local_command'] = normalized_data.get('local_command') or getattr(connection, 'local_command', '') or ''
+            normalized_data['remote_command'] = normalized_data.get('remote_command') or getattr(connection, 'remote_command', '') or ''
+            normalized_data['extra_ssh_config'] = normalized_data.get('extra_ssh_config') or getattr(connection, 'extra_ssh_config', '') or ''
+            normalized_data['forward_agent'] = bool(normalized_data.get('forward_agent', getattr(connection, 'forward_agent', False)))
+            normalized_data['x11_forwarding'] = bool(normalized_data.get('x11_forwarding', getattr(connection, 'x11_forwarding', False)))
+            normalized_data['pubkey_auth_no'] = bool(normalized_data.get('pubkey_auth_no', getattr(connection, 'pubkey_auth_no', False)))
+
+            proxy_command = normalized_data.get('proxy_command') or getattr(connection, 'proxy_command', '') or ''
+            normalized_data['proxy_command'] = proxy_command
+
+            proxy_jump = normalized_data.get('proxy_jump', getattr(connection, 'proxy_jump', []))
+            if isinstance(proxy_jump, str):
+                proxy_jump = [token.strip() for token in re.split(r'[\s,]+', proxy_jump) if token.strip()]
+            elif isinstance(proxy_jump, (tuple, set)):
+                proxy_jump = [str(token).strip() for token in proxy_jump if str(token).strip()]
+            elif isinstance(proxy_jump, list):
+                proxy_jump = [str(token).strip() for token in proxy_jump if str(token).strip()]
+            else:
+                proxy_jump = []
+            normalized_data['proxy_jump'] = proxy_jump
+
+            forwarding_rules = normalized_data.get('forwarding_rules', getattr(connection, 'forwarding_rules', []))
+            if not isinstance(forwarding_rules, list):
+                forwarding_rules = []
+            normalized_data['forwarding_rules'] = copy.deepcopy(forwarding_rules)
+
+            normalized_data['source'] = normalized_data.get('source') or getattr(connection, 'source', '')
+
+            new_connection = Connection(normalized_data.copy())
+            self.connection_manager.connections.append(new_connection)
+
+            if not self.connection_manager.update_connection(new_connection, normalized_data.copy()):
+                self.connection_manager.connections.remove(new_connection)
+                dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_('Failed to duplicate connection'),
+                    body=_('The connection could not be duplicated. Please try again.')
+                )
+                dialog.add_response('close', _('Close'))
+                dialog.set_close_response('close')
+                dialog.present()
+                return
+
+            original_nickname = getattr(connection, 'nickname', None)
+            original_group = self.group_manager.connections.get(original_nickname)
+
+            self.group_manager.connections[new_nickname] = original_group
+
+            if original_group and original_group in self.group_manager.groups:
+                conn_list = self.group_manager.groups[original_group].setdefault('connections', [])
+                if new_nickname in conn_list:
+                    conn_list = [n for n in conn_list if n != new_nickname]
+                    self.group_manager.groups[original_group]['connections'] = conn_list
+                if new_nickname in self.group_manager.root_connections:
+                    self.group_manager.root_connections = [
+                        n for n in self.group_manager.root_connections if n != new_nickname
+                    ]
+                try:
+                    insert_index = conn_list.index(original_nickname) + 1
+                except ValueError:
+                    insert_index = len(conn_list)
+                self.group_manager.groups[original_group]['connections'].insert(insert_index, new_nickname)
+            else:
+                roots = list(self.group_manager.root_connections)
+                if new_nickname in roots:
+                    roots = [n for n in roots if n != new_nickname]
+                try:
+                    insert_index = roots.index(original_nickname) + 1 if original_nickname in roots else len(roots)
+                except ValueError:
+                    insert_index = len(roots)
+                roots.insert(insert_index, new_nickname)
+                self.group_manager.root_connections = roots
+
+            self.group_manager._save_groups()
+
+            try:
+                self.connection_manager.load_ssh_config()
+            except Exception as exc:
+                logger.error(f"Failed to reload SSH config after duplication: {exc}")
+
+            self.rebuild_connection_list()
+
+            reloaded = self.connection_manager.find_connection_by_nickname(new_nickname)
+            if reloaded:
+                row = self.connection_rows.get(reloaded)
+                if row:
+                    self.connection_list.select_row(row)
+                    try:
+                        row.grab_focus()
+                    except Exception:
+                        self.connection_list.grab_focus()
+                    else:
+                        self.connection_list.grab_focus()
+                else:
+                    self.connection_list.grab_focus()
+
+        except Exception as e:
+            logger.error(f"Failed to duplicate connection: {e}", exc_info=True)
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_('Failed to duplicate connection'),
+                body=str(e)
+            )
+            dialog.add_response('close', _('Close'))
+            dialog.set_close_response('close')
+            dialog.present()
+
     def setup_sidebar(self):
         """Set up the sidebar with connection list"""
         sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -930,6 +1131,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         
                         edit_row.connect('activated', lambda *_: (self.on_edit_connection_action(None, None), pop.popdown()))
                         listbox.append(edit_row)
+
+                        duplicate_row = Adw.ActionRow(title=_('Duplicate Connection'))
+                        duplicate_icon = Gtk.Image.new_from_icon_name('edit-copy-symbolic')
+                        duplicate_row.add_prefix(duplicate_icon)
+                        duplicate_row.set_activatable(True)
+                        duplicate_row.connect('activated', lambda *_: (self.on_duplicate_connection_action(None, None), pop.popdown()))
+                        listbox.append(duplicate_row)
 
                         # Manage Files row
                         if not should_hide_file_manager_options():

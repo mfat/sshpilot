@@ -123,6 +123,19 @@ class WindowActions:
         except Exception as e:
             logger.error(f"Failed to edit connection: {e}")
 
+    def on_duplicate_connection_action(self, action, param=None):
+        """Duplicate the connection referenced by the context menu or selection."""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+            self.duplicate_connection(connection)
+        except Exception as e:
+            logger.error(f"Failed to duplicate connection: {e}")
+
     def on_delete_connection_action(self, action, param=None):
         """Handle delete connection action from context menu"""
         try:
@@ -683,6 +696,11 @@ def register_window_actions(window):
     window.edit_connection_action = Gio.SimpleAction.new('edit-connection', None)
     window.edit_connection_action.connect('activate', window.on_edit_connection_action)
     window.add_action(window.edit_connection_action)
+
+    if hasattr(window, 'on_duplicate_connection_action'):
+        window.duplicate_connection_action = Gio.SimpleAction.new('duplicate-connection', None)
+        window.duplicate_connection_action.connect('activate', window.on_duplicate_connection_action)
+        window.add_action(window.duplicate_connection_action)
 
     # Action for deleting connections via context menu
     window.delete_connection_action = Gio.SimpleAction.new('delete-connection', None)
