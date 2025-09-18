@@ -118,8 +118,10 @@ class SSHConnectionValidator:
             return ValidationResult(True, _("Unknown or uncommon top-level domain"), "warning")
         return ValidationResult(True, _("Valid hostname"))
 
-    def validate_hostname(self, hostname: str) -> 'ValidationResult':
+    def validate_hostname(self, hostname: str, allow_empty: bool = False) -> 'ValidationResult':
         if not hostname or not hostname.strip():
+            if allow_empty:
+                return ValidationResult(True, "")
             return ValidationResult(False, _("Hostname is required"), "error")
         hostname = hostname.strip()
         ip_result = self._validate_ip_address(hostname)
@@ -1531,7 +1533,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             raw = (text or '').strip()
             if raw.startswith('[') and raw.endswith(']') and len(raw) > 2:
                 raw = raw[1:-1]
-            result = self.validator.validate_hostname(raw)
+            result = self.validator.validate_hostname(raw, allow_empty=True)
         elif field_name == 'port':
             result = self.validator.validate_port(text, context)
         elif field_name == 'username':
@@ -3198,10 +3200,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.show_error(_("Please enter a nickname for this connection"))
             return
             
-        if not self.host_row.get_text().strip():
-            self.show_error(_("Please enter a hostname or IP address"))
-            return
-        
         # Initialize forwarding_rules list if needed
         if not hasattr(self, 'forwarding_rules') or self.forwarding_rules is None:
             self.forwarding_rules = []
