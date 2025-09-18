@@ -251,3 +251,67 @@ class GroupManager:
 
         self._save_groups()
 
+    def reorder_group(self, source_group_id: str, target_group_id: str, position: str):
+        """Reorder a group relative to another group at the same level"""
+        # Get both groups
+        source_group = self.groups.get(source_group_id)
+        target_group = self.groups.get(target_group_id)
+        
+        if not source_group or not target_group:
+            return
+        
+        # Both groups must have the same parent (be at the same level)
+        source_parent = source_group.get('parent_id')
+        target_parent = target_group.get('parent_id')
+        
+        if source_parent != target_parent:
+            return
+        
+        # Get the list of groups at this level
+        if source_parent:
+            parent_group = self.groups.get(source_parent)
+            if not parent_group:
+                return
+            groups_list = parent_group['children']
+        else:
+            # Root level groups - we need to maintain order differently
+            # For now, use the order field in the group data
+            root_groups = [gid for gid, ginfo in self.groups.items() 
+                          if ginfo.get('parent_id') is None]
+            root_groups.sort(key=lambda gid: self.groups[gid].get('order', 0))
+            groups_list = root_groups
+        
+        # Remove source group from its current position
+        if source_group_id in groups_list:
+            groups_list.remove(source_group_id)
+        
+        # Find target position
+        try:
+            target_index = groups_list.index(target_group_id)
+        except ValueError:
+            # Target not found, append to end
+            groups_list.append(source_group_id)
+            self._update_group_orders(groups_list, source_parent)
+            self._save_groups()
+            return
+        
+        # Insert at appropriate position
+        if position == 'above':
+            groups_list.insert(target_index, source_group_id)
+        else:  # 'below'
+            groups_list.insert(target_index + 1, source_group_id)
+        
+        # Update the parent's children list or root group orders
+        if source_parent:
+            parent_group['children'] = groups_list
+        else:
+            self._update_group_orders(groups_list, None)
+        
+        self._save_groups()
+    
+    def _update_group_orders(self, groups_list, parent_id):
+        """Update the order field for groups at a given level"""
+        for i, group_id in enumerate(groups_list):
+            if group_id in self.groups:
+                self.groups[group_id]['order'] = i
+
