@@ -11,6 +11,13 @@ try:  # Skip test if Gtk/Adw bindings aren't available
 except Exception:  # pragma: no cover - environment without GI bindings
     pytest.skip("GTK or Adw not available", allow_module_level=True)
 
+if (
+    not hasattr(Gtk, 'ApplicationWindow')
+    or not hasattr(Adw, 'ApplicationWindow')
+    or not getattr(Gtk.ApplicationWindow, '__module__', '').startswith('gi.repository')
+):
+    pytest.skip("GTK/Adw ApplicationWindow unavailable", allow_module_level=True)
+
 
 
 def test_application_quit_with_confirmation_dialog_does_not_crash():

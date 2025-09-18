@@ -10,9 +10,39 @@ import re
 import ipaddress
 import socket
 import subprocess
+import types
 from typing import Optional, Dict, Any
 
-from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
+try:
+    from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
+except (ImportError, AttributeError):  # pragma: no cover - used in tests without GTK
+    class _DummyGIMeta(type):
+        def __getattr__(cls, name):
+            value = _DummyGIMeta(name, (object,), {})
+            setattr(cls, name, value)
+            return value
+
+        def __call__(cls, *args, **kwargs):
+            return object()
+
+    class _DummyGIModule(metaclass=_DummyGIMeta):
+        pass
+
+    Gtk = _DummyGIModule
+    Adw = _DummyGIModule
+    Gio = _DummyGIModule
+    GObject = _DummyGIModule
+    Gdk = _DummyGIModule
+    Pango = _DummyGIModule
+    PangoFT2 = _DummyGIModule
+
+    class _DummyGLib(_DummyGIModule):
+        @staticmethod
+        def idle_add(*args, **kwargs):
+            return None
+
+    GLib = _DummyGLib
+    GObject.SignalFlags = types.SimpleNamespace(RUN_FIRST=None)
 from .port_utils import get_port_checker
 from .platform_utils import is_macos, get_ssh_dir
 
@@ -60,6 +90,8 @@ class SSHConnectionValidator:
         if not name or not name.strip():
             return ValidationResult(False, _("Connection name is required"), "error")
         name = name.strip()
+        if re.search(r"\s", name):
+            return ValidationResult(False, _("Connection name cannot contain whitespace"), "error")
         if name.strip().lower() in self.existing_names:
             return ValidationResult(False, _("Nickname already exists"), "error")
         return ValidationResult(True, _("Valid connection name"))
