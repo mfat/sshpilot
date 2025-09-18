@@ -3,9 +3,11 @@ Main Window for sshPilot
 Primary UI with connection list, tabs, and terminal management
 """
 
+import copy
 import os
 import logging
 import math
+import re
 import shlex
 import time
 from pathlib import Path
@@ -606,6 +608,222 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
         return 0
 
+
+    
+    def _generate_duplicate_nickname(self, base_nickname: str) -> str:
+        """Generate a unique nickname for a duplicated connection."""
+        try:
+            existing_names = {
+                str(getattr(conn, 'nickname', '')).strip()
+                for conn in self.connection_manager.get_connections()
+                if getattr(conn, 'nickname', None)
+            }
+        except Exception:
+            existing_names = set()
+        existing_lower = {name.lower() for name in existing_names if name}
+
+        base = (base_nickname or '').strip()
+        if not base:
+            base = _('Connection')
+
+        copy_label = _('Copy')
+        pattern = re.compile(r"\s+\(" + re.escape(copy_label) + r"(?:\s+(\d+))?\)\s*$", re.IGNORECASE)
+        base_clean = pattern.sub('', base).strip() or base
+
+        def is_unique(name: str) -> bool:
+            return name.lower() not in existing_lower
+
+        candidate = f"{base_clean} ({copy_label})"
+        if is_unique(candidate):
+            return candidate
+
+        index = 2
+        while True:
+            candidate = f"{base_clean} ({copy_label} {index})"
+            if is_unique(candidate):
+                return candidate
+            index += 1
+
+    def _show_duplicate_connection_error(self, connection: Optional[Connection], error: Exception) -> None:
+        """Display an error dialog when duplication fails."""
+        try:
+            nickname = (getattr(connection, 'nickname', '') or _('Connection')).strip()
+            heading = _('Duplicate Failed')
+            body = _('Failed to duplicate connection "{name}".\n\n{details}').format(
+                name=nickname,
+                details=str(error) or _('An unknown error occurred.')
+            )
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=heading,
+                body=body,
+            )
+            dialog.add_response('close', _('Close'))
+            dialog.set_close_response('close')
+            dialog.present()
+        except Exception:
+            pass
+
+    def duplicate_connection(self, connection: Optional[Connection]) -> Optional[Connection]:
+        """Duplicate an existing connection, persist it, and select the new entry."""
+        if connection is None:
+            return None
+
+        try:
+            try:
+                base_data = getattr(connection, 'data', None)
+                new_data = copy.deepcopy(base_data) if isinstance(base_data, dict) else {}
+            except Exception:
+                new_data = {}
+            if not isinstance(new_data, dict):
+                new_data = {}
+
+            for key in list(new_data.keys()):
+                if key.startswith('__') or key in {'aliases', 'password_changed'}:
+                    new_data.pop(key, None)
+
+            new_nickname = self._generate_duplicate_nickname(getattr(connection, 'nickname', ''))
+            new_data['nickname'] = new_nickname
+
+            host_value = (
+                getattr(connection, 'hostname', '')
+                or getattr(connection, 'host', '')
+                or new_data.get('hostname', '')
+                or new_data.get('host', '')
+            )
+            host_value = str(host_value).strip()
+            if not host_value:
+                host_value = new_nickname
+            new_data['hostname'] = host_value
+            new_data.pop('host', None)
+
+            new_data['username'] = str(getattr(connection, 'username', new_data.get('username', '')) or '')
+
+            try:
+                new_data['port'] = int(getattr(connection, 'port', new_data.get('port', 22)) or 22)
+            except Exception:
+                new_data['port'] = 22
+
+            try:
+                new_data['auth_method'] = int(getattr(connection, 'auth_method', new_data.get('auth_method', 0)) or 0)
+            except Exception:
+                new_data['auth_method'] = 0
+
+            keyfile_value = getattr(connection, 'keyfile', new_data.get('keyfile', '')) or ''
+            if isinstance(keyfile_value, str) and keyfile_value.strip().lower().startswith('select key file'):
+                keyfile_value = ''
+            new_data['keyfile'] = keyfile_value
+
+            certificate_value = getattr(connection, 'certificate', new_data.get('certificate', '')) or ''
+            if isinstance(certificate_value, str) and certificate_value.strip().lower().startswith('select certificate'):
+                certificate_value = ''
+            new_data['certificate'] = certificate_value
+
+            new_data['key_passphrase'] = getattr(connection, 'key_passphrase', new_data.get('key_passphrase', '')) or ''
+
+            try:
+                new_data['key_select_mode'] = int(getattr(connection, 'key_select_mode', new_data.get('key_select_mode', 0)) or 0)
+            except Exception:
+                new_data['key_select_mode'] = 0
+
+            new_data['password'] = getattr(connection, 'password', new_data.get('password', '')) or ''
+            new_data['x11_forwarding'] = bool(getattr(connection, 'x11_forwarding', new_data.get('x11_forwarding', False)))
+            new_data['pubkey_auth_no'] = bool(getattr(connection, 'pubkey_auth_no', new_data.get('pubkey_auth_no', False)))
+            new_data['forward_agent'] = bool(getattr(connection, 'forward_agent', new_data.get('forward_agent', False)))
+
+            proxy_jump_value = getattr(connection, 'proxy_jump', new_data.get('proxy_jump', []))
+            if isinstance(proxy_jump_value, str):
+                proxy_jump_value = [h.strip() for h in re.split(r'[\s,]+', proxy_jump_value) if h.strip()]
+            else:
+                proxy_jump_value = list(proxy_jump_value or [])
+            new_data['proxy_jump'] = proxy_jump_value
+
+            new_data['proxy_command'] = getattr(connection, 'proxy_command', new_data.get('proxy_command', '')) or ''
+            new_data['local_command'] = getattr(connection, 'local_command', new_data.get('local_command', '')) or ''
+            new_data['remote_command'] = getattr(connection, 'remote_command', new_data.get('remote_command', '')) or ''
+            new_data['extra_ssh_config'] = getattr(connection, 'extra_ssh_config', new_data.get('extra_ssh_config', '')) or ''
+
+            forwarding_rules = getattr(connection, 'forwarding_rules', new_data.get('forwarding_rules', []))
+            try:
+                new_data['forwarding_rules'] = copy.deepcopy(list(forwarding_rules or []))
+            except Exception:
+                new_data['forwarding_rules'] = []
+
+            source_path = getattr(connection, 'source', new_data.get('source'))
+            if source_path:
+                new_data['source'] = source_path
+            else:
+                new_data.pop('source', None)
+
+            new_connection = Connection(new_data)
+            try:
+                new_connection.auth_method = int(new_data.get('auth_method', 0) or 0)
+            except Exception:
+                new_connection.auth_method = 0
+            try:
+                new_connection.key_select_mode = int(new_data.get('key_select_mode', 0) or 0)
+            except Exception:
+                new_connection.key_select_mode = 0
+            new_connection.forwarding_rules = list(new_data.get('forwarding_rules', []))
+            new_connection.proxy_jump = list(new_data.get('proxy_jump', []))
+            new_connection.forward_agent = bool(new_data.get('forward_agent', False))
+            new_connection.extra_ssh_config = new_data.get('extra_ssh_config', '')
+            new_connection.certificate = new_data.get('certificate', '')
+
+            original_group_id = self.group_manager.get_connection_group(connection.nickname)
+
+            self.connection_manager.connections.append(new_connection)
+            try:
+                if not self.connection_manager.update_connection(new_connection, new_data):
+                    raise RuntimeError(_('Failed to save duplicated connection.'))
+            except Exception:
+                try:
+                    self.connection_manager.connections.remove(new_connection)
+                except ValueError:
+                    pass
+                raise
+
+            self.connection_manager.load_ssh_config()
+
+            if original_group_id and original_group_id in getattr(self.group_manager, 'groups', {}):
+                self.group_manager.move_connection(new_nickname, original_group_id)
+                try:
+                    self.group_manager.reorder_connection_in_group(new_nickname, connection.nickname, 'below')
+                except Exception:
+                    pass
+            else:
+                self.group_manager.move_connection(new_nickname, None)
+                try:
+                    root_connections = self.group_manager.root_connections
+                    if new_nickname in root_connections and connection.nickname in root_connections:
+                        root_connections.remove(new_nickname)
+                        insert_at = root_connections.index(connection.nickname) + 1
+                        root_connections.insert(insert_at, new_nickname)
+                        self.group_manager._save_groups()
+                except Exception:
+                    pass
+
+            self.rebuild_connection_list()
+
+            duplicated = self.connection_manager.find_connection_by_nickname(new_nickname)
+            if duplicated and duplicated in self.connection_rows:
+                row = self.connection_rows[duplicated]
+                self.connection_list.select_row(row)
+                try:
+                    self.connection_list.scroll_to_row(row)
+                except Exception:
+                    pass
+                try:
+                    self.connection_list.grab_focus()
+                except Exception:
+                    pass
+            return duplicated
+        except Exception as error:
+            self._show_duplicate_connection_error(connection, error)
+            logger.error(f"Failed to duplicate connection: {error}", exc_info=True)
+            return None
+
     def setup_sidebar(self):
         """Set up the sidebar with connection list"""
         sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -908,6 +1126,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         
                         edit_row.connect('activated', lambda *_: (self.on_edit_connection_action(None, None), pop.popdown()))
                         listbox.append(edit_row)
+
+                        # Duplicate Connection row
+                        duplicate_row = Adw.ActionRow(title=_('Duplicate Connection'))
+                        duplicate_icon = Gtk.Image.new_from_icon_name('edit-copy-symbolic')
+                        duplicate_row.add_prefix(duplicate_icon)
+                        duplicate_row.set_activatable(True)
+                        duplicate_row.connect('activated', lambda *_: (self.on_duplicate_connection_action(None, None), pop.popdown()))
+                        listbox.append(duplicate_row)
 
                         # Manage Files row
                         if not should_hide_file_manager_options():

@@ -58,6 +58,20 @@ class WindowActions:
         except Exception as e:
             logger.error(f"Failed to open new connection tab: {e}")
 
+    def on_duplicate_connection_action(self, action, param=None):
+        """Duplicate the currently selected connection."""
+        try:
+            connection = getattr(self, '_context_menu_connection', None)
+            if connection is None:
+                row = self.connection_list.get_selected_row()
+                connection = getattr(row, 'connection', None) if row else None
+            if connection is None:
+                return
+            if hasattr(self, 'duplicate_connection'):
+                self.duplicate_connection(connection)
+        except Exception as e:
+            logger.error(f"Failed to duplicate connection: {e}")
+
     def on_open_new_connection_tab_action(self, action, param=None):
         """Open a new tab for the selected connection via global shortcut (Ctrl/⌘+Alt+N)."""
         try:
@@ -679,6 +693,11 @@ def register_window_actions(window):
         window.manage_files_action = Gio.SimpleAction.new('manage-files', None)
         window.manage_files_action.connect('activate', window.on_manage_files_action)
         window.add_action(window.manage_files_action)
+
+    if hasattr(window, 'on_duplicate_connection_action'):
+        window.duplicate_connection_action = Gio.SimpleAction.new('duplicate-connection', None)
+        window.duplicate_connection_action.connect('activate', window.on_duplicate_connection_action)
+        window.add_action(window.duplicate_connection_action)
 
     # Action for editing connections via context menu
     window.edit_connection_action = Gio.SimpleAction.new('edit-connection', None)
