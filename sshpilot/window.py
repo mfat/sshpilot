@@ -61,6 +61,18 @@ from .ssh_utils import ensure_writable_ssh_home
 
 logger = logging.getLogger(__name__)
 
+
+def _get_connection_host(connection) -> str:
+    """Return the hostname for a connection object, falling back to legacy host attribute."""
+    host = getattr(connection, 'hostname', None)
+    if host:
+        return str(host)
+    legacy = getattr(connection, 'host', None)
+    if legacy:
+        return str(legacy)
+    nickname = getattr(connection, 'nickname', '')
+    return str(nickname or '')
+
 class MainWindow(Adw.ApplicationWindow, WindowActions):
     """Main application window"""
 
@@ -1970,7 +1982,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             name_label.set_halign(Gtk.Align.START)
             name_label.set_css_classes(['title-4'])
             
-            host_label = Gtk.Label(label=f"{connection.username}@{connection.host}:{connection.port}")
+            host_value = _get_connection_host(connection)
+            host_label = Gtk.Label(label=f"{connection.username}@{host_value}:{connection.port}")
             host_label.set_halign(Gtk.Align.START)
             host_label.set_css_classes(['dim-label'])
             
@@ -2253,7 +2266,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             return
         connection = selected_row.connection
         logger.info(f"Main window: Selected connection: {getattr(connection, 'nickname', 'unknown')}")
-        logger.debug(f"Main window: Connection details - host: {getattr(connection, 'host', 'unknown')}, "
+        logger.debug(f"Main window: Connection details - host: {getattr(connection, 'hostname', getattr(connection, 'host', 'unknown'))}, "
                     f"username: {getattr(connection, 'username', 'unknown')}, "
                     f"port: {getattr(connection, 'port', 22)}")
 
@@ -2646,7 +2659,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             connection = self.terminal_to_connection.get(child)
             if connection:
                 # Check if this is a local terminal
-                if hasattr(connection, 'host') and connection.host == 'localhost':
+                if _get_connection_host(connection) == 'localhost':
                     # Local terminal - clear selection
                     current = self.connection_list.get_selected_row()
                     if current is not None:
@@ -2831,9 +2844,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Show error dialog to user
                     self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
                 
+                host_value = _get_connection_host(connection)
                 success, error_msg = open_remote_in_file_manager(
                     user=connection.username,
-                    host=connection.host,
+                    host=host_value,
                     port=connection.port if connection.port != 22 else None,
                     error_callback=error_callback,
                     parent_window=self
@@ -2874,14 +2888,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         - Header bar contains Cancel and Close buttons
         """
         logger.info("Main window: Starting ssh-copy-id terminal window creation")
-        logger.debug(f"Main window: Connection details - host: {getattr(connection, 'host', 'unknown')}, "
+        host_value = _get_connection_host(connection)
+        logger.debug(f"Main window: Connection details - host: {host_value}, "
                     f"username: {getattr(connection, 'username', 'unknown')}, "
                     f"port: {getattr(connection, 'port', 22)}")
         logger.debug(f"Main window: SSH key details - private_path: {getattr(ssh_key, 'private_path', 'unknown')}, "
                     f"public_path: {getattr(ssh_key, 'public_path', 'unknown')}")
         
         try:
-            target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
+            target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
             pub_name = os.path.basename(getattr(ssh_key, 'public_path', '') or '')
             body_text = _('This will add your public key to the server\'s ~/.ssh/authorized_keys so future logins can use SSH keys.')
             logger.debug(f"Main window: Target: {target}, public key name: {pub_name}")
@@ -3027,7 +3042,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 auth_method = 0
                 prefer_password = False
 
-            has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username))
+            has_saved_password = bool(self.connection_manager.get_password(host_value, connection.username))
             combined_auth = (auth_method == 0 and has_saved_password)
             logger.debug(f"Main window: Has saved password: {has_saved_password}")
             logger.debug(
@@ -3066,7 +3081,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     logger.debug("Main window: FIFO created with permissions 0o600")
                     
                     # Start writer thread that writes the password exactly once
-                    saved_password = self.connection_manager.get_password(connection.host, connection.username)
+                    saved_password = self.connection_manager.get_password(host_value, connection.username)
                     logger.debug(f"Main window: Retrieved saved password, length: {len(saved_password) if saved_password else 0}")
                     t = threading.Thread(target=_write_once_fifo, args=(fifo, saved_password), daemon=True)
                     t.start()
@@ -3219,7 +3234,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             transient_for=dlg,
                             modal=True,
                             heading=_('Success') if ok else _('Error'),
-                            body=(_('Public key copied to {}@{}').format(connection.username, connection.host)
+                            body=(_('Public key copied to {}@{}').format(connection.username, host_value)
                                   if ok else _('Failed to copy the public key. Check logs for details.')),
                         )
                         msg.add_response('ok', _('OK'))
@@ -3271,6 +3286,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         logger.debug(f"Main window: SSH key object: {type(ssh_key)}")
         logger.debug(f"Main window: Force option: {force}")
         logger.info(f"Key object attributes: private_path={getattr(ssh_key, 'private_path', 'unknown')}, public_path={getattr(ssh_key, 'public_path', 'unknown')}")
+        host_value = _get_connection_host(connection)
         
         # Verify the public key file exists
         logger.debug(f"Main window: Checking if public key file exists: {ssh_key.public_path}")
@@ -3336,7 +3352,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             auth_method = 0
             prefer_password = False
 
-        has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username))
+        has_saved_password = bool(self.connection_manager.get_password(host_value, connection.username))
         combined_auth = (auth_method == 0 and has_saved_password)
 
         try:
@@ -3386,7 +3402,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 )
         
         # Target
-        target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
+        target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
         argv.append(target)
         logger.debug(f"Main window: Added target: {target}")
         logger.debug(f"Main window: Final argv: {argv}")
@@ -3437,7 +3453,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _show_scp_upload_terminal_window(self, connection, local_paths, remote_dir):
         try:
-            target = f"{connection.username}@{connection.host}"
+            host_value = _get_connection_host(connection)
+            target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
             info_text = _('We will use scp to upload file(s) to the selected server.')
 
             dlg = Adw.Window()
@@ -3686,6 +3703,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         known_hosts_path: Optional[str] = None,
     ):
         argv = ['scp', '-v']
+        host_value = _get_connection_host(connection)
         # Port
         try:
             if getattr(connection, 'port', 22) and connection.port != 22:
@@ -3717,7 +3735,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             auth_method = 0
             prefer_password = False
-        has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username)) if hasattr(self, 'connection_manager') and self.connection_manager else False
+        has_saved_password = bool(self.connection_manager.get_password(host_value, connection.username)) if hasattr(self, 'connection_manager') and self.connection_manager else False
         combined_auth = (auth_method == 0 and has_saved_password)
         try:
             key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
@@ -3765,7 +3783,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Try to get saved password
             try:
                 if hasattr(self, 'connection_manager') and self.connection_manager:
-                    saved_password = self.connection_manager.get_password(connection.host, connection.username)
+                    saved_password = self.connection_manager.get_password(host_value, connection.username)
                     if saved_password:
                         # Use sshpass for password authentication
                         import shutil
@@ -3822,7 +3840,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Paths
         for p in local_paths:
             argv.append(p)
-        target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
+        target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
         argv.append(f"{target}:{remote_dir}")
         return argv
 
@@ -3976,10 +3994,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self._pending_close_terminal = terminal
             
             # Show confirmation dialog
+            host_value = _get_connection_host(connection)
             dialog = Adw.MessageDialog(
                 transient_for=self,
                 modal=True,
-                heading=_("Close connection to {}").format(connection.nickname or connection.host),
+                heading=_("Close connection to {}").format(connection.nickname or host_value),
                 body=_("Are you sure you want to close this connection?")
             )
             dialog.add_response('cancel', _("Cancel"))
@@ -4457,9 +4476,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Show error dialog to user
                     self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
                 
+                host_value = _get_connection_host(connection)
                 success, error_msg = open_remote_in_file_manager(
                     user=connection.username,
-                    host=connection.host,
+                    host=host_value,
                     port=connection.port if connection.port != 22 else None,
                     error_callback=error_callback,
                     parent_window=self
@@ -4561,7 +4581,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     if (hasattr(terminal_widget.connection, 'nickname') and
                             terminal_widget.connection.nickname == "Local Terminal"):
                         continue
-                    if hasattr(terminal_widget.connection, 'host'):
+                    if hasattr(terminal_widget.connection, 'hostname'):
                         ssh_terminals_count += 1
             
             if ssh_terminals_count == 0:
@@ -5078,8 +5098,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def open_in_system_terminal(self, connection):
         """Open the connection in the system's default terminal"""
         try:
+            host_value = _get_connection_host(connection)
             port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
-            ssh_command = f"ssh{port_text} {connection.username}@{connection.host}"
+            ssh_command = f"ssh{port_text} {connection.username}@{host_value}" if getattr(connection, 'username', '') else f"ssh{port_text} {host_value}"
 
             use_external = self.config.get_setting('use-external-terminal', False)
             if use_external:
@@ -5223,8 +5244,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def _open_connection_in_external_terminal(self, connection):
         """Open the connection in the user's preferred external terminal"""
         try:
+            host_value = _get_connection_host(connection)
             port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
-            ssh_command = f"ssh{port_text} {connection.username}@{connection.host}"
+            ssh_command = f"ssh{port_text} {connection.username}@{host_value}" if getattr(connection, 'username', '') else f"ssh{port_text} {host_value}"
 
             terminal = self._get_user_preferred_terminal()
             if not terminal:
@@ -5522,7 +5544,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         return []
                 existing = {
                     'nickname': _norm_str(getattr(old_connection, 'nickname', '')),
-                    'host': _norm_str(getattr(old_connection, 'host', '')),
+                    'hostname': _norm_str(getattr(old_connection, 'hostname', getattr(old_connection, 'host', ''))),
                     'username': _norm_str(getattr(old_connection, 'username', '')),
                     'port': int(getattr(old_connection, 'port', 22) or 22),
                     'auth_method': int(getattr(old_connection, 'auth_method', 0) or 0),
@@ -5539,7 +5561,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 }
                 incoming = {
                     'nickname': _norm_str(connection_data.get('nickname')),
-                    'host': _norm_str(connection_data.get('host')),
+                    'hostname': _norm_str(connection_data.get('hostname') or connection_data.get('host')),
                     'username': _norm_str(connection_data.get('username')),
                     'port': int(connection_data.get('port') or 22),
                     'auth_method': int(connection_data.get('auth_method') or 0),
@@ -5603,7 +5625,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
                 # Update connection attributes in memory (ensure forwarding rules kept)
                 old_connection.nickname = connection_data['nickname']
-                old_connection.host = connection_data['host']
+                old_connection.hostname = connection_data['hostname']
+                old_connection.host = old_connection.hostname
                 old_connection.username = connection_data['username']
                 old_connection.port = connection_data['port']
                 old_connection.keyfile = connection_data['keyfile']
