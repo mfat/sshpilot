@@ -71,7 +71,7 @@ def test_parse_host_with_quotes():
     }
     parsed = ConnectionManager.parse_host_config(cm, config)
     assert parsed["nickname"] == "nick name"
-    assert parsed["host"] == "example.com"
+    assert parsed["hostname"] == "example.com"
     assert parsed["aliases"] == []
 
 
@@ -79,7 +79,7 @@ def test_format_host_requotes():
     cm = make_cm()
     data = {
         "nickname": "nick name",
-        "host": "example.com",
+        "hostname": "example.com",
         "username": "user",
     }
     entry = ConnectionManager.format_ssh_config_entry(cm, data)

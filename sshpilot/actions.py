@@ -91,9 +91,10 @@ class WindowActions:
                     # Show error dialog to user
                     self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
 
+                host_value = getattr(connection, 'hostname', getattr(connection, 'host', getattr(connection, 'nickname', '')))
                 success, error_msg = open_remote_in_file_manager(
                     user=connection.username,
-                    host=connection.host,
+                    host=host_value,
                     port=connection.port if connection.port != 22 else None,
                     error_callback=error_callback,
                     parent_window=self

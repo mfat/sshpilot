@@ -520,7 +520,7 @@ class SSHConfigAdvancedTab(Gtk.Box):
                         
                         config_data = {
                             'nickname': getattr(connection, 'nickname', 'your-host-name'),
-                            'host': getattr(connection, 'host', ''),
+                            'hostname': getattr(connection, 'hostname', getattr(connection, 'host', '')),
                             'username': getattr(connection, 'username', ''),
                             'port': getattr(connection, 'port', 22),
                             'auth_method': getattr(connection, 'auth_method', 0),
@@ -1081,7 +1081,7 @@ class ConnectionDialog(Adw.Window):
         try:
             # Get current connection data
             nickname = getattr(self, 'nickname_row', None)
-            host = getattr(self, 'host_row', None)
+            host = getattr(self, 'hostname_row', None)
             username = getattr(self, 'username_row', None)
             port = getattr(self, 'port_row', None)
             auth_method = getattr(self, 'auth_method_row', None)
@@ -1193,7 +1193,7 @@ class ConnectionDialog(Adw.Window):
             return f"""# SSH Config Block for this connection
 # Generated from current settings
 Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'nickname_row') else 'my-server'}
-    HostName {getattr(self, 'host_row', None).get_text().strip() if hasattr(self, 'host_row') else 'example.com'}
+    HostName {getattr(self, 'hostname_row', None).get_text().strip() if hasattr(self, 'hostname_row') else 'example.com'}
     User {getattr(self, 'username_row', None).get_text().strip() if hasattr(self, 'username_row') else 'user'}
     Port {getattr(self, 'port_row', None).get_text().strip() if hasattr(self, 'port_row') else '22'}"""
     
@@ -1205,7 +1205,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         try:
             # Ensure UI controls exist
             required_attrs = [
-                'nickname_row', 'host_row', 'username_row', 'port_row',
+                'nickname_row', 'hostname_row', 'username_row', 'port_row',
                 'proxy_jump_row', 'forward_agent_row',
                 'auth_method_row', 'keyfile_row', 'password_row', 'key_passphrase_row',
                 'pubkey_auth_row'
@@ -1216,8 +1216,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # Load basic connection data
             if hasattr(self.connection, 'nickname'):
                 self.nickname_row.set_text(self.connection.nickname or "")
-            if hasattr(self.connection, 'host'):
-                self.host_row.set_text(self.connection.host or "")
+            if hasattr(self.connection, 'hostname'):
+                self.hostname_row.set_text(self.connection.hostname or "")
             if hasattr(self.connection, 'username'):
                 self.username_row.set_text(self.connection.username or "")
             if hasattr(self.connection, 'port'):
@@ -1285,8 +1285,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 # Fallback: fetch from keyring so the dialog shows stored password (masked)
                 try:
                     mgr = getattr(self.parent_window, 'connection_manager', None)
-                    if mgr and hasattr(self.connection, 'host') and hasattr(self.connection, 'username'):
-                        pw = mgr.get_password(self.connection.host, self.connection.username)
+                    if mgr and hasattr(self.connection, 'hostname') and hasattr(self.connection, 'username'):
+                        pw = mgr.get_password(self.connection.hostname, self.connection.username)
                         if pw:
                             self.password_row.set_text(pw)
                 except Exception:
@@ -1745,8 +1745,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self._connect_row_validation(self.nickname_row, lambda r: self._validate_field_row('name', r))
         if hasattr(self, 'username_row'):
             self._connect_row_validation(self.username_row, lambda r: self._validate_field_row('username', r))
-        if hasattr(self, 'host_row'):
-            self._connect_row_validation(self.host_row, lambda r: self._validate_field_row('hostname', r))
+        if hasattr(self, 'hostname_row'):
+            self._connect_row_validation(self.hostname_row, lambda r: self._validate_field_row('hostname', r))
         if hasattr(self, 'port_row'):
             self._connect_row_validation(self.port_row, lambda r: self._validate_field_row('port', r, context="SSH"))
         # Local forwarding
@@ -1964,8 +1964,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self._validate_field_row('name', self.nickname_row)
             if hasattr(self, 'username_row'):
                 self._validate_field_row('username', self.username_row)
-            if hasattr(self, 'host_row'):
-                self._validate_field_row('hostname', self.host_row)
+            if hasattr(self, 'hostname_row'):
+                self._validate_field_row('hostname', self.hostname_row)
             if hasattr(self, 'port_row'):
                 self._validate_field_row('port', self.port_row, context="SSH")
         except Exception:
@@ -1995,10 +1995,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             res = self._validate_field_row('username', self.username_row)
             if not res.is_valid:
                 return self.username_row
-        if hasattr(self, 'host_row'):
-            res = self._validate_field_row('hostname', self.host_row)
+        if hasattr(self, 'hostname_row'):
+            res = self._validate_field_row('hostname', self.hostname_row)
             if not res.is_valid:
-                return self.host_row
+                return self.hostname_row
         if hasattr(self, 'port_row'):
             res = self._validate_field_row('port', self.port_row, context="SSH")
             if not res.is_valid:
@@ -2047,9 +2047,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.nickname_row = Adw.EntryRow(title=_("Nickname"))
         basic_group.add(self.nickname_row)
         
-        # Host
-        self.host_row = Adw.EntryRow(title=_("Host/IP address"))
-        basic_group.add(self.host_row)
+        # Hostname
+        self.hostname_row = Adw.EntryRow(title=_("Hostname / IP address"))
+        basic_group.add(self.hostname_row)
 
         # Username
         self.username_row = Adw.EntryRow(title=_("Username"))
@@ -3332,7 +3332,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Gather connection data
         connection_data = {
             'nickname': self.nickname_row.get_text().strip(),
-            'host': self.host_row.get_text().strip(),
+            'hostname': self.hostname_row.get_text().strip(),
             'username': self.username_row.get_text().strip(),
             'port': int(self.port_row.get_text().strip() or '22'),
             'auth_method': self.auth_method_row.get_selected(),
