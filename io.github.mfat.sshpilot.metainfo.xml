@@ -32,7 +32,7 @@
 
   <releases>
 
-    <release version="3.8.6" date="2025-09-17">
+    <release version="3.8.7" date="2025-09-18">
 
       <description>
         <p>Latest stable release.</p>
@@ -67,8 +67,7 @@
 
   <categories>
     <category>Utility</category>
-    <category>Security</category>
-    <category>Networking</category>
+    <category>Network</category>
   </categories>
 
 </component>
