@@ -24,6 +24,7 @@ import pathlib
 import posixpath
 import shutil
 import threading
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -401,11 +402,11 @@ class PaneControls(Gtk.Box):
 class PaneToolbar(Gtk.Box):
     def __init__(self) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
-        
+
         # Create the actual header bar
         self._header_bar = Adw.HeaderBar()
         self._header_bar.set_title_widget(Gtk.Label(label=""))
-        
+
         self.controls = PaneControls()
         self.path_entry = PathEntry()
         self.list_toggle = ViewToggle("view-list-symbolic", "List view")
@@ -415,10 +416,32 @@ class PaneToolbar(Gtk.Box):
         action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         action_box.append(self.list_toggle)
         action_box.append(self.grid_toggle)
+
+        sort_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        sort_box.set_valign(Gtk.Align.CENTER)
+
+        sort_label = Gtk.Label(label="Sort")
+        sort_label.add_css_class("dim-label")
+        sort_label.set_valign(Gtk.Align.CENTER)
+
+        self.sort_dropdown = Gtk.DropDown.new_from_strings(["Name", "Size", "Modified"])
+        self.sort_dropdown.set_selected(0)
+        self.sort_dropdown.set_valign(Gtk.Align.CENTER)
+        self.sort_dropdown.set_tooltip_text("Choose how to sort entries")
+
+        self.sort_direction_button = Gtk.ToggleButton()
+        self.sort_direction_button.set_valign(Gtk.Align.CENTER)
+        self.sort_direction_button.set_tooltip_text("Toggle ascending or descending order")
+
+        sort_box.append(sort_label)
+        sort_box.append(self.sort_dropdown)
+        sort_box.append(self.sort_direction_button)
+
+        action_box.append(sort_box)
         self._header_bar.pack_start(self.controls)
         self._header_bar.pack_start(self.path_entry)
         self._header_bar.pack_end(action_box)
-        
+
         self.append(self._header_bar)
     
     def get_header_bar(self):
@@ -428,6 +451,8 @@ class PaneToolbar(Gtk.Box):
 
 class FilePane(Gtk.Box):
     """Represents a single pane in the manager."""
+
+    _TYPEAHEAD_TIMEOUT = 1.0
 
     __gsignals__ = {
         "path-changed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
@@ -504,11 +529,11 @@ class FilePane(Gtk.Box):
             "clicked", lambda *_: self.emit("request-operation", "mkdir", None)
         )
         if self._is_remote:
-            self.toolbar.controls.upload_button.set_visible(False)
-            self.toolbar.controls.download_button.connect("clicked", self._on_download_clicked)
-        else:
             self.toolbar.controls.upload_button.connect("clicked", self._on_upload_clicked)
             self.toolbar.controls.download_button.set_visible(False)
+        else:
+            self.toolbar.controls.upload_button.set_visible(False)
+            self.toolbar.controls.download_button.connect("clicked", self._on_download_clicked)
 
         self._history: List[str] = []
         self._current_path = "/"
@@ -519,6 +544,7 @@ class FilePane(Gtk.Box):
         self.toolbar.controls.show_hidden_toggle.connect(
             "toggled", self._on_show_hidden_toggled
         )
+
         self._suppress_history_push: bool = False
         self._selection_model.connect("selection-changed", self._on_selection_changed)
 
@@ -529,6 +555,11 @@ class FilePane(Gtk.Box):
         self._add_context_controller(list_view)
         self._add_context_controller(grid_view)
 
+        for view in (list_view, grid_view):
+            controller = Gtk.EventControllerKey.new()
+            controller.connect("key-pressed", self._on_typeahead_key_pressed)
+            view.add_controller(controller)
+
         # Drag and drop controllers – these provide the visual affordance and
         # forward requests to the window which understands the context.
         drop_target = Gtk.DropTarget.new(Gio.File, Gdk.DragAction.COPY)
@@ -536,6 +567,12 @@ class FilePane(Gtk.Box):
         drop_target.connect("drop", self._on_drop)
         self.add_controller(drop_target)
         self._update_menu_state()
+        self.toolbar.sort_dropdown.connect("notify::selected", self._on_sort_key_changed)
+        self.toolbar.sort_direction_button.connect("toggled", self._on_sort_direction_toggled)
+        self._update_sort_direction_icon()
+
+        self._typeahead_buffer: str = ""
+        self._typeahead_last_time: float = 0.0
 
     # -- callbacks ------------------------------------------------------
 
@@ -593,6 +630,27 @@ class FilePane(Gtk.Box):
 
     def _on_selection_changed(self, model, position, n_items):
         self._update_menu_state()
+
+    def _on_sort_key_changed(self, dropdown: Gtk.DropDown, _param: GObject.ParamSpec) -> None:
+        mapping = {0: "name", 1: "size", 2: "modified"}
+        selected = dropdown.get_selected()
+        new_key = mapping.get(selected, "name")
+        if new_key != self._sort_key:
+            self._sort_key = new_key
+            self._refresh_sorted_entries(preserve_selection=True)
+
+    def _on_sort_direction_toggled(self, button: Gtk.ToggleButton) -> None:
+        self._sort_descending = button.get_active()
+        self._update_sort_direction_icon()
+        self._refresh_sorted_entries(preserve_selection=True)
+
+    def _update_sort_direction_icon(self) -> None:
+        icon = "view-sort-descending-symbolic" if self._sort_descending else "view-sort-ascending-symbolic"
+        tooltip = "Sorted descending" if self._sort_descending else "Sorted ascending"
+        self.toolbar.sort_direction_button.set_icon_name(icon)
+        self.toolbar.sort_direction_button.set_tooltip_text(
+            f"{tooltip}. Click to toggle order"
+        )
 
     def _create_menu_model(self) -> Gtk.PopoverMenu:
         if not self._menu_actions:
@@ -684,8 +742,15 @@ class FilePane(Gtk.Box):
             if action is not None:
                 action.set_enabled(enabled)
 
+        window = self.get_root()
+        local_has_selection = False
+        if self._is_remote and isinstance(window, FileManagerWindow):
+            local_pane = getattr(window, "_left_pane", None)
+            if isinstance(local_pane, FilePane):
+                local_has_selection = local_pane.get_selected_entry() is not None
+
         _set_enabled("download", self._is_remote and has_selection)
-        _set_enabled("upload", (not self._is_remote) and has_selection)
+        _set_enabled("upload", self._is_remote and local_has_selection)
         _set_enabled("rename", has_selection)
         _set_enabled("delete", has_selection)
         _set_enabled("new_folder", True)
@@ -718,16 +783,25 @@ class FilePane(Gtk.Box):
         return self._entries[index]
 
     def _on_upload_clicked(self, _button: Gtk.Button) -> None:
-        if not self._is_remote:
-            return
-
         window = self.get_root()
         if not isinstance(window, FileManagerWindow):
             return
 
         local_pane = getattr(window, "_left_pane", None)
-        if local_pane is None:
+        if not isinstance(local_pane, FilePane):
             self.show_toast("Local pane is unavailable")
+            return
+
+        destination_pane: Optional[FilePane]
+        if self._is_remote:
+            destination_pane = self
+        else:
+            destination_pane = getattr(window, "_right_pane", None)
+            if not isinstance(destination_pane, FilePane) or not destination_pane._is_remote:
+                destination_pane = None
+
+        if destination_pane is None:
+            self.show_toast("Remote pane is unavailable")
             return
 
         entry = local_pane.get_selected_entry()
@@ -741,7 +815,7 @@ class FilePane(Gtk.Box):
             self.show_toast("Selected local item is not accessible")
             return
 
-        destination = self.toolbar.path_entry.get_text() or "/"
+        destination = destination_pane.toolbar.path_entry.get_text() or "/"
         payload = {"paths": [source_path], "destination": destination}
         self.emit("request-operation", "upload", payload)
 
@@ -818,6 +892,7 @@ class FilePane(Gtk.Box):
 
         self._update_menu_state()
 
+
     def _on_show_hidden_toggled(self, button: Gtk.ToggleButton) -> None:
         new_value = button.get_active()
         if self._show_hidden == new_value:
@@ -832,6 +907,46 @@ class FilePane(Gtk.Box):
             entry = self._entries[position]
             if entry.is_dir:
                 self.emit("path-changed", os.path.join(self._current_path, entry.name))
+
+    def _sort_entries(self, entries: Iterable[FileEntry]) -> List[FileEntry]:
+        def key_func(item: FileEntry):
+            if self._sort_key == "size":
+                return item.size
+            if self._sort_key == "modified":
+                return item.modified
+            return item.name.casefold()
+
+        dirs = [entry for entry in entries if entry.is_dir]
+        files = [entry for entry in entries if not entry.is_dir]
+
+        dirs_sorted = sorted(dirs, key=key_func, reverse=self._sort_descending)
+        files_sorted = sorted(files, key=key_func, reverse=self._sort_descending)
+        return dirs_sorted + files_sorted
+
+    def _refresh_sorted_entries(self, *, preserve_selection: bool) -> None:
+        selected_name: Optional[str] = None
+        if preserve_selection:
+            selected_entry = self.get_selected_entry()
+            if selected_entry is not None:
+                selected_name = selected_entry.name
+
+        self._entries = self._sort_entries(self._raw_entries)
+        self._list_store.remove_all()
+        for entry in self._entries:
+            suffix = "/" if entry.is_dir else ""
+            self._list_store.append(Gtk.StringObject.new(entry.name + suffix))
+
+        if preserve_selection and selected_name is not None:
+            for index, entry in enumerate(self._entries):
+                if entry.name == selected_name:
+                    self._selection_model.select(index)
+                    break
+            else:
+                self._selection_model.unselect_all()
+        else:
+            self._selection_model.unselect_all()
+
+        self._update_menu_state()
 
     def _on_grid_activate(self, _grid_view: Gtk.GridView, position: int) -> None:
         if position is not None and 0 <= position < len(self._entries):
@@ -865,6 +980,124 @@ class FilePane(Gtk.Box):
 
     def show_toast(self, text: str) -> None:
         self._overlay.add_toast(Adw.Toast.new(text))
+
+    # -- type-ahead search ----------------------------------------------
+
+    def _current_time(self) -> float:
+        getter = getattr(GLib, "get_monotonic_time", None)
+        if callable(getter):
+            try:
+                return getter() / 1_000_000
+            except Exception:
+                pass
+        return time.monotonic()
+
+    def _find_prefix_match(self, prefix: str, start_index: int) -> Optional[int]:
+        if not prefix or not self._entries:
+            return None
+
+        total = len(self._entries)
+        if total <= 0:
+            return None
+
+        start = 0 if start_index is None else start_index
+        if start < 0:
+            start = 0
+
+        prefix_casefold = prefix.casefold()
+        for offset in range(total):
+            index = (start + offset) % total
+            if self._entries[index].name.casefold().startswith(prefix_casefold):
+                return index
+        return None
+
+    def _scroll_to_position(self, position: int) -> None:
+        visible = self._stack.get_visible_child_name()
+        view: Optional[Gtk.Widget] = None
+        if visible == "list":
+            view = self._list_view
+        elif visible == "grid":
+            view = self._grid_view
+
+        if view is None:
+            return
+
+        scroll_to = getattr(view, "scroll_to", None)
+        if callable(scroll_to):
+            flags = getattr(Gtk, "ListScrollFlags", None)
+            none_flag = getattr(flags, "NONE", 0) if flags is not None else 0
+            try:
+                scroll_to(position, none_flag, 0.0)
+            except TypeError:
+                try:
+                    scroll_to(position, none_flag, 0)
+                except Exception:
+                    pass
+
+    def _on_typeahead_key_pressed(
+        self,
+        _controller: Gtk.EventControllerKey,
+        keyval: int,
+        _keycode: int,
+        state: Gdk.ModifierType,
+    ) -> bool:
+        if not self._entries:
+            return False
+
+        if state & (
+            Gdk.ModifierType.CONTROL_MASK
+            | Gdk.ModifierType.MOD1_MASK
+            | getattr(Gdk.ModifierType, "ALT_MASK", 0)
+            | getattr(Gdk.ModifierType, "SUPER_MASK", 0)
+        ):
+            return False
+
+        char_code = Gdk.keyval_to_unicode(keyval)
+        if not char_code:
+            return False
+
+        char = chr(char_code)
+        if not char or not char.isprintable():
+            return False
+
+        now = self._current_time()
+        if now - self._typeahead_last_time > self._TYPEAHEAD_TIMEOUT:
+            self._typeahead_buffer = ""
+
+        self._typeahead_last_time = now
+
+        repeat_cycle = (
+            bool(self._typeahead_buffer)
+            and len(self._typeahead_buffer) == 1
+            and char.casefold() == self._typeahead_buffer.casefold()
+        )
+
+        selected = self._selection_model.get_selected()
+        if selected is None or selected < 0:
+            selected_index = 0
+        else:
+            selected_index = selected
+
+        start_index = selected_index
+        if repeat_cycle:
+            start_index += 1
+            prefix = self._typeahead_buffer
+        else:
+            self._typeahead_buffer += char
+            prefix = self._typeahead_buffer
+
+        match = self._find_prefix_match(prefix, start_index)
+
+        if match is None and not repeat_cycle:
+            self._typeahead_buffer = char
+            match = self._find_prefix_match(self._typeahead_buffer, selected_index)
+
+        if match is None:
+            return False
+
+        self._selection_model.set_selected(match)
+        self._scroll_to_position(match)
+        return True
 
 
 class FileManagerWindow(Adw.Window):
@@ -1365,12 +1598,26 @@ def launch_file_manager_window(
     port: int = 22,
     path: str = "~",
     parent: Optional[Gtk.Window] = None,
+    transient_for_parent: bool = True,
 ) -> FileManagerWindow:
     """Create and present the :class:`FileManagerWindow`.
 
     The function obtains the default application instance (``Gtk.Application``)
     if available; otherwise the caller must ensure the returned window remains
     referenced for the duration of its lifetime.
+
+    Parameters
+    ----------
+    host, username, port, path
+        Connection details used by :class:`FileManagerWindow`.
+    parent
+        Optional window that should act as the logical parent for stacking
+        purposes.  When provided the new window may be set as transient for
+        this parent depending on ``transient_for_parent``.
+    transient_for_parent
+        Set to ``False`` to avoid establishing a transient relationship with
+        ``parent``.  This allows callers to request a free-floating window even
+        when a parent reference is supplied.
     """
 
     app = Gtk.Application.get_default()
@@ -1384,9 +1631,8 @@ def launch_file_manager_window(
         port=port,
         initial_path=path,
     )
-    if parent is not None:
+    if parent is not None and transient_for_parent:
         window.set_transient_for(parent)
-        window.set_modal(True)
     window.present()
     return window
 
