@@ -60,9 +60,14 @@ class SshPilotApplication(Adw.Application):
         self.setup_logging()
         
         # Apply saved application theme (light/dark/system)
+        self.config = None
+        self._default_shortcuts = {}
+        self._action_order = []
+
         try:
             from .config import Config
             cfg = Config()
+            self.config = cfg
             saved_theme = str(cfg.get_setting('app-theme', 'default'))
             style_manager = Adw.StyleManager.get_default()
             if saved_theme == 'light':
@@ -71,7 +76,7 @@ class SshPilotApplication(Adw.Application):
                 style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
             else:
                 style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
-            
+
             # Apply color overrides
             self.apply_color_overrides(cfg)
 
@@ -259,11 +264,57 @@ class SshPilotApplication(Adw.Application):
         action = Gio.SimpleAction.new(name, None)
         action.connect("activate", callback)
         self.add_action(action)
-        if shortcuts:
-            self.set_accels_for_action(f"app.{name}", shortcuts)
-            logging.debug(f"Registered action '{name}' with shortcuts: {shortcuts}")
-        else:
+        if name not in self._action_order:
+            self._action_order.append(name)
+        self._default_shortcuts[name] = list(shortcuts) if shortcuts else None
+        self._apply_shortcut_for_action(name)
+
+    def _apply_shortcut_for_action(self, name: str):
+        default = self._default_shortcuts.get(name)
+        override = None
+        if self.config is not None:
+            try:
+                override = self.config.get_shortcut_override(name)
+            except Exception:
+                override = None
+
+        effective = default
+        source = 'default'
+        if override is not None:
+            effective = override
+            source = 'override'
+
+        action_name = f"app.{name}"
+        if effective is None:
+            self.set_accels_for_action(action_name, [])
             logging.debug(f"Registered action '{name}' without shortcuts")
+        elif len(effective) == 0:
+            self.set_accels_for_action(action_name, [])
+            logging.debug(f"Action '{name}' shortcuts disabled via {source}")
+        else:
+            self.set_accels_for_action(action_name, effective)
+            logging.debug(
+                "Registered action '%s' with shortcuts from %s: %s",
+                name,
+                source,
+                effective,
+            )
+
+    def apply_shortcut_overrides(self):
+        """Reapply all shortcut overrides to the registered actions."""
+        for name in self._action_order:
+            self._apply_shortcut_for_action(name)
+
+    def get_registered_shortcut_defaults(self):
+        """Return a mapping of action names to their default accelerators."""
+        return {
+            name: (shortcuts.copy() if isinstance(shortcuts, list) else shortcuts)
+            for name, shortcuts in self._default_shortcuts.items()
+        }
+
+    def get_registered_action_order(self):
+        """Return the order in which actions were registered."""
+        return list(self._action_order)
 
     def quit(self):
         """Request application shutdown, showing confirmation if needed."""
