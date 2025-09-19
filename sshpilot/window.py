@@ -98,6 +98,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_to_terminals: Dict[Connection, List[TerminalWidget]] = {}
         self.terminal_to_connection: Dict[TerminalWidget, Connection] = {}
         self.connection_rows = {}   # connection -> row_widget
+        self._context_menu_row = None
         # Hide hosts toggle state
         try:
             self._hide_hosts = bool(self.config.get_setting('ui.hide_hosts', False))
@@ -284,8 +285,149 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Helper to toggle CSS class on a widget"""
         if on: 
             widget.add_css_class(name)
-        else:  
+        else:
             widget.remove_css_class(name)
+
+
+
+    def _select_only_row(self, row: Optional[Gtk.ListBoxRow]) -> None:
+        """Select only the provided row, clearing any other selections."""
+        if not row or not getattr(self, 'connection_list', None):
+            return
+
+        try:
+            if hasattr(self.connection_list, 'unselect_all'):
+                self.connection_list.unselect_all()
+        except Exception:
+            pass
+
+        try:
+            self.connection_list.select_row(row)
+        except Exception:
+            pass
+
+    def _get_selected_connection_rows(self) -> List[Gtk.ListBoxRow]:
+        """Return all selected rows that represent connections."""
+        if not getattr(self, 'connection_list', None):
+            return []
+
+        try:
+            selected_rows = list(self.connection_list.get_selected_rows())
+        except Exception:
+            selected_row = self.connection_list.get_selected_row()
+            selected_rows = [selected_row] if selected_row else []
+
+        return [row for row in selected_rows if hasattr(row, 'connection')]
+
+    def _get_selected_group_rows(self) -> List[Gtk.ListBoxRow]:
+        """Return all selected rows that represent groups."""
+        if not getattr(self, 'connection_list', None):
+            return []
+
+        try:
+            selected_rows = list(self.connection_list.get_selected_rows())
+        except Exception:
+            selected_row = self.connection_list.get_selected_row()
+            selected_rows = [selected_row] if selected_row else []
+
+        return [row for row in selected_rows if hasattr(row, 'group_id')]
+
+    def _get_target_connection_rows(self, prefer_context: bool = False) -> List[Gtk.ListBoxRow]:
+        """Return rows targeted by the current action, respecting context menus."""
+        rows = self._get_selected_connection_rows()
+        context_row = getattr(self, '_context_menu_row', None)
+
+        if context_row and hasattr(context_row, 'connection'):
+            if rows and context_row in rows:
+                return rows
+            if prefer_context or not rows:
+                return [context_row]
+
+        return rows
+
+    def _get_target_connections(self, prefer_context: bool = False) -> List[Connection]:
+        """Return connection objects targeted by the current action."""
+        rows = self._get_target_connection_rows(prefer_context=prefer_context)
+        connections: List[Connection] = []
+        seen_ids = set()
+        for row in rows:
+            connection = getattr(row, 'connection', None)
+            if connection and id(connection) not in seen_ids:
+                seen_ids.add(id(connection))
+                connections.append(connection)
+        return connections
+
+    def _disconnect_connection_terminals(self, connection: Connection) -> None:
+        """Disconnect all tracked terminals for a connection."""
+        try:
+            for term in list(self.connection_to_terminals.get(connection, [])):
+                try:
+                    if hasattr(term, 'disconnect'):
+                        term.disconnect()
+                except Exception:
+                    pass
+
+            term = self.active_terminals.get(connection)
+            if term and hasattr(term, 'disconnect'):
+                try:
+                    term.disconnect()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _prompt_delete_connections(self, connections: List[Connection]) -> None:
+        """Show a confirmation dialog for deleting one or more connections."""
+        unique_connections: List[Connection] = []
+        seen_ids = set()
+        for connection in connections:
+            if connection and id(connection) not in seen_ids:
+                seen_ids.add(id(connection))
+                unique_connections.append(connection)
+
+        if not unique_connections:
+            return
+
+        active_connections = [
+            connection
+            for connection in unique_connections
+            if getattr(connection, 'is_connected', False)
+            or bool(self.connection_to_terminals.get(connection, []))
+        ]
+
+        if active_connections:
+            heading = _('Remove host?') if len(unique_connections) == 1 else _('Remove connections?')
+            body = _('Close connections and remove host?') if len(unique_connections) == 1 else _(
+                'Close connections and remove the selected hosts?'
+            )
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=heading,
+                body=body,
+            )
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('close_remove', _('Close and Remove'))
+            dialog.set_response_appearance('close_remove', Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response('close_remove')
+            dialog.set_close_response('cancel')
+        else:
+            heading = _('Delete Connection?') if len(unique_connections) == 1 else _('Delete Connections?')
+            if len(unique_connections) == 1:
+                nickname = unique_connections[0].nickname if hasattr(unique_connections[0], 'nickname') else ''
+                body = _('Are you sure you want to delete "{}"?').format(nickname)
+            else:
+                body = _('Are you sure you want to delete the selected connections?')
+
+            dialog = Adw.MessageDialog.new(self, heading, body)
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('delete', _('Delete'))
+            dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response('cancel')
+            dialog.set_close_response('cancel')
+
+        dialog.connect('response', self.on_delete_connection_response, unique_connections)
+        dialog.present()
 
 
 
@@ -809,7 +951,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             duplicated = self.connection_manager.find_connection_by_nickname(new_nickname)
             if duplicated and duplicated in self.connection_rows:
                 row = self.connection_rows[duplicated]
-                self.connection_list.select_row(row)
+                self._select_only_row(row)
                 try:
                     self.connection_list.scroll_to_row(row)
                 except Exception:
@@ -952,7 +1094,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         self.connection_list = Gtk.ListBox()
         self.connection_list.add_css_class("navigation-sidebar")
-        self.connection_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
         try:
             self.connection_list.set_can_focus(True)
         except Exception:
@@ -1028,6 +1170,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         return
                     
                     # Set context menu data
+                    self._context_menu_row = row
                     self._context_menu_connection = getattr(row, 'connection', None)
                     self._context_menu_group_row = row if hasattr(row, 'group_id') else None
                     # Create popover menu and rely on default autohide behavior
@@ -1052,6 +1195,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                                 logger.debug(f"Error cleaning up focus handler: {e}")
 
                         logger.debug("Context menu closed")
+                        try:
+                            self._context_menu_row = None
+                            self._context_menu_connection = None
+                        except Exception:
+                            pass
                     
                     pop.connect("closed", _on_popover_closed)
                     
@@ -1700,7 +1848,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if connections:
             first_row = self.connection_list.get_row_at_index(0)
             if first_row:
-                self.connection_list.select_row(first_row)
+                self._select_only_row(first_row)
                 # Defer focus to the list to ensure keyboard navigation works immediately
                 GLib.idle_add(self._focus_connection_list_first_row)
     
@@ -1800,7 +1948,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Reselect the toggled group so focus doesn't jump to another row
         for row in self.connection_list:
             if hasattr(row, "group_id") and row.group_id == group_id:
-                self.connection_list.select_row(row)
+                self._select_only_row(row)
                 break
     
     def add_connection_row(self, connection: Connection, indent_level: int = 0):
@@ -1823,7 +1971,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.rebuild_connection_list()
         first_row = self.connection_list.get_row_at_index(0)
         if first_row:
-            self.connection_list.select_row(first_row)
+            self._select_only_row(first_row)
 
     def on_search_stopped(self, entry):
         """Handle search stop (Esc key)."""
@@ -1843,7 +1991,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if hasattr(self, 'connection_list') and self.connection_list:
                 first_row = self.connection_list.get_row_at_index(0)
                 if first_row:
-                    self.connection_list.select_row(first_row)
+                    self._select_only_row(first_row)
                 self.connection_list.grab_focus()
             return True
         elif keyval == Gdk.KEY_Return:
@@ -1853,7 +2001,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if search_text:
                     first_row = self.connection_list.get_row_at_index(0)
                     if first_row:
-                        self.connection_list.select_row(first_row)
+                        self._select_only_row(first_row)
                         self.connection_list.grab_focus()
                     return True
                 else:
@@ -1861,7 +2009,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     if hasattr(self, 'connection_list') and self.connection_list:
                         first_row = self.connection_list.get_row_at_index(0)
                         if first_row:
-                            self.connection_list.select_row(first_row)
+                            self._select_only_row(first_row)
                         self.connection_list.grab_focus()
                     return True
         return False
@@ -1920,10 +2068,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 return False
                 
             # If the list has no selection, select the first row
-            selected = self.connection_list.get_selected_row() if hasattr(self.connection_list, 'get_selected_row') else None
+            try:
+                selected_rows = list(self.connection_list.get_selected_rows())
+            except Exception:
+                selected_row = self.connection_list.get_selected_row()
+                selected_rows = [selected_row] if selected_row else []
             first_row = self.connection_list.get_row_at_index(0)
-            if not selected and first_row:
-                self.connection_list.select_row(first_row)
+            if not selected_rows and first_row:
+                self._select_only_row(first_row)
             
             # Always focus the connection list on startup, regardless of current focus
             # This ensures the connection list gets focus instead of the search entry
@@ -1944,14 +2096,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         self.sidebar_toggle_button.set_active(False)
                 
                 # Ensure a row is selected before focusing
-                selected = self.connection_list.get_selected_row()
-                logger.debug(f"Focus connection list - current selection: {selected}")
-                if not selected:
+                try:
+                    selected_rows = list(self.connection_list.get_selected_rows())
+                except Exception:
+                    selected_row = self.connection_list.get_selected_row()
+                    selected_rows = [selected_row] if selected_row else []
+                logger.debug(f"Focus connection list - current selection count: {len(selected_rows)}")
+                if not selected_rows:
                     # Select the first row regardless of type
                     first_row = self.connection_list.get_row_at_index(0)
                     logger.debug(f"Focus connection list - first row: {first_row}")
                     if first_row:
-                        self.connection_list.select_row(first_row)
+                        self._select_only_row(first_row)
                         logger.debug(f"Focus connection list - selected first row: {first_row}")
                 
                 self.connection_list.grab_focus()
@@ -2676,7 +2832,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             return
 
         if n_press == 1:  # Single click - just select
-            self.connection_list.select_row(row)
+            try:
+                state = gesture.get_current_event_state()
+            except Exception:
+                state = 0
+
+            multi_mask = (
+                Gdk.ModifierType.CONTROL_MASK
+                | Gdk.ModifierType.SHIFT_MASK
+                | getattr(Gdk.ModifierType, 'PRIMARY_ACCELERATOR_MASK', 0)
+            )
+
+            if state & multi_mask:
+                # Allow default multi-selection behavior
+                return
+
+            self._select_only_row(row)
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
         elif n_press == 2:  # Double click - connect
             if hasattr(row, 'connection'):
@@ -2853,57 +3024,102 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 # Check if this is a local terminal
                 if _get_connection_host(connection) == 'localhost':
                     # Local terminal - clear selection
-                    current = self.connection_list.get_selected_row()
-                    if current is not None:
-                        self.connection_list.unselect_row(current)
+                    try:
+                        if hasattr(self.connection_list, 'unselect_all'):
+                            self.connection_list.unselect_all()
+                        else:
+                            current = self.connection_list.get_selected_row()
+                            if current is not None:
+                                self.connection_list.unselect_row(current)
+                    except Exception:
+                        pass
                 else:
                     # Regular connection terminal - select the corresponding row
                     self.active_terminals[connection] = child
                     row = self.connection_rows.get(connection)
                     if row:
-                        current = self.connection_list.get_selected_row()
-                        if current != row:
-                            self.connection_list.select_row(row)
+                        selected_rows = []
+                        try:
+                            selected_rows = list(self.connection_list.get_selected_rows())
+                        except Exception:
+                            current = self.connection_list.get_selected_row()
+                            if current:
+                                selected_rows = [current]
+                        if row not in selected_rows:
+                            self._select_only_row(row)
             else:
                 # Other non-connection terminal - clear selection
-                current = self.connection_list.get_selected_row()
-                if current is not None:
-                    self.connection_list.unselect_row(current)
+                try:
+                    if hasattr(self.connection_list, 'unselect_all'):
+                        self.connection_list.unselect_all()
+                    else:
+                        current = self.connection_list.get_selected_row()
+                        if current is not None:
+                            self.connection_list.unselect_row(current)
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"Failed to sync tab selection: {e}")
 
     def on_connection_selected(self, list_box, row):
         """Handle connection list selection change"""
-        has_selection = row is not None
+        try:
+            connection_rows = self._get_selected_connection_rows()
+            group_rows = self._get_selected_group_rows()
+        except Exception:
+            connection_rows = []
+            group_rows = []
 
-        if has_selection:
-            # Check if selected item is a group or connection
-            is_group = hasattr(row, 'group_id')
+        has_connections = bool(connection_rows)
+        has_groups = bool(group_rows)
 
-            if is_group:
-                # Show group toolbar, hide connection toolbar
-                self.connection_toolbar.set_visible(False)
-                self.group_toolbar.set_visible(True)
-                self.rename_group_button.set_sensitive(True)
-                self.delete_group_button.set_sensitive(True)
-            else:
-                # Show connection toolbar, hide group toolbar
-                self.connection_toolbar.set_visible(True)
-                self.group_toolbar.set_visible(False)
-                self.edit_button.set_sensitive(True)
-                if hasattr(self, 'copy_key_button'):
-                    self.copy_key_button.set_sensitive(True)
-                if hasattr(self, 'upload_button'):
-                    self.upload_button.set_sensitive(True)
-                if hasattr(self, 'manage_files_button'):
-                    self.manage_files_button.set_sensitive(True)
-                if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
-                    self.system_terminal_button.set_sensitive(True)
-                self.delete_button.set_sensitive(True)
+        if has_connections and not has_groups:
+            self.connection_toolbar.set_visible(True)
+            self.group_toolbar.set_visible(False)
+
+            multiple_connections = len(connection_rows) > 1
+            self.edit_button.set_sensitive(not multiple_connections)
+            if hasattr(self, 'copy_key_button'):
+                self.copy_key_button.set_sensitive(not multiple_connections)
+            if hasattr(self, 'upload_button'):
+                self.upload_button.set_sensitive(not multiple_connections)
+            if hasattr(self, 'manage_files_button'):
+                self.manage_files_button.set_sensitive(not multiple_connections)
+            if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
+                self.system_terminal_button.set_sensitive(not multiple_connections)
+            self.delete_button.set_sensitive(True)
+            self.rename_group_button.set_sensitive(False)
+            self.delete_group_button.set_sensitive(False)
+        elif has_groups and not has_connections:
+            self.connection_toolbar.set_visible(False)
+            self.group_toolbar.set_visible(True)
+
+            allow_single_group = len(group_rows) == 1
+            self.delete_button.set_sensitive(False)
+            if hasattr(self, 'copy_key_button'):
+                self.copy_key_button.set_sensitive(False)
+            if hasattr(self, 'upload_button'):
+                self.upload_button.set_sensitive(False)
+            if hasattr(self, 'manage_files_button'):
+                self.manage_files_button.set_sensitive(False)
+            if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
+                self.system_terminal_button.set_sensitive(False)
+            self.rename_group_button.set_sensitive(allow_single_group)
+            self.delete_group_button.set_sensitive(allow_single_group)
         else:
-            # No selection - hide both toolbars
             self.connection_toolbar.set_visible(False)
             self.group_toolbar.set_visible(False)
+            self.delete_button.set_sensitive(False)
+            if hasattr(self, 'copy_key_button'):
+                self.copy_key_button.set_sensitive(False)
+            if hasattr(self, 'upload_button'):
+                self.upload_button.set_sensitive(False)
+            if hasattr(self, 'manage_files_button'):
+                self.manage_files_button.set_sensitive(False)
+            if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
+                self.system_terminal_button.set_sensitive(False)
+            self.rename_group_button.set_sensitive(False)
+            self.delete_group_button.set_sensitive(False)
 
     def on_add_connection_clicked(self, button):
         """Handle add connection button click"""
@@ -4038,42 +4254,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def on_delete_connection_clicked(self, button):
         """Handle delete connection button click"""
-        selected_row = self.connection_list.get_selected_row()
-        if not selected_row:
+        connections = self._get_target_connections()
+        if not connections:
+            logger.debug("Delete requested without any connection selection")
             return
-        
-        if not hasattr(selected_row, 'connection'):
-            logger.debug("Cannot delete group row")
-            return
-        
-        connection = selected_row.connection
-        
-        # If host has active connections/tabs, warn about closing them first
-        has_active_terms = bool(self.connection_to_terminals.get(connection, []))
-        if getattr(connection, 'is_connected', False) or has_active_terms:
-            dialog = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_('Remove host?'),
-                body=_('Close connections and remove host?')
-            )
-            dialog.add_response('cancel', _('Cancel'))
-            dialog.add_response('close_remove', _('Close and Remove'))
-            dialog.set_response_appearance('close_remove', Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response('close')
-            dialog.set_close_response('cancel')
-        else:
-            # Simple delete confirmation when not connected
-            dialog = Adw.MessageDialog.new(self, _('Delete Connection?'),
-                                         _('Are you sure you want to delete "{}"?').format(connection.nickname))
-            dialog.add_response('cancel', _('Cancel'))
-            dialog.add_response('delete', _('Delete'))
-            dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response('cancel')
-            dialog.set_close_response('cancel')
 
-        dialog.connect('response', self.on_delete_connection_response, connection)
-        dialog.present()
+        self._prompt_delete_connections(connections)
 
     def on_rename_group_clicked(self, button):
         """Handle rename group button click"""
@@ -4087,31 +4273,23 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if selected_row and hasattr(selected_row, 'group_id'):
             self.on_delete_group_action(None, None)
 
-    def on_delete_connection_response(self, dialog, response, connection):
+    def on_delete_connection_response(self, dialog, response, connections):
         """Handle delete connection dialog response"""
-        if response == 'delete':
-            # Simple deletion when not connected
-            self.connection_manager.remove_connection(connection)
-        elif response == 'close_remove':
-            # Close connections immediately (no extra confirmation), then remove
-            try:
-                # Disconnect all terminals for this connection
-                for term in list(self.connection_to_terminals.get(connection, [])):
-                    try:
-                        if hasattr(term, 'disconnect'):
-                            term.disconnect()
-                    except Exception:
-                        pass
-                # Also disconnect the active terminal if tracked separately
-                term = self.active_terminals.get(connection)
-                if term and hasattr(term, 'disconnect'):
-                    try:
-                        term.disconnect()
-                    except Exception:
-                        pass
-            finally:
-                # Remove connection without further prompts
+        try:
+            if not isinstance(connections, (list, tuple)):
+                connections = [connections] if connections else []
+
+            if response not in {'delete', 'close_remove'}:
+                return
+
+            for connection in connections:
+                if not connection:
+                    continue
+                if response == 'close_remove':
+                    self._disconnect_connection_terminals(connection)
                 self.connection_manager.remove_connection(connection)
+        except Exception as e:
+            logger.error(f"Failed to delete connections: {e}")
 
     def _on_tab_close_confirmed(self, dialog, response_id, tab_view, page):
         """Handle response from tab close confirmation dialog"""
@@ -4704,41 +4882,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_delete_connection_action(self, action, param=None):
         """Handle delete connection action from context menu"""
         try:
-            connection = getattr(self, '_context_menu_connection', None)
-            if connection is None:
-                # Fallback to selected row if any
-                row = self.connection_list.get_selected_row()
-                connection = getattr(row, 'connection', None) if row else None
-            if connection is None:
+            connections = self._get_target_connections(prefer_context=True)
+            if not connections:
                 return
-            
-            # Use the same logic as the button click handler
-            # If host has active connections/tabs, warn about closing them first
-            has_active_terms = bool(self.connection_to_terminals.get(connection, []))
-            if getattr(connection, 'is_connected', False) or has_active_terms:
-                dialog = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading=_('Remove host?'),
-                    body=_('Close connections and remove host?')
-                )
-                dialog.add_response('cancel', _('Cancel'))
-                dialog.add_response('close_remove', _('Close and Remove'))
-                dialog.set_response_appearance('close_remove', Adw.ResponseAppearance.DESTRUCTIVE)
-                dialog.set_default_response('close')
-                dialog.set_close_response('cancel')
-            else:
-                # Simple delete confirmation when not connected
-                dialog = Adw.MessageDialog.new(self, _('Delete Connection?'),
-                                             _('Are you sure you want to delete "{}"?').format(connection.nickname))
-                dialog.add_response('cancel', _('Cancel'))
-                dialog.add_response('delete', _('Delete'))
-                dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
-                dialog.set_default_response('cancel')
-                dialog.set_close_response('cancel')
 
-            dialog.connect('response', self.on_delete_connection_response, connection)
-            dialog.present()
+            self._prompt_delete_connections(connections)
         except Exception as e:
             logger.error(f"Failed to delete connection: {e}")
 
@@ -5055,40 +5203,32 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_move_to_ungrouped_action(self, action, param=None):
         """Handle move to ungrouped action"""
         try:
-            # Get the connection from context menu or selected row
-            selected_row = getattr(self, '_context_menu_connection', None)
-            if not selected_row:
-                selected_row = self.connection_list.get_selected_row()
-                if selected_row and hasattr(selected_row, 'connection'):
-                    selected_row = selected_row.connection
-            
-            if not selected_row:
+            connections = self._get_target_connections(prefer_context=True)
+            if not connections:
                 return
-            
-            connection_nickname = selected_row.nickname if hasattr(selected_row, 'nickname') else selected_row
-            
-            # Move to ungrouped (None group)
-            self.group_manager.move_connection(connection_nickname, None)
+
+            for connection in connections:
+                nickname = getattr(connection, 'nickname', None)
+                if nickname:
+                    self.group_manager.move_connection(nickname, None)
             self.rebuild_connection_list()
-            
+
         except Exception as e:
             logger.error(f"Failed to move connection to ungrouped: {e}")
     
     def on_move_to_group_action(self, action, param=None):
         """Handle move to group action"""
         try:
-            # Get the connection from context menu or selected row
-            selected_row = getattr(self, '_context_menu_connection', None)
-            if not selected_row:
-                selected_row = self.connection_list.get_selected_row()
-                if selected_row and hasattr(selected_row, 'connection'):
-                    selected_row = selected_row.connection
-            
-            if not selected_row:
+            connections = self._get_target_connections(prefer_context=True)
+            if not connections:
                 return
-            
-            connection_nickname = selected_row.nickname if hasattr(selected_row, 'nickname') else selected_row
-            
+
+            connection_nicknames = [
+                conn.nickname for conn in connections if hasattr(conn, 'nickname')
+            ]
+            if not connection_nicknames:
+                return
+
             # Get available groups
             available_groups = self.get_available_groups()
             logger.debug(f"Available groups for move dialog: {len(available_groups)} groups")
@@ -5112,44 +5252,48 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             content_area.set_spacing(12)
             
             # Add label
-            label = Gtk.Label(label=_("Select a group to move the connection to:"))
+            if len(connection_nicknames) == 1:
+                label_text = _("Select a group to move the connection to:")
+            else:
+                label_text = _("Select a group to move the selected connections to:")
+            label = Gtk.Label(label=label_text)
             label.set_wrap(True)
             label.set_xalign(0)
             content_area.append(label)
-            
+
             # Add list box for groups
             listbox = Gtk.ListBox()
             listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
             listbox.set_vexpand(True)
-            
+
             # Add inline group creation section
             create_section_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             create_section_box.set_margin_start(12)
             create_section_box.set_margin_end(12)
             create_section_box.set_margin_top(6)
             create_section_box.set_margin_bottom(6)
-            
+
             # Create new group label
             create_label = Gtk.Label(label=_("Create New Group"))
             create_label.set_xalign(0)
             create_label.add_css_class("heading")
             create_section_box.append(create_label)
-            
+
             # Create new group entry and button
             create_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-            
+
             self.create_group_entry = Gtk.Entry()
             self.create_group_entry.set_placeholder_text(_("Enter group name"))
             self.create_group_entry.set_hexpand(True)
             create_box.append(self.create_group_entry)
-            
+
             self.create_group_button = Gtk.Button(label=_("Create"))
             self.create_group_button.add_css_class("suggested-action")
             self.create_group_button.set_sensitive(False)
             create_box.append(self.create_group_button)
-            
+
             create_section_box.append(create_box)
-            
+
             # Add the create section to content area
             content_area.append(create_section_box)
             
@@ -5198,20 +5342,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             def on_entry_changed(entry):
                 text = entry.get_text().strip()
                 self.create_group_button.set_sensitive(bool(text))
-            
+
             def on_entry_activated(entry):
                 text = entry.get_text().strip()
                 if text:
                     on_create_group_clicked()
-            
+
             def on_create_group_clicked():
                 group_name = self.create_group_entry.get_text().strip()
                 if group_name:
                     try:
                         # Create the new group
                         new_group_id = self.group_manager.create_group(group_name)
-                        # Move the connection to the new group
-                        self.group_manager.move_connection(connection_nickname, new_group_id)
+                        # Move all selected connections to the new group
+                        for nickname in connection_nicknames:
+                            self.group_manager.move_connection(nickname, new_group_id)
                         # Rebuild the connection list
                         self.rebuild_connection_list()
                         # Close the dialog
@@ -5252,17 +5397,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         # Clear the entry and focus it for retry
                         self.create_group_entry.set_text("")
                         self.create_group_entry.grab_focus()
-            
+
             self.create_group_entry.connect('changed', on_entry_changed)
             self.create_group_entry.connect('activate', on_entry_activated)
             self.create_group_button.connect('clicked', lambda btn: on_create_group_clicked())
-            
+
             def on_response(dialog, response):
                 if response == Gtk.ResponseType.OK:
                     selected_row = listbox.get_selected_row()
                     if selected_row:
                         target_group_id = selected_row.group_id
-                        self.group_manager.move_connection(connection_nickname, target_group_id)
+                        for nickname in connection_nicknames:
+                            self.group_manager.move_connection(nickname, target_group_id)
                         self.rebuild_connection_list()
                 dialog.destroy()
             
