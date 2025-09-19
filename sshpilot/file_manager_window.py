@@ -33,8 +33,338 @@ import paramiko
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
 
+class TransferCancelledException(Exception):
+    """Exception raised when a transfer is cancelled"""
+    pass
+
+
 # ---------------------------------------------------------------------------
 # Utility data structures
+
+
+class SFTPProgressDialog(Adw.Window):
+    """GNOME HIG-compliant SFTP file transfer progress dialog"""
+    
+    def __init__(self, parent=None, operation_type="transfer"):
+        super().__init__()
+        
+        # Window properties
+        self.set_title("File Transfer")
+        self.set_default_size(480, 320)
+        self.set_modal(True)
+        if parent:
+            self.set_transient_for(parent)
+        
+        # Transfer state
+        self.is_cancelled = False
+        self.current_file = ""
+        self.transferred_bytes = 0
+        self.total_bytes = 0
+        self.files_completed = 0
+        self.total_files = 0
+        self.start_time = time.time()
+        self.operation_type = operation_type
+        self._current_future = None
+        
+        self._build_ui()
+        
+    def _build_ui(self):
+        """Build the HIG-compliant UI"""
+        
+        # Main container
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.set_content(main_box)
+        
+        # Header bar
+        header = Adw.HeaderBar()
+        header.set_show_end_title_buttons(True)
+        main_box.append(header)
+        
+        # Content area with proper spacing
+        content_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=24,
+            margin_top=24,
+            margin_bottom=24,
+            margin_start=24,
+            margin_end=24
+        )
+        main_box.append(content_box)
+        
+        # Status icon and title
+        status_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=12,
+            halign=Gtk.Align.CENTER
+        )
+        content_box.append(status_box)
+        
+        # Transfer icon
+        icon_name = "folder-download-symbolic" if self.operation_type == "download" else "folder-upload-symbolic"
+        self.status_icon = Gtk.Image.new_from_icon_name(icon_name)
+        self.status_icon.set_pixel_size(48)
+        self.status_icon.add_css_class("accent")
+        status_box.append(self.status_icon)
+        
+        # Main status label
+        self.status_label = Gtk.Label()
+        self.status_label.set_markup("<span size='large' weight='bold'>Preparing transfer…</span>")
+        self.status_label.set_justify(Gtk.Justification.CENTER)
+        status_box.append(self.status_label)
+        
+        # Current file label
+        self.file_label = Gtk.Label()
+        self.file_label.set_text("Scanning files...")
+        self.file_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.file_label.add_css_class("dim-label")
+        status_box.append(self.file_label)
+        
+        # Progress section
+        progress_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=12
+        )
+        content_box.append(progress_box)
+        
+        # Main progress bar
+        self.progress_bar = Gtk.ProgressBar()
+        self.progress_bar.set_show_text(True)
+        self.progress_bar.set_text("0%")
+        progress_box.append(self.progress_bar)
+        
+        # Transfer details
+        details_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=6
+        )
+        progress_box.append(details_box)
+        
+        # Speed and time info
+        info_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        details_box.append(info_box)
+        
+        self.speed_label = Gtk.Label()
+        self.speed_label.set_text("—")
+        self.speed_label.set_halign(Gtk.Align.START)
+        self.speed_label.add_css_class("caption")
+        info_box.append(self.speed_label)
+        
+        # Spacer
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        info_box.append(spacer)
+        
+        self.time_label = Gtk.Label()
+        self.time_label.set_text("—")
+        self.time_label.set_halign(Gtk.Align.END)
+        self.time_label.add_css_class("caption")
+        info_box.append(self.time_label)
+        
+        # File counter
+        self.counter_label = Gtk.Label()
+        self.counter_label.set_text("0 of 0 files")
+        self.counter_label.set_halign(Gtk.Align.CENTER)
+        self.counter_label.add_css_class("caption")
+        details_box.append(self.counter_label)
+        
+        # Button box
+        button_box = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=12,
+            halign=Gtk.Align.END
+        )
+        content_box.append(button_box)
+        
+        # Cancel button
+        self.cancel_button = Gtk.Button()
+        self.cancel_button.set_label("Cancel")
+        self.cancel_button.connect("clicked", self._on_cancel_clicked)
+        button_box.append(self.cancel_button)
+        
+        # Done button (hidden initially)
+        self.done_button = Gtk.Button()
+        self.done_button.set_label("Done")
+        self.done_button.set_visible(False)
+        self.done_button.add_css_class("suggested-action")
+        self.done_button.connect("clicked", lambda w: self.close())
+        button_box.append(self.done_button)
+        
+        # Set initial focus to cancel button
+        self.cancel_button.grab_focus()
+    
+    def set_operation_details(self, total_files, filename=None):
+        """Set the operation details"""
+        self.total_files = total_files
+        self.files_completed = 0
+        
+        if filename:
+            self.current_file = filename
+            self.file_label.set_text(filename)
+        
+        self.counter_label.set_text(f"0 of {total_files} files")
+    
+    def update_progress(self, fraction, message=None, current_file=None):
+        """Update progress bar and status"""
+        GLib.idle_add(self._update_progress_ui, fraction, message, current_file)
+    
+    def _update_progress_ui(self, fraction, message, current_file):
+        """Update UI elements (must be called from main thread)"""
+        
+        # Update progress bar
+        percentage = int(fraction * 100)
+        self.progress_bar.set_fraction(fraction)
+        self.progress_bar.set_text(f"{percentage}%")
+        
+        # Update status message
+        if message:
+            self.status_label.set_markup(f"<span size='large' weight='bold'>{message}</span>")
+        
+        # Update current file
+        if current_file:
+            self.current_file = current_file
+            self.file_label.set_text(current_file)
+        
+        # Calculate and update speed/time estimates
+        elapsed = time.time() - self.start_time
+        if elapsed > 1.0 and fraction > 0:  # Wait at least 1 second for meaningful estimates
+            # Calculate transferred bytes and speed
+            if self.total_bytes > 0:
+                transferred_bytes = int(self.total_bytes * fraction)
+                bytes_per_second = transferred_bytes / elapsed
+                
+                # Update speed display
+                if bytes_per_second > 1024 * 1024:  # MB/s
+                    speed_text = f"{bytes_per_second / (1024 * 1024):.1f} MB/s"
+                elif bytes_per_second > 1024:  # KB/s
+                    speed_text = f"{bytes_per_second / 1024:.1f} KB/s"
+                else:
+                    speed_text = f"{bytes_per_second:.0f} B/s"
+                
+                self.speed_label.set_text(speed_text)
+                
+                # Show size information
+                transferred_size = self._format_size(transferred_bytes)
+                total_size = self._format_size(self.total_bytes)
+                size_info = f"{transferred_size} of {total_size}"
+                
+                # Update file label to show size info
+                if current_file:
+                    self.file_label.set_text(f"{current_file} ({size_info})")
+            
+            # Estimate total time and remaining time
+            estimated_total_time = elapsed / fraction
+            remaining_time = estimated_total_time - elapsed
+            
+            if remaining_time > 0:
+                self.time_label.set_text(self._format_time(remaining_time))
+            else:
+                self.time_label.set_text("Almost done…")
+        
+        return False
+    
+    def increment_file_count(self):
+        """Increment completed file counter"""
+        GLib.idle_add(self._increment_file_count_ui)
+    
+    def _increment_file_count_ui(self):
+        """Update file counter (must be called from main thread)"""
+        self.files_completed += 1
+        self.counter_label.set_text(f"{self.files_completed} of {self.total_files} files")
+        return False
+    
+    def set_future(self, future):
+        """Set the current operation future for cancellation"""
+        self._current_future = future
+    
+    def set_total_bytes(self, total_bytes):
+        """Set the total bytes for the operation"""
+        self.total_bytes = total_bytes
+    
+    def _format_time(self, seconds):
+        """Format time remaining for display"""
+        if seconds > 3600:
+            hours = int(seconds // 3600)
+            minutes = int((seconds % 3600) // 60)
+            return f"{hours}h {minutes}m remaining"
+        elif seconds > 60:
+            minutes = int(seconds // 60)
+            return f"{minutes}m remaining"
+        else:
+            return f"{int(seconds)}s remaining"
+    
+    def _format_size(self, size_bytes):
+        """Format file size for display"""
+        if size_bytes >= 1024 * 1024 * 1024:  # GB
+            return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+        elif size_bytes >= 1024 * 1024:  # MB
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+        elif size_bytes >= 1024:  # KB
+            return f"{size_bytes / 1024:.1f} KB"
+        else:
+            return f"{size_bytes} bytes"
+    
+    def show_completion(self, success=True, error_message=None):
+        """Show completion state"""
+        GLib.idle_add(self._show_completion_ui, success, error_message)
+    
+    def _show_completion_ui(self, success, error_message):
+        """Update UI to show completion state"""
+        if success:
+            self.status_icon.set_from_icon_name("emblem-ok-symbolic")
+            self.status_icon.remove_css_class("accent")
+            self.status_icon.add_css_class("success")
+            
+            self.status_label.set_markup("<span size='large' weight='bold'>Transfer complete</span>")
+            self.file_label.set_text(f"Successfully transferred {self.files_completed} files")
+            
+            self.progress_bar.set_fraction(1.0)
+            self.progress_bar.set_text("100%")
+        else:
+            self.status_icon.set_from_icon_name("dialog-error-symbolic")
+            self.status_icon.remove_css_class("accent")
+            self.status_icon.add_css_class("error")
+            
+            self.status_label.set_markup("<span size='large' weight='bold'>Transfer failed</span>")
+            if error_message:
+                self.file_label.set_text(f"Error: {error_message}")
+            else:
+                self.file_label.set_text("An error occurred during transfer")
+        
+        # Switch buttons
+        self.cancel_button.set_visible(False)
+        self.done_button.set_visible(True)
+        self.done_button.grab_focus()
+        
+        return False
+    
+    def _on_cancel_clicked(self, button):
+        """Handle cancel button click"""
+        self.is_cancelled = True
+        
+        # Cancel the future operation
+        if self._current_future and not self._current_future.done():
+            try:
+                self._current_future.cancel()
+                print("DEBUG: Future cancelled successfully")
+            except Exception as e:
+                print(f"DEBUG: Error cancelling future: {e}")
+        
+        # Update UI to show cancellation
+        self.status_label.set_markup("<span size='large' weight='bold'>Cancelled</span>")
+        self.file_label.set_text("Transfer was cancelled by user")
+        
+        # Change icon to indicate cancellation
+        self.status_icon.set_from_icon_name("process-stop-symbolic")
+        self.status_icon.remove_css_class("accent")
+        self.status_icon.add_css_class("warning")
+        
+        # Switch buttons immediately
+        button.set_visible(False)
+        self.done_button.set_label("Close")
+        self.done_button.set_visible(True)
+        self.done_button.grab_focus()
+        
+        print("DEBUG: Cancel operation completed")
 
 
 @dataclasses.dataclass
@@ -111,6 +441,18 @@ class AsyncSFTPManager(GObject.GObject):
             )
         )
         self._lock = threading.Lock()
+        self._cancelled_operations = set()  # Track cancelled operation IDs
+    
+    def _format_size(self, size_bytes):
+        """Format file size for display"""
+        if size_bytes >= 1024 * 1024 * 1024:  # GB
+            return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+        elif size_bytes >= 1024 * 1024:  # MB
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+        elif size_bytes >= 1024:  # KB
+            return f"{size_bytes / 1024:.1f} KB"
+        else:
+            return f"{size_bytes} bytes"
 
     # -- connection -----------------------------------------------------
 
@@ -269,23 +611,101 @@ class AsyncSFTPManager(GObject.GObject):
 
     def download(self, source: str, destination: pathlib.Path) -> Future:
         destination.parent.mkdir(parents=True, exist_ok=True)
+        operation_id = f"download_{id(self)}_{time.time()}"
 
         def _impl() -> None:
             assert self._sftp is not None
             self.emit("progress", 0.0, "Starting download…")
-            self._sftp.get(source, str(destination))
-            self.emit("progress", 1.0, "Download complete")
+            
+            def progress_callback(transferred: int, total: int) -> None:
+                # Check if this operation was cancelled
+                if operation_id in self._cancelled_operations:
+                    raise TransferCancelledException("Download was cancelled")
+                    
+                if total > 0:
+                    progress = transferred / total
+                    transferred_size = self._format_size(transferred)
+                    total_size = self._format_size(total)
+                    self.emit("progress", progress, f"Downloaded {transferred_size} of {total_size}")
+                else:
+                    transferred_size = self._format_size(transferred)
+                    self.emit("progress", 0.0, f"Downloaded {transferred_size}")
+            
+            try:
+                self._sftp.get(source, str(destination), callback=progress_callback)
+                # Only emit completion if not cancelled
+                if operation_id not in self._cancelled_operations:
+                    self.emit("progress", 1.0, "Download complete")
+            except TransferCancelledException:
+                # Clean up partial download on cancellation
+                try:
+                    if destination.exists():
+                        destination.unlink()
+                        print(f"DEBUG: Cleaned up partial download: {destination}")
+                except Exception:
+                    pass
+                self.emit("progress", 0.0, "Download cancelled")
+                print(f"DEBUG: Download operation {operation_id} was cancelled")
+            finally:
+                # Clean up the cancellation flag
+                self._cancelled_operations.discard(operation_id)
 
-        return self._submit(_impl)
+        future = self._submit(_impl)
+        
+        # Store the operation ID so we can cancel it
+        original_cancel = future.cancel
+        def cancel_with_cleanup():
+            print(f"DEBUG: Cancelling download operation {operation_id}")
+            self._cancelled_operations.add(operation_id)
+            return original_cancel()
+        future.cancel = cancel_with_cleanup
+        
+        return future
 
     def upload(self, source: pathlib.Path, destination: str) -> Future:
+        operation_id = f"upload_{id(self)}_{time.time()}"
+        
         def _impl() -> None:
             assert self._sftp is not None
             self.emit("progress", 0.0, "Starting upload…")
-            self._sftp.put(str(source), destination)
-            self.emit("progress", 1.0, "Upload complete")
+            
+            def progress_callback(transferred: int, total: int) -> None:
+                # Check if this operation was cancelled
+                if operation_id in self._cancelled_operations:
+                    raise TransferCancelledException("Upload was cancelled")
+                    
+                if total > 0:
+                    progress = transferred / total
+                    transferred_size = self._format_size(transferred)
+                    total_size = self._format_size(total)
+                    self.emit("progress", progress, f"Uploaded {transferred_size} of {total_size}")
+                else:
+                    transferred_size = self._format_size(transferred)
+                    self.emit("progress", 0.0, f"Uploaded {transferred_size}")
+            
+            try:
+                self._sftp.put(str(source), destination, callback=progress_callback)
+                # Only emit completion if not cancelled
+                if operation_id not in self._cancelled_operations:
+                    self.emit("progress", 1.0, "Upload complete")
+            except TransferCancelledException:
+                self.emit("progress", 0.0, "Upload cancelled")
+                print(f"DEBUG: Upload operation {operation_id} was cancelled")
+            finally:
+                # Clean up the cancellation flag
+                self._cancelled_operations.discard(operation_id)
 
-        return self._submit(_impl)
+        future = self._submit(_impl)
+        
+        # Store the operation ID so we can cancel it
+        original_cancel = future.cancel
+        def cancel_with_cleanup():
+            print(f"DEBUG: Cancelling upload operation {operation_id}")
+            self._cancelled_operations.add(operation_id)
+            return original_cancel()
+        future.cancel = cancel_with_cleanup
+        
+        return future
 
     # Helpers for directory recursion – these are intentionally simplistic
     # and rely on Paramiko's high level API.
@@ -294,12 +714,35 @@ class AsyncSFTPManager(GObject.GObject):
         def _impl() -> None:
             assert self._sftp is not None
             self.emit("progress", 0.0, "Preparing download…")
+            
+            # First, collect all files to get total count
+            all_files = []
             for root, dirs, files in walk_remote(self._sftp, source):
                 rel_root = os.path.relpath(root, source)
                 target_root = destination / rel_root
                 target_root.mkdir(parents=True, exist_ok=True)
                 for name in files:
-                    self._sftp.get(os.path.join(root, name), str(target_root / name))
+                    all_files.append((os.path.join(root, name), str(target_root / name)))
+            
+            total_files = len(all_files)
+            if total_files == 0:
+                self.emit("progress", 1.0, "Directory downloaded (no files)")
+                return
+            
+            # Download files with progress tracking
+            for i, (remote_path, local_path) in enumerate(all_files):
+                file_progress = i / total_files
+                self.emit("progress", file_progress, f"Downloading {os.path.basename(remote_path)}...")
+                
+                def progress_callback(transferred: int, total: int) -> None:
+                    if total > 0:
+                        file_progress = transferred / total
+                        overall_progress = (i + file_progress) / total_files
+                        self.emit("progress", overall_progress, 
+                                f"Downloading {os.path.basename(remote_path)} ({transferred:,}/{total:,} bytes)")
+                
+                self._sftp.get(remote_path, local_path, callback=progress_callback)
+            
             self.emit("progress", 1.0, "Directory downloaded")
 
         return self._submit(_impl)
@@ -308,6 +751,9 @@ class AsyncSFTPManager(GObject.GObject):
         def _impl() -> None:
             assert self._sftp is not None
             self.emit("progress", 0.0, "Preparing upload…")
+            
+            # First, collect all files to get total count
+            all_files = []
             for root, dirs, files in os.walk(source):
                 rel_root = os.path.relpath(root, str(source))
                 remote_root = (
@@ -318,9 +764,29 @@ class AsyncSFTPManager(GObject.GObject):
                 except IOError:
                     pass
                 for name in files:
-                    self._sftp.put(
-                        os.path.join(root, name), os.path.join(remote_root, name)
-                    )
+                    local_path = os.path.join(root, name)
+                    remote_path = os.path.join(remote_root, name)
+                    all_files.append((local_path, remote_path))
+            
+            total_files = len(all_files)
+            if total_files == 0:
+                self.emit("progress", 1.0, "Directory uploaded (no files)")
+                return
+            
+            # Upload files with progress tracking
+            for i, (local_path, remote_path) in enumerate(all_files):
+                file_progress = i / total_files
+                self.emit("progress", file_progress, f"Uploading {os.path.basename(local_path)}...")
+                
+                def progress_callback(transferred: int, total: int) -> None:
+                    if total > 0:
+                        file_progress = transferred / total
+                        overall_progress = (i + file_progress) / total_files
+                        self.emit("progress", overall_progress, 
+                                f"Uploading {os.path.basename(local_path)} ({transferred:,}/{total:,} bytes)")
+                
+                self._sftp.put(local_path, remote_path, callback=progress_callback)
+            
             self.emit("progress", 1.0, "Directory uploaded")
 
         return self._submit(_impl)
@@ -367,17 +833,20 @@ class PaneControls(Gtk.Box):
         self.set_valign(Gtk.Align.CENTER)
         self.back_button = Gtk.Button.new_from_icon_name("go-previous-symbolic")
         self.up_button = Gtk.Button.new_from_icon_name("go-up-symbolic")
+        self.refresh_button = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
         self.new_folder_button = Gtk.Button.new_from_icon_name("folder-new-symbolic")
         for widget in (
             self.back_button,
             self.up_button,
+            self.refresh_button,
             self.new_folder_button,
         ):
             widget.set_valign(Gtk.Align.CENTER)
-        for widget in (self.back_button, self.up_button, self.new_folder_button):
+        for widget in (self.back_button, self.up_button, self.refresh_button, self.new_folder_button):
             widget.add_css_class("flat")
         self.append(self.back_button)
         self.append(self.up_button)
+        self.append(self.refresh_button)
         self.append(self.new_folder_button)
 
 
@@ -610,6 +1079,7 @@ class FilePane(Gtk.Box):
         # Wire navigation buttons
         self.toolbar.controls.up_button.connect("clicked", self._on_up_clicked)
         self.toolbar.controls.back_button.connect("clicked", self._on_back_clicked)
+        self.toolbar.controls.refresh_button.connect("clicked", self._on_refresh_clicked)
         self.toolbar.controls.new_folder_button.connect(
             "clicked", lambda *_: self.emit("request-operation", "mkdir", None)
         )
@@ -1085,6 +1555,11 @@ class FilePane(Gtk.Box):
             self._suppress_history_push = True
             self.emit("path-changed", prev)
 
+    def _on_refresh_clicked(self, _button) -> None:
+        # Refresh the current directory
+        current_path = self._current_path or "/"
+        self.emit("path-changed", current_path)
+
     def push_history(self, path: str) -> None:
         if self._history and self._history[-1] == path:
             return
@@ -1097,7 +1572,13 @@ class FilePane(Gtk.Box):
         return None
 
     def show_toast(self, text: str) -> None:
-        self._overlay.add_toast(Adw.Toast.new(text))
+        """Show a toast message safely."""
+        try:
+            toast = Adw.Toast.new(text)
+            self._overlay.add_toast(toast)
+        except (AttributeError, RuntimeError, GLib.GError):
+            # Overlay might be destroyed or invalid, ignore
+            pass
 
     # -- type-ahead search ----------------------------------------------
 
@@ -1239,6 +1720,9 @@ class FileManagerWindow(Adw.Window):
         self.set_resizable(True)
         # Ensure window decorations are shown (minimize, maximize, close buttons)
         self.set_decorated(True)
+        
+        # Progress state
+        self._current_future: Optional[Future] = None
 
         # Use ToolbarView like other Adw.Window instances
         toolbar_view = Adw.ToolbarView()
@@ -1254,13 +1738,14 @@ class FileManagerWindow(Adw.Window):
         # Create menu button for headerbar
         self._create_headerbar_menu(header_bar)
         
+        # Create toast overlay first and set it as toolbar content
+        self._toast_overlay = Adw.ToastOverlay()
+        self._progress_dialog: Optional[SFTPProgressDialog] = None
+        self._connection_error_reported = False
+        toolbar_view.set_content(self._toast_overlay)
         toolbar_view.add_top_bar(header_bar)
 
-        self._toast_overlay = Adw.ToastOverlay()
-        toolbar_view.set_content(self._toast_overlay)
-        self._progress_toast: Optional[Adw.Toast] = None
-        self._connection_error_reported = False
-
+        # Create the main content area and set it as toast overlay child
         panes = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
         panes.set_wide_handle(True)
         # Set position to split evenly by default (50%)
@@ -1270,6 +1755,8 @@ class FileManagerWindow(Adw.Window):
         panes.set_resize_end_child(True)
         panes.set_shrink_start_child(False)
         panes.set_shrink_end_child(False)
+        
+        # Set panes as the child of toast overlay
         self._toast_overlay.set_child(panes)
 
         self._left_pane = FilePane("Local")
@@ -1282,18 +1769,6 @@ class FileManagerWindow(Adw.Window):
         
         # Connect to size-allocate to maintain proportional split
         self.connect("notify::default-width", self._on_window_resize)
-
-        self._manager = AsyncSFTPManager(host, username, port)
-        self._manager.connect("connected", self._on_connected)
-        self._manager.connect("connection-error", self._on_connection_error)
-        self._manager.connect("progress", self._on_progress)
-        self._manager.connect("operation-error", self._on_operation_error)
-        self._manager.connect("directory-loaded", self._on_directory_loaded)
-        self._manager.connect_to_server()
-
-        for pane in (self._left_pane, self._right_pane):
-            pane.connect("path-changed", self._on_path_changed, pane)
-            pane.connect("request-operation", self._on_request_operation, pane)
 
         # Initialize panes: left is LOCAL home, right is REMOTE home (~)
         self._pending_paths: Dict[FilePane, Optional[str]] = {
@@ -1309,21 +1784,58 @@ class FileManagerWindow(Adw.Window):
         except Exception as exc:
             self._left_pane.show_toast(f"Failed to load local home: {exc}")
 
-        self._show_progress(0.1, "Connecting…")
+        # Connect pane signals
+        for pane in (self._left_pane, self._right_pane):
+            pane.connect("path-changed", self._on_path_changed, pane)
+            pane.connect("request-operation", self._on_request_operation, pane)
+
+        # Initialize SFTP manager and connect signals
+        self._manager = AsyncSFTPManager(host, username, port)
+        
+        # Connect signals with error handling
+        try:
+            self._manager.connect("connected", self._on_connected)
+            self._manager.connect("connection-error", self._on_connection_error)
+            self._manager.connect("progress", self._on_progress)
+            self._manager.connect("operation-error", self._on_operation_error)
+            self._manager.connect("directory-loaded", self._on_directory_loaded)
+        except Exception as exc:
+            print(f"Error connecting signals: {exc}")
+        
+        # Show initial progress before connecting
+        try:
+            self._show_progress(0.1, "Connecting…")
+        except Exception as exc:
+            print(f"Error showing progress: {exc}")
+        
+        # Start connection after everything is set up
+        try:
+            self._manager.connect_to_server()
+        except Exception as exc:
+            print(f"Error connecting to server: {exc}")
 
     # -- signal handlers ------------------------------------------------
 
     def _clear_progress_toast(self) -> None:
-        if self._progress_toast is not None:
-            self._progress_toast.dismiss()
-            self._progress_toast = None
+        """Clear the progress dialog safely."""
+        if hasattr(self, '_progress_dialog') and self._progress_dialog is not None:
+            try:
+                self._progress_dialog.close()
+            except (AttributeError, RuntimeError, GLib.GError):
+                # Dialog might be destroyed or invalid, ignore
+                pass
+            finally:
+                self._progress_dialog = None
+
 
     def _show_progress(self, fraction: float, message: str) -> None:
-        del fraction  # Fraction reserved for future progress UI enhancements
-        self._clear_progress_toast()
-        toast = Adw.Toast.new(message)
-        self._toast_overlay.add_toast(toast)
-        self._progress_toast = toast
+        """Update progress dialog if active."""
+        if hasattr(self, '_progress_dialog') and self._progress_dialog is not None:
+            try:
+                self._progress_dialog.update_progress(fraction, message)
+            except (AttributeError, RuntimeError, GLib.GError):
+                # Dialog might be destroyed or invalid, ignore
+                pass
 
     def _create_headerbar_menu(self, header_bar: Adw.HeaderBar) -> None:
         """Create and add menu button to headerbar."""
@@ -1382,18 +1894,30 @@ class FileManagerWindow(Adw.Window):
         self._show_progress(fraction, message)
 
     def _on_operation_error(self, _manager, message: str) -> None:
-        toast = Adw.Toast.new(message)
-        toast.set_priority(Adw.ToastPriority.HIGH)
-        self._toast_overlay.add_toast(toast)
+        """Handle operation error with toast."""
+        try:
+            toast = Adw.Toast.new(message)
+            toast.set_priority(Adw.ToastPriority.HIGH)
+            self._toast_overlay.add_toast(toast)
+        except (AttributeError, RuntimeError, GLib.GError):
+            # Overlay might be destroyed or invalid, ignore
+            pass
 
     def _on_connection_error(self, _manager, message: str) -> None:
+        """Handle connection error with toast."""
         self._clear_progress_toast()
         if self._connection_error_reported:
             return
-        toast = Adw.Toast.new(message or "Connection failed")
-        toast.set_priority(Adw.ToastPriority.HIGH)
-        self._toast_overlay.add_toast(toast)
-        self._connection_error_reported = True
+        
+        try:
+            toast = Adw.Toast.new(message or "Connection failed")
+            toast.set_priority(Adw.ToastPriority.HIGH)
+            self._toast_overlay.add_toast(toast)
+        except (AttributeError, RuntimeError, GLib.GError):
+            # Overlay might be destroyed or invalid, ignore
+            pass
+        finally:
+            self._connection_error_reported = True
 
     def _on_directory_loaded(
         self, _manager, path: str, entries: Iterable[FileEntry]
@@ -1672,37 +2196,51 @@ class FileManagerWindow(Adw.Window):
 
             for path_obj in available_paths:
                 destination = posixpath.join(remote_root or "/", path_obj.name)
-                toast_message = f"Uploading {path_obj.name}"
-                self._toast_overlay.add_toast(Adw.Toast.new(toast_message))
                 if path_obj.is_dir():
                     future = self._manager.upload_directory(path_obj, destination)
                 else:
                     future = self._manager.upload(path_obj, destination)
+                
+                # Show progress dialog for upload
+                self._show_progress_dialog("upload", path_obj.name, future)
                 self._attach_refresh(future, refresh_remote=target_pane)
         elif action == "download" and isinstance(payload, dict):
-            source = payload.get("source")
-            destination_base = payload.get("destination")
-            is_dir = payload.get("is_dir", False)
+            try:
+                print(f"DEBUG: Starting download operation")
+                source = payload.get("source")
+                destination_base = payload.get("destination")
+                is_dir = payload.get("is_dir", False)
 
-            if not source or destination_base is None:
-                pane.show_toast("Invalid download request")
-                return
+                if not source or destination_base is None:
+                    pane.show_toast("Invalid download request")
+                    return
 
-            if not isinstance(destination_base, pathlib.Path):
-                destination_base = pathlib.Path(destination_base)
+                if not isinstance(destination_base, pathlib.Path):
+                    destination_base = pathlib.Path(destination_base)
 
-            name = os.path.basename(source.rstrip("/"))
-            toast_message = f"Downloading {name}"
-            self._toast_overlay.add_toast(Adw.Toast.new(toast_message))
+                name = os.path.basename(source.rstrip("/"))
+                print(f"DEBUG: Downloading {name} from {source} to {destination_base}")
+                
+                if is_dir:
+                    target_path = destination_base / name
+                    print(f"DEBUG: Starting directory download")
+                    future = self._manager.download_directory(source, target_path)
+                else:
+                    target_path = destination_base / name
+                    print(f"DEBUG: Starting file download")
+                    future = self._manager.download(source, target_path)
 
-            if is_dir:
-                target_path = destination_base / name
-                future = self._manager.download_directory(source, target_path)
-            else:
-                target_path = destination_base / name
-                future = self._manager.download(source, target_path)
-
-            self._attach_refresh(future, refresh_local_path=str(destination_base))
+                print(f"DEBUG: Download future created, showing progress dialog")
+                # Show progress dialog for download
+                self._show_progress_dialog("download", name, future)
+                print(f"DEBUG: Progress dialog shown, attaching refresh")
+                self._attach_refresh(future, refresh_local_path=str(destination_base))
+                print(f"DEBUG: Download operation setup complete")
+            except Exception as exc:
+                print(f"DEBUG: Error in download operation: {exc}")
+                import traceback
+                traceback.print_exc()
+                pane.show_toast(f"Download failed: {exc}")
 
     def _on_window_resize(self, window, pspec) -> None:
         """Maintain proportional paned split when window is resized following GNOME HIG"""
@@ -1746,6 +2284,99 @@ class FileManagerWindow(Adw.Window):
         if target == current:
             self._load_local(target)
         return False
+
+    
+    def _show_progress_dialog(self, operation_type: str, filename: str, future: Future) -> None:
+        """Show and manage the progress dialog for a file operation."""
+        try:
+            print(f"DEBUG: _show_progress_dialog called for {operation_type} {filename}")
+            
+            # Dismiss any existing progress dialog
+            if hasattr(self, '_progress_dialog') and self._progress_dialog:
+                try:
+                    self._progress_dialog.close()
+                except (AttributeError, RuntimeError):
+                    pass
+                self._progress_dialog = None
+            
+            # Create new progress dialog
+            print(f"DEBUG: Creating progress dialog")
+            self._progress_dialog = SFTPProgressDialog(parent=self, operation_type=operation_type)
+            self._progress_dialog.set_operation_details(total_files=1, filename=filename)
+            self._progress_dialog.set_future(future)
+            
+            # Try to get file size for better progress display
+            try:
+                if operation_type == "download":
+                    # For downloads, we'll get the size from the SFTP manager if available
+                    # This is a rough estimate, the actual implementation would need to
+                    # query the remote file size
+                    self._progress_dialog.total_bytes = 1024 * 1024  # Default to 1MB estimate
+                else:  # upload
+                    # For uploads, we could get the local file size
+                    self._progress_dialog.total_bytes = 1024 * 1024  # Default to 1MB estimate
+            except Exception:
+                self._progress_dialog.total_bytes = 0
+            
+            # Show the dialog
+            self._progress_dialog.present()
+            print(f"DEBUG: Progress dialog created and shown successfully")
+            
+        except Exception as exc:
+            print(f"DEBUG: Error in _show_progress_dialog: {exc}")
+            import traceback
+            traceback.print_exc()
+            return
+        
+        # Store references for cleanup
+        self._progress_handler_id = None
+        
+        # Connect progress signal
+        def _on_progress(manager, progress: float, message: str) -> None:
+            # Check if dialog exists and operation hasn't been cancelled
+            if (self._progress_dialog and 
+                not self._progress_dialog.is_cancelled and
+                self._current_future and 
+                not self._current_future.cancelled()):
+                try:
+                    self._progress_dialog.update_progress(progress, message)
+                except (AttributeError, RuntimeError, GLib.GError):
+                    # Dialog may have been destroyed
+                    pass
+        
+        # Connect progress signal and store handler ID
+        self._progress_handler_id = self._manager.connect("progress", _on_progress)
+        
+        def _on_complete(future_result) -> None:
+            # Use GLib.idle_add to ensure we're on the main thread
+            def _cleanup():
+                # Disconnect progress signal
+                if hasattr(self, '_progress_handler_id') and self._progress_handler_id:
+                    try:
+                        self._manager.disconnect(self._progress_handler_id)
+                    except (TypeError, RuntimeError):
+                        pass
+                    self._progress_handler_id = None
+                
+                # Update dialog to show completion
+                if self._progress_dialog:
+                    try:
+                        if future_result.exception():
+                            error_msg = str(future_result.exception())
+                            self._progress_dialog.show_completion(success=False, error_message=error_msg)
+                        else:
+                            self._progress_dialog.increment_file_count()
+                            self._progress_dialog.show_completion(success=True)
+                    except (AttributeError, RuntimeError, GLib.GError):
+                        # Dialog may have been destroyed
+                        pass
+                
+                self._current_future = None
+            
+            GLib.idle_add(_cleanup)
+        
+        # Connect future completion
+        future.add_done_callback(_on_complete)
 
     @staticmethod
     def _normalize_local_path(path: Optional[str]) -> str:
@@ -1803,6 +2434,7 @@ __all__ = [
     "AsyncSFTPManager",
     "FileEntry",
     "FileManagerWindow",
+    "SFTPProgressDialog",
     "launch_file_manager_window",
 ]
 
