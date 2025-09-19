@@ -48,11 +48,11 @@ from .preferences import (
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
 )
+from .file_manager_integration import launch_remote_file_manager
 from .sshcopyid_window import SshCopyIdWindow
 from .groups import GroupManager
 from .sidebar import GroupRow, ConnectionRow, build_sidebar
 
-from .sftp_utils import open_remote_in_file_manager
 from .welcome_page import WelcomePage
 from .actions import WindowActions, register_window_actions
 from . import shutdown
@@ -85,6 +85,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connections = []
         self._is_quitting = False  # Flag to prevent multiple quit attempts
         self._is_controlled_reconnect = False  # Flag to track controlled reconnection
+        self._internal_file_manager_windows: List[Any] = []
 
         # Initialize managers
         self.config = Config()
@@ -1505,13 +1506,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.scp_button.connect('clicked', self.on_scp_button_clicked)
         self.connection_toolbar.append(self.scp_button)
 
-        # Manage files button
-        if not should_hide_file_manager_options():
-            self.manage_files_button = Gtk.Button.new_from_icon_name('folder-symbolic')
-            self.manage_files_button.set_tooltip_text('Open file manager for remote server')
-            self.manage_files_button.set_sensitive(False)
-            self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
-            self.connection_toolbar.append(self.manage_files_button)
+        # Manage files button (visibility controlled dynamically)
+        self.manage_files_button = Gtk.Button.new_from_icon_name('folder-symbolic')
+        self.manage_files_button.set_tooltip_text('Open file manager for remote server')
+        self.manage_files_button.set_sensitive(False)
+        self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
+        self.manage_files_button.set_visible(not should_hide_file_manager_options())
+        self.connection_toolbar.append(self.manage_files_button)
         
         # System terminal button (only when external terminals are available)
         if not should_hide_external_terminal_options():
@@ -3315,8 +3316,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.copy_key_button.set_sensitive(not multiple_connections)
             if hasattr(self, 'scp_button'):
                 self.scp_button.set_sensitive(not multiple_connections)
-            if hasattr(self, 'manage_files_button'):
-                self.manage_files_button.set_sensitive(not multiple_connections)
+            self.manage_files_button.set_sensitive(
+                not multiple_connections and not should_hide_file_manager_options()
+            )
+            self.manage_files_button.set_visible(not should_hide_file_manager_options())
             if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
                 self.system_terminal_button.set_sensitive(not multiple_connections)
             self.delete_button.set_sensitive(True)
@@ -3332,8 +3335,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.copy_key_button.set_sensitive(False)
             if hasattr(self, 'scp_button'):
                 self.scp_button.set_sensitive(False)
-            if hasattr(self, 'manage_files_button'):
-                self.manage_files_button.set_sensitive(False)
+            self.manage_files_button.set_sensitive(False)
+            self.manage_files_button.set_visible(not should_hide_file_manager_options())
             if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
                 self.system_terminal_button.set_sensitive(False)
             self.rename_group_button.set_sensitive(allow_single_group)
@@ -3346,8 +3349,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.copy_key_button.set_sensitive(False)
             if hasattr(self, 'scp_button'):
                 self.scp_button.set_sensitive(False)
-            if hasattr(self, 'manage_files_button'):
-                self.manage_files_button.set_sensitive(False)
+            self.manage_files_button.set_sensitive(False)
+            self.manage_files_button.set_visible(not should_hide_file_manager_options())
             if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
                 self.system_terminal_button.set_sensitive(False)
             self.rename_group_button.set_sensitive(False)
@@ -3565,33 +3568,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             connection = getattr(selected_row, 'connection', None)
             if not connection:
                 return
-            
-            # Use the same logic as the context menu action
-            try:
-                # Define error callback for async operation
-                def error_callback(error_msg):
-                    logger.error(f"Failed to open file manager for {connection.nickname}: {error_msg}")
-                    # Show error dialog to user
-                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
-                
-                host_value = _get_connection_host(connection)
-                success, error_msg = open_remote_in_file_manager(
-                    user=connection.username,
-                    host=host_value,
-                    port=connection.port if connection.port != 22 else None,
-                    error_callback=error_callback,
-                    parent_window=self
-                )
-                if success:
-                    logger.info(f"Started file manager process for {connection.nickname}")
-                else:
-                    logger.error(f"Failed to start file manager process for {connection.nickname}: {error_msg}")
-                    # Show error dialog to user
-                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to start file manager process")
-            except Exception as e:
-                logger.error(f"Error opening file manager: {e}")
-                # Show error dialog to user
-                self._show_manage_files_error(connection.nickname, str(e))
+
+            self._open_manage_files_for_connection(connection)
         except Exception as e:
             logger.error(f"Manage files button click failed: {e}")
 
@@ -5169,30 +5147,61 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if hasattr(self, '_context_menu_connection') and self._context_menu_connection:
             connection = self._context_menu_connection
             try:
-                # Define error callback for async operation
-                def error_callback(error_msg):
-                    logger.error(f"Failed to open file manager for {connection.nickname}: {error_msg}")
-                    # Show error dialog to user
-                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
-                
-                host_value = _get_connection_host(connection)
-                success, error_msg = open_remote_in_file_manager(
-                    user=connection.username,
-                    host=host_value,
-                    port=connection.port if connection.port != 22 else None,
-                    error_callback=error_callback,
-                    parent_window=self
-                )
-                if success:
-                    logger.info(f"Started file manager process for {connection.nickname}")
-                else:
-                    logger.error(f"Failed to start file manager process for {connection.nickname}: {error_msg}")
-                    # Show error dialog to user
-                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to start file manager process")
+                self._open_manage_files_for_connection(connection)
             except Exception as e:
                 logger.error(f"Error opening file manager: {e}")
-                # Show error dialog to user
-                self._show_manage_files_error(connection.nickname, str(e))
+
+    def _open_manage_files_for_connection(self, connection):
+        """Open files for the supplied connection using the best integration."""
+
+        nickname = getattr(connection, 'nickname', None) or getattr(connection, 'hostname', None) or getattr(connection, 'host', None) or getattr(connection, 'username', 'Remote Host')
+        host_value = _get_connection_host(connection)
+        username = getattr(connection, 'username', '') or ''
+        port_value = getattr(connection, 'port', 22)
+        effective_port = port_value if port_value and port_value != 22 else None
+
+        def error_callback(error_msg):
+            message = error_msg or "Failed to open file manager"
+            logger.error(f"Failed to open file manager for {nickname}: {message}")
+            self._show_manage_files_error(str(nickname), message)
+
+        success, error_msg, window = launch_remote_file_manager(
+            user=str(username or ''),
+            host=str(host_value or ''),
+            port=effective_port,
+            nickname=str(nickname),
+            parent_window=self,
+            error_callback=error_callback,
+        )
+
+        if success:
+            logger.info(f"Started file manager for {nickname}")
+            if window is not None:
+                self._track_internal_file_manager_window(window)
+        else:
+            message = error_msg or "Failed to start file manager process"
+            logger.error(f"Failed to start file manager process for {nickname}: {message}")
+            self._show_manage_files_error(str(nickname), message)
+
+    def _track_internal_file_manager_window(self, window):
+        """Keep a reference to in-app file manager windows to prevent GC."""
+
+        if window in self._internal_file_manager_windows:
+            return
+        self._internal_file_manager_windows.append(window)
+
+        def _cleanup(*_args):
+            try:
+                self._internal_file_manager_windows.remove(window)
+            except ValueError:
+                pass
+            return False
+
+        try:
+            if hasattr(window, 'connect'):
+                window.connect('close-request', _cleanup)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug('Unable to attach close handler to internal file manager window')
 
     def on_edit_connection_action(self, action, param=None):
         """Handle edit connection action from context menu"""

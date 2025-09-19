@@ -5,7 +5,11 @@ import logging
 import subprocess
 import shutil
 
-from .platform_utils import is_macos, is_flatpak, get_config_dir
+from .platform_utils import get_config_dir, is_flatpak, is_macos
+from .file_manager_integration import (
+    has_internal_file_manager,
+    has_native_gvfs_support,
+)
 
 
 import gi
@@ -62,9 +66,20 @@ def should_hide_external_terminal_options() -> bool:
 def should_hide_file_manager_options() -> bool:
     """Check if file manager options should be hidden.
 
-    Returns True on macOS or when running inside a Flatpak sandbox.
+    File manager UI should only be hidden when neither the native GVFS
+    integration nor the built-in manager are available. This allows the
+    Manage Files button to remain visible on platforms like macOS or Flatpak
+    where the new in-app manager is preferred.
     """
-    return is_macos() or is_flatpak()
+
+    try:
+        if has_native_gvfs_support():
+            return False
+        if has_internal_file_manager():
+            return False
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("File manager capability detection failed: %s", exc)
+    return True
 
 class MonospaceFontDialog(Adw.Window):
     def __init__(self, parent=None, current_font="Monospace 12"):
