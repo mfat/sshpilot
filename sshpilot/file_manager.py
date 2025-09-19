@@ -1,4 +1,5 @@
 import gi
+
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 
@@ -12,6 +13,7 @@ import json
 import tempfile
 from datetime import datetime
 import shutil
+from typing import Any, Dict, Optional
 
 # Import your existing SSH utilities
 try:
@@ -40,19 +42,38 @@ except ImportError:
             return []
 
 class SftpFileManager(Adw.ApplicationWindow):
-    def __init__(self, app):
+    def __init__(
+        self,
+        app,
+        connection_info: Optional[Dict[str, Any]] = None,
+        parent_window: Optional['Gtk.Window'] = None,
+    ):
         super().__init__(application=app)
-        
+
+        if parent_window is not None:
+            try:
+                self.set_transient_for(parent_window)
+            except Exception:
+                pass
+
         self.connection_info = None  # Will store connection details
         self.connected = False
         self.current_local_path = Path.home()
         self.current_remote_path = "/"
-        
+        self.connection_defaults: Dict[str, Any] = {}
+
+        if connection_info:
+            # Store a copy so the dialog can reuse defaults if manual retry is required
+            self.connection_defaults = dict(connection_info)
+
         self.set_title("SFTP File Manager")
         self.set_default_size(1200, 800)
-        
+
         self.setup_ui()
         self.refresh_local_view()
+
+        if connection_info:
+            GLib.idle_add(self.connect_with_metadata, dict(connection_info))
         
     def setup_ui(self):
         # Main content
@@ -231,28 +252,33 @@ class SftpFileManager(Adw.ApplicationWindow):
         form_box.set_margin_bottom(12)
         
         # Host
+        defaults = self.connection_defaults
+
         host_group = Adw.PreferencesGroup()
         host_row = Adw.EntryRow()
         host_row.set_title("Host")
-        host_row.set_text("localhost")
+        host_row.set_text(str(defaults.get("host", defaults.get("hostname", "localhost"))))
         host_group.add(host_row)
         form_box.append(host_group)
-        
+
         # Port
         port_group = Adw.PreferencesGroup()
         port_row = Adw.EntryRow()
         port_row.set_title("Port")
-        port_row.set_text("22")
+        port_value = defaults.get("port", 22)
+        port_row.set_text(str(port_value if port_value else 22))
         port_group.add(port_row)
         form_box.append(port_group)
-        
+
         # Username
         user_group = Adw.PreferencesGroup()
         user_row = Adw.EntryRow()
         user_row.set_title("Username")
+        if defaults.get("username"):
+            user_row.set_text(str(defaults.get("username")))
         user_group.add(user_row)
         form_box.append(user_group)
-        
+
         # Authentication method
         auth_group = Adw.PreferencesGroup()
         auth_group.set_title("Authentication")
@@ -264,14 +290,27 @@ class SftpFileManager(Adw.ApplicationWindow):
         auth_model.append("SSH Key")
         auth_model.append("Password")
         auth_row.set_model(auth_model)
-        auth_row.set_selected(0)
+        auth_method = defaults.get("auth_method")
+        if isinstance(auth_method, str):
+            auth_method = 0 if auth_method.lower() == "key" else 1
+        auth_row.set_selected(0 if auth_method in (0, None) else 1)
         auth_group.add(auth_row)
-        
+
         # Key file selection (initially visible)
         key_row = Adw.ActionRow()
         key_row.set_title("SSH Key File")
         key_entry = Gtk.Entry()
-        key_entry.set_text(str(Path.home() / ".ssh" / "id_rsa"))
+        key_entry.set_text(
+            str(
+                defaults.get(
+                    "key_file",
+                    defaults.get(
+                        "keyfile",
+                        Path.home() / ".ssh" / "id_rsa",
+                    ),
+                )
+            )
+        )
         key_entry.set_hexpand(True)
         key_button = Gtk.Button(label="Browse...")
         key_button.connect("clicked", lambda b: self.browse_key_file(key_entry))
@@ -280,11 +319,13 @@ class SftpFileManager(Adw.ApplicationWindow):
         key_box.append(key_button)
         key_row.add_suffix(key_box)
         auth_group.add(key_row)
-        
+
         # Password entry (initially hidden)
         pass_row = Adw.PasswordEntryRow()
         pass_row.set_title("Password")
         pass_row.set_visible(False)
+        if defaults.get("password"):
+            pass_row.set_text(str(defaults.get("password")))
         auth_group.add(pass_row)
         
         # Toggle visibility based on auth method
@@ -303,11 +344,46 @@ class SftpFileManager(Adw.ApplicationWindow):
         dialog.set_response_appearance("connect", Adw.ResponseAppearance.SUGGESTED)
         
         dialog.connect("response", lambda d, r: self.on_connection_response(
-            d, r, host_row.get_text(), int(port_row.get_text() or 22), 
+            d, r, host_row.get_text(), int(port_row.get_text() or 22),
             user_row.get_text(), auth_row.get_selected(), key_entry.get_text(), pass_row.get_text()
         ))
-        
+
         dialog.present()
+
+    def connect_with_metadata(self, metadata: Dict[str, Any]):
+        """Attempt automatic connection using provided metadata."""
+
+        # Ensure defaults remain available for manual retries
+        self.connection_defaults.update(metadata)
+
+        host = metadata.get("host") or metadata.get("hostname")
+        username = metadata.get("username")
+        port = metadata.get("port") or 22
+        auth_method = metadata.get("auth_method", "key")
+
+        if not host or not username:
+            return False
+
+        if isinstance(auth_method, int):
+            auth_method = "key" if auth_method == 0 else "password"
+        else:
+            auth_method = str(auth_method).lower()
+
+        if auth_method == "password":
+            password = metadata.get("password", "")
+            if not password:
+                GLib.idle_add(
+                    self.on_connection_error,
+                    "No stored password available. Enter credentials to connect.",
+                )
+                return False
+            self.connect_with_password(host, port, username, password)
+        else:
+            key_file = metadata.get("key_file") or metadata.get("keyfile")
+            if not key_file:
+                key_file = str(Path.home() / ".ssh" / "id_rsa")
+            self.connect_with_key(host, port, username, key_file)
+        return True
     
     def browse_key_file(self, entry):
         """Open file chooser for SSH key selection"""
@@ -828,13 +904,53 @@ class SftpFileManager(Adw.ApplicationWindow):
         print(f"Info: {message}")  # Fallback for now
 
 class SftpFileManagerApp(Adw.Application):
-    def __init__(self):
-        super().__init__(application_id="com.example.sftpfilemanager")
+    def __init__(
+        self,
+        connection_info: Optional[Dict[str, Any]] = None,
+        parent_window: Optional['Gtk.Window'] = None,
+    ):
+        super().__init__(application_id="io.github.mfat.sshpilot.filemanager")
+        self._connection_info = dict(connection_info or {})
+        self._parent_window = parent_window
+        self.window: Optional[SftpFileManager] = None
         self.connect("activate", self.on_activate)
-    
+
     def on_activate(self, app):
-        self.window = SftpFileManager(self)
+        if self.window is None:
+            self.window = SftpFileManager(
+                self,
+                connection_info=self._connection_info,
+                parent_window=self._parent_window,
+            )
         self.window.present()
+
+
+def launch_sftp_file_manager(
+    connection_info: Optional[Dict[str, Any]] = None,
+    parent_window: Optional['Gtk.Window'] = None,
+) -> SftpFileManager:
+    """Launch the in-app SFTP file manager window."""
+
+    app = Gtk.Application.get_default()
+    metadata = dict(connection_info or {})
+
+    if app is None:
+        # Create a standalone application instance if sshPilot is not running under Gtk.Application
+        manager_app = SftpFileManagerApp(metadata, parent_window)
+        manager_app.register(None)
+        manager_app.activate()
+        if manager_app.window is None:
+            raise RuntimeError("Failed to create SFTP File Manager window")
+        return manager_app.window
+
+    window = SftpFileManager(
+        app,
+        connection_info=metadata,
+        parent_window=parent_window,
+    )
+    window.present()
+    return window
+
 
 if __name__ == "__main__":
     app = SftpFileManagerApp()

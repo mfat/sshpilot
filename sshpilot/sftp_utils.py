@@ -6,11 +6,13 @@ import os
 import logging
 import subprocess
 import threading
-from typing import Optional, Tuple, Callable
+import sys
+from typing import Optional, Tuple, Callable, Dict, Any
 
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk
 
-from .platform_utils import is_flatpak
+from .file_manager import launch_sftp_file_manager
+from .platform_utils import is_flatpak, is_macos
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +24,27 @@ def open_remote_in_file_manager(
     path: Optional[str] = None,
     error_callback: Optional[Callable] = None,
     parent_window=None,
+    connection_metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, Optional[str]]:
-    """Open remote server in file manager using SFTP URI with asynchronous verification"""
+    """Open remote server in file manager using SFTP URI or the in-app manager."""
+
+    metadata = dict(connection_metadata or {})
+    metadata.setdefault("host", host)
+    metadata.setdefault("username", user)
+    metadata.setdefault("port", port or 22)
+
+    if _should_use_in_app_manager():
+        try:
+            launch_sftp_file_manager(metadata, parent_window=parent_window)
+            return True, None
+        except Exception as exc:
+            logger.error(f"Failed to launch in-app file manager: {exc}")
+            # Fall back to GVFS flow when available
+            if not _has_gvfs_support():
+                error_msg = str(exc)
+                if error_callback:
+                    error_callback(error_msg)
+                return False, error_msg
 
     # Build sftp URI
     p = path or "/"
@@ -76,6 +97,24 @@ def open_remote_in_file_manager(
     _verify_ssh_connection_async(user, host, port, _on_verify_complete)
 
     return True, None
+
+
+def _should_use_in_app_manager() -> bool:
+    if is_flatpak() or is_macos() or sys.platform.startswith("win"):
+        return True
+
+    if os.environ.get("GIO_USE_VFS", "").lower() == "local":
+        return True
+
+    return not _has_gvfs_support()
+
+
+def _has_gvfs_support() -> bool:
+    try:
+        handler = Gio.AppInfo.get_default_for_uri_scheme("sftp")
+        return handler is not None
+    except Exception:
+        return False
 
 
 def _mount_and_open_sftp(

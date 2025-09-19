@@ -3573,14 +3573,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     logger.error(f"Failed to open file manager for {connection.nickname}: {error_msg}")
                     # Show error dialog to user
                     self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
-                
+
                 host_value = _get_connection_host(connection)
+                metadata = self._build_file_manager_metadata(connection)
                 success, error_msg = open_remote_in_file_manager(
                     user=connection.username,
                     host=host_value,
                     port=connection.port if connection.port != 22 else None,
                     error_callback=error_callback,
-                    parent_window=self
+                    parent_window=self,
+                    connection_metadata=metadata,
                 )
                 if success:
                     logger.info(f"Started file manager process for {connection.nickname}")
@@ -5174,14 +5176,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     logger.error(f"Failed to open file manager for {connection.nickname}: {error_msg}")
                     # Show error dialog to user
                     self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
-                
+
                 host_value = _get_connection_host(connection)
+                metadata = self._build_file_manager_metadata(connection)
                 success, error_msg = open_remote_in_file_manager(
                     user=connection.username,
                     host=host_value,
                     port=connection.port if connection.port != 22 else None,
                     error_callback=error_callback,
-                    parent_window=self
+                    parent_window=self,
+                    connection_metadata=metadata,
                 )
                 if success:
                     logger.info(f"Started file manager process for {connection.nickname}")

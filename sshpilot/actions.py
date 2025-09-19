@@ -21,6 +21,42 @@ logger = logging.getLogger(__name__)
 class WindowActions:
     """Mixin providing action handlers for :class:`MainWindow`."""
 
+    def _build_file_manager_metadata(self, connection) -> dict:
+        metadata = {}
+
+        try:
+            metadata["host"] = getattr(connection, "hostname", None) or getattr(
+                connection,
+                "host",
+                None,
+            )
+        except Exception:
+            metadata["host"] = None
+
+        metadata["username"] = getattr(connection, "username", "")
+        metadata["port"] = getattr(connection, "port", 22) or 22
+
+        auth_method = getattr(connection, "auth_method", 0)
+        if isinstance(auth_method, str):
+            auth_value = auth_method.lower()
+        else:
+            auth_value = "key" if auth_method == 0 else "password"
+        metadata["auth_method"] = auth_value
+
+        key_file = getattr(connection, "keyfile", "") or getattr(
+            connection,
+            "private_key",
+            "",
+        )
+        if key_file:
+            metadata["key_file"] = key_file
+
+        password = getattr(connection, "password", "")
+        if password:
+            metadata["password"] = password
+
+        return metadata
+
     def on_toggle_sidebar_action(self, action, param):
         """Handle sidebar toggle action (for keyboard shortcuts)"""
         try:
@@ -106,12 +142,14 @@ class WindowActions:
                     self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
 
                 host_value = getattr(connection, 'hostname', getattr(connection, 'host', getattr(connection, 'nickname', '')))
+                metadata = self._build_file_manager_metadata(connection)
                 success, error_msg = open_remote_in_file_manager(
                     user=connection.username,
                     host=host_value,
                     port=connection.port if connection.port != 22 else None,
                     error_callback=error_callback,
-                    parent_window=self
+                    parent_window=self,
+                    connection_metadata=metadata,
                 )
                 if success:
                     logger.info(f"Started file manager process for {connection.nickname}")
