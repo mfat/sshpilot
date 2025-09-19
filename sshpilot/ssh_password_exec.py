@@ -1,6 +1,8 @@
 # ssh_password_exec.py
 import os, tempfile, threading, subprocess, shutil
 
+from .scp_utils import assemble_scp_transfer_args
+
 def _write_once_fifo(path: str, secret: str):
     # Writer runs in a thread: blocks until sshpass opens FIFO for read
     with open(path, "w", encoding="utf-8") as w:
@@ -98,7 +100,8 @@ def run_ssh_with_password(host: str, user: str, password: str, *,
             pass
 
 def run_scp_with_password(host: str, user: str, password: str,
-                          local_paths: list[str], remote_dir: str, *,
+                          sources: list[str], destination: str, *,
+                          direction: str = 'upload',
                           port: int = 22,
                           known_hosts_path: str | None = None,
                           extra_ssh_opts: list[str] | None = None,
@@ -124,16 +127,28 @@ def run_scp_with_password(host: str, user: str, password: str,
                      "-o", "StrictHostKeyChecking=accept-new"]
     else:
         ssh_opts += ["-o", "StrictHostKeyChecking=accept-new"]
+    if extra_ssh_opts:
+        ssh_opts += list(extra_ssh_opts)
 
     # Resolve sshpass and scp binaries
     sshpass = ("/app/bin/sshpass" if os.path.exists("/app/bin/sshpass") and os.access("/app/bin/sshpass", os.X_OK) else None) or shutil.which("sshpass")
     scpbin = shutil.which("scp") or "/usr/bin/scp"
-    
+
+    target = f"{user}@{host}" if user else host
+    transfer_sources, transfer_destination = assemble_scp_transfer_args(
+        target,
+        sources,
+        destination,
+        direction,
+    )
+
+    base_cmd = [scpbin, "-v", "-P", str(port), *ssh_opts, *transfer_sources, transfer_destination]
+
     if sshpass:
-        cmd = [sshpass, "-f", fifo, scpbin, "-v", "-P", str(port), *ssh_opts, *local_paths, f"{user}@{host}:{remote_dir}"]
+        cmd = [sshpass, "-f", fifo, *base_cmd]
     else:
         # sshpass not available – allow interactive password prompt
-        cmd = [scpbin, "-v", "-P", str(port), *ssh_opts, *local_paths, f"{user}@{host}:{remote_dir}"]
+        cmd = base_cmd
 
     # Always strip askpass vars so OpenSSH can prompt interactively if needed
     env = (inherit_env or os.environ).copy()
