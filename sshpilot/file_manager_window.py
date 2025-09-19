@@ -23,7 +23,8 @@ import os
 import pathlib
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Callable, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
+
 
 import paramiko
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk
@@ -539,7 +540,11 @@ class FileManagerWindow(Adw.ApplicationWindow):
             pane.connect("path-changed", self._on_path_changed, pane)
             pane.connect("request-operation", self._on_request_operation, pane)
 
-        self._pending_initial_path = initial_path
+        self._pending_paths: Dict[FilePane, Optional[str]] = {
+            self._left_pane: initial_path,
+            self._right_pane: None,
+        }
+
         self._show_progress(0.1, "Connecting…")
 
     # -- signal handlers ------------------------------------------------
@@ -549,7 +554,10 @@ class FileManagerWindow(Adw.ApplicationWindow):
 
     def _on_connected(self, *_args) -> None:
         self._show_progress(0.4, "Connected")
-        self._manager.listdir(self._pending_initial_path)
+        initial_path = self._pending_paths.get(self._left_pane)
+        if initial_path:
+            self._manager.listdir(initial_path)
+
 
     def _on_progress(self, _manager, fraction: float, message: str) -> None:
         self._show_progress(fraction, message)
@@ -562,13 +570,22 @@ class FileManagerWindow(Adw.ApplicationWindow):
     def _on_directory_loaded(
         self, _manager, path: str, entries: Iterable[FileEntry]
     ) -> None:
-        target = self._left_pane if self._pending_initial_path == path else self._right_pane
+        target = next(
+            (pane for pane, pending in self._pending_paths.items() if pending == path),
+            None,
+        )
+        if target is None:
+            target = self._left_pane
+        else:
+            self._pending_paths[target] = None
+
         target.show_entries(path, entries)
         target.push_history(path)
         target.show_toast(f"Loaded {path}")
 
     def _on_path_changed(self, pane: FilePane, path: str) -> None:
-        self._pending_initial_path = path
+        self._pending_paths[pane] = path
+
         pane.push_history(path)
         self._manager.listdir(path)
 
