@@ -496,10 +496,10 @@ class FilePane(Gtk.Box):
             "clicked", lambda *_: self.emit("request-operation", "mkdir", None)
         )
         if self._is_remote:
-            self.toolbar.controls.upload_button.connect("clicked", self._on_upload_clicked)
+            self.toolbar.controls.upload_button.set_visible(False)
             self.toolbar.controls.download_button.connect("clicked", self._on_download_clicked)
         else:
-            self.toolbar.controls.upload_button.set_visible(False)
+            self.toolbar.controls.upload_button.connect("clicked", self._on_upload_clicked)
             self.toolbar.controls.download_button.set_visible(False)
 
         self._history: List[str] = []
@@ -645,12 +645,14 @@ class FilePane(Gtk.Box):
 
     def _update_selection_for_menu(self, widget: Gtk.Widget, x: float, y: float) -> None:
         position = Gtk.INVALID_LIST_POSITION
+        int_x, int_y = int(x), int(y)
+
         if widget is self._list_view:
-            row = self._list_view.get_row_at_y(int(y))
-            if row is not None:
-                position = row.get_position()
+            item = self._list_view.get_item_at_pos(int_x, int_y)
+            if item is not None:
+                position = item.get_position()
         elif widget is self._grid_view:
-            item = self._grid_view.get_item_at_pos(int(x), int(y))
+            item = self._grid_view.get_item_at_pos(int_x, int_y)
             if item is not None:
                 position = item.get_position()
 
@@ -666,7 +668,7 @@ class FilePane(Gtk.Box):
                 action.set_enabled(enabled)
 
         _set_enabled("download", self._is_remote and has_selection)
-        _set_enabled("upload", self._is_remote)
+        _set_enabled("upload", (not self._is_remote) and has_selection)
         _set_enabled("rename", has_selection)
         _set_enabled("delete", has_selection)
         _set_enabled("new_folder", True)
@@ -686,8 +688,6 @@ class FilePane(Gtk.Box):
         self._on_download_clicked(None)
 
     def _on_menu_upload(self) -> None:
-        if not self._is_remote:
-            return
         self._on_upload_clicked(None)
 
     def _on_drop(self, target: Gtk.DropTarget, value: Gio.File, x: float, y: float):
@@ -727,6 +727,7 @@ class FilePane(Gtk.Box):
         destination = self.toolbar.path_entry.get_text() or "/"
         payload = {"paths": [source_path], "destination": destination}
         self.emit("request-operation", "upload", payload)
+
 
     def _on_download_clicked(self, _button: Gtk.Button) -> None:
         entry = self.get_selected_entry()
@@ -1216,7 +1217,7 @@ class FileManagerWindow(Adw.Window):
                     future = self._manager.upload_directory(path_obj, destination)
                 else:
                     future = self._manager.upload(path_obj, destination)
-                self._attach_refresh(future, refresh_remote=pane)
+                self._attach_refresh(future, refresh_remote=remote_pane)
         elif action == "download" and isinstance(payload, dict):
             source = payload.get("source")
             destination_base = payload.get("destination")
