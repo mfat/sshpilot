@@ -22,7 +22,7 @@
 - Option to use the built-in terminal or your favorite one
 - Broadcast commands to all open tabs
 - Full support for Local, Remote and Dynamic port forwarding 
-- SCP support for quicly uploading a file to remote server
+- SCP support for quickly uploading or downloading files to/from remote servers
 - Keypair generation and copying to remote servers (ssh-copy-id)
 - Support for running remote and local commands upon login
 - Secure storage for credentials via libsecret on Linux; no secret (password or passphrase) is copied to clipboard or saved to plain text

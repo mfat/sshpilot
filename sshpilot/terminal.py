@@ -512,7 +512,7 @@ class TerminalWidget(Gtk.Box):
                 # Try to fetch stored password regardless of auth method
                 password_value = getattr(self.connection, 'password', None)
                 if (not password_value) and hasattr(self, 'connection_manager') and self.connection_manager:
-                    password_value = self.connection_manager.get_password(self.connection.host, self.connection.username)
+                    password_value = self.connection_manager.get_password(self.connection.hostname, self.connection.username)
                 has_saved_password = bool(password_value)
             except Exception:
                 auth_method = 0
@@ -753,7 +753,7 @@ class TerminalWidget(Gtk.Box):
                     ssh_cmd.extend(['-p', str(self.connection.port)])
                 
                 # Add host and user
-                ssh_cmd.append(f"{self.connection.username}@{self.connection.host}" if hasattr(self.connection, 'username') and self.connection.username else self.connection.host)
+                ssh_cmd.append(f"{self.connection.username}@{self.connection.hostname}" if hasattr(self.connection, 'username') and self.connection.username else self.connection.hostname)
 
                 # Append remote command last so ssh treats it as the command to run, ensure shell remains active
                 if remote_cmd:
@@ -989,7 +989,11 @@ class TerminalWidget(Gtk.Box):
             # Store process info for cleanup
             with process_manager.lock:
                 # Determine command type based on connection type
-                command_type = 'bash' if hasattr(self.connection, 'host') and self.connection.host == 'localhost' else 'ssh'
+                command_type = (
+                    'bash'
+                    if hasattr(self.connection, 'hostname') and self.connection.hostname == 'localhost'
+                    else 'ssh'
+                )
                 process_manager.processes[pid] = {
                     'terminal': weakref.ref(self),
                     'start_time': datetime.now(),
@@ -1005,13 +1009,13 @@ class TerminalWidget(Gtk.Box):
             self.is_connected = True
             
             # Update connection status in the connection manager (only for SSH connections)
-            if hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'host') and self.connection.host != 'localhost':
+            if hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'hostname') and self.connection.hostname != 'localhost':
                 if hasattr(self, 'connection_manager') and self.connection_manager:
                     self.connection_manager.update_connection_status(self.connection, True)
                     logger.debug(f"Terminal {self.session_id} updated connection status to connected")
                 else:
                     logger.warning(f"Terminal {self.session_id} has no connection manager")
-            elif hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'host') and self.connection.host == 'localhost':
+            elif hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'hostname') and self.connection.hostname == 'localhost':
                 logger.debug(f"Local terminal {self.session_id} spawned successfully")
             else:
                 logger.warning(f"Terminal {self.session_id} has no connection object to update")
@@ -1050,13 +1054,13 @@ class TerminalWidget(Gtk.Box):
             self.is_connected = True
             
             # Update connection status in the connection manager (only for SSH connections)
-            if hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'host') and self.connection.host != 'localhost':
+            if hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'hostname') and self.connection.hostname != 'localhost':
                 if hasattr(self, 'connection_manager') and self.connection_manager:
                     self.connection_manager.update_connection_status(self.connection, True)
                     logger.debug(f"Terminal {self.session_id} updated connection status to connected (fallback)")
                 else:
                     logger.warning(f"Terminal {self.session_id} has no connection manager (fallback)")
-            elif hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'host') and self.connection.host == 'localhost':
+            elif hasattr(self, 'connection') and self.connection and hasattr(self.connection, 'hostname') and self.connection.hostname == 'localhost':
                 logger.debug(f"Local terminal {self.session_id} spawned successfully (fallback)")
             else:
                 logger.warning(f"Terminal {self.session_id} has no connection object to update (fallback)")
@@ -1108,6 +1112,12 @@ class TerminalWidget(Gtk.Box):
                     'cursor_color': '#000000',
                     'highlight_background': '#4A90E2',
                     'highlight_foreground': '#FFFFFF',
+                    'palette': [
+                        '#000000', '#CC0000', '#4E9A06', '#C4A000',
+                        '#3465A4', '#75507B', '#06989A', '#D3D7CF',
+                        '#555753', '#EF2929', '#8AE234', '#FCE94F',
+                        '#729FCF', '#AD7FA8', '#34E2E2', '#EEEEEC'
+                    ]
                 }
             
             # Set colors
@@ -1126,8 +1136,30 @@ class TerminalWidget(Gtk.Box):
             highlight_fg = Gdk.RGBA()
             highlight_fg.parse(profile.get('highlight_foreground', profile['foreground']))
             
+            # Prepare palette colors (16 ANSI colors)
+            palette_colors = None
+            if 'palette' in profile and profile['palette']:
+                palette_colors = []
+                for color_hex in profile['palette']:
+                    color = Gdk.RGBA()
+                    if color.parse(color_hex):
+                        palette_colors.append(color)
+                    else:
+                        logger.warning(f"Failed to parse palette color: {color_hex}")
+                        # Use a fallback color
+                        fallback = Gdk.RGBA()
+                        fallback.parse('#000000')
+                        palette_colors.append(fallback)
+                
+                # Ensure we have exactly 16 colors
+                while len(palette_colors) < 16:
+                    fallback = Gdk.RGBA()
+                    fallback.parse('#000000')
+                    palette_colors.append(fallback)
+                palette_colors = palette_colors[:16]  # Limit to 16 colors
+            
             # Apply colors to terminal
-            self.vte.set_colors(fg_color, bg_color, None)
+            self.vte.set_colors(fg_color, bg_color, palette_colors)
             self.vte.set_color_cursor(cursor_color)
             self.vte.set_color_highlight(highlight_bg)
             self.vte.set_color_highlight_foreground(highlight_fg)
@@ -1605,7 +1637,7 @@ class TerminalWidget(Gtk.Box):
     
     def _on_connection_established(self):
         """Handle successful SSH connection"""
-        logger.info(f"SSH connection to {self.connection.host} established")
+        logger.info(f"SSH connection to {self.connection.hostname} established")
         self.is_connected = True
         
         # Update connection status in the connection manager
@@ -1623,7 +1655,7 @@ class TerminalWidget(Gtk.Box):
     def _on_connection_lost(self, message: str = None):
         """Handle SSH connection loss"""
         if self.is_connected:
-            logger.info(f"SSH connection to {self.connection.host} lost")
+            logger.info(f"SSH connection to {self.connection.hostname} lost")
             self.is_connected = False
 
             # Update connection status in the connection manager
@@ -2209,7 +2241,7 @@ class TerminalWidget(Gtk.Box):
         if self.connection:
             return {
                 'nickname': self.connection.nickname,
-                'host': self.connection.host,
+                'hostname': self.connection.hostname,
                 'username': self.connection.username,
                 'connected': self.is_connected
             }
@@ -2220,8 +2252,8 @@ class TerminalWidget(Gtk.Box):
         try:
             if not hasattr(self, 'connection') or not self.connection:
                 return False
-            return (hasattr(self.connection, 'host') and 
-                   self.connection.host == 'localhost')
+            return (hasattr(self.connection, 'hostname') and
+                   self.connection.hostname == 'localhost')
         except Exception:
             return False
 

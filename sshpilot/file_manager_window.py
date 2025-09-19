@@ -25,6 +25,7 @@ import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
+
 import paramiko
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk
 
@@ -543,6 +544,7 @@ class FileManagerWindow(Adw.ApplicationWindow):
             self._left_pane: initial_path,
             self._right_pane: None,
         }
+
         self._show_progress(0.1, "Connecting…")
 
     # -- signal handlers ------------------------------------------------
@@ -555,6 +557,7 @@ class FileManagerWindow(Adw.ApplicationWindow):
         initial_path = self._pending_paths.get(self._left_pane)
         if initial_path:
             self._manager.listdir(initial_path)
+
 
     def _on_progress(self, _manager, fraction: float, message: str) -> None:
         self._show_progress(fraction, message)
@@ -575,12 +578,14 @@ class FileManagerWindow(Adw.ApplicationWindow):
             target = self._left_pane
         else:
             self._pending_paths[target] = None
+
         target.show_entries(path, entries)
         target.push_history(path)
         target.show_toast(f"Loaded {path}")
 
     def _on_path_changed(self, pane: FilePane, path: str) -> None:
         self._pending_paths[pane] = path
+
         pane.push_history(path)
         self._manager.listdir(path)
 
