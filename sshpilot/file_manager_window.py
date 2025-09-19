@@ -335,10 +335,14 @@ class PaneControls(Gtk.Box):
         self.append(self.new_folder_button)
 
 
-class PaneToolbar(Adw.HeaderBar):
+class PaneToolbar(Gtk.Box):
     def __init__(self) -> None:
-        super().__init__()
-        self.set_title_widget(Gtk.Label(label=""))
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        
+        # Create the actual header bar
+        self._header_bar = Adw.HeaderBar()
+        self._header_bar.set_title_widget(Gtk.Label(label=""))
+        
         self.controls = PaneControls()
         self.path_entry = PathEntry()
         self.list_toggle = ViewToggle("view-list-symbolic", "List view")
@@ -348,9 +352,15 @@ class PaneToolbar(Adw.HeaderBar):
         action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         action_box.append(self.list_toggle)
         action_box.append(self.grid_toggle)
-        self.pack_start(self.controls)
-        self.pack_start(self.path_entry)
-        self.pack_end(action_box)
+        self._header_bar.pack_start(self.controls)
+        self._header_bar.pack_start(self.path_entry)
+        self._header_bar.pack_end(action_box)
+        
+        self.append(self._header_bar)
+    
+    def get_header_bar(self):
+        """Get the actual header bar for toolbar view."""
+        return self._header_bar
 
 
 class FilePane(Gtk.Box):
@@ -368,7 +378,7 @@ class FilePane(Gtk.Box):
     def __init__(self, label: str) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.toolbar = PaneToolbar()
-        self.toolbar.get_title_widget().set_text(label)
+        self.toolbar.get_header_bar().get_title_widget().set_text(label)
         self.append(self.toolbar)
 
         self._stack = Gtk.Stack()
