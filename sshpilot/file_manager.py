@@ -706,7 +706,7 @@ class SftpFileManager(Adw.ApplicationWindow):
                 if self.connection_info['auth_method'] == 'key':
                     # For key-based auth, use scp with proper SSH options
                     env = get_ssh_env_with_askpass("force")
-                    
+
                     cmd = [
                         'scp',
                         '-o', 'IdentitiesOnly=yes',
@@ -716,7 +716,7 @@ class SftpFileManager(Adw.ApplicationWindow):
                         str(local_path),
                         f"{self.connection_info['username']}@{self.connection_info['host']}:{remote_path}"
                     ]
-                    
+
                     result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=60)
                 else:
                     # For password auth, use your scp utility
@@ -728,64 +728,21 @@ class SftpFileManager(Adw.ApplicationWindow):
                         str(Path(self.current_remote_path)),
                         port=self.connection_info['port']
                     )
-                
+
                 if result.returncode == 0:
                     GLib.idle_add(self.refresh_remote_view)
                     GLib.idle_add(self.show_info, f"Uploaded {filename}")
                 else:
                     GLib.idle_add(self.show_error, f"Upload failed: {result.stderr}")
-                    
+
             except subprocess.TimeoutExpired:
                 GLib.idle_add(self.show_error, f"Upload timeout for {filename}")
             except Exception as e:
                 GLib.idle_add(self.show_error, f"Upload failed: {e}")
-        
-        threading.Thread(target=do_upload, daemon=True).start() = self.local_tree_view.get_selection()
-        model, iterator = selection.get_selected()
-        
-        if not iterator:
-            self.show_error("Please select a file to upload")
-            return
-        
-        filename = model.get_value(iterator, 0)
-        is_dir = model.get_value(iterator, 4)
-        
-        if is_dir:
-            self.show_error("Directory upload not supported yet")
-            return
-        
-        local_path = self.current_local_path / filename
-        remote_path = str(Path(self.current_remote_path) / filename)
-        
-        def do_upload():
-            try:
-                cmd = [
-                    'scp',
-                    '-o', 'BatchMode=yes',
-                    '-o', 'ConnectTimeout=10',
-                    '-o', 'StrictHostKeyChecking=no',
-                    '-P', str(self.ssh_connection['port']),
-                    str(local_path),
-                    f"{self.ssh_connection['username']}@{self.ssh_connection['host']}:{remote_path}"
-                ]
-                
-                if self.ssh_connection.get('password'):
-                    cmd = ['sshpass', '-p', self.ssh_connection['password']] + cmd
-                
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-                
-                if result.returncode == 0:
-                    GLib.idle_add(self.refresh_remote_view)
-                    GLib.idle_add(self.show_info, f"Uploaded {filename}")
-                else:
-                    GLib.idle_add(self.show_error, f"Upload failed: {result.stderr}")
-                    
-            except subprocess.TimeoutExpired:
-                GLib.idle_add(self.show_error, f"Upload timeout for {filename}")
-            except Exception as e:
-                GLib.idle_add(self.show_error, f"Upload failed: {e}")
-        
-        threading.Thread(target=do_upload, daemon=True).start()
+
+        upload_thread = threading.Thread(target=do_upload, daemon=True)
+        upload_thread.start()
+        return
     
     def download_file(self, button):
         selection = self.remote_tree_view.get_selection()
