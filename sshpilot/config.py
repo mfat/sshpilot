@@ -8,13 +8,14 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+
 from gi.repository import Gio, GLib, GObject
 from .platform_utils import get_config_dir, is_flatpak
 
 logger = logging.getLogger(__name__)
 
 # Increment this whenever the configuration format changes
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 
 class Config(GObject.Object):
     """Configuration manager for sshPilot"""
@@ -100,14 +101,54 @@ class Config(GObject.Object):
         try:
             if config_data is None:
                 config_data = self.config_data
-            
+
             os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
             with open(self.config_file, 'w') as f:
                 json.dump(config_data, f, indent=2)
-            
+
             logger.debug("Configuration saved to JSON file")
         except Exception as e:
             logger.error(f"Failed to save JSON config: {e}")
+
+    # --- Shortcut helpers -------------------------------------------------
+
+    def get_shortcut_overrides(self) -> Dict[str, Any]:
+        """Return the stored shortcut overrides mapping."""
+        try:
+            overrides = self.get_setting('shortcuts', {})
+            if isinstance(overrides, dict):
+                return overrides
+        except Exception:
+            pass
+        return {}
+
+    def get_shortcut_override(self, action_name: str):
+        """Return the stored shortcut override for an action.
+
+        Returns ``None`` when no override is stored, an empty list when the
+        shortcut is disabled, or the list of accelerator strings otherwise.
+        """
+        overrides = self.get_shortcut_overrides()
+        value = overrides.get(action_name)
+        if value is None:
+            return None
+        if isinstance(value, list):
+            return value
+        # Coerce malformed entries back to sane defaults
+        return None
+
+    def set_shortcut_override(self, action_name: str, accelerators: Optional[List[str]]):
+        """Persist a shortcut override.
+
+        ``None`` clears the override, an empty list disables the shortcut, and
+        any other list stores custom accelerators for the action.
+        """
+        overrides = self.get_shortcut_overrides().copy()
+        if accelerators is None:
+            overrides.pop(action_name, None)
+        else:
+            overrides[action_name] = accelerators
+        self.set_setting('shortcuts', overrides)
 
     def get_default_config(self) -> Dict[str, Any]:
         """Get default configuration values"""
@@ -135,6 +176,7 @@ class Config(GObject.Object):
                 'tile_color': None,  # None for default, or hex color for custom
             },
             'connections_meta': {},  # per-connection metadata
+            'shortcuts': {},  # action -> list of custom accelerators
             'ssh': {
                 'connection_timeout': 30,
                 'keepalive_interval': 60,

@@ -3,9 +3,11 @@ Main Window for sshPilot
 Primary UI with connection list, tabs, and terminal management
 """
 
+import copy
 import os
 import logging
 import math
+import re
 import shlex
 import time
 from pathlib import Path
@@ -61,6 +63,18 @@ from .ssh_utils import ensure_writable_ssh_home
 
 logger = logging.getLogger(__name__)
 
+
+def _get_connection_host(connection) -> str:
+    """Return the hostname for a connection object, falling back to legacy host attribute."""
+    host = getattr(connection, 'hostname', None)
+    if host:
+        return str(host)
+    legacy = getattr(connection, 'host', None)
+    if legacy:
+        return str(legacy)
+    nickname = getattr(connection, 'nickname', '')
+    return str(nickname or '')
+
 class MainWindow(Adw.ApplicationWindow, WindowActions):
     """Main application window"""
 
@@ -84,6 +98,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_to_terminals: Dict[Connection, List[TerminalWidget]] = {}
         self.terminal_to_connection: Dict[TerminalWidget, Connection] = {}
         self.connection_rows = {}   # connection -> row_widget
+        self._context_menu_row = None
         # Hide hosts toggle state
         try:
             self._hide_hosts = bool(self.config.get_setting('ui.hide_hosts', False))
@@ -142,6 +157,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # If startup_behavior == 'welcome', the welcome view is already shown by default
         except Exception as e:
             logger.error(f"Error handling startup behavior: {e}")
+        
+        # Mark startup as complete after a short delay to allow all initialization to finish
+        GLib.timeout_add(500, lambda: setattr(self, '_startup_complete', True) or False)
 
     def _install_sidebar_css(self):
         """Install sidebar focus CSS"""
@@ -270,8 +288,204 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Helper to toggle CSS class on a widget"""
         if on: 
             widget.add_css_class(name)
-        else:  
+        else:
             widget.remove_css_class(name)
+
+
+
+    def _select_only_row(self, row: Optional[Gtk.ListBoxRow]) -> None:
+        """Select only the provided row, clearing any other selections."""
+        if not row or not getattr(self, 'connection_list', None):
+            return
+
+        try:
+            if hasattr(self.connection_list, 'unselect_all'):
+                self.connection_list.unselect_all()
+        except Exception:
+            pass
+
+        try:
+            self.connection_list.select_row(row)
+        except Exception:
+            pass
+
+    def _get_selected_connection_rows(self) -> List[Gtk.ListBoxRow]:
+        """Return all selected rows that represent connections."""
+        if not getattr(self, 'connection_list', None):
+            return []
+
+        try:
+            selected_rows = list(self.connection_list.get_selected_rows())
+        except Exception:
+            selected_row = self.connection_list.get_selected_row()
+            selected_rows = [selected_row] if selected_row else []
+
+        return [row for row in selected_rows if hasattr(row, 'connection')]
+
+    def _get_selected_group_rows(self) -> List[Gtk.ListBoxRow]:
+        """Return all selected rows that represent groups."""
+        if not getattr(self, 'connection_list', None):
+            return []
+
+        try:
+            selected_rows = list(self.connection_list.get_selected_rows())
+        except Exception:
+            selected_row = self.connection_list.get_selected_row()
+            selected_rows = [selected_row] if selected_row else []
+
+        return [row for row in selected_rows if hasattr(row, 'group_id')]
+
+    def _get_target_connection_rows(self, prefer_context: bool = False) -> List[Gtk.ListBoxRow]:
+        """Return rows targeted by the current action, respecting context menus."""
+        rows = self._get_selected_connection_rows()
+        context_row = getattr(self, '_context_menu_row', None)
+
+        if context_row and hasattr(context_row, 'connection'):
+            if rows and context_row in rows:
+                return rows
+            if prefer_context or not rows:
+                return [context_row]
+
+        return rows
+
+    def _connections_from_rows(self, rows: List[Gtk.ListBoxRow]) -> List[Connection]:
+        """Return unique connections represented by the provided rows."""
+        connections: List[Connection] = []
+        seen_ids = set()
+        for row in rows:
+            connection = getattr(row, 'connection', None)
+            if connection and id(connection) not in seen_ids:
+                seen_ids.add(id(connection))
+                connections.append(connection)
+        return connections
+
+    def _get_target_connections(self, prefer_context: bool = False) -> List[Connection]:
+        """Return connection objects targeted by the current action."""
+        rows = self._get_target_connection_rows(prefer_context=prefer_context)
+        return self._connections_from_rows(rows)
+
+    def _determine_neighbor_connection_row(
+        self, target_rows: List[Gtk.ListBoxRow]
+    ) -> Optional[Gtk.ListBoxRow]:
+        """Find the closest remaining connection row after deleting target_rows."""
+        if not target_rows or not getattr(self, 'connection_list', None):
+            return None
+
+        try:
+            all_rows = list(self.connection_list)
+        except Exception:
+            # If iteration fails, fall back to default behavior.
+            return None
+
+        if not all_rows:
+            return None
+
+        index_map = {row: idx for idx, row in enumerate(all_rows)}
+        target_indexes = sorted(
+            index_map[row]
+            for row in target_rows
+            if row in index_map
+        )
+
+        if not target_indexes:
+            return None
+
+        max_index = target_indexes[-1]
+        min_index = target_indexes[0]
+
+        # Try to find the next connection row after the targeted range.
+        for idx in range(max_index + 1, len(all_rows)):
+            row = all_rows[idx]
+            if hasattr(row, 'connection') and row not in target_rows:
+                return row
+
+        # Fall back to previous connection rows before the targeted range.
+        for idx in range(min_index - 1, -1, -1):
+            row = all_rows[idx]
+            if hasattr(row, 'connection') and row not in target_rows:
+                return row
+
+        return None
+
+    def _disconnect_connection_terminals(self, connection: Connection) -> None:
+        """Disconnect all tracked terminals for a connection."""
+        try:
+            for term in list(self.connection_to_terminals.get(connection, [])):
+                try:
+                    if hasattr(term, 'disconnect'):
+                        term.disconnect()
+                except Exception:
+                    pass
+
+            term = self.active_terminals.get(connection)
+            if term and hasattr(term, 'disconnect'):
+                try:
+                    term.disconnect()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _prompt_delete_connections(
+        self,
+        connections: List[Connection],
+        neighbor_row: Optional[Gtk.ListBoxRow] = None,
+    ) -> None:
+        """Show a confirmation dialog for deleting one or more connections."""
+        unique_connections: List[Connection] = []
+        seen_ids = set()
+        for connection in connections:
+            if connection and id(connection) not in seen_ids:
+                seen_ids.add(id(connection))
+                unique_connections.append(connection)
+
+        if not unique_connections:
+            return
+
+        active_connections = [
+            connection
+            for connection in unique_connections
+            if getattr(connection, 'is_connected', False)
+            or bool(self.connection_to_terminals.get(connection, []))
+        ]
+
+        if active_connections:
+            heading = _('Remove host?') if len(unique_connections) == 1 else _('Remove connections?')
+            body = _('Close connections and remove host?') if len(unique_connections) == 1 else _(
+                'Close connections and remove the selected hosts?'
+            )
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=heading,
+                body=body,
+            )
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('close_remove', _('Close and Remove'))
+            dialog.set_response_appearance('close_remove', Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response('close_remove')
+            dialog.set_close_response('cancel')
+        else:
+            heading = _('Delete Connection?') if len(unique_connections) == 1 else _('Delete Connections?')
+            if len(unique_connections) == 1:
+                nickname = unique_connections[0].nickname if hasattr(unique_connections[0], 'nickname') else ''
+                body = _('Are you sure you want to delete "{}"?').format(nickname)
+            else:
+                body = _('Are you sure you want to delete the selected connections?')
+
+            dialog = Adw.MessageDialog.new(self, heading, body)
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('delete', _('Delete'))
+            dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response('cancel')
+            dialog.set_close_response('cancel')
+
+        payload = {
+            'connections': unique_connections,
+            'neighbor_row': neighbor_row,
+        }
+        dialog.connect('response', self.on_delete_connection_response, payload)
+        dialog.present()
 
 
 
@@ -344,6 +558,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self._focus_most_recent_tab_or_open_new(connection)
                 return True  # Consume the event to prevent row-activated
             return False  # Allow group rows to be handled by row-activated
+
+        # Handle deletion keys to remove selected connections
+        if keyval in (
+            Gdk.KEY_Delete,
+            Gdk.KEY_KP_Delete,
+            Gdk.KEY_BackSpace,
+        ):
+            target_rows = self._get_target_connection_rows()
+            connections = self._connections_from_rows(target_rows)
+
+            if connections:
+                neighbor_row = self._determine_neighbor_connection_row(target_rows)
+                self._prompt_delete_connections(connections, neighbor_row)
+                return True
+
+            return False
         return False
 
     def _stop_pulse_on_interaction(self, controller, *args):
@@ -594,6 +824,222 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
         return 0
 
+
+    
+    def _generate_duplicate_nickname(self, base_nickname: str) -> str:
+        """Generate a unique nickname for a duplicated connection."""
+        try:
+            existing_names = {
+                str(getattr(conn, 'nickname', '')).strip()
+                for conn in self.connection_manager.get_connections()
+                if getattr(conn, 'nickname', None)
+            }
+        except Exception:
+            existing_names = set()
+        existing_lower = {name.lower() for name in existing_names if name}
+
+        base = (base_nickname or '').strip()
+        if not base:
+            base = _('Connection')
+
+        copy_label = _('Copy')
+        pattern = re.compile(r"\s+\(" + re.escape(copy_label) + r"(?:\s+(\d+))?\)\s*$", re.IGNORECASE)
+        base_clean = pattern.sub('', base).strip() or base
+
+        def is_unique(name: str) -> bool:
+            return name.lower() not in existing_lower
+
+        candidate = f"{base_clean} ({copy_label})"
+        if is_unique(candidate):
+            return candidate
+
+        index = 2
+        while True:
+            candidate = f"{base_clean} ({copy_label} {index})"
+            if is_unique(candidate):
+                return candidate
+            index += 1
+
+    def _show_duplicate_connection_error(self, connection: Optional[Connection], error: Exception) -> None:
+        """Display an error dialog when duplication fails."""
+        try:
+            nickname = (getattr(connection, 'nickname', '') or _('Connection')).strip()
+            heading = _('Duplicate Failed')
+            body = _('Failed to duplicate connection "{name}".\n\n{details}').format(
+                name=nickname,
+                details=str(error) or _('An unknown error occurred.')
+            )
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=heading,
+                body=body,
+            )
+            dialog.add_response('close', _('Close'))
+            dialog.set_close_response('close')
+            dialog.present()
+        except Exception:
+            pass
+
+    def duplicate_connection(self, connection: Optional[Connection]) -> Optional[Connection]:
+        """Duplicate an existing connection, persist it, and select the new entry."""
+        if connection is None:
+            return None
+
+        try:
+            try:
+                base_data = getattr(connection, 'data', None)
+                new_data = copy.deepcopy(base_data) if isinstance(base_data, dict) else {}
+            except Exception:
+                new_data = {}
+            if not isinstance(new_data, dict):
+                new_data = {}
+
+            for key in list(new_data.keys()):
+                if key.startswith('__') or key in {'aliases', 'password_changed'}:
+                    new_data.pop(key, None)
+
+            new_nickname = self._generate_duplicate_nickname(getattr(connection, 'nickname', ''))
+            new_data['nickname'] = new_nickname
+
+            host_value = (
+                getattr(connection, 'hostname', '')
+                or getattr(connection, 'host', '')
+                or new_data.get('hostname', '')
+                or new_data.get('host', '')
+            )
+            host_value = str(host_value).strip()
+            if not host_value:
+                host_value = new_nickname
+            new_data['hostname'] = host_value
+            new_data.pop('host', None)
+
+            new_data['username'] = str(getattr(connection, 'username', new_data.get('username', '')) or '')
+
+            try:
+                new_data['port'] = int(getattr(connection, 'port', new_data.get('port', 22)) or 22)
+            except Exception:
+                new_data['port'] = 22
+
+            try:
+                new_data['auth_method'] = int(getattr(connection, 'auth_method', new_data.get('auth_method', 0)) or 0)
+            except Exception:
+                new_data['auth_method'] = 0
+
+            keyfile_value = getattr(connection, 'keyfile', new_data.get('keyfile', '')) or ''
+            if isinstance(keyfile_value, str) and keyfile_value.strip().lower().startswith('select key file'):
+                keyfile_value = ''
+            new_data['keyfile'] = keyfile_value
+
+            certificate_value = getattr(connection, 'certificate', new_data.get('certificate', '')) or ''
+            if isinstance(certificate_value, str) and certificate_value.strip().lower().startswith('select certificate'):
+                certificate_value = ''
+            new_data['certificate'] = certificate_value
+
+            new_data['key_passphrase'] = getattr(connection, 'key_passphrase', new_data.get('key_passphrase', '')) or ''
+
+            try:
+                new_data['key_select_mode'] = int(getattr(connection, 'key_select_mode', new_data.get('key_select_mode', 0)) or 0)
+            except Exception:
+                new_data['key_select_mode'] = 0
+
+            new_data['password'] = getattr(connection, 'password', new_data.get('password', '')) or ''
+            new_data['x11_forwarding'] = bool(getattr(connection, 'x11_forwarding', new_data.get('x11_forwarding', False)))
+            new_data['pubkey_auth_no'] = bool(getattr(connection, 'pubkey_auth_no', new_data.get('pubkey_auth_no', False)))
+            new_data['forward_agent'] = bool(getattr(connection, 'forward_agent', new_data.get('forward_agent', False)))
+
+            proxy_jump_value = getattr(connection, 'proxy_jump', new_data.get('proxy_jump', []))
+            if isinstance(proxy_jump_value, str):
+                proxy_jump_value = [h.strip() for h in re.split(r'[\s,]+', proxy_jump_value) if h.strip()]
+            else:
+                proxy_jump_value = list(proxy_jump_value or [])
+            new_data['proxy_jump'] = proxy_jump_value
+
+            new_data['proxy_command'] = getattr(connection, 'proxy_command', new_data.get('proxy_command', '')) or ''
+            new_data['local_command'] = getattr(connection, 'local_command', new_data.get('local_command', '')) or ''
+            new_data['remote_command'] = getattr(connection, 'remote_command', new_data.get('remote_command', '')) or ''
+            new_data['extra_ssh_config'] = getattr(connection, 'extra_ssh_config', new_data.get('extra_ssh_config', '')) or ''
+
+            forwarding_rules = getattr(connection, 'forwarding_rules', new_data.get('forwarding_rules', []))
+            try:
+                new_data['forwarding_rules'] = copy.deepcopy(list(forwarding_rules or []))
+            except Exception:
+                new_data['forwarding_rules'] = []
+
+            source_path = getattr(connection, 'source', new_data.get('source'))
+            if source_path:
+                new_data['source'] = source_path
+            else:
+                new_data.pop('source', None)
+
+            new_connection = Connection(new_data)
+            try:
+                new_connection.auth_method = int(new_data.get('auth_method', 0) or 0)
+            except Exception:
+                new_connection.auth_method = 0
+            try:
+                new_connection.key_select_mode = int(new_data.get('key_select_mode', 0) or 0)
+            except Exception:
+                new_connection.key_select_mode = 0
+            new_connection.forwarding_rules = list(new_data.get('forwarding_rules', []))
+            new_connection.proxy_jump = list(new_data.get('proxy_jump', []))
+            new_connection.forward_agent = bool(new_data.get('forward_agent', False))
+            new_connection.extra_ssh_config = new_data.get('extra_ssh_config', '')
+            new_connection.certificate = new_data.get('certificate', '')
+
+            original_group_id = self.group_manager.get_connection_group(connection.nickname)
+
+            self.connection_manager.connections.append(new_connection)
+            try:
+                if not self.connection_manager.update_connection(new_connection, new_data):
+                    raise RuntimeError(_('Failed to save duplicated connection.'))
+            except Exception:
+                try:
+                    self.connection_manager.connections.remove(new_connection)
+                except ValueError:
+                    pass
+                raise
+
+            self.connection_manager.load_ssh_config()
+
+            if original_group_id and original_group_id in getattr(self.group_manager, 'groups', {}):
+                self.group_manager.move_connection(new_nickname, original_group_id)
+                try:
+                    self.group_manager.reorder_connection_in_group(new_nickname, connection.nickname, 'below')
+                except Exception:
+                    pass
+            else:
+                self.group_manager.move_connection(new_nickname, None)
+                try:
+                    root_connections = self.group_manager.root_connections
+                    if new_nickname in root_connections and connection.nickname in root_connections:
+                        root_connections.remove(new_nickname)
+                        insert_at = root_connections.index(connection.nickname) + 1
+                        root_connections.insert(insert_at, new_nickname)
+                        self.group_manager._save_groups()
+                except Exception:
+                    pass
+
+            self.rebuild_connection_list()
+
+            duplicated = self.connection_manager.find_connection_by_nickname(new_nickname)
+            if duplicated and duplicated in self.connection_rows:
+                row = self.connection_rows[duplicated]
+                self._select_only_row(row)
+                try:
+                    self.connection_list.scroll_to_row(row)
+                except Exception:
+                    pass
+                try:
+                    self.connection_list.grab_focus()
+                except Exception:
+                    pass
+            return duplicated
+        except Exception as error:
+            self._show_duplicate_connection_error(connection, error)
+            logger.error(f"Failed to duplicate connection: {error}", exc_info=True)
+            return None
+
     def setup_sidebar(self):
         """Set up the sidebar with connection list"""
         sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -716,13 +1162,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         sidebar_box.append(search_container)
 
         # Connection list
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_vexpand(True)
+        self.connection_scrolled = Gtk.ScrolledWindow()
+        self.connection_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.connection_scrolled.set_vexpand(True)
         
         self.connection_list = Gtk.ListBox()
         self.connection_list.add_css_class("navigation-sidebar")
-        self.connection_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
         try:
             self.connection_list.set_can_focus(True)
         except Exception:
@@ -798,13 +1244,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         return
                     
                     # Set context menu data
+                    self._context_menu_row = row
                     self._context_menu_connection = getattr(row, 'connection', None)
                     self._context_menu_group_row = row if hasattr(row, 'group_id') else None
-                    # Create popover menu with disabled autohide for manual control
+                    # Create popover menu and rely on default autohide behavior
                     pop = Gtk.Popover.new()
                     pop.set_has_arrow(True)
-                    pop.set_autohide(False)  # Disable automatic hiding to control it manually
-                    logger.debug("Created popover with autohide disabled")
+                    logger.debug("Created popover with default autohide")
 
 
                     # Create listbox for menu items
@@ -821,16 +1267,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                                 logger.debug("Cleaned up window focus handler")
                             except Exception as e:
                                 logger.debug(f"Error cleaning up focus handler: {e}")
-                        
-                        # Clean up the click controller
-                        if hasattr(pop, '_click_controller') and pop._click_controller:
-                            try:
-                                self.remove_controller(pop._click_controller)
-                                logger.debug("Cleaned up click controller")
-                            except Exception as e:
-                                logger.debug(f"Error cleaning up click controller: {e}")
-                        
+
                         logger.debug("Context menu closed")
+                        try:
+                            self._context_menu_row = None
+                            self._context_menu_connection = None
+                        except Exception:
+                            pass
                     
                     pop.connect("closed", _on_popover_closed)
                     
@@ -865,31 +1308,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Delay the connection slightly to avoid immediate triggering
                     GLib.timeout_add(100, connect_focus_handler)
                     
-                    # Add manual click-outside detection since autohide is disabled
-                    def setup_click_outside_detection():
-                        try:
-                            click_controller = Gtk.GestureClick()
-                            click_controller.set_button(0)  # Any button
-                            
-                            def _on_outside_click(gesture, n_press, x, y):
-                                try:
-                                    if pop and pop.get_visible():
-                                        pop.popdown()
-                                        logger.debug("Context menu closed due to outside click")
-                                except Exception as e:
-                                    logger.debug(f"Error handling outside click: {e}")
-                            
-                            click_controller.connect('pressed', _on_outside_click)
-                            self.add_controller(click_controller)
-                            pop._click_controller = click_controller
-                            logger.debug("Added click-outside detection")
-                        except Exception as e:
-                            logger.debug(f"Error setting up click-outside detection: {e}")
-                        return False
-                    
-                    # Set up click detection after popover is shown
-                    GLib.timeout_add(150, setup_click_outside_detection)
-
                     # Add menu items based on row type
                     if hasattr(row, 'group_id'):
                         # Group row context menu
@@ -930,6 +1348,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         
                         edit_row.connect('activated', lambda *_: (self.on_edit_connection_action(None, None), pop.popdown()))
                         listbox.append(edit_row)
+
+                        # Duplicate Connection row
+                        duplicate_row = Adw.ActionRow(title=_('Duplicate Connection'))
+                        duplicate_icon = Gtk.Image.new_from_icon_name('edit-copy-symbolic')
+                        duplicate_row.add_prefix(duplicate_icon)
+                        duplicate_row.set_activatable(True)
+                        duplicate_row.connect('activated', lambda *_: (self.on_duplicate_connection_action(None, None), pop.popdown()))
+                        listbox.append(duplicate_row)
 
                         # Manage Files row
                         if not should_hide_file_manager_options():
@@ -1028,8 +1454,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 f"Failed to add {get_primary_modifier_label()}+Enter shortcut: {e}"
             )
         
-        scrolled.set_child(self.connection_list)
-        sidebar_box.append(scrolled)
+        self.connection_scrolled.set_child(self.connection_list)
+        sidebar_box.append(self.connection_scrolled)
         
         # Sidebar toolbar
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -1496,12 +1922,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if connections:
             first_row = self.connection_list.get_row_at_index(0)
             if first_row:
-                self.connection_list.select_row(first_row)
+                self._select_only_row(first_row)
                 # Defer focus to the list to ensure keyboard navigation works immediately
                 GLib.idle_add(self._focus_connection_list_first_row)
     
     def rebuild_connection_list(self):
         """Rebuild the connection list with groups"""
+        # Save current scroll position
+        scroll_position = None
+        if hasattr(self, 'connection_scrolled') and self.connection_scrolled:
+            vadj = self.connection_scrolled.get_vadjustment()
+            if vadj:
+                scroll_position = vadj.get_value()
+        
         # Clear existing rows
         child = self.connection_list.get_first_child()
         while child:
@@ -1521,6 +1954,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
             self._ungrouped_area_row = None
+            # Restore scroll position
+            if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
+                vadj = self.connection_scrolled.get_vadjustment()
+                if vadj:
+                    GLib.idle_add(lambda: vadj.set_value(scroll_position))
             return
 
         connections_dict = {conn.nickname: conn for conn in connections}
@@ -1564,6 +2002,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Store reference to ungrouped area (hidden by default)
         self._ungrouped_area_row = None
+        
+        # Restore scroll position
+        if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
+            vadj = self.connection_scrolled.get_vadjustment()
+            if vadj:
+                GLib.idle_add(lambda: vadj.set_value(scroll_position))
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list"""
         for group_info in hierarchy:
@@ -1596,7 +2040,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Reselect the toggled group so focus doesn't jump to another row
         for row in self.connection_list:
             if hasattr(row, "group_id") and row.group_id == group_id:
-                self.connection_list.select_row(row)
+                self._select_only_row(row)
                 break
     
     def add_connection_row(self, connection: Connection, indent_level: int = 0):
@@ -1619,7 +2063,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.rebuild_connection_list()
         first_row = self.connection_list.get_row_at_index(0)
         if first_row:
-            self.connection_list.select_row(first_row)
+            self._select_only_row(first_row)
 
     def on_search_stopped(self, entry):
         """Handle search stop (Esc key)."""
@@ -1639,7 +2083,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if hasattr(self, 'connection_list') and self.connection_list:
                 first_row = self.connection_list.get_row_at_index(0)
                 if first_row:
-                    self.connection_list.select_row(first_row)
+                    self._select_only_row(first_row)
                 self.connection_list.grab_focus()
             return True
         elif keyval == Gdk.KEY_Return:
@@ -1649,7 +2093,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if search_text:
                     first_row = self.connection_list.get_row_at_index(0)
                     if first_row:
-                        self.connection_list.select_row(first_row)
+                        self._select_only_row(first_row)
                         self.connection_list.grab_focus()
                     return True
                 else:
@@ -1657,7 +2101,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     if hasattr(self, 'connection_list') and self.connection_list:
                         first_row = self.connection_list.get_row_at_index(0)
                         if first_row:
-                            self.connection_list.select_row(first_row)
+                            self._select_only_row(first_row)
                         self.connection_list.grab_focus()
                     return True
         return False
@@ -1706,7 +2150,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         logger.info("Showing welcome view")
 
     def _focus_connection_list_first_row(self):
-        """Focus the connection list and ensure the first row is selected."""
+        """Focus the connection list and ensure the first row is selected (startup only)."""
         try:
             if not hasattr(self, 'connection_list') or self.connection_list is None:
                 return False
@@ -1715,15 +2159,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if not self.connection_list.get_parent():
                 return False
                 
-            # If the list has no selection, select the first row
-            selected = self.connection_list.get_selected_row() if hasattr(self.connection_list, 'get_selected_row') else None
-            first_row = self.connection_list.get_row_at_index(0)
-            if not selected and first_row:
-                self.connection_list.select_row(first_row)
+            # Only auto-select first row during initial startup, not during normal operations
+            # Check if this is being called during startup vs normal operations
+            if not hasattr(self, '_startup_complete'):
+                # During startup - select first row if no selection exists
+                try:
+                    selected_rows = list(self.connection_list.get_selected_rows())
+                except Exception:
+                    selected_row = self.connection_list.get_selected_row()
+                    selected_rows = [selected_row] if selected_row else []
+                first_row = self.connection_list.get_row_at_index(0)
+                if not selected_rows and first_row:
+                    self._select_only_row(first_row)
             
-            # Always focus the connection list on startup, regardless of current focus
-            # This ensures the connection list gets focus instead of the search entry
-            if first_row and self.connection_list.get_parent():
+            # Always focus the connection list when requested
+            if self.connection_list.get_parent():
                 self.connection_list.grab_focus()
         except Exception as e:
             logger.debug(f"Focus connection list failed: {e}")
@@ -1740,14 +2190,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         self.sidebar_toggle_button.set_active(False)
                 
                 # Ensure a row is selected before focusing
-                selected = self.connection_list.get_selected_row()
-                logger.debug(f"Focus connection list - current selection: {selected}")
-                if not selected:
+                try:
+                    selected_rows = list(self.connection_list.get_selected_rows())
+                except Exception:
+                    selected_row = self.connection_list.get_selected_row()
+                    selected_rows = [selected_row] if selected_row else []
+                logger.debug(f"Focus connection list - current selection count: {len(selected_rows)}")
+                if not selected_rows:
                     # Select the first row regardless of type
                     first_row = self.connection_list.get_row_at_index(0)
                     logger.debug(f"Focus connection list - first row: {first_row}")
                     if first_row:
-                        self.connection_list.select_row(first_row)
+                        self._select_only_row(first_row)
                         logger.debug(f"Focus connection list - selected first row: {first_row}")
                 
                 self.connection_list.grab_focus()
@@ -1970,7 +2424,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             name_label.set_halign(Gtk.Align.START)
             name_label.set_css_classes(['title-4'])
             
-            host_label = Gtk.Label(label=f"{connection.username}@{connection.host}:{connection.port}")
+            host_value = _get_connection_host(connection)
+            host_label = Gtk.Label(label=f"{connection.username}@{host_value}:{connection.port}")
             host_label.set_halign(Gtk.Align.START)
             host_label.set_css_classes(['dim-label'])
             
@@ -2253,7 +2708,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             return
         connection = selected_row.connection
         logger.info(f"Main window: Selected connection: {getattr(connection, 'nickname', 'unknown')}")
-        logger.debug(f"Main window: Connection details - host: {getattr(connection, 'host', 'unknown')}, "
+        logger.debug(f"Main window: Connection details - host: {getattr(connection, 'hostname', getattr(connection, 'host', 'unknown'))}, "
                     f"username: {getattr(connection, 'username', 'unknown')}, "
                     f"port: {getattr(connection, 'port', 22)}")
 
@@ -2285,6 +2740,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             editor.present()
         except Exception as e:
             logger.error(f"Failed to open known hosts editor: {e}")
+
+    def show_shortcut_editor(self):
+        """Launch the shortcut editor window"""
+        logger.info("Show shortcut editor window")
+        try:
+            from .shortcut_editor import ShortcutEditorWindow
+            editor = ShortcutEditorWindow(self)
+            editor.present()
+        except Exception as e:
+            logger.error(f"Failed to open shortcut editor: {e}")
 
     def show_preferences(self):
         """Show preferences dialog"""
@@ -2361,6 +2826,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         primary = '<Meta>' if mac else '<primary>'
 
         win = Gtk.ShortcutsWindow(transient_for=self, modal=True)
+
+        # Build header bar with shortcut editor button only once per overlay instance
+        if not hasattr(win, '_header_initialized'):
+            header_bar = Adw.HeaderBar()
+            header_bar.set_show_start_title_buttons(False)
+
+            edit_button = Gtk.Button.new_with_mnemonic(_("Edit _Shortcuts…"))
+            edit_button.add_css_class('flat')
+            edit_button.set_tooltip_text(_("Open the shortcut editor"))
+            edit_button.connect('clicked', lambda _btn: self.show_shortcut_editor())
+            header_bar.pack_end(edit_button)
+
+            win.set_titlebar(header_bar)
+            win._header_initialized = True
+            win._edit_shortcuts_button = edit_button
 
         section = Gtk.ShortcutsSection()
         section.set_property('title', _('Keyboard Shortcuts'))
@@ -2471,7 +2951,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             return
 
         if n_press == 1:  # Single click - just select
-            self.connection_list.select_row(row)
+            try:
+                state = gesture.get_current_event_state()
+            except Exception:
+                state = 0
+
+            multi_mask = (
+                Gdk.ModifierType.CONTROL_MASK
+                | Gdk.ModifierType.SHIFT_MASK
+                | getattr(Gdk.ModifierType, 'PRIMARY_ACCELERATOR_MASK', 0)
+            )
+
+            if state & multi_mask:
+                # Allow default multi-selection behavior
+                return
+
+            self._select_only_row(row)
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
         elif n_press == 2:  # Double click - connect
             if hasattr(row, 'connection'):
@@ -2646,59 +3141,104 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             connection = self.terminal_to_connection.get(child)
             if connection:
                 # Check if this is a local terminal
-                if hasattr(connection, 'host') and connection.host == 'localhost':
+                if _get_connection_host(connection) == 'localhost':
                     # Local terminal - clear selection
-                    current = self.connection_list.get_selected_row()
-                    if current is not None:
-                        self.connection_list.unselect_row(current)
+                    try:
+                        if hasattr(self.connection_list, 'unselect_all'):
+                            self.connection_list.unselect_all()
+                        else:
+                            current = self.connection_list.get_selected_row()
+                            if current is not None:
+                                self.connection_list.unselect_row(current)
+                    except Exception:
+                        pass
                 else:
                     # Regular connection terminal - select the corresponding row
                     self.active_terminals[connection] = child
                     row = self.connection_rows.get(connection)
                     if row:
-                        current = self.connection_list.get_selected_row()
-                        if current != row:
-                            self.connection_list.select_row(row)
+                        selected_rows = []
+                        try:
+                            selected_rows = list(self.connection_list.get_selected_rows())
+                        except Exception:
+                            current = self.connection_list.get_selected_row()
+                            if current:
+                                selected_rows = [current]
+                        if row not in selected_rows:
+                            self._select_only_row(row)
             else:
                 # Other non-connection terminal - clear selection
-                current = self.connection_list.get_selected_row()
-                if current is not None:
-                    self.connection_list.unselect_row(current)
+                try:
+                    if hasattr(self.connection_list, 'unselect_all'):
+                        self.connection_list.unselect_all()
+                    else:
+                        current = self.connection_list.get_selected_row()
+                        if current is not None:
+                            self.connection_list.unselect_row(current)
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"Failed to sync tab selection: {e}")
 
     def on_connection_selected(self, list_box, row):
         """Handle connection list selection change"""
-        has_selection = row is not None
+        try:
+            connection_rows = self._get_selected_connection_rows()
+            group_rows = self._get_selected_group_rows()
+        except Exception:
+            connection_rows = []
+            group_rows = []
 
-        if has_selection:
-            # Check if selected item is a group or connection
-            is_group = hasattr(row, 'group_id')
+        has_connections = bool(connection_rows)
+        has_groups = bool(group_rows)
 
-            if is_group:
-                # Show group toolbar, hide connection toolbar
-                self.connection_toolbar.set_visible(False)
-                self.group_toolbar.set_visible(True)
-                self.rename_group_button.set_sensitive(True)
-                self.delete_group_button.set_sensitive(True)
-            else:
-                # Show connection toolbar, hide group toolbar
-                self.connection_toolbar.set_visible(True)
-                self.group_toolbar.set_visible(False)
-                self.edit_button.set_sensitive(True)
-                if hasattr(self, 'copy_key_button'):
-                    self.copy_key_button.set_sensitive(True)
-                if hasattr(self, 'upload_button'):
-                    self.upload_button.set_sensitive(True)
-                if hasattr(self, 'manage_files_button'):
-                    self.manage_files_button.set_sensitive(True)
-                if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
-                    self.system_terminal_button.set_sensitive(True)
-                self.delete_button.set_sensitive(True)
+        if has_connections and not has_groups:
+            self.connection_toolbar.set_visible(True)
+            self.group_toolbar.set_visible(False)
+
+            multiple_connections = len(connection_rows) > 1
+            self.edit_button.set_sensitive(not multiple_connections)
+            if hasattr(self, 'copy_key_button'):
+                self.copy_key_button.set_sensitive(not multiple_connections)
+            if hasattr(self, 'upload_button'):
+                self.upload_button.set_sensitive(not multiple_connections)
+            if hasattr(self, 'manage_files_button'):
+                self.manage_files_button.set_sensitive(not multiple_connections)
+            if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
+                self.system_terminal_button.set_sensitive(not multiple_connections)
+            self.delete_button.set_sensitive(True)
+            self.rename_group_button.set_sensitive(False)
+            self.delete_group_button.set_sensitive(False)
+        elif has_groups and not has_connections:
+            self.connection_toolbar.set_visible(False)
+            self.group_toolbar.set_visible(True)
+
+            allow_single_group = len(group_rows) == 1
+            self.delete_button.set_sensitive(False)
+            if hasattr(self, 'copy_key_button'):
+                self.copy_key_button.set_sensitive(False)
+            if hasattr(self, 'upload_button'):
+                self.upload_button.set_sensitive(False)
+            if hasattr(self, 'manage_files_button'):
+                self.manage_files_button.set_sensitive(False)
+            if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
+                self.system_terminal_button.set_sensitive(False)
+            self.rename_group_button.set_sensitive(allow_single_group)
+            self.delete_group_button.set_sensitive(allow_single_group)
         else:
-            # No selection - hide both toolbars
             self.connection_toolbar.set_visible(False)
             self.group_toolbar.set_visible(False)
+            self.delete_button.set_sensitive(False)
+            if hasattr(self, 'copy_key_button'):
+                self.copy_key_button.set_sensitive(False)
+            if hasattr(self, 'upload_button'):
+                self.upload_button.set_sensitive(False)
+            if hasattr(self, 'manage_files_button'):
+                self.manage_files_button.set_sensitive(False)
+            if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
+                self.system_terminal_button.set_sensitive(False)
+            self.rename_group_button.set_sensitive(False)
+            self.delete_group_button.set_sensitive(False)
 
     def on_add_connection_clicked(self, button):
         """Handle add connection button click"""
@@ -2831,9 +3371,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Show error dialog to user
                     self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
                 
+                host_value = _get_connection_host(connection)
                 success, error_msg = open_remote_in_file_manager(
                     user=connection.username,
-                    host=connection.host,
+                    host=host_value,
                     port=connection.port if connection.port != 22 else None,
                     error_callback=error_callback,
                     parent_window=self
@@ -2874,14 +3415,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         - Header bar contains Cancel and Close buttons
         """
         logger.info("Main window: Starting ssh-copy-id terminal window creation")
-        logger.debug(f"Main window: Connection details - host: {getattr(connection, 'host', 'unknown')}, "
+        host_value = _get_connection_host(connection)
+        logger.debug(f"Main window: Connection details - host: {host_value}, "
                     f"username: {getattr(connection, 'username', 'unknown')}, "
                     f"port: {getattr(connection, 'port', 22)}")
         logger.debug(f"Main window: SSH key details - private_path: {getattr(ssh_key, 'private_path', 'unknown')}, "
                     f"public_path: {getattr(ssh_key, 'public_path', 'unknown')}")
         
         try:
-            target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
+            target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
             pub_name = os.path.basename(getattr(ssh_key, 'public_path', '') or '')
             body_text = _('This will add your public key to the server\'s ~/.ssh/authorized_keys so future logins can use SSH keys.')
             logger.debug(f"Main window: Target: {target}, public key name: {pub_name}")
@@ -3027,7 +3569,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 auth_method = 0
                 prefer_password = False
 
-            has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username))
+            has_saved_password = bool(self.connection_manager.get_password(host_value, connection.username))
             combined_auth = (auth_method == 0 and has_saved_password)
             logger.debug(f"Main window: Has saved password: {has_saved_password}")
             logger.debug(
@@ -3066,7 +3608,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     logger.debug("Main window: FIFO created with permissions 0o600")
                     
                     # Start writer thread that writes the password exactly once
-                    saved_password = self.connection_manager.get_password(connection.host, connection.username)
+                    saved_password = self.connection_manager.get_password(host_value, connection.username)
                     logger.debug(f"Main window: Retrieved saved password, length: {len(saved_password) if saved_password else 0}")
                     t = threading.Thread(target=_write_once_fifo, args=(fifo, saved_password), daemon=True)
                     t.start()
@@ -3219,7 +3761,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             transient_for=dlg,
                             modal=True,
                             heading=_('Success') if ok else _('Error'),
-                            body=(_('Public key copied to {}@{}').format(connection.username, connection.host)
+                            body=(_('Public key copied to {}@{}').format(connection.username, host_value)
                                   if ok else _('Failed to copy the public key. Check logs for details.')),
                         )
                         msg.add_response('ok', _('OK'))
@@ -3271,6 +3813,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         logger.debug(f"Main window: SSH key object: {type(ssh_key)}")
         logger.debug(f"Main window: Force option: {force}")
         logger.info(f"Key object attributes: private_path={getattr(ssh_key, 'private_path', 'unknown')}, public_path={getattr(ssh_key, 'public_path', 'unknown')}")
+        host_value = _get_connection_host(connection)
         
         # Verify the public key file exists
         logger.debug(f"Main window: Checking if public key file exists: {ssh_key.public_path}")
@@ -3336,7 +3879,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             auth_method = 0
             prefer_password = False
 
-        has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username))
+        has_saved_password = bool(self.connection_manager.get_password(host_value, connection.username))
         combined_auth = (auth_method == 0 and has_saved_password)
 
         try:
@@ -3386,7 +3929,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 )
         
         # Target
-        target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
+        target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
         argv.append(target)
         logger.debug(f"Main window: Added target: {target}")
         logger.debug(f"Main window: Final argv: {argv}")
@@ -3437,7 +3980,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _show_scp_upload_terminal_window(self, connection, local_paths, remote_dir):
         try:
-            target = f"{connection.username}@{connection.host}"
+            host_value = _get_connection_host(connection)
+            target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
             info_text = _('We will use scp to upload file(s) to the selected server.')
 
             dlg = Adw.Window()
@@ -3686,6 +4230,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         known_hosts_path: Optional[str] = None,
     ):
         argv = ['scp', '-v']
+        host_value = _get_connection_host(connection)
         # Port
         try:
             if getattr(connection, 'port', 22) and connection.port != 22:
@@ -3717,7 +4262,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             auth_method = 0
             prefer_password = False
-        has_saved_password = bool(self.connection_manager.get_password(connection.host, connection.username)) if hasattr(self, 'connection_manager') and self.connection_manager else False
+        has_saved_password = bool(self.connection_manager.get_password(host_value, connection.username)) if hasattr(self, 'connection_manager') and self.connection_manager else False
         combined_auth = (auth_method == 0 and has_saved_password)
         try:
             key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
@@ -3765,7 +4310,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Try to get saved password
             try:
                 if hasattr(self, 'connection_manager') and self.connection_manager:
-                    saved_password = self.connection_manager.get_password(connection.host, connection.username)
+                    saved_password = self.connection_manager.get_password(host_value, connection.username)
                     if saved_password:
                         # Use sshpass for password authentication
                         import shutil
@@ -3822,48 +4367,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Paths
         for p in local_paths:
             argv.append(p)
-        target = f"{connection.username}@{connection.host}" if getattr(connection, 'username', '') else str(connection.host)
+        target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
         argv.append(f"{target}:{remote_dir}")
         return argv
 
     def on_delete_connection_clicked(self, button):
         """Handle delete connection button click"""
-        selected_row = self.connection_list.get_selected_row()
-        if not selected_row:
+        target_rows = self._get_target_connection_rows()
+        if not target_rows:
+            logger.debug("Delete requested without any connection selection")
             return
-        
-        if not hasattr(selected_row, 'connection'):
-            logger.debug("Cannot delete group row")
-            return
-        
-        connection = selected_row.connection
-        
-        # If host has active connections/tabs, warn about closing them first
-        has_active_terms = bool(self.connection_to_terminals.get(connection, []))
-        if getattr(connection, 'is_connected', False) or has_active_terms:
-            dialog = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_('Remove host?'),
-                body=_('Close connections and remove host?')
-            )
-            dialog.add_response('cancel', _('Cancel'))
-            dialog.add_response('close_remove', _('Close and Remove'))
-            dialog.set_response_appearance('close_remove', Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response('close')
-            dialog.set_close_response('cancel')
-        else:
-            # Simple delete confirmation when not connected
-            dialog = Adw.MessageDialog.new(self, _('Delete Connection?'),
-                                         _('Are you sure you want to delete "{}"?').format(connection.nickname))
-            dialog.add_response('cancel', _('Cancel'))
-            dialog.add_response('delete', _('Delete'))
-            dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response('cancel')
-            dialog.set_close_response('cancel')
 
-        dialog.connect('response', self.on_delete_connection_response, connection)
-        dialog.present()
+        connections = self._connections_from_rows(target_rows)
+        neighbor_row = self._determine_neighbor_connection_row(target_rows)
+
+        self._prompt_delete_connections(connections, neighbor_row)
 
     def on_rename_group_clicked(self, button):
         """Handle rename group button click"""
@@ -3877,31 +4395,34 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if selected_row and hasattr(selected_row, 'group_id'):
             self.on_delete_group_action(None, None)
 
-    def on_delete_connection_response(self, dialog, response, connection):
+    def on_delete_connection_response(self, dialog, response, payload):
         """Handle delete connection dialog response"""
-        if response == 'delete':
-            # Simple deletion when not connected
-            self.connection_manager.remove_connection(connection)
-        elif response == 'close_remove':
-            # Close connections immediately (no extra confirmation), then remove
-            try:
-                # Disconnect all terminals for this connection
-                for term in list(self.connection_to_terminals.get(connection, [])):
-                    try:
-                        if hasattr(term, 'disconnect'):
-                            term.disconnect()
-                    except Exception:
-                        pass
-                # Also disconnect the active terminal if tracked separately
-                term = self.active_terminals.get(connection)
-                if term and hasattr(term, 'disconnect'):
-                    try:
-                        term.disconnect()
-                    except Exception:
-                        pass
-            finally:
-                # Remove connection without further prompts
+        try:
+            neighbor_row = None
+            connections: List[Connection]
+
+            if isinstance(payload, dict):
+                connections = payload.get('connections', []) or []
+                neighbor_row = payload.get('neighbor_row')
+            elif isinstance(payload, (list, tuple)):
+                connections = list(payload)
+            else:
+                connections = [payload] if payload else []
+
+            if response not in {'delete', 'close_remove'}:
+                return
+
+            for connection in connections:
+                if not connection:
+                    continue
+                if response == 'close_remove':
+                    self._disconnect_connection_terminals(connection)
                 self.connection_manager.remove_connection(connection)
+
+            # No automatic selection or focus changes after deletion
+            # Let the connection removal handler manage the UI state
+        except Exception as e:
+            logger.error(f"Failed to delete connections: {e}")
 
     def _on_tab_close_confirmed(self, dialog, response_id, tab_view, page):
         """Handle response from tab close confirmation dialog"""
@@ -3976,10 +4497,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self._pending_close_terminal = terminal
             
             # Show confirmation dialog
+            host_value = _get_connection_host(connection)
             dialog = Adw.MessageDialog(
                 transient_for=self,
                 modal=True,
-                heading=_("Close connection to {}").format(connection.nickname or connection.host),
+                heading=_("Close connection to {}").format(connection.nickname or host_value),
                 body=_("Are you sure you want to close this connection?")
             )
             dialog.add_response('cancel', _("Cancel"))
@@ -4104,19 +4626,25 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
 
             
+
     def on_connection_added(self, manager, connection):
-        """Handle new connection added to the connection manager"""
-        logger.info(f"New connection added: {connection.nickname}")
+        """Handle new connection added"""
         self.group_manager.connections.setdefault(connection.nickname, None)
         if connection.nickname not in self.group_manager.root_connections:
             self.group_manager.root_connections.append(connection.nickname)
             self.group_manager._save_groups()
         self.rebuild_connection_list()
-        
-                
+
     def on_connection_removed(self, manager, connection):
         """Handle connection removed from the connection manager"""
         logger.info(f"Connection removed: {connection.nickname}")
+
+        # Save current scroll position before any UI changes
+        scroll_position = None
+        if hasattr(self, 'connection_scrolled') and self.connection_scrolled:
+            vadj = self.connection_scrolled.get_vadjustment()
+            if vadj:
+                scroll_position = vadj.get_value()
 
         # Remove from UI if it exists
         if connection in self.connection_rows:
@@ -4160,59 +4688,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if connection in self.active_terminals:
             del self.active_terminals[connection]
 
+        # Restore scroll position without auto-selecting any row
+        def _restore_scroll_only():
+            if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
+                vadj = self.connection_scrolled.get_vadjustment()
+                if vadj:
+                    vadj.set_value(scroll_position)
+            return False
 
-
-    def on_connection_added(self, manager, connection):
-        """Handle new connection added"""
-        self.group_manager.connections.setdefault(connection.nickname, None)
-        if connection.nickname not in self.group_manager.root_connections:
-            self.group_manager.root_connections.append(connection.nickname)
-            self.group_manager._save_groups()
-        self.rebuild_connection_list()
-
-    def on_connection_removed(self, manager, connection):
-        """Handle connection removed (multi-tab aware)"""
-        # Remove from UI
-        if connection in self.connection_rows:
-            row = self.connection_rows[connection]
-            self.connection_list.remove(row)
-            del self.connection_rows[connection]
-
-        # Remove from group manager
-        self.group_manager.connections.pop(connection.nickname, None)
-        if connection.nickname in self.group_manager.root_connections:
-            self.group_manager.root_connections.remove(connection.nickname)
-        self.group_manager._save_groups()
-
-        # Close all terminals for this connection and clean up maps
-        terminals = list(self.connection_to_terminals.get(connection, []))
-        # Suppress confirmation while we programmatically close pages
-        self._suppress_close_confirmation = True
-        try:
-            for term in terminals:
-                try:
-                    page = self.tab_view.get_page(term)
-                    if page:
-                        self.tab_view.close_page(page)
-                except Exception:
-                    pass
-                try:
-                    if hasattr(term, 'disconnect'):
-                        term.disconnect()
-                except Exception:
-                    pass
-                # Remove reverse map entry for each terminal
-                try:
-                    if term in self.terminal_to_connection:
-                        del self.terminal_to_connection[term]
-                except Exception:
-                    pass
-        finally:
-            self._suppress_close_confirmation = False
-        if connection in self.connection_to_terminals:
-            del self.connection_to_terminals[connection]
-        if connection in self.active_terminals:
-            del self.active_terminals[connection]
+        # Use idle_add to restore scroll position after UI updates complete
+        GLib.idle_add(_restore_scroll_only)
 
     def on_connection_status_changed(self, manager, connection, is_connected):
         """Handle connection status change"""
@@ -4457,9 +4942,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Show error dialog to user
                     self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
                 
+                host_value = _get_connection_host(connection)
                 success, error_msg = open_remote_in_file_manager(
                     user=connection.username,
-                    host=connection.host,
+                    host=host_value,
                     port=connection.port if connection.port != 22 else None,
                     error_callback=error_callback,
                     parent_window=self
@@ -4492,41 +4978,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_delete_connection_action(self, action, param=None):
         """Handle delete connection action from context menu"""
         try:
-            connection = getattr(self, '_context_menu_connection', None)
-            if connection is None:
-                # Fallback to selected row if any
-                row = self.connection_list.get_selected_row()
-                connection = getattr(row, 'connection', None) if row else None
-            if connection is None:
+            target_rows = self._get_target_connection_rows(prefer_context=True)
+            if not target_rows:
                 return
-            
-            # Use the same logic as the button click handler
-            # If host has active connections/tabs, warn about closing them first
-            has_active_terms = bool(self.connection_to_terminals.get(connection, []))
-            if getattr(connection, 'is_connected', False) or has_active_terms:
-                dialog = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading=_('Remove host?'),
-                    body=_('Close connections and remove host?')
-                )
-                dialog.add_response('cancel', _('Cancel'))
-                dialog.add_response('close_remove', _('Close and Remove'))
-                dialog.set_response_appearance('close_remove', Adw.ResponseAppearance.DESTRUCTIVE)
-                dialog.set_default_response('close')
-                dialog.set_close_response('cancel')
-            else:
-                # Simple delete confirmation when not connected
-                dialog = Adw.MessageDialog.new(self, _('Delete Connection?'),
-                                             _('Are you sure you want to delete "{}"?').format(connection.nickname))
-                dialog.add_response('cancel', _('Cancel'))
-                dialog.add_response('delete', _('Delete'))
-                dialog.set_response_appearance('delete', Adw.ResponseAppearance.DESTRUCTIVE)
-                dialog.set_default_response('cancel')
-                dialog.set_close_response('cancel')
 
-            dialog.connect('response', self.on_delete_connection_response, connection)
-            dialog.present()
+            connections = self._connections_from_rows(target_rows)
+            neighbor_row = self._determine_neighbor_connection_row(target_rows)
+
+            self._prompt_delete_connections(connections, neighbor_row)
         except Exception as e:
             logger.error(f"Failed to delete connection: {e}")
 
@@ -4561,7 +5020,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     if (hasattr(terminal_widget.connection, 'nickname') and
                             terminal_widget.connection.nickname == "Local Terminal"):
                         continue
-                    if hasattr(terminal_widget.connection, 'host'):
+                    if hasattr(terminal_widget.connection, 'hostname'):
                         ssh_terminals_count += 1
             
             if ssh_terminals_count == 0:
@@ -4843,40 +5302,32 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_move_to_ungrouped_action(self, action, param=None):
         """Handle move to ungrouped action"""
         try:
-            # Get the connection from context menu or selected row
-            selected_row = getattr(self, '_context_menu_connection', None)
-            if not selected_row:
-                selected_row = self.connection_list.get_selected_row()
-                if selected_row and hasattr(selected_row, 'connection'):
-                    selected_row = selected_row.connection
-            
-            if not selected_row:
+            connections = self._get_target_connections(prefer_context=True)
+            if not connections:
                 return
-            
-            connection_nickname = selected_row.nickname if hasattr(selected_row, 'nickname') else selected_row
-            
-            # Move to ungrouped (None group)
-            self.group_manager.move_connection(connection_nickname, None)
+
+            for connection in connections:
+                nickname = getattr(connection, 'nickname', None)
+                if nickname:
+                    self.group_manager.move_connection(nickname, None)
             self.rebuild_connection_list()
-            
+
         except Exception as e:
             logger.error(f"Failed to move connection to ungrouped: {e}")
     
     def on_move_to_group_action(self, action, param=None):
         """Handle move to group action"""
         try:
-            # Get the connection from context menu or selected row
-            selected_row = getattr(self, '_context_menu_connection', None)
-            if not selected_row:
-                selected_row = self.connection_list.get_selected_row()
-                if selected_row and hasattr(selected_row, 'connection'):
-                    selected_row = selected_row.connection
-            
-            if not selected_row:
+            connections = self._get_target_connections(prefer_context=True)
+            if not connections:
                 return
-            
-            connection_nickname = selected_row.nickname if hasattr(selected_row, 'nickname') else selected_row
-            
+
+            connection_nicknames = [
+                conn.nickname for conn in connections if hasattr(conn, 'nickname')
+            ]
+            if not connection_nicknames:
+                return
+
             # Get available groups
             available_groups = self.get_available_groups()
             logger.debug(f"Available groups for move dialog: {len(available_groups)} groups")
@@ -4900,44 +5351,48 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             content_area.set_spacing(12)
             
             # Add label
-            label = Gtk.Label(label=_("Select a group to move the connection to:"))
+            if len(connection_nicknames) == 1:
+                label_text = _("Select a group to move the connection to:")
+            else:
+                label_text = _("Select a group to move the selected connections to:")
+            label = Gtk.Label(label=label_text)
             label.set_wrap(True)
             label.set_xalign(0)
             content_area.append(label)
-            
+
             # Add list box for groups
             listbox = Gtk.ListBox()
             listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
             listbox.set_vexpand(True)
-            
+
             # Add inline group creation section
             create_section_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             create_section_box.set_margin_start(12)
             create_section_box.set_margin_end(12)
             create_section_box.set_margin_top(6)
             create_section_box.set_margin_bottom(6)
-            
+
             # Create new group label
             create_label = Gtk.Label(label=_("Create New Group"))
             create_label.set_xalign(0)
             create_label.add_css_class("heading")
             create_section_box.append(create_label)
-            
+
             # Create new group entry and button
             create_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-            
+
             self.create_group_entry = Gtk.Entry()
             self.create_group_entry.set_placeholder_text(_("Enter group name"))
             self.create_group_entry.set_hexpand(True)
             create_box.append(self.create_group_entry)
-            
+
             self.create_group_button = Gtk.Button(label=_("Create"))
             self.create_group_button.add_css_class("suggested-action")
             self.create_group_button.set_sensitive(False)
             create_box.append(self.create_group_button)
-            
+
             create_section_box.append(create_box)
-            
+
             # Add the create section to content area
             content_area.append(create_section_box)
             
@@ -4986,20 +5441,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             def on_entry_changed(entry):
                 text = entry.get_text().strip()
                 self.create_group_button.set_sensitive(bool(text))
-            
+
             def on_entry_activated(entry):
                 text = entry.get_text().strip()
                 if text:
                     on_create_group_clicked()
-            
+
             def on_create_group_clicked():
                 group_name = self.create_group_entry.get_text().strip()
                 if group_name:
                     try:
                         # Create the new group
                         new_group_id = self.group_manager.create_group(group_name)
-                        # Move the connection to the new group
-                        self.group_manager.move_connection(connection_nickname, new_group_id)
+                        # Move all selected connections to the new group
+                        for nickname in connection_nicknames:
+                            self.group_manager.move_connection(nickname, new_group_id)
                         # Rebuild the connection list
                         self.rebuild_connection_list()
                         # Close the dialog
@@ -5040,17 +5496,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         # Clear the entry and focus it for retry
                         self.create_group_entry.set_text("")
                         self.create_group_entry.grab_focus()
-            
+
             self.create_group_entry.connect('changed', on_entry_changed)
             self.create_group_entry.connect('activate', on_entry_activated)
             self.create_group_button.connect('clicked', lambda btn: on_create_group_clicked())
-            
+
             def on_response(dialog, response):
                 if response == Gtk.ResponseType.OK:
                     selected_row = listbox.get_selected_row()
                     if selected_row:
                         target_group_id = selected_row.group_id
-                        self.group_manager.move_connection(connection_nickname, target_group_id)
+                        for nickname in connection_nicknames:
+                            self.group_manager.move_connection(nickname, target_group_id)
                         self.rebuild_connection_list()
                 dialog.destroy()
             
@@ -5078,8 +5535,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def open_in_system_terminal(self, connection):
         """Open the connection in the system's default terminal"""
         try:
+            host_value = _get_connection_host(connection)
             port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
-            ssh_command = f"ssh{port_text} {connection.username}@{connection.host}"
+            ssh_command = f"ssh{port_text} {connection.username}@{host_value}" if getattr(connection, 'username', '') else f"ssh{port_text} {host_value}"
 
             use_external = self.config.get_setting('use-external-terminal', False)
             if use_external:
@@ -5223,8 +5681,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def _open_connection_in_external_terminal(self, connection):
         """Open the connection in the user's preferred external terminal"""
         try:
+            host_value = _get_connection_host(connection)
             port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
-            ssh_command = f"ssh{port_text} {connection.username}@{connection.host}"
+            ssh_command = f"ssh{port_text} {connection.username}@{host_value}" if getattr(connection, 'username', '') else f"ssh{port_text} {host_value}"
 
             terminal = self._get_user_preferred_terminal()
             if not terminal:
@@ -5522,7 +5981,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         return []
                 existing = {
                     'nickname': _norm_str(getattr(old_connection, 'nickname', '')),
-                    'host': _norm_str(getattr(old_connection, 'host', '')),
+                    'hostname': _norm_str(getattr(old_connection, 'hostname', getattr(old_connection, 'host', ''))),
                     'username': _norm_str(getattr(old_connection, 'username', '')),
                     'port': int(getattr(old_connection, 'port', 22) or 22),
                     'auth_method': int(getattr(old_connection, 'auth_method', 0) or 0),
@@ -5539,7 +5998,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 }
                 incoming = {
                     'nickname': _norm_str(connection_data.get('nickname')),
-                    'host': _norm_str(connection_data.get('host')),
+                    'hostname': _norm_str(connection_data.get('hostname') or connection_data.get('host')),
                     'username': _norm_str(connection_data.get('username')),
                     'port': int(connection_data.get('port') or 22),
                     'auth_method': int(connection_data.get('auth_method') or 0),
@@ -5603,7 +6062,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
                 # Update connection attributes in memory (ensure forwarding rules kept)
                 old_connection.nickname = connection_data['nickname']
-                old_connection.host = connection_data['host']
+                old_connection.hostname = connection_data['hostname']
+                old_connection.host = old_connection.hostname
                 old_connection.username = connection_data['username']
                 old_connection.port = connection_data['port']
                 old_connection.keyfile = connection_data['keyfile']

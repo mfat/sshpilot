@@ -9,7 +9,7 @@ def test_strip_password_directives_when_key_auth():
     cm = make_cm()
     data = {
         'nickname': 'host1',
-        'host': 'example.com',
+        'hostname': 'example.com',
         'username': 'user',
         'auth_method': 0,
         'extra_ssh_config': 'PreferredAuthentications password\nPubkeyAuthentication no\nCompression yes',

@@ -75,10 +75,11 @@ class Connection:
         self.forwarders: List[asyncio.Task] = []
         self.listeners: List[asyncio.Server] = []
 
-        self.nickname = data.get('nickname', data.get('host', 'Unknown'))
+        self.nickname = data.get('nickname', data.get('hostname', data.get('host', 'Unknown')))
         if 'aliases' in data:
             self.aliases = data.get('aliases', [])
-        self.host = data.get('host', '')
+        self.hostname = data.get('hostname', data.get('host', ''))
+        self.host = self.hostname  # Backward compatibility for legacy references
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         # previously: self.keyfile = data.get('keyfile', '')
@@ -125,7 +126,7 @@ class Connection:
         self.loop = asyncio.get_event_loop()
 
     def __str__(self):
-        return f"{self.nickname} ({self.username}@{self.host})"
+        return f"{self.nickname} ({self.username}@{self.hostname})"
 
     @property
     def source_file(self) -> str:
@@ -194,18 +195,19 @@ class Connection:
 
             # Resolve effective SSH configuration for this nickname/host
             effective_cfg: Dict[str, Union[str, List[str]]] = {}
-            target_alias = self.nickname or self.host
+            target_alias = self.nickname or self.hostname
             if target_alias:
                 effective_cfg = get_effective_ssh_config(target_alias)
 
             # Determine final parameters, falling back to resolved config when needed
-            resolved_host = str(effective_cfg.get('hostname', self.host))
+            resolved_host = str(effective_cfg.get('hostname', self.hostname))
             resolved_user = self.username or str(effective_cfg.get('user', ''))
             try:
                 resolved_port = int(effective_cfg.get('port', self.port))
             except Exception:
                 resolved_port = self.port
-            self.host = resolved_host
+            self.hostname = resolved_host
+            self.host = self.hostname
             self.port = resolved_port
             if resolved_user:
                 self.username = resolved_user
@@ -375,7 +377,7 @@ class Connection:
     async def start_dynamic_forwarding(self, listen_addr: str, listen_port: int):
         """Start dynamic port forwarding (SOCKS proxy) using system SSH client"""
         try:
-            logger.debug(f"Starting dynamic port forwarding setup for {self.host} on {listen_addr}:{listen_port}")
+            logger.debug(f"Starting dynamic port forwarding setup for {self.hostname} on {listen_addr}:{listen_port}")
             
             # Build the complete SSH command for dynamic port forwarding
             ssh_cmd = ['ssh', '-v']  # Add verbose flag for debugging
@@ -432,7 +434,7 @@ class Connection:
             ])
             
             # Add username and host
-            target = f"{self.username}@{self.host}" if self.username else self.host
+            target = f"{self.username}@{self.hostname}" if self.username else self.hostname
             ssh_cmd.append(target)
             
             # Log the full command (without sensitive data)
@@ -617,10 +619,11 @@ class Connection:
     
     def _update_properties_from_data(self, data: Dict[str, Any]):
         """Update instance properties from data dictionary"""
-        self.nickname = data.get('nickname', data.get('host', 'Unknown'))
+        self.nickname = data.get('nickname', data.get('hostname', data.get('host', 'Unknown')))
         if 'aliases' in data:
             self.aliases = data.get('aliases', getattr(self, 'aliases', []))
-        self.host = data.get('host', '')
+        self.hostname = data.get('hostname', data.get('host', ''))
+        self.host = self.hostname
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
@@ -932,10 +935,13 @@ class ConnectionManager(GObject.Object):
 
             host = host_token
 
+            hostname_value = config.get('hostname')
+            parsed_host = _unwrap(hostname_value) if hostname_value else ''
+
             # Extract relevant configuration
             parsed = {
                 'nickname': host,
-                'host': _unwrap(config.get('hostname', host)),
+                'hostname': parsed_host,
 
                 'port': int(_unwrap(config.get('port', 22))),
                 'username': _unwrap(config.get('user', getpass.getuser())),
@@ -1323,7 +1329,7 @@ class ConnectionManager(GObject.Object):
                 return f'"{token}"'
             return token
 
-        host = data.get('host', '')
+        host = data.get('hostname', data.get('host', ''))
         nickname = data.get('nickname') or host
         primary_token = _quote_token(nickname)
         lines = [f"Host {primary_token}"]
@@ -1761,7 +1767,7 @@ class ConnectionManager(GObject.Object):
                 len(new_data.get('forwarding_rules', []) or [])
             )
             # Capture previous identifiers for credential cleanup
-            prev_host = getattr(connection, 'host', '')
+            prev_host = getattr(connection, 'hostname', '')
             prev_user = getattr(connection, 'username', '')
             original_nickname = getattr(connection, 'nickname', '')
 
@@ -1781,7 +1787,11 @@ class ConnectionManager(GObject.Object):
             if 'password' in new_data:
                 pwd = new_data.get('password') or ''
                 # Determine current identifiers after update
-                curr_host = new_data.get('host') or getattr(connection, 'host', prev_host)
+                curr_host = (
+                    new_data.get('hostname')
+                    or new_data.get('host')
+                    or getattr(connection, 'hostname', prev_host)
+                )
                 curr_user = new_data.get('username') or getattr(connection, 'username', prev_user)
                 if pwd:
                     self.store_password(curr_host, curr_user, pwd)
@@ -1819,7 +1829,7 @@ class ConnectionManager(GObject.Object):
             
             # Remove password from secure storage
             try:
-                self.delete_password(connection.host, connection.username)
+                self.delete_password(connection.hostname, connection.username)
             except Exception as e:
                 logger.warning(f"Failed to remove password from storage: {e}")
             
@@ -1871,8 +1881,8 @@ class ConnectionManager(GObject.Object):
                 await connection.setup_forwarding()
             
             # Store the connection task
-            if connection.host in self.active_connections:
-                self.active_connections[connection.host].cancel()
+            if connection.hostname in self.active_connections:
+                self.active_connections[connection.hostname].cancel()
             
             # Create a task to keep the connection alive
             async def keepalive():
@@ -1897,7 +1907,7 @@ class ConnectionManager(GObject.Object):
             
             # Start the keepalive task
             task = asyncio.create_task(keepalive())
-            self.active_connections[connection.host] = task
+            self.active_connections[connection.hostname] = task
             
             # Update the connection state and emit status change
             connection.is_connected = True
@@ -1918,13 +1928,13 @@ class ConnectionManager(GObject.Object):
         """Disconnect from SSH host and clean up resources asynchronously"""
         try:
             # Cancel the keepalive task if it exists
-            if connection.host in self.active_connections:
-                self.active_connections[connection.host].cancel()
+            if connection.hostname in self.active_connections:
+                self.active_connections[connection.hostname].cancel()
                 try:
-                    await self.active_connections[connection.host]
+                    await self.active_connections[connection.hostname]
                 except asyncio.CancelledError:
                     pass
-                del self.active_connections[connection.host]
+                del self.active_connections[connection.hostname]
             
             # Disconnect the connection
             if hasattr(connection, 'connection') and connection.connection and connection.is_connected:
