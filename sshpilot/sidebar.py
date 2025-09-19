@@ -603,7 +603,7 @@ def _on_connection_list_leave(window, target):
     # Restore selection mode after drag
     if hasattr(window, '_drag_in_progress'):
         window._drag_in_progress = False
-        window.connection_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
     
     return True
 
@@ -729,7 +729,7 @@ def _on_connection_list_drop(window, target, value, x, y):
         # Restore selection mode after drag
         if hasattr(window, '_drag_in_progress'):
             window._drag_in_progress = False
-            window.connection_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
 
         # Extract Python object from GObject.Value drops
         if isinstance(value, GObject.Value):
