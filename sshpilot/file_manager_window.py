@@ -29,7 +29,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 
 import paramiko
-from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk
+from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
 
 # ---------------------------------------------------------------------------
@@ -537,6 +537,8 @@ class FilePane(Gtk.Box):
         icon = Gtk.Image.new_from_icon_name("folder-symbolic")
         icon.set_valign(Gtk.Align.CENTER)
         label = Gtk.Label(xalign=0)
+        label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        label.set_max_width_chars(40)
         label.set_hexpand(True)
         box.append(icon)
         box.append(label)
@@ -548,6 +550,7 @@ class FilePane(Gtk.Box):
         icon = box.get_first_child()
         value = item.get_item().get_string()
         label.set_text(value)
+        label.set_tooltip_text(value)
         # Choose icon based on whether value ends with '/'
         if value.endswith('/'):
             icon.set_from_icon_name("folder-symbolic")
