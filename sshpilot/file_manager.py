@@ -761,37 +761,48 @@ class SftpFileManager(Adw.ApplicationWindow):
         
         remote_path = str(Path(self.current_remote_path) / filename)
         local_path = self.current_local_path / filename
-        
+
         def do_download():
             try:
-                cmd = [
-                    'scp',
-                    '-o', 'BatchMode=yes',
-                    '-o', 'ConnectTimeout=10', 
-                    '-o', 'StrictHostKeyChecking=no',
-                    '-P', str(self.ssh_connection['port']),
-                    f"{self.ssh_connection['username']}@{self.ssh_connection['host']}:{remote_path}",
-                    str(local_path)
-                ]
-                
-                if self.ssh_connection.get('password'):
-                    cmd = ['sshpass', '-p', self.ssh_connection['password']] + cmd
-                
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-                
+                if self.connection_info['auth_method'] == 'key':
+                    env = get_ssh_env_with_askpass("force")
+
+                    cmd = [
+                        'scp',
+                        '-o', 'IdentitiesOnly=yes',
+                        '-i', self.connection_info['key_file'],
+                        '-P', str(self.connection_info['port']),
+                        '-o', 'StrictHostKeyChecking=accept-new',
+                        f"{self.connection_info['username']}@{self.connection_info['host']}:{remote_path}",
+                        str(local_path)
+                    ]
+
+                    result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=60)
+                else:
+                    result = run_scp_with_password(
+                        self.connection_info['host'],
+                        self.connection_info['username'],
+                        self.connection_info['password'],
+                        [remote_path],
+                        str(local_path),
+                        direction='download',
+                        port=self.connection_info['port']
+                    )
+
                 if result.returncode == 0:
                     GLib.idle_add(self.refresh_local_view)
                     GLib.idle_add(self.show_info, f"Downloaded {filename}")
                 else:
                     GLib.idle_add(self.show_error, f"Download failed: {result.stderr}")
-                    
+
             except subprocess.TimeoutExpired:
                 GLib.idle_add(self.show_error, f"Download timeout for {filename}")
             except Exception as e:
                 GLib.idle_add(self.show_error, f"Download failed: {e}")
-        
-        threading.Thread(target=do_download, daemon=True).start()
-    
+
+        download_thread = threading.Thread(target=do_download, daemon=True)
+        download_thread.start()
+
     def show_error(self, message):
         dialog = Adw.MessageDialog(
             transient_for=self,
