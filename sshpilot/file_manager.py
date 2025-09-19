@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
@@ -7,29 +9,94 @@ import os
 import stat
 import threading
 from pathlib import Path
+from typing import Optional, TYPE_CHECKING
 import paramiko
 from datetime import datetime
 
+if TYPE_CHECKING:
+    from .connection_manager import Connection
+
 class SftpFileManager(Adw.ApplicationWindow):
-    def __init__(self, app):
+    def __init__(
+        self,
+        app,
+        *,
+        connection: Optional["Connection"] = None,
+        restrict_to_file_manager: bool = False,
+        auto_connect: bool = False,
+    ):
         super().__init__(application=app)
-        
+
         self.sftp_client = None
         self.ssh_client = None
         self.current_local_path = Path.home()
         self.current_remote_path = "/"
-        
+
+        self.local_store = None
+        self.local_tree_view = None
+        self.remote_store = None
+        self.remote_tree_view = None
+        self.upload_btn = None
+        self.download_btn = None
+
+        self.prefill_host: Optional[str] = None
+        self.prefill_port: int = 22
+        self.prefill_username: Optional[str] = None
+        self.prefill_password: Optional[str] = None
+        self.auto_connect = auto_connect
+        self.restrict_to_file_manager = restrict_to_file_manager
+
+        if connection is not None:
+            self._apply_connection_defaults(connection)
+
         self.set_title("SFTP File Manager")
         self.set_default_size(1200, 800)
-        
+
         self.setup_ui()
         self.refresh_local_view()
+
+        if (
+            self.auto_connect
+            and self.prefill_host
+            and self.prefill_username
+            and self.prefill_password
+        ):
+            try:
+                self.connect_sftp(
+                    self.prefill_host,
+                    self.prefill_port,
+                    self.prefill_username,
+                    self.prefill_password,
+                )
+            except Exception:
+                pass
+        elif self.auto_connect and (self.prefill_host or self.prefill_username):
+            GLib.idle_add(lambda: (self.show_connection_dialog(self.connect_btn), False)[1])
+
+    def _apply_connection_defaults(self, connection: "Connection"):
+        host = getattr(connection, "hostname", None) or getattr(connection, "host", None)
+        if isinstance(host, str) and host:
+            self.prefill_host = host
+        nickname = getattr(connection, "nickname", None)
+        if not self.prefill_host and isinstance(nickname, str) and nickname:
+            self.prefill_host = nickname
+        try:
+            port = int(getattr(connection, "port", 22) or 22)
+        except Exception:
+            port = 22
+        self.prefill_port = port
+        username = getattr(connection, "username", None)
+        if isinstance(username, str) and username:
+            self.prefill_username = username
+        password = getattr(connection, "password", None)
+        if isinstance(password, str) and password:
+            self.prefill_password = password
         
     def setup_ui(self):
         # Main content
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.set_content(main_box)
-        
+
         # Header bar
         header_bar = Adw.HeaderBar()
         main_box.append(header_bar)
@@ -45,22 +112,27 @@ class SftpFileManager(Adw.ApplicationWindow):
         self.status_label.add_css_class("dim-label")
         header_bar.pack_end(self.status_label)
         
-        # Main paned view
-        self.paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        self.paned.set_shrink_start_child(False)
-        self.paned.set_shrink_end_child(False)
-        self.paned.set_position(600)
-        main_box.append(self.paned)
+        # Main content area
+        if self.restrict_to_file_manager:
+            remote_panel = self.create_file_panel("Remote", False, enable_transfers=False)
+            main_box.append(remote_panel)
+            self.paned = None
+        else:
+            self.paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+            self.paned.set_shrink_start_child(False)
+            self.paned.set_shrink_end_child(False)
+            self.paned.set_position(600)
+            main_box.append(self.paned)
+
+            # Local panel
+            local_panel = self.create_file_panel("Local", True)
+            self.paned.set_start_child(local_panel)
+
+            # Remote panel
+            remote_panel = self.create_file_panel("Remote", False)
+            self.paned.set_end_child(remote_panel)
         
-        # Local panel
-        local_panel = self.create_file_panel("Local", True)
-        self.paned.set_start_child(local_panel)
-        
-        # Remote panel
-        remote_panel = self.create_file_panel("Remote", False)
-        self.paned.set_end_child(remote_panel)
-        
-    def create_file_panel(self, title, is_local):
+    def create_file_panel(self, title, is_local, enable_transfers=True):
         # Main container
         panel_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         
@@ -169,7 +241,7 @@ class SftpFileManager(Adw.ApplicationWindow):
         action_box.set_margin_end(12)
         action_box.set_margin_bottom(12)
         panel_box.append(action_box)
-        
+
         if is_local:
             upload_btn = Gtk.Button(label="Upload →")
             upload_btn.add_css_class("suggested-action")
@@ -178,13 +250,16 @@ class SftpFileManager(Adw.ApplicationWindow):
             action_box.append(upload_btn)
             self.upload_btn = upload_btn
         else:
-            download_btn = Gtk.Button(label="← Download")
-            download_btn.add_css_class("suggested-action")
-            download_btn.connect("clicked", self.download_file)
-            download_btn.set_sensitive(False)
-            action_box.append(download_btn)
-            self.download_btn = download_btn
-        
+            if enable_transfers:
+                download_btn = Gtk.Button(label="← Download")
+                download_btn.add_css_class("suggested-action")
+                download_btn.connect("clicked", self.download_file)
+                download_btn.set_sensitive(False)
+                action_box.append(download_btn)
+                self.download_btn = download_btn
+            else:
+                self.download_btn = None
+
         return panel_box
     
     def show_connection_dialog(self, button):
@@ -205,29 +280,36 @@ class SftpFileManager(Adw.ApplicationWindow):
         host_group = Adw.PreferencesGroup()
         host_row = Adw.EntryRow()
         host_row.set_title("Host")
-        host_row.set_text("localhost")
+        if self.prefill_host:
+            host_row.set_text(self.prefill_host)
+        else:
+            host_row.set_text("localhost")
         host_group.add(host_row)
         form_box.append(host_group)
-        
+
         # Port
         port_group = Adw.PreferencesGroup()
         port_row = Adw.EntryRow()
         port_row.set_title("Port")
-        port_row.set_text("22")
+        port_row.set_text(str(self.prefill_port))
         port_group.add(port_row)
         form_box.append(port_group)
-        
+
         # Username
         user_group = Adw.PreferencesGroup()
         user_row = Adw.EntryRow()
         user_row.set_title("Username")
+        if self.prefill_username:
+            user_row.set_text(self.prefill_username)
         user_group.add(user_row)
         form_box.append(user_group)
-        
+
         # Password
         pass_group = Adw.PreferencesGroup()
         pass_row = Adw.PasswordEntryRow()
         pass_row.set_title("Password")
+        if self.prefill_password:
+            pass_row.set_text(self.prefill_password)
         pass_group.add(pass_row)
         form_box.append(pass_group)
         
@@ -272,8 +354,10 @@ class SftpFileManager(Adw.ApplicationWindow):
         self.connect_btn.connect("clicked", self.disconnect_sftp)
         
         self.remote_path_entry.set_sensitive(True)
-        self.upload_btn.set_sensitive(True)
-        self.download_btn.set_sensitive(True)
+        if self.upload_btn:
+            self.upload_btn.set_sensitive(True)
+        if self.download_btn:
+            self.download_btn.set_sensitive(True)
         
         self.refresh_remote_view()
     
@@ -305,17 +389,20 @@ class SftpFileManager(Adw.ApplicationWindow):
         self.connect_btn.connect("clicked", self.show_connection_dialog)
         
         self.remote_path_entry.set_sensitive(False)
-        self.upload_btn.set_sensitive(False)
-        self.download_btn.set_sensitive(False)
-        
-        self.remote_store.clear()
+        if self.upload_btn:
+            self.upload_btn.set_sensitive(False)
+        if self.download_btn:
+            self.download_btn.set_sensitive(False)
+
+        if self.remote_store:
+            self.remote_store.clear()
     
     def refresh_local_view(self):
         self.local_store.clear()
         try:
             entries = list(self.current_local_path.iterdir())
             entries.sort(key=lambda x: (not x.is_dir(), x.name.lower()))
-            
+
             for entry in entries:
                 try:
                     stat_info = entry.stat()
@@ -332,12 +419,13 @@ class SftpFileManager(Adw.ApplicationWindow):
         except (OSError, PermissionError) as e:
             self.show_error(f"Cannot read directory: {e}")
         
-        self.local_path_entry.set_text(str(self.current_local_path))
+        if hasattr(self, "local_path_entry") and self.local_path_entry:
+            self.local_path_entry.set_text(str(self.current_local_path))
     
     def refresh_remote_view(self):
         if not self.sftp_client:
             return
-            
+
         def do_refresh():
             try:
                 entries = self.sftp_client.listdir_attr(self.current_remote_path)
@@ -350,6 +438,8 @@ class SftpFileManager(Adw.ApplicationWindow):
         threading.Thread(target=do_refresh, daemon=True).start()
     
     def update_remote_store(self, entries):
+        if not self.remote_store:
+            return
         self.remote_store.clear()
         for entry in entries:
             size = self.format_size(entry.st_size) if not stat.S_ISDIR(entry.st_mode) else ""
@@ -433,6 +523,9 @@ class SftpFileManager(Adw.ApplicationWindow):
             self.navigate_remote(name)
     
     def upload_file(self, button):
+        if not self.local_tree_view:
+            self.show_error("Local browser is unavailable in this mode")
+            return
         selection = self.local_tree_view.get_selection()
         model, iterator = selection.get_selected()
         
@@ -461,6 +554,9 @@ class SftpFileManager(Adw.ApplicationWindow):
         threading.Thread(target=do_upload, daemon=True).start()
     
     def download_file(self, button):
+        if not self.remote_tree_view:
+            self.show_error("Remote browser is unavailable")
+            return
         selection = self.remote_tree_view.get_selection()
         model, iterator = selection.get_selected()
         
@@ -502,6 +598,24 @@ class SftpFileManager(Adw.ApplicationWindow):
         toast.set_timeout(3)
         # Note: You'd need to add a toast overlay to show toasts
         print(f"Info: {message}")  # Fallback for now
+
+def launch_sftp_file_manager_for_connection(
+    app: Adw.Application,
+    connection: "Connection",
+    *,
+    restrict_to_file_manager: bool = False,
+    auto_connect: bool = True,
+) -> SftpFileManager:
+    """Create and present a :class:`SftpFileManager` configured for ``connection``."""
+
+    window = SftpFileManager(
+        app,
+        connection=connection,
+        restrict_to_file_manager=restrict_to_file_manager,
+        auto_connect=auto_connect,
+    )
+    window.present()
+    return window
 
 class SftpFileManagerApp(Adw.Application):
     def __init__(self):

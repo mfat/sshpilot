@@ -37,11 +37,19 @@ def reload_module(name):
 
 def prepare_actions(monkeypatch):
     setup_gi(monkeypatch)
-    sftp_stub = types.ModuleType("sshpilot.sftp_utils")
-    def open_remote_in_file_manager(*args, **kwargs):
-        return True, None
-    sftp_stub.open_remote_in_file_manager = open_remote_in_file_manager
-    monkeypatch.setitem(sys.modules, "sshpilot.sftp_utils", sftp_stub)
+    file_manager_stub = types.ModuleType("sshpilot.file_manager")
+
+    class DummyFileManager:
+        def present(self):
+            pass
+
+    def launch_sftp_file_manager_for_connection(*args, **kwargs):
+        return DummyFileManager()
+
+    file_manager_stub.launch_sftp_file_manager_for_connection = (
+        launch_sftp_file_manager_for_connection
+    )
+    monkeypatch.setitem(sys.modules, "sshpilot.file_manager", file_manager_stub)
     return reload_module("sshpilot.actions")
 
 
@@ -75,6 +83,8 @@ def create_window():
              pass
         def on_toggle_sidebar_action(self, *args):
              pass
+        def _open_sftp_file_manager_for_connection(self, *args, **kwargs):
+            self.file_manager_opened = True
     return DummyWindow()
 
 

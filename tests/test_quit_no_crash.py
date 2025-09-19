@@ -38,7 +38,9 @@ def test_application_quit_with_confirmation_dialog_does_not_crash():
         'sshpilot.sshcopyid_window': types.SimpleNamespace(SshCopyIdWindow=object),
         'sshpilot.groups': types.SimpleNamespace(GroupManager=lambda config: None),
         'sshpilot.sidebar': types.SimpleNamespace(GroupRow=object, ConnectionRow=object, build_sidebar=lambda *a, **k: None),
-        'sshpilot.sftp_utils': types.SimpleNamespace(open_remote_in_file_manager=lambda *a, **k: None),
+        'sshpilot.file_manager': types.SimpleNamespace(
+            launch_sftp_file_manager_for_connection=lambda *a, **k: types.SimpleNamespace(present=lambda: None)
+        ),
         'sshpilot.welcome_page': types.SimpleNamespace(WelcomePage=object),
         'sshpilot.actions': types.SimpleNamespace(WindowActions=object, register_window_actions=lambda window: None),
         'sshpilot.shutdown': types.SimpleNamespace(cleanup_and_quit=lambda w: None),

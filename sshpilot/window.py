@@ -52,7 +52,7 @@ from .sshcopyid_window import SshCopyIdWindow
 from .groups import GroupManager
 from .sidebar import GroupRow, ConnectionRow, build_sidebar
 
-from .sftp_utils import open_remote_in_file_manager
+from .file_manager import launch_sftp_file_manager_for_connection
 from .welcome_page import WelcomePage
 from .actions import WindowActions, register_window_actions
 from . import shutdown
@@ -100,6 +100,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.terminal_to_connection: Dict[TerminalWidget, Connection] = {}
         self.connection_rows = {}   # connection -> row_widget
         self._context_menu_row = None
+        self._file_manager_windows: Dict[Connection, Any] = {}
         # Hide hosts toggle state
         try:
             self._hide_hosts = bool(self.config.get_setting('ui.hide_hosts', False))
@@ -1360,7 +1361,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
                         # Manage Files row
                         if not should_hide_file_manager_options():
-                            files_row = Adw.ActionRow(title=_('Manage Files'))
+                            files_row = Adw.ActionRow(title=_('Open SFTP file manager'))
                             files_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
                             files_row.add_prefix(files_icon)
                             files_row.set_activatable(True)
@@ -1500,7 +1501,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # SCP transfer button
         self.scp_button = Gtk.Button.new_from_icon_name('document-send-symbolic')
-        self.scp_button.set_tooltip_text('Transfer files with scp')
+        self.scp_button.set_tooltip_text(_('Open SFTP transfer manager'))
         self.scp_button.set_sensitive(False)
         self.scp_button.connect('clicked', self.on_scp_button_clicked)
         self.connection_toolbar.append(self.scp_button)
@@ -1508,7 +1509,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Manage files button
         if not should_hide_file_manager_options():
             self.manage_files_button = Gtk.Button.new_from_icon_name('folder-symbolic')
-            self.manage_files_button.set_tooltip_text('Open file manager for remote server')
+            self.manage_files_button.set_tooltip_text(_('Open SFTP file manager'))
             self.manage_files_button.set_sensitive(False)
             self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
             self.connection_toolbar.append(self.manage_files_button)
@@ -3432,7 +3433,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
 
     def on_scp_button_clicked(self, button):
-        """Prompt the user to choose between uploading or downloading with scp."""
+        """Open the integrated SFTP manager for the selected connection."""
         try:
             selected_row = self.connection_list.get_selected_row()
             if not selected_row:
@@ -3440,30 +3441,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             connection = getattr(selected_row, 'connection', None)
             if not connection:
                 return
-
-            chooser = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_('Transfer files with scp'),
-                body=_('Choose whether you want to upload local files to the server or download remote paths to your computer.')
+            self._open_sftp_file_manager_for_connection(
+                connection,
+                restrict_to_file_manager=False,
+                show_error=True,
             )
-            chooser.add_response('cancel', _('Cancel'))
-            chooser.add_response('upload', _('Upload to server…'))
-            chooser.add_response('download', _('Download from server…'))
-            chooser.set_default_response('upload')
-            chooser.set_close_response('cancel')
-
-            def _on_choice(dlg, response):
-                dlg.close()
-                if response == 'upload':
-                    self._start_scp_upload_flow(connection)
-                elif response == 'download':
-                    self._prompt_scp_download(connection)
-
-            chooser.connect('response', _on_choice)
-            chooser.present()
         except Exception as e:
-            logger.error(f'SCP transfer chooser failed: {e}')
+            logger.error(f'SFTP manager launch failed: {e}')
 
     def _start_scp_upload_flow(self, connection):
         """Kick off the upload flow using a portal-aware file chooser."""
@@ -3565,35 +3549,86 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             connection = getattr(selected_row, 'connection', None)
             if not connection:
                 return
-            
-            # Use the same logic as the context menu action
-            try:
-                # Define error callback for async operation
-                def error_callback(error_msg):
-                    logger.error(f"Failed to open file manager for {connection.nickname}: {error_msg}")
-                    # Show error dialog to user
-                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
-                
-                host_value = _get_connection_host(connection)
-                success, error_msg = open_remote_in_file_manager(
-                    user=connection.username,
-                    host=host_value,
-                    port=connection.port if connection.port != 22 else None,
-                    error_callback=error_callback,
-                    parent_window=self
-                )
-                if success:
-                    logger.info(f"Started file manager process for {connection.nickname}")
-                else:
-                    logger.error(f"Failed to start file manager process for {connection.nickname}: {error_msg}")
-                    # Show error dialog to user
-                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to start file manager process")
-            except Exception as e:
-                logger.error(f"Error opening file manager: {e}")
-                # Show error dialog to user
-                self._show_manage_files_error(connection.nickname, str(e))
+            self._open_sftp_file_manager_for_connection(
+                connection,
+                restrict_to_file_manager=True,
+                show_error=True,
+            )
         except Exception as e:
             logger.error(f"Manage files button click failed: {e}")
+
+    def _open_sftp_file_manager_for_connection(
+        self,
+        connection: Connection,
+        *,
+        restrict_to_file_manager: bool,
+        show_error: bool = False,
+    ):
+        """Open or focus the SFTP file manager window for ``connection``."""
+
+        existing = self._file_manager_windows.get(connection)
+        if existing:
+            try:
+                existing.present()
+                return existing
+            except Exception as exc:
+                logger.debug(
+                    "Existing file manager window invalid for %s: %s", connection.nickname, exc
+                )
+                self._file_manager_windows.pop(connection, None)
+
+        app = self.get_application()
+        if app is None:
+            logger.error("Cannot open SFTP manager without an application instance")
+            if show_error:
+                self._show_manage_files_error(
+                    connection.nickname,
+                    _('Unable to open the file manager window.'),
+                )
+            return None
+
+        try:
+            window = launch_sftp_file_manager_for_connection(
+                app,
+                connection,
+                restrict_to_file_manager=restrict_to_file_manager,
+                auto_connect=True,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to open SFTP manager for %s: %s", connection.nickname, exc
+            )
+            if show_error:
+                self._show_manage_files_error(
+                    connection.nickname,
+                    str(exc) or _('Failed to open file manager.'),
+                )
+            return None
+
+        self._register_file_manager_window(connection, window)
+        mode = 'browser' if restrict_to_file_manager else 'transfer'
+        logger.info("Opened SFTP file manager for %s in %s mode", connection.nickname, mode)
+        return window
+
+    def _register_file_manager_window(self, connection: Connection, window):
+        """Track an opened SFTP manager to keep it alive for the session."""
+
+        def _on_close(win, *args):
+            try:
+                existing = self._file_manager_windows.get(connection)
+                if existing is win:
+                    self._file_manager_windows.pop(connection, None)
+            except Exception as exc:
+                logger.debug("Failed to update file manager registry: %s", exc)
+            return False
+
+        try:
+            window.connect('close-request', _on_close)
+        except Exception as exc:
+            logger.debug("Unable to connect close-request handler: %s", exc)
+
+        self._file_manager_windows[connection] = window
+        return window
 
     def on_system_terminal_button_clicked(self, button):
         """Handle system terminal button click from toolbar"""
@@ -5168,31 +5203,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Handle manage files action from context menu"""
         if hasattr(self, '_context_menu_connection') and self._context_menu_connection:
             connection = self._context_menu_connection
-            try:
-                # Define error callback for async operation
-                def error_callback(error_msg):
-                    logger.error(f"Failed to open file manager for {connection.nickname}: {error_msg}")
-                    # Show error dialog to user
-                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
-                
-                host_value = _get_connection_host(connection)
-                success, error_msg = open_remote_in_file_manager(
-                    user=connection.username,
-                    host=host_value,
-                    port=connection.port if connection.port != 22 else None,
-                    error_callback=error_callback,
-                    parent_window=self
-                )
-                if success:
-                    logger.info(f"Started file manager process for {connection.nickname}")
-                else:
-                    logger.error(f"Failed to start file manager process for {connection.nickname}: {error_msg}")
-                    # Show error dialog to user
-                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to start file manager process")
-            except Exception as e:
-                logger.error(f"Error opening file manager: {e}")
-                # Show error dialog to user
-                self._show_manage_files_error(connection.nickname, str(e))
+            self._open_sftp_file_manager_for_connection(
+                connection,
+                restrict_to_file_manager=True,
+                show_error=True,
+            )
 
     def on_edit_connection_action(self, action, param=None):
         """Handle edit connection action from context menu"""

@@ -4,7 +4,6 @@ import logging
 from gi.repository import Gio, Gtk, Adw, GLib
 from gettext import gettext as _
 
-from .sftp_utils import open_remote_in_file_manager
 from .preferences import (
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
@@ -99,30 +98,13 @@ class WindowActions:
         if hasattr(self, '_context_menu_connection') and self._context_menu_connection:
             connection = self._context_menu_connection
             try:
-                # Define error callback for async operation
-                def error_callback(error_msg):
-                    logger.error(f"Failed to open file manager for {connection.nickname}: {error_msg}")
-                    # Show error dialog to user
-                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
-
-                host_value = getattr(connection, 'hostname', getattr(connection, 'host', getattr(connection, 'nickname', '')))
-                success, error_msg = open_remote_in_file_manager(
-                    user=connection.username,
-                    host=host_value,
-                    port=connection.port if connection.port != 22 else None,
-                    error_callback=error_callback,
-                    parent_window=self
+                self._open_sftp_file_manager_for_connection(
+                    connection,
+                    restrict_to_file_manager=True,
+                    show_error=True,
                 )
-                if success:
-                    logger.info(f"Started file manager process for {connection.nickname}")
-                else:
-                    logger.error(f"Failed to start file manager process for {connection.nickname}: {error_msg}")
-                    # Show error dialog to user
-                    self._show_manage_files_error(connection.nickname, error_msg or "Failed to start file manager process")
             except Exception as e:
-                logger.error(f"Error opening file manager: {e}")
-                # Show error dialog to user
-                self._show_manage_files_error(connection.nickname, str(e))
+                logger.error(f"Error opening SFTP file manager: {e}")
 
     def on_edit_connection_action(self, action, param=None):
         """Handle edit connection action from context menu"""
