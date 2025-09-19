@@ -179,15 +179,43 @@ class AsyncSFTPManager(GObject.GObject):
             # Expand ~ to user's home directory
             expanded_path = path
             if path == "~" or path.startswith("~/"):
+                # Use the most reliable method to get home directory
+                # The SFTP normalize method with "." should give us the initial directory
+                # which is typically the user's home directory
                 try:
-                    # Get the home directory from the SFTP server
-                    expanded_path = self._sftp.normalize(".")
-                    if path.startswith("~/"):
-                        # Handle ~/subpath
-                        expanded_path = expanded_path + path[1:]
+                    if path == "~":
+                        # For just ~, resolve to the absolute home directory
+                        expanded_path = self._sftp.normalize(".")
+                    else:
+                        # For ~/subpath, we need to resolve the home directory first
+                        # Try to get the actual home directory path
+                        home_path = self._sftp.normalize(".")
+                        expanded_path = home_path + path[1:]  # Replace ~ with home_path
                 except Exception:
-                    # Fallback to assuming /home/username if normalize fails
-                    expanded_path = f"/home/{self._username}" + (path[1:] if path.startswith("~/") else "")
+                    # If normalize fails, try common patterns
+                    try:
+                        possible_homes = [
+                            f"/home/{self._username}",
+                            f"/Users/{self._username}",  # macOS
+                            f"/export/home/{self._username}",  # Solaris
+                        ]
+                        for possible_home in possible_homes:
+                            try:
+                                # Test if this directory exists
+                                self._sftp.listdir_attr(possible_home)
+                                if path == "~":
+                                    expanded_path = possible_home
+                                else:
+                                    expanded_path = possible_home + path[1:]
+                                break
+                            except Exception:
+                                continue
+                        else:
+                            # Final fallback
+                            expanded_path = f"/home/{self._username}" + (path[1:] if path.startswith("~/") else "")
+                    except Exception:
+                        # Ultimate fallback
+                        expanded_path = f"/home/{self._username}" + (path[1:] if path.startswith("~/") else "")
             
             for attr in self._sftp.listdir_attr(expanded_path):
                 entries.append(
@@ -408,6 +436,9 @@ class FilePane(Gtk.Box):
         list_factory.connect("bind", self._on_list_bind)
         list_view = Gtk.ListView(model=self._selection_model, factory=list_factory)
         list_view.add_css_class("rich-list")
+        # Navigate on row activation (double click / Enter)
+        self._list_view = list_view
+        list_view.connect("activate", self._on_list_activate)
         
         # Wrap list view in a scrolled window for proper scrolling
         list_scrolled = Gtk.ScrolledWindow()
@@ -423,6 +454,9 @@ class FilePane(Gtk.Box):
             max_columns=6,
         )
         grid_view.add_css_class("iconview")
+        self._grid_view = grid_view
+        # Navigate on grid item activation (double click / Enter)
+        grid_view.connect("activate", self._on_grid_activate)
         
         # Wrap grid view in a scrolled window for proper scrolling
         grid_scrolled = Gtk.ScrolledWindow()
@@ -440,12 +474,17 @@ class FilePane(Gtk.Box):
         self.toolbar.list_toggle.connect("toggled", self._on_view_toggle, "list")
         self.toolbar.grid_toggle.connect("toggled", self._on_view_toggle, "grid")
         self.toolbar.path_entry.connect("activate", self._on_path_entry)
+        # Wire navigation buttons
+        self.toolbar.controls.up_button.connect("clicked", self._on_up_clicked)
+        self.toolbar.controls.back_button.connect("clicked", self._on_back_clicked)
         self.toolbar.controls.new_folder_button.connect(
             "clicked", lambda *_: self.emit("request-operation", "mkdir", None)
         )
 
         self._history: List[str] = []
         self._current_path = "/"
+        self._entries: List[FileEntry] = []
+        self._suppress_history_push: bool = False
         self._selection_model.connect("selection-changed", self._on_selection_changed)
 
         # Drag and drop controllers – these provide the visual affordance and
@@ -505,11 +544,40 @@ class FilePane(Gtk.Box):
 
     def show_entries(self, path: str, entries: Iterable[FileEntry]) -> None:
         self._list_store.remove_all()
-        for entry in entries:
+        # Store entries so we can determine directories on activation
+        self._entries = list(entries)
+        for entry in self._entries:
             suffix = "/" if entry.is_dir else ""
             self._list_store.append(Gtk.StringObject.new(entry.name + suffix))
         self._current_path = path
         self.toolbar.path_entry.set_text(path)
+
+    # -- navigation helpers --------------------------------------------
+
+    def _on_list_activate(self, _list_view: Gtk.ListView, position: int) -> None:
+        if position is not None and 0 <= position < len(self._entries):
+            entry = self._entries[position]
+            if entry.is_dir:
+                self.emit("path-changed", os.path.join(self._current_path, entry.name))
+
+    def _on_grid_activate(self, _grid_view: Gtk.GridView, position: int) -> None:
+        if position is not None and 0 <= position < len(self._entries):
+            entry = self._entries[position]
+            if entry.is_dir:
+                self.emit("path-changed", os.path.join(self._current_path, entry.name))
+
+    def _on_up_clicked(self, _button) -> None:
+        parent = os.path.dirname(self._current_path.rstrip('/')) or '/'
+        # Avoid navigating past root repeatedly
+        if parent != self._current_path:
+            self.emit("path-changed", parent)
+
+    def _on_back_clicked(self, _button) -> None:
+        prev = self.pop_history()
+        if prev:
+            # Suppress history push for back navigation
+            self._suppress_history_push = True
+            self.emit("path-changed", prev)
 
     def push_history(self, path: str) -> None:
         if self._history and self._history[-1] == path:
@@ -574,8 +642,8 @@ class FileManagerWindow(Adw.Window):
         panes.set_shrink_end_child(False)
         self._toast_overlay.set_child(panes)
 
-        self._left_pane = FilePane("Left Pane")
-        self._right_pane = FilePane("Right Pane")
+        self._left_pane = FilePane("Local")
+        self._right_pane = FilePane("Remote")
         panes.set_start_child(self._left_pane)
         panes.set_end_child(self._right_pane)
         
@@ -599,10 +667,19 @@ class FileManagerWindow(Adw.Window):
             pane.connect("path-changed", self._on_path_changed, pane)
             pane.connect("request-operation", self._on_request_operation, pane)
 
+        # Initialize panes: left is LOCAL home, right is REMOTE home (~)
         self._pending_paths: Dict[FilePane, Optional[str]] = {
-            self._left_pane: initial_path,
-            self._right_pane: None,
+            self._left_pane: None,
+            self._right_pane: initial_path,
         }
+
+        # Prime the left (local) pane immediately with local home directory
+        try:
+            local_home = os.path.expanduser("~")
+            self._load_local(local_home)
+            self._left_pane.push_history(local_home)
+        except Exception as exc:
+            self._left_pane.show_toast(f"Failed to load local home: {exc}")
 
         self._show_progress(0.1, "Connecting…")
 
@@ -613,9 +690,10 @@ class FileManagerWindow(Adw.Window):
 
     def _on_connected(self, *_args) -> None:
         self._show_progress(0.4, "Connected")
-        initial_path = self._pending_paths.get(self._left_pane)
-        if initial_path:
-            self._manager.listdir(initial_path)
+        # Trigger directory loads for all panes that have a pending initial path
+        for pane, pending in self._pending_paths.items():
+            if pending:
+                self._manager.listdir(pending)
 
 
     def _on_progress(self, _manager, fraction: float, message: str) -> None:
@@ -629,24 +707,80 @@ class FileManagerWindow(Adw.Window):
     def _on_directory_loaded(
         self, _manager, path: str, entries: Iterable[FileEntry]
     ) -> None:
-        target = next(
-            (pane for pane, pending in self._pending_paths.items() if pending == path),
-            None,
-        )
+        # Prefer the pane explicitly waiting for this exact path; otherwise
+        # assign to the next pane that still has a pending request. This makes
+        # initial dual loads robust even if the backend normalizes paths.
+        target = next((pane for pane, pending in self._pending_paths.items() if pending == path), None)
         if target is None:
-            target = self._left_pane
-        else:
-            self._pending_paths[target] = None
+            target = next((pane for pane, pending in self._pending_paths.items() if pending is not None), self._left_pane)
+        # Clear the pending flag for the resolved pane
+        self._pending_paths[target] = None
 
         target.show_entries(path, entries)
         target.push_history(path)
         target.show_toast(f"Loaded {path}")
 
-    def _on_path_changed(self, pane: FilePane, path: str, user_data=None) -> None:
-        self._pending_paths[pane] = path
+    # -- local filesystem helpers ---------------------------------------
 
-        pane.push_history(path)
-        self._manager.listdir(path)
+    def _load_local(self, path: str) -> None:
+        """Load local directory contents into the left pane.
+
+        This is a synchronous operation using the local filesystem.
+        """
+        try:
+            path = os.path.expanduser(path or "~")
+            if not os.path.isabs(path):
+                path = os.path.abspath(path)
+            if not os.path.isdir(path):
+                raise NotADirectoryError(f"Not a directory: {path}")
+
+            entries: List[FileEntry] = []
+            with os.scandir(path) as it:
+                for dirent in it:
+                    try:
+                        stat = dirent.stat(follow_symlinks=False)
+                        entries.append(
+                            FileEntry(
+                                name=dirent.name,
+                                is_dir=dirent.is_dir(follow_symlinks=False),
+                                size=getattr(stat, "st_size", 0) or 0,
+                                modified=getattr(stat, "st_mtime", 0.0) or 0.0,
+                            )
+                        )
+                    except Exception:
+                        # Skip entries we cannot stat
+                        continue
+
+            # Show results in the left pane
+            self._left_pane.show_entries(path, entries)
+        except Exception as exc:
+            self._left_pane.show_toast(str(exc))
+
+    def _on_path_changed(self, pane: FilePane, path: str, user_data=None) -> None:
+        # Route local vs remote browsing
+        if pane is self._left_pane:
+            # Local pane: expand ~ and navigate local filesystem
+            local_path = os.path.expanduser(path) if path.startswith("~") else path
+            if not local_path:
+                local_path = os.path.expanduser("~")
+            try:
+                self._load_local(local_path)
+                # Only push history if not triggered by Back
+                if getattr(pane, "_suppress_history_push", False):
+                    pane._suppress_history_push = False
+                else:
+                    pane.push_history(local_path)
+            except Exception as exc:
+                pane.show_toast(str(exc))
+        else:
+            # Remote pane: use SFTP manager
+            self._pending_paths[pane] = path
+            # Only push history if not triggered by Back
+            if getattr(pane, "_suppress_history_push", False):
+                pane._suppress_history_push = False
+            else:
+                pane.push_history(path)
+            self._manager.listdir(path)
 
     def _on_request_operation(self, pane: FilePane, action: str, payload, user_data=None) -> None:
         if action == "mkdir":
@@ -667,17 +801,30 @@ class FileManagerWindow(Adw.Window):
                     name = entry.get_text().strip()
                     if name:
                         new_path = os.path.join(pane.toolbar.path_entry.get_text(), name)
-                        self._manager.mkdir(new_path)
+                        if pane is self._left_pane:
+                            try:
+                                os.makedirs(new_path, exist_ok=False)
+                            except FileExistsError:
+                                pane.show_toast("Folder already exists")
+                            except Exception as exc:
+                                pane.show_toast(str(exc))
+                            else:
+                                # Refresh local listing
+                                self._load_local(os.path.dirname(new_path) or "/")
+                        else:
+                            self._manager.mkdir(new_path)
                 dialog.destroy()
 
             dialog.connect("response", _on_response)
             dialog.present()
         elif action == "upload" and isinstance(payload, Gio.File):
-            self._toast_overlay.add_toast(Adw.Toast.new("Uploading file…"))
-            self._manager.upload(
-                pathlib.Path(payload.get_path()),
-                os.path.join(pane.toolbar.path_entry.get_text(), payload.get_basename()),
-            )
+            # Uploads target remote pane only; ignore drops on local pane
+            if pane is self._right_pane:
+                self._toast_overlay.add_toast(Adw.Toast.new("Uploading file…"))
+                self._manager.upload(
+                    pathlib.Path(payload.get_path()),
+                    os.path.join(pane.toolbar.path_entry.get_text(), payload.get_basename()),
+                )
     
     def _on_window_resize(self, window, pspec) -> None:
         """Maintain proportional paned split when window is resized following GNOME HIG"""
