@@ -114,7 +114,11 @@ class AsyncSFTPManager(GObject.GObject):
     # -- connection -----------------------------------------------------
 
     def connect_to_server(self) -> None:
-        self._submit(self._connect_impl, on_success=lambda *_: self.emit("connected"))
+        self._submit(
+            self._connect_impl,
+            on_success=lambda *_: self.emit("connected"),
+            on_error=lambda exc: self.emit("connection-error", str(exc)),
+        )
 
     def close(self) -> None:
         with self._lock:
@@ -856,6 +860,8 @@ class FileManagerWindow(Adw.Window):
 
         self._toast_overlay = Adw.ToastOverlay()
         toolbar_view.set_content(self._toast_overlay)
+        self._progress_toast: Optional[Adw.Toast] = None
+        self._connection_error_reported = False
 
         panes = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
         panes.set_wide_handle(True)
@@ -881,9 +887,7 @@ class FileManagerWindow(Adw.Window):
 
         self._manager = AsyncSFTPManager(host, username, port)
         self._manager.connect("connected", self._on_connected)
-        self._manager.connect(
-            "connection-error", lambda *_: self._toast_overlay.add_toast(Adw.Toast.new("Connection failed"))
-        )
+        self._manager.connect("connection-error", self._on_connection_error)
         self._manager.connect("progress", self._on_progress)
         self._manager.connect("operation-error", self._on_operation_error)
         self._manager.connect("directory-loaded", self._on_directory_loaded)
@@ -911,8 +915,17 @@ class FileManagerWindow(Adw.Window):
 
     # -- signal handlers ------------------------------------------------
 
+    def _clear_progress_toast(self) -> None:
+        if self._progress_toast is not None:
+            self._progress_toast.dismiss()
+            self._progress_toast = None
+
     def _show_progress(self, fraction: float, message: str) -> None:
-        self._toast_overlay.add_toast(Adw.Toast.new(message))
+        del fraction  # Fraction reserved for future progress UI enhancements
+        self._clear_progress_toast()
+        toast = Adw.Toast.new(message)
+        self._toast_overlay.add_toast(toast)
+        self._progress_toast = toast
 
     def _on_connected(self, *_args) -> None:
         self._show_progress(0.4, "Connected")
@@ -929,6 +942,15 @@ class FileManagerWindow(Adw.Window):
         toast = Adw.Toast.new(message)
         toast.set_priority(Adw.ToastPriority.HIGH)
         self._toast_overlay.add_toast(toast)
+
+    def _on_connection_error(self, _manager, message: str) -> None:
+        self._clear_progress_toast()
+        if self._connection_error_reported:
+            return
+        toast = Adw.Toast.new(message or "Connection failed")
+        toast.set_priority(Adw.ToastPriority.HIGH)
+        self._toast_overlay.add_toast(toast)
+        self._connection_error_reported = True
 
     def _on_directory_loaded(
         self, _manager, path: str, entries: Iterable[FileEntry]
