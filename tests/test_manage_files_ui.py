@@ -37,11 +37,11 @@ def reload_module(name):
 
 def prepare_actions(monkeypatch):
     setup_gi(monkeypatch)
-    sftp_stub = types.ModuleType("sshpilot.sftp_utils")
-    def open_remote_in_file_manager(*args, **kwargs):
+    fm_stub = types.ModuleType("sshpilot.file_manager")
+    def open_connection_in_file_manager(*args, **kwargs):
         return True, None
-    sftp_stub.open_remote_in_file_manager = open_remote_in_file_manager
-    monkeypatch.setitem(sys.modules, "sshpilot.sftp_utils", sftp_stub)
+    fm_stub.open_connection_in_file_manager = open_connection_in_file_manager
+    monkeypatch.setitem(sys.modules, "sshpilot.file_manager", fm_stub)
     return reload_module("sshpilot.actions")
 
 
