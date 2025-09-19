@@ -6,7 +6,7 @@ Handles application settings, themes, and preferences
 import json
 import logging
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from gi.repository import Gio, GLib, GObject
 from .platform_utils import get_config_dir, is_flatpak
@@ -132,7 +132,7 @@ class Config(GObject.Object):
         # Coerce malformed entries back to sane defaults
         return None
 
-    def set_shortcut_override(self, action_name: str, accelerators: Optional[list[str]]):
+    def set_shortcut_override(self, action_name: str, accelerators: Optional[List[str]]):
         """Persist a shortcut override.
 
         ``None`` clears the override, an empty list disables the shortcut, and

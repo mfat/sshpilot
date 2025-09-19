@@ -4,6 +4,9 @@ import logging
 from gettext import gettext as _
 from typing import Dict, List, Optional
 
+import gi
+gi.require_version('Adw', '1')
+gi.require_version('Gtk', '4.0')
 from gi.repository import Adw, Gdk, Gtk
 
 logger = logging.getLogger(__name__)
@@ -105,12 +108,12 @@ class ShortcutEditorWindow(Adw.Window):
     def __init__(self, parent_window):
         super().__init__(transient_for=parent_window, modal=True)
         self.set_title(_('Shortcut Editor'))
-        self.set_default_size(560, 520)
+        self.set_default_size(600, 600)
 
         self._parent_window = parent_window
         self._app = parent_window.get_application()
         self._config = getattr(self._app, 'config', None)
-        self._rows: Dict[str, Adw.ActionRow] = {}
+        self._rows: Dict[str, Dict[str, Gtk.Widget]] = {}
         self._pending_overrides: Dict[str, List[str]] = {}
         self._default_shortcuts: Dict[str, Optional[List[str]]] = {}
 
@@ -163,47 +166,100 @@ class ShortcutEditorWindow(Adw.Window):
         return names
 
     def _build_list_box(self) -> Gtk.Widget:
-        list_box = Gtk.ListBox()
-        list_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        # Create preferences page for better organization
+        preferences_page = Adw.PreferencesPage()
+        
+        # Group shortcuts by category for better UX
+        general_group = Adw.PreferencesGroup()
+        general_group.set_title(_('General'))
+        
+        connection_group = Adw.PreferencesGroup()
+        connection_group.set_title(_('Connection Management'))
+        
+        terminal_group = Adw.PreferencesGroup()
+        terminal_group.set_title(_('Terminal'))
+        
+        tab_group = Adw.PreferencesGroup()
+        tab_group.set_title(_('Tab Management'))
+
+        # Categorize actions
+        general_actions = ['quit', 'preferences', 'help', 'shortcuts']
+        connection_actions = ['new-connection', 'open-new-connection-tab', 'toggle-list', 'search', 
+                            'new-key', 'edit-ssh-config', 'quick-connect']
+        terminal_actions = ['local-terminal', 'broadcast-command']
+        tab_actions = ['tab-next', 'tab-prev', 'tab-close', 'tab-overview']
 
         for name in self._action_names:
+            # Create ActionRow with switch for enable/disable
             row = Adw.ActionRow()
             row.set_title(_get_action_label(name))
-            row.set_subtitle(self._build_subtitle(name))
-            row.set_activatable(True)
-            row.connect('activated', self._on_row_activated, name)
+            
+            # Get current shortcuts for subtitle
+            current_shortcuts = self._get_effective_shortcuts(name)
+            if current_shortcuts is None or len(current_shortcuts) == 0:
+                subtitle = _('No shortcut assigned')
+                is_enabled = False
+            else:
+                subtitle = self._format_accelerators(current_shortcuts)
+                is_enabled = True
+            
+            row.set_subtitle(subtitle)
 
-            buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            # Add enable/disable switch
+            enable_switch = Gtk.Switch()
+            enable_switch.set_active(is_enabled)
+            enable_switch.set_valign(Gtk.Align.CENTER)
+            enable_switch.connect('notify::active', self._on_switch_toggled, name)
+            row.add_suffix(enable_switch)
 
-            assign_button = Gtk.Button(label=_('Assign…'))
-            assign_button.add_css_class('suggested-action')
+            # Add assign button
+            assign_button = Gtk.Button()
+            assign_button.set_icon_name('input-keyboard-symbolic')
+            assign_button.set_tooltip_text(_('Assign new shortcut'))
+            assign_button.add_css_class('flat')
+            assign_button.set_valign(Gtk.Align.CENTER)
             assign_button.connect('clicked', self._on_assign_clicked, name)
-            buttons.append(assign_button)
+            row.add_suffix(assign_button)
 
-            disable_button = Gtk.Button(label=_('Disable'))
-            disable_button.connect('clicked', self._on_disable_clicked, name)
-            buttons.append(disable_button)
+            # Add reset button (only show if different from default)
+            default_shortcuts = self._default_shortcuts.get(name)
+            if current_shortcuts != default_shortcuts:
+                reset_button = Gtk.Button()
+                reset_button.set_icon_name('edit-undo-symbolic')
+                reset_button.set_tooltip_text(_('Reset to default'))
+                reset_button.add_css_class('flat')
+                reset_button.set_valign(Gtk.Align.CENTER)
+                reset_button.connect('clicked', self._on_reset_clicked, name)
+                row.add_suffix(reset_button)
 
-            reset_button = Gtk.Button(label=_('Reset'))
-            reset_button.connect('clicked', self._on_reset_clicked, name)
-            buttons.append(reset_button)
+            # Store references for updates
+            self._rows[name] = {
+                'row': row,
+                'switch': enable_switch,
+                'assign_button': assign_button
+            }
 
-            row.add_suffix(buttons)
-            row.set_activatable_widget(assign_button)
+            # Add to appropriate group
+            if name in general_actions:
+                general_group.add(row)
+            elif name in connection_actions:
+                connection_group.add(row)
+            elif name in terminal_actions:
+                terminal_group.add(row)
+            elif name in tab_actions:
+                tab_group.add(row)
+            else:
+                # Fallback to general group
+                general_group.add(row)
 
-            list_box.append(row)
-            self._rows[name] = row
+        # Add groups to preferences page
+        preferences_page.add(general_group)
+        preferences_page.add(connection_group)
+        preferences_page.add(terminal_group)
+        preferences_page.add(tab_group)
 
-        return list_box
+        return preferences_page
 
-    def _build_subtitle(self, action_name: str) -> str:
-        current = self._format_accelerators(self._get_effective_shortcuts(action_name))
-        default = self._format_accelerators(self._default_shortcuts.get(action_name))
-        subtitle_parts = [
-            _('Current: {shortcut}').format(shortcut=current),
-        ]
-        subtitle_parts.append(_('Default: {shortcut}').format(shortcut=default))
-        return '\n'.join(subtitle_parts)
 
     def _format_accelerators(self, accelerators: Optional[List[str]]) -> str:
         if accelerators is None:
@@ -213,8 +269,8 @@ class ShortcutEditorWindow(Adw.Window):
 
         labels: List[str] = []
         for accel in accelerators:
-            keyval, modifiers = Gtk.accelerator_parse(accel)
-            if keyval == 0 and modifiers == 0:
+            success, keyval, modifiers = Gtk.accelerator_parse(accel)
+            if not success or (keyval == 0 and modifiers == 0):
                 labels.append(accel)
             else:
                 labels.append(Gtk.accelerator_get_label(keyval, modifiers))
@@ -225,15 +281,23 @@ class ShortcutEditorWindow(Adw.Window):
             return self._pending_overrides[action_name]
         return self._default_shortcuts.get(action_name)
 
-    def _on_row_activated(self, _row, action_name: str):
-        self._on_assign_clicked(None, action_name)
+    def _on_switch_toggled(self, switch: Gtk.Switch, _pspec, action_name: str):
+        """Handle enable/disable switch toggle"""
+        if switch.get_active():
+            # Switch turned on - restore default or prompt for new shortcut
+            default = self._default_shortcuts.get(action_name)
+            if default:
+                self._attempt_set_override(action_name, default)
+            else:
+                # No default, prompt for assignment
+                self._on_assign_clicked(None, action_name)
+        else:
+            # Switch turned off - disable shortcut
+            self._attempt_set_override(action_name, [])
 
     def _on_assign_clicked(self, _button, action_name: str):
         dialog = _ShortcutCaptureDialog(self, lambda accel: self._attempt_set_override(action_name, [accel]))
         dialog.present()
-
-    def _on_disable_clicked(self, _button, action_name: str):
-        self._attempt_set_override(action_name, [])
 
     def _on_reset_clicked(self, _button, action_name: str):
         self._attempt_set_override(action_name, None)
@@ -272,9 +336,26 @@ class ShortcutEditorWindow(Adw.Window):
         self._apply_shortcuts()
 
     def _update_row_display(self, action_name: str):
-        row = self._rows.get(action_name)
-        if row is not None:
-            row.set_subtitle(self._build_subtitle(action_name))
+        row_data = self._rows.get(action_name)
+        if row_data is not None:
+            row = row_data['row']
+            switch = row_data['switch']
+            
+            # Update subtitle and switch state
+            current_shortcuts = self._get_effective_shortcuts(action_name)
+            if current_shortcuts is None or len(current_shortcuts) == 0:
+                subtitle = _('No shortcut assigned')
+                is_enabled = False
+            else:
+                subtitle = self._format_accelerators(current_shortcuts)
+                is_enabled = True
+            
+            row.set_subtitle(subtitle)
+            
+            # Update switch without triggering the callback
+            switch.handler_block_by_func(self._on_switch_toggled)
+            switch.set_active(is_enabled)
+            switch.handler_unblock_by_func(self._on_switch_toggled)
 
     def _find_conflict(self, action_name: str, accelerator: str) -> Optional[str]:
         for other in self._action_names:
