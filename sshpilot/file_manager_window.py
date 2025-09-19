@@ -234,13 +234,13 @@ class AsyncSFTPManager(GObject.GObject):
             on_error=lambda exc: self.emit("operation-error", str(exc)),
         )
 
-    def mkdir(self, path: str) -> None:
-        self._submit(
+    def mkdir(self, path: str) -> Future:
+        return self._submit(
             lambda: self._sftp.mkdir(path),
             on_success=lambda *_: self.listdir(os.path.dirname(path) or "/"),
         )
 
-    def remove(self, path: str) -> None:
+    def remove(self, path: str) -> Future:
         def _impl() -> None:
             assert self._sftp is not None
             try:
@@ -252,15 +252,15 @@ class AsyncSFTPManager(GObject.GObject):
                 self._sftp.rmdir(path)
 
         parent = os.path.dirname(path) or "/"
-        self._submit(_impl, on_success=lambda *_: self.listdir(parent))
+        return self._submit(_impl, on_success=lambda *_: self.listdir(parent))
 
-    def rename(self, source: str, target: str) -> None:
-        self._submit(
+    def rename(self, source: str, target: str) -> Future:
+        return self._submit(
             lambda: self._sftp.rename(source, target),
             on_success=lambda *_: self.listdir(os.path.dirname(target) or "/"),
         )
 
-    def download(self, source: str, destination: pathlib.Path) -> None:
+    def download(self, source: str, destination: pathlib.Path) -> Future:
         destination.parent.mkdir(parents=True, exist_ok=True)
 
         def _impl() -> None:
@@ -269,21 +269,21 @@ class AsyncSFTPManager(GObject.GObject):
             self._sftp.get(source, str(destination))
             self.emit("progress", 1.0, "Download complete")
 
-        self._submit(_impl)
+        return self._submit(_impl)
 
-    def upload(self, source: pathlib.Path, destination: str) -> None:
+    def upload(self, source: pathlib.Path, destination: str) -> Future:
         def _impl() -> None:
             assert self._sftp is not None
             self.emit("progress", 0.0, "Starting upload…")
             self._sftp.put(str(source), destination)
             self.emit("progress", 1.0, "Upload complete")
 
-        self._submit(_impl)
+        return self._submit(_impl)
 
     # Helpers for directory recursion – these are intentionally simplistic
     # and rely on Paramiko's high level API.
 
-    def download_directory(self, source: str, destination: pathlib.Path) -> None:
+    def download_directory(self, source: str, destination: pathlib.Path) -> Future:
         def _impl() -> None:
             assert self._sftp is not None
             self.emit("progress", 0.0, "Preparing download…")
@@ -295,9 +295,9 @@ class AsyncSFTPManager(GObject.GObject):
                     self._sftp.get(os.path.join(root, name), str(target_root / name))
             self.emit("progress", 1.0, "Directory downloaded")
 
-        self._submit(_impl)
+        return self._submit(_impl)
 
-    def upload_directory(self, source: pathlib.Path, destination: str) -> None:
+    def upload_directory(self, source: pathlib.Path, destination: str) -> Future:
         def _impl() -> None:
             assert self._sftp is not None
             self.emit("progress", 0.0, "Preparing upload…")
@@ -316,7 +316,7 @@ class AsyncSFTPManager(GObject.GObject):
                     )
             self.emit("progress", 1.0, "Directory uploaded")
 
-        self._submit(_impl)
+        return self._submit(_impl)
 
 
 def stat_isdir(attr: paramiko.SFTPAttributes) -> bool:
@@ -369,12 +369,23 @@ class PaneControls(Gtk.Box):
         self.back_button = Gtk.Button.new_from_icon_name("go-previous-symbolic")
         self.up_button = Gtk.Button.new_from_icon_name("go-up-symbolic")
         self.new_folder_button = Gtk.Button.new_from_icon_name("folder-new-symbolic")
-        for widget in (self.back_button, self.up_button, self.new_folder_button):
+        self.upload_button = Gtk.Button(label="Upload")
+        self.download_button = Gtk.Button(label="Download")
+        for widget in (
+            self.back_button,
+            self.up_button,
+            self.new_folder_button,
+            self.upload_button,
+            self.download_button,
+        ):
             widget.set_valign(Gtk.Align.CENTER)
+        for widget in (self.back_button, self.up_button, self.new_folder_button):
             widget.add_css_class("flat")
         self.append(self.back_button)
         self.append(self.up_button)
         self.append(self.new_folder_button)
+        self.append(self.upload_button)
+        self.append(self.download_button)
 
 
 class PaneToolbar(Gtk.Box):
@@ -422,6 +433,8 @@ class FilePane(Gtk.Box):
         self.toolbar = PaneToolbar()
         self.toolbar.get_header_bar().get_title_widget().set_text(label)
         self.append(self.toolbar)
+
+        self._is_remote = label.lower() == "remote"
 
         self._stack = Gtk.Stack()
         self._stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
@@ -480,6 +493,12 @@ class FilePane(Gtk.Box):
         self.toolbar.controls.new_folder_button.connect(
             "clicked", lambda *_: self.emit("request-operation", "mkdir", None)
         )
+        if self._is_remote:
+            self.toolbar.controls.upload_button.connect("clicked", self._on_upload_clicked)
+            self.toolbar.controls.download_button.connect("clicked", self._on_download_clicked)
+        else:
+            self.toolbar.controls.upload_button.set_visible(False)
+            self.toolbar.controls.download_button.set_visible(False)
 
         self._history: List[str] = []
         self._current_path = "/"
@@ -551,6 +570,76 @@ class FilePane(Gtk.Box):
     def _on_drop(self, target: Gtk.DropTarget, value: Gio.File, x: float, y: float):
         self.emit("request-operation", "upload", value)
         return True
+
+    def get_selected_entry(self) -> Optional[FileEntry]:
+        index = self._selection_model.get_selected()
+        if index is None or index < 0 or index >= len(self._entries):
+            return None
+        return self._entries[index]
+
+    def _on_upload_clicked(self, _button: Gtk.Button) -> None:
+        dialog = Gtk.FileDialog()
+        dialog.set_title("Select items to upload")
+
+        def _on_finish(dlg: Gtk.FileDialog, result: Gio.AsyncResult) -> None:
+            try:
+                files = dlg.open_multiple_finish(result)
+            except GLib.Error as exc:
+                if not self._dialog_dismissed(exc):
+                    self.show_toast(str(exc))
+                return
+
+            paths: List[pathlib.Path] = []
+            if files is not None:
+                for index in range(files.get_n_items()):
+                    file_obj = files.get_item(index)
+                    if isinstance(file_obj, Gio.File):
+                        path = file_obj.get_path()
+                        if path:
+                            paths.append(pathlib.Path(path))
+            if not paths:
+                return
+            self.emit("request-operation", "upload", paths)
+
+        dialog.open_multiple(self.get_root(), None, _on_finish)
+
+    def _on_download_clicked(self, _button: Gtk.Button) -> None:
+        entry = self.get_selected_entry()
+        if entry is None:
+            self.show_toast("Select an item to download")
+            return
+
+        dialog = Gtk.FileDialog()
+        dialog.set_title("Choose download destination")
+
+        def _on_finish(dlg: Gtk.FileDialog, result: Gio.AsyncResult) -> None:
+            try:
+                folder = dlg.select_folder_finish(result)
+            except GLib.Error as exc:
+                if not self._dialog_dismissed(exc):
+                    self.show_toast(str(exc))
+                return
+            if folder is None:
+                return
+            folder_path = folder.get_path()
+            if not folder_path:
+                self.show_toast("Destination is not accessible")
+                return
+            payload = {
+                "source": os.path.join(self._current_path, entry.name),
+                "is_dir": entry.is_dir,
+                "destination": pathlib.Path(folder_path),
+            }
+            self.emit("request-operation", "download", payload)
+
+        dialog.select_folder(self.get_root(), None, _on_finish)
+
+    @staticmethod
+    def _dialog_dismissed(error: GLib.Error) -> bool:
+        dialog_error = getattr(Gtk, "DialogError", None)
+        if dialog_error is not None and error.matches(dialog_error, dialog_error.DISMISSED):
+            return True
+        return error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)
 
     # -- public API -----------------------------------------------------
 
@@ -829,15 +918,63 @@ class FileManagerWindow(Adw.Window):
 
             dialog.connect("response", _on_response)
             dialog.present()
-        elif action == "upload" and isinstance(payload, Gio.File):
-            # Uploads target remote pane only; ignore drops on local pane
-            if pane is self._right_pane:
-                self._toast_overlay.add_toast(Adw.Toast.new("Uploading file…"))
-                self._manager.upload(
-                    pathlib.Path(payload.get_path()),
-                    os.path.join(pane.toolbar.path_entry.get_text(), payload.get_basename()),
-                )
-    
+        elif action == "upload":
+            if pane is not self._right_pane:
+                return
+
+            paths: List[pathlib.Path] = []
+            if isinstance(payload, Gio.File):
+                local_path = payload.get_path()
+                if local_path:
+                    paths.append(pathlib.Path(local_path))
+            elif isinstance(payload, list):
+                for item in payload:
+                    if isinstance(item, pathlib.Path):
+                        paths.append(item)
+                    elif isinstance(item, Gio.File):
+                        item_path = item.get_path()
+                        if item_path:
+                            paths.append(pathlib.Path(item_path))
+
+            if not paths:
+                pane.show_toast("No files selected for upload")
+                return
+
+            remote_root = pane.toolbar.path_entry.get_text() or "/"
+            for path_obj in paths:
+                destination = os.path.join(remote_root, path_obj.name)
+                toast_message = f"Uploading {path_obj.name}"
+                self._toast_overlay.add_toast(Adw.Toast.new(toast_message))
+                if path_obj.is_dir():
+                    future = self._manager.upload_directory(path_obj, destination)
+                else:
+                    future = self._manager.upload(path_obj, destination)
+                self._attach_refresh(future, refresh_remote=pane)
+        elif action == "download" and isinstance(payload, dict):
+            source = payload.get("source")
+            destination_base = payload.get("destination")
+            is_dir = payload.get("is_dir", False)
+
+            if not source or destination_base is None:
+                pane.show_toast("Invalid download request")
+                return
+
+            if not isinstance(destination_base, pathlib.Path):
+                destination_base = pathlib.Path(destination_base)
+
+            name = os.path.basename(source.rstrip("/"))
+            toast_message = f"Downloading {name}"
+            self._toast_overlay.add_toast(Adw.Toast.new(toast_message))
+
+            if is_dir:
+                target_path = destination_base / name
+                future = self._manager.download_directory(source, target_path)
+            else:
+                target_path = destination_base / name
+                future = self._manager.download(source, target_path)
+
+            self._attach_refresh(future, refresh_local_path=str(destination_base))
+
     def _on_window_resize(self, window, pspec) -> None:
         """Maintain proportional paned split when window is resized following GNOME HIG"""
         # Get current window width
@@ -845,6 +982,46 @@ class FileManagerWindow(Adw.Window):
         if width > 0:
             # Set paned position to half the window width (maintaining 50/50 split)
             self._panes.set_position(width // 2)
+
+    def _attach_refresh(
+        self,
+        future: Optional[Future],
+        *,
+        refresh_remote: Optional[FilePane] = None,
+        refresh_local_path: Optional[str] = None,
+    ) -> None:
+        if future is None:
+            return
+
+        def _on_done(completed: Future) -> None:
+            try:
+                completed.result()
+            except Exception:
+                return
+            if refresh_remote is not None:
+                GLib.idle_add(self._refresh_remote_listing, refresh_remote)
+            if refresh_local_path:
+                GLib.idle_add(self._refresh_local_listing, refresh_local_path)
+
+        future.add_done_callback(_on_done)
+
+    def _refresh_remote_listing(self, pane: FilePane) -> bool:
+        path = pane.toolbar.path_entry.get_text() or "/"
+        self._pending_paths[pane] = path
+        self._manager.listdir(path)
+        return False
+
+    def _refresh_local_listing(self, path: str) -> bool:
+        target = self._normalize_local_path(path)
+        current = self._normalize_local_path(self._left_pane.toolbar.path_entry.get_text())
+        if target == current:
+            self._load_local(target)
+        return False
+
+    @staticmethod
+    def _normalize_local_path(path: Optional[str]) -> str:
+        expanded = os.path.expanduser(path or "/")
+        return os.path.abspath(expanded)
 
 
 def launch_file_manager_window(
