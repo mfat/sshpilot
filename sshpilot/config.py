@@ -186,6 +186,9 @@ class Config(GObject.Object):
                 'debug_enabled': False,
                 'use_isolated_config': is_flatpak(),
             },
+            'file_manager': {
+                'force_internal': False,
+            },
             'security': {
                 'store_passwords': True,
                 'ssh_agent_forwarding': True,
@@ -671,6 +674,14 @@ class Config(GObject.Object):
         shortcuts = config.get('shortcuts')
         if not isinstance(shortcuts, dict):
             config['shortcuts'] = {}
+            updated = True
+
+        file_manager_cfg = config.get('file_manager')
+        if not isinstance(file_manager_cfg, dict):
+            config['file_manager'] = {'force_internal': False}
+            updated = True
+        elif 'force_internal' not in file_manager_cfg:
+            file_manager_cfg['force_internal'] = False
             updated = True
 
         return config, updated

@@ -103,6 +103,13 @@ def _should_use_in_app_file_manager() -> bool:
 
     if os.environ.get("SSHPILOT_FORCE_IN_APP_FILE_MANAGER") == "1":
         return True
+    try:
+        app = Adw.Application.get_default()
+        config = getattr(app, 'config', None) if app else None
+        if config and bool(config.get_setting('file_manager.force_internal', False)):
+            return True
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Failed to read file manager preference: %s", exc)
     if is_flatpak():
         return True
     if os.environ.get("SSHPILOT_DISABLE_GVFS") == "1":
