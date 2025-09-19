@@ -345,9 +345,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         return rows
 
-    def _get_target_connections(self, prefer_context: bool = False) -> List[Connection]:
-        """Return connection objects targeted by the current action."""
-        rows = self._get_target_connection_rows(prefer_context=prefer_context)
+    def _connections_from_rows(self, rows: List[Gtk.ListBoxRow]) -> List[Connection]:
+        """Return unique connections represented by the provided rows."""
         connections: List[Connection] = []
         seen_ids = set()
         for row in rows:
@@ -356,6 +355,54 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 seen_ids.add(id(connection))
                 connections.append(connection)
         return connections
+
+    def _get_target_connections(self, prefer_context: bool = False) -> List[Connection]:
+        """Return connection objects targeted by the current action."""
+        rows = self._get_target_connection_rows(prefer_context=prefer_context)
+        return self._connections_from_rows(rows)
+
+    def _determine_neighbor_connection_row(
+        self, target_rows: List[Gtk.ListBoxRow]
+    ) -> Optional[Gtk.ListBoxRow]:
+        """Find the closest remaining connection row after deleting target_rows."""
+        if not target_rows or not getattr(self, 'connection_list', None):
+            return None
+
+        try:
+            all_rows = list(self.connection_list)
+        except Exception:
+            # If iteration fails, fall back to default behavior.
+            return None
+
+        if not all_rows:
+            return None
+
+        index_map = {row: idx for idx, row in enumerate(all_rows)}
+        target_indexes = sorted(
+            index_map[row]
+            for row in target_rows
+            if row in index_map
+        )
+
+        if not target_indexes:
+            return None
+
+        max_index = target_indexes[-1]
+        min_index = target_indexes[0]
+
+        # Try to find the next connection row after the targeted range.
+        for idx in range(max_index + 1, len(all_rows)):
+            row = all_rows[idx]
+            if hasattr(row, 'connection') and row not in target_rows:
+                return row
+
+        # Fall back to previous connection rows before the targeted range.
+        for idx in range(min_index - 1, -1, -1):
+            row = all_rows[idx]
+            if hasattr(row, 'connection') and row not in target_rows:
+                return row
+
+        return None
 
     def _disconnect_connection_terminals(self, connection: Connection) -> None:
         """Disconnect all tracked terminals for a connection."""
@@ -376,7 +423,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
 
-    def _prompt_delete_connections(self, connections: List[Connection]) -> None:
+    def _prompt_delete_connections(
+        self,
+        connections: List[Connection],
+        neighbor_row: Optional[Gtk.ListBoxRow] = None,
+    ) -> None:
         """Show a confirmation dialog for deleting one or more connections."""
         unique_connections: List[Connection] = []
         seen_ids = set()
@@ -426,7 +477,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             dialog.set_default_response('cancel')
             dialog.set_close_response('cancel')
 
-        dialog.connect('response', self.on_delete_connection_response, unique_connections)
+        payload = {
+            'connections': unique_connections,
+            'neighbor_row': neighbor_row,
+        }
+        dialog.connect('response', self.on_delete_connection_response, payload)
         dialog.present()
 
 
@@ -4254,12 +4309,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def on_delete_connection_clicked(self, button):
         """Handle delete connection button click"""
-        connections = self._get_target_connections()
-        if not connections:
+        target_rows = self._get_target_connection_rows()
+        if not target_rows:
             logger.debug("Delete requested without any connection selection")
             return
 
-        self._prompt_delete_connections(connections)
+        connections = self._connections_from_rows(target_rows)
+        neighbor_row = self._determine_neighbor_connection_row(target_rows)
+
+        self._prompt_delete_connections(connections, neighbor_row)
 
     def on_rename_group_clicked(self, button):
         """Handle rename group button click"""
@@ -4273,11 +4331,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if selected_row and hasattr(selected_row, 'group_id'):
             self.on_delete_group_action(None, None)
 
-    def on_delete_connection_response(self, dialog, response, connections):
+    def on_delete_connection_response(self, dialog, response, payload):
         """Handle delete connection dialog response"""
         try:
-            if not isinstance(connections, (list, tuple)):
-                connections = [connections] if connections else []
+            neighbor_row = None
+            connections: List[Connection]
+
+            if isinstance(payload, dict):
+                connections = payload.get('connections', []) or []
+                neighbor_row = payload.get('neighbor_row')
+            elif isinstance(payload, (list, tuple)):
+                connections = list(payload)
+            else:
+                connections = [payload] if payload else []
 
             if response not in {'delete', 'close_remove'}:
                 return
@@ -4288,6 +4354,48 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if response == 'close_remove':
                     self._disconnect_connection_terminals(connection)
                 self.connection_manager.remove_connection(connection)
+
+            def _restore_selection():
+                try:
+                    listbox = getattr(self, 'connection_list', None)
+                    if not listbox:
+                        return False
+
+                    target_row = None
+                    if neighbor_row and getattr(neighbor_row, 'get_parent', None):
+                        # Ensure the neighbor row is still part of the list box
+                        parent = neighbor_row.get_parent()
+                        if parent is listbox:
+                            target_row = neighbor_row
+
+                    if not target_row:
+                        # Try to keep whichever row GTK selected automatically
+                        try:
+                            target_row = listbox.get_selected_row()
+                        except Exception:
+                            target_row = None
+
+                    if not target_row:
+                        for row in listbox:
+                            if hasattr(row, 'connection'):
+                                target_row = row
+                                break
+
+                    if target_row and hasattr(listbox, 'select_row'):
+                        try:
+                            listbox.select_row(target_row)
+                        except Exception:
+                            pass
+
+                    try:
+                        listbox.grab_focus()
+                    except Exception:
+                        pass
+                except Exception:
+                    logger.debug("Failed to restore selection after deletion", exc_info=True)
+                return False
+
+            GLib.idle_add(_restore_selection)
         except Exception as e:
             logger.error(f"Failed to delete connections: {e}")
 
@@ -4882,11 +4990,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def on_delete_connection_action(self, action, param=None):
         """Handle delete connection action from context menu"""
         try:
-            connections = self._get_target_connections(prefer_context=True)
-            if not connections:
+            target_rows = self._get_target_connection_rows(prefer_context=True)
+            if not target_rows:
                 return
 
-            self._prompt_delete_connections(connections)
+            connections = self._connections_from_rows(target_rows)
+            neighbor_row = self._determine_neighbor_connection_row(target_rows)
+
+            self._prompt_delete_connections(connections, neighbor_row)
         except Exception as e:
             logger.error(f"Failed to delete connection: {e}")
 
