@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from typing import Optional
 
 try:
     import gi
@@ -493,18 +494,27 @@ def get_scp_ssh_options() -> list:
         "-o", "IdentitiesOnly=yes",
     ]
 
-def connect_ssh_with_key(host: str, username: str, key_path: str, command: str = None) -> subprocess.CompletedProcess:
+def connect_ssh_with_key(
+    host: str,
+    username: str,
+    key_path: str,
+    command: str = None,
+    port: Optional[int] = None,
+) -> subprocess.CompletedProcess:
     """Connect via SSH with proper key handling"""
     # Ensure key is loaded in ssh-agent
     if not ensure_key_in_agent(key_path):
         raise Exception(f"Failed to load key {key_path} into SSH agent")
-    
+
     # Get SSH environment with askpass
     env = get_ssh_env_with_askpass("force")
-    
+
     # Build SSH command
     ssh_cmd = ["ssh", "-o", "PreferredAuthentications=publickey", "-o", "PasswordAuthentication=no"]
-    
+
+    if port is not None:
+        ssh_cmd.extend(["-p", str(port)])
+
     if command:
         ssh_cmd.extend([f"{username}@{host}", command])
     else:

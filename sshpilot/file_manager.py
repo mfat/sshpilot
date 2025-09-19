@@ -34,7 +34,7 @@ except ImportError:
             return os.environ.copy()
         def ensure_key_in_agent(key_path):
             return True
-        def connect_ssh_with_key(host, username, key_path, command=None):
+        def connect_ssh_with_key(host, username, key_path, command=None, port=None):
             raise NotImplementedError("askpass_utils module not available")
         def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False):
             return []
@@ -354,7 +354,13 @@ class SftpFileManager(Adw.ApplicationWindow):
                     return
                 
                 # Test connection using your SSH utilities
-                result = connect_ssh_with_key(host, username, key_file, "echo 'connection_test'")
+                result = connect_ssh_with_key(
+                    host,
+                    username,
+                    key_file,
+                    "echo 'connection_test'",
+                    port=port,
+                )
                 
                 if result.returncode == 0 and "connection_test" in result.stdout:
                     self.connection_info = {
@@ -485,7 +491,8 @@ class SftpFileManager(Adw.ApplicationWindow):
                         self.connection_info['host'],
                         self.connection_info['username'],
                         self.connection_info['key_file'],
-                        f'ls -la --time-style="+%Y-%m-%d %H:%M" "{self.current_remote_path}"'
+                        f'ls -la --time-style="+%Y-%m-%d %H:%M" "{self.current_remote_path}"',
+                        port=self.connection_info['port'],
                     )
                 else:  # password
                     result = run_ssh_with_password(
@@ -599,7 +606,8 @@ class SftpFileManager(Adw.ApplicationWindow):
                         self.connection_info['host'],
                         self.connection_info['username'],
                         self.connection_info['key_file'],
-                        f'test -d "{new_path}" && echo "OK"'
+                        f'test -d "{new_path}" && echo "OK"',
+                        port=self.connection_info['port'],
                     )
                 else:  # password
                     result = run_ssh_with_password(
@@ -641,7 +649,8 @@ class SftpFileManager(Adw.ApplicationWindow):
                         self.connection_info['host'],
                         self.connection_info['username'],
                         self.connection_info['key_file'],
-                        f'test -d "{path}" && echo "OK"'
+                        f'test -d "{path}" && echo "OK"',
+                        port=self.connection_info['port'],
                     )
                 else:  # password
                     result = run_ssh_with_password(
