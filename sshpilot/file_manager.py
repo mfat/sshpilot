@@ -7,15 +7,44 @@ import os
 import stat
 import threading
 from pathlib import Path
-import paramiko
+import subprocess
+import json
+import tempfile
 from datetime import datetime
+import shutil
+
+# Import your existing SSH utilities
+try:
+    from .ssh_password_exec import run_ssh_with_password, run_scp_with_password
+    from .askpass_utils import get_ssh_env_with_askpass, ensure_key_in_agent, connect_ssh_with_key
+    from .ssh_utils import build_connection_ssh_options
+except ImportError:
+    # Fallback imports for standalone testing
+    try:
+        from ssh_password_exec import run_ssh_with_password, run_scp_with_password
+        from askpass_utils import get_ssh_env_with_askpass, ensure_key_in_agent, connect_ssh_with_key
+        from ssh_utils import build_connection_ssh_options
+    except ImportError:
+        # Define minimal fallbacks if modules not available
+        def run_ssh_with_password(host, user, password, **kwargs):
+            raise NotImplementedError("ssh_password_exec module not available")
+        def run_scp_with_password(host, user, password, **kwargs):
+            raise NotImplementedError("ssh_password_exec module not available")
+        def get_ssh_env_with_askpass(**kwargs):
+            return os.environ.copy()
+        def ensure_key_in_agent(key_path):
+            return True
+        def connect_ssh_with_key(host, username, key_path, command=None):
+            raise NotImplementedError("askpass_utils module not available")
+        def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False):
+            return []
 
 class SftpFileManager(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app)
         
-        self.sftp_client = None
-        self.ssh_client = None
+        self.connection_info = None  # Will store connection details
+        self.connected = False
         self.current_local_path = Path.home()
         self.current_remote_path = "/"
         
@@ -193,7 +222,7 @@ class SftpFileManager(Adw.ApplicationWindow):
             heading="Connect to SFTP Server"
         )
         
-        # Create form
+        # Create form with authentication method selection
         form_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         form_box.set_spacing(12)
         form_box.set_margin_start(12)
@@ -224,12 +253,49 @@ class SftpFileManager(Adw.ApplicationWindow):
         user_group.add(user_row)
         form_box.append(user_group)
         
-        # Password
-        pass_group = Adw.PreferencesGroup()
+        # Authentication method
+        auth_group = Adw.PreferencesGroup()
+        auth_group.set_title("Authentication")
+        
+        # Auth method selection
+        auth_row = Adw.ComboRow()
+        auth_row.set_title("Method")
+        auth_model = Gtk.StringList()
+        auth_model.append("SSH Key")
+        auth_model.append("Password")
+        auth_row.set_model(auth_model)
+        auth_row.set_selected(0)
+        auth_group.add(auth_row)
+        
+        # Key file selection (initially visible)
+        key_row = Adw.ActionRow()
+        key_row.set_title("SSH Key File")
+        key_entry = Gtk.Entry()
+        key_entry.set_text(str(Path.home() / ".ssh" / "id_rsa"))
+        key_entry.set_hexpand(True)
+        key_button = Gtk.Button(label="Browse...")
+        key_button.connect("clicked", lambda b: self.browse_key_file(key_entry))
+        key_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        key_box.append(key_entry)
+        key_box.append(key_button)
+        key_row.add_suffix(key_box)
+        auth_group.add(key_row)
+        
+        # Password entry (initially hidden)
         pass_row = Adw.PasswordEntryRow()
         pass_row.set_title("Password")
-        pass_group.add(pass_row)
-        form_box.append(pass_group)
+        pass_row.set_visible(False)
+        auth_group.add(pass_row)
+        
+        # Toggle visibility based on auth method
+        def on_auth_changed(combo_row, *args):
+            is_password = combo_row.get_selected() == 1
+            key_row.set_visible(not is_password)
+            pass_row.set_visible(is_password)
+        
+        auth_row.connect("notify::selected", on_auth_changed)
+        
+        form_box.append(auth_group)
         
         dialog.set_extra_child(form_box)
         dialog.add_response("cancel", "Cancel")
@@ -238,30 +304,108 @@ class SftpFileManager(Adw.ApplicationWindow):
         
         dialog.connect("response", lambda d, r: self.on_connection_response(
             d, r, host_row.get_text(), int(port_row.get_text() or 22), 
-            user_row.get_text(), pass_row.get_text()
+            user_row.get_text(), auth_row.get_selected(), key_entry.get_text(), pass_row.get_text()
         ))
         
         dialog.present()
     
-    def on_connection_response(self, dialog, response, host, port, username, password):
+    def browse_key_file(self, entry):
+        """Open file chooser for SSH key selection"""
+        dialog = Gtk.FileChooserDialog(
+            title="Select SSH Key File",
+            transient_for=self,
+            action=Gtk.FileChooserAction.OPEN
+        )
+        dialog.add_buttons(
+            "Cancel", Gtk.ResponseType.CANCEL,
+            "Open", Gtk.ResponseType.ACCEPT
+        )
+        
+        # Set initial directory to ~/.ssh
+        ssh_dir = Path.home() / ".ssh"
+        if ssh_dir.exists():
+            dialog.set_current_folder(Gio.File.new_for_path(str(ssh_dir)))
+        
+        dialog.connect("response", lambda d, r: self.on_key_file_selected(d, r, entry))
+        dialog.present()
+    
+    def on_key_file_selected(self, dialog, response, entry):
+        if response == Gtk.ResponseType.ACCEPT:
+            file = dialog.get_file()
+            if file:
+                entry.set_text(file.get_path())
+        dialog.destroy()
+    
+    def on_connection_response(self, dialog, response, host, port, username, auth_method, key_file, password):
         dialog.close()
         if response == "connect":
-            self.connect_sftp(host, port, username, password)
+            if auth_method == 0:  # SSH Key
+                self.connect_with_key(host, port, username, key_file)
+            else:  # Password
+                self.connect_with_password(host, port, username, password)
     
-    def connect_sftp(self, host, port, username, password):
+    def connect_with_key(self, host, port, username, key_file):
+        """Connect using SSH key authentication with your askpass system"""
         def do_connect():
             try:
-                self.ssh_client = paramiko.SSHClient()
-                self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                self.ssh_client.connect(host, port, username, password)
-                self.sftp_client = self.ssh_client.open_sftp()
+                # Ensure key is loaded in ssh-agent using your askpass system
+                if not ensure_key_in_agent(key_file):
+                    GLib.idle_add(self.on_connection_error, f"Failed to load SSH key: {key_file}")
+                    return
                 
-                GLib.idle_add(self.on_connected, host)
+                # Test connection using your SSH utilities
+                result = connect_ssh_with_key(host, username, key_file, "echo 'connection_test'")
+                
+                if result.returncode == 0 and "connection_test" in result.stdout:
+                    self.connection_info = {
+                        'host': host,
+                        'port': port,
+                        'username': username,
+                        'auth_method': 'key',
+                        'key_file': key_file
+                    }
+                    self.connected = True
+                    GLib.idle_add(self.on_connected, host)
+                else:
+                    error_msg = result.stderr or "Key authentication failed"
+                    GLib.idle_add(self.on_connection_error, error_msg)
+                    
             except Exception as e:
                 GLib.idle_add(self.on_connection_error, str(e))
         
         threading.Thread(target=do_connect, daemon=True).start()
-        self.status_label.set_text("Connecting...")
+        self.status_label.set_text("Connecting with SSH key...")
+
+    def connect_with_password(self, host, port, username, password):
+        """Connect using password authentication with your sshpass system"""
+        def do_connect():
+            try:
+                # Test connection using your password SSH utilities
+                result = run_ssh_with_password(
+                    host, username, password,
+                    port=port,
+                    argv_tail=["echo", "connection_test"]
+                )
+                
+                if result.returncode == 0 and "connection_test" in result.stdout:
+                    self.connection_info = {
+                        'host': host,
+                        'port': port,
+                        'username': username,
+                        'auth_method': 'password',
+                        'password': password
+                    }
+                    self.connected = True
+                    GLib.idle_add(self.on_connected, host)
+                else:
+                    error_msg = result.stderr or "Password authentication failed"
+                    GLib.idle_add(self.on_connection_error, error_msg)
+                    
+            except Exception as e:
+                GLib.idle_add(self.on_connection_error, str(e))
+        
+        threading.Thread(target=do_connect, daemon=True).start()
+        self.status_label.set_text("Connecting with password...")
     
     def on_connected(self, host):
         self.status_label.set_text(f"Connected to {host}")
@@ -289,13 +433,8 @@ class SftpFileManager(Adw.ApplicationWindow):
         dialog.present()
     
     def disconnect_sftp(self, button):
-        if self.sftp_client:
-            self.sftp_client.close()
-        if self.ssh_client:
-            self.ssh_client.close()
-        
-        self.sftp_client = None
-        self.ssh_client = None
+        self.connection_info = None
+        self.connected = False
         
         self.status_label.set_text("Not connected")
         self.connect_btn.set_label("Connect to Server")
@@ -335,29 +474,93 @@ class SftpFileManager(Adw.ApplicationWindow):
         self.local_path_entry.set_text(str(self.current_local_path))
     
     def refresh_remote_view(self):
-        if not self.sftp_client:
+        if not self.connected:
             return
             
         def do_refresh():
             try:
-                entries = self.sftp_client.listdir_attr(self.current_remote_path)
-                entries.sort(key=lambda x: (not stat.S_ISDIR(x.st_mode), x.filename.lower()))
+                # Use your SSH utilities to get directory listing
+                if self.connection_info['auth_method'] == 'key':
+                    result = connect_ssh_with_key(
+                        self.connection_info['host'],
+                        self.connection_info['username'],
+                        self.connection_info['key_file'],
+                        f'ls -la --time-style="+%Y-%m-%d %H:%M" "{self.current_remote_path}"'
+                    )
+                else:  # password
+                    result = run_ssh_with_password(
+                        self.connection_info['host'],
+                        self.connection_info['username'],
+                        self.connection_info['password'],
+                        port=self.connection_info['port'],
+                        argv_tail=[f'ls -la --time-style="+%Y-%m-%d %H:%M" "{self.current_remote_path}"']
+                    )
                 
-                GLib.idle_add(self.update_remote_store, entries)
+                if result.returncode == 0:
+                    entries = self.parse_ls_output(result.stdout)
+                    GLib.idle_add(self.update_remote_store, entries)
+                else:
+                    GLib.idle_add(self.show_error, f"Cannot read remote directory: {result.stderr}")
+                    
             except Exception as e:
                 GLib.idle_add(self.show_error, f"Cannot read remote directory: {e}")
         
         threading.Thread(target=do_refresh, daemon=True).start()
     
+    def parse_ls_output(self, ls_output):
+        """Parse ls -la output into file entries"""
+        entries = []
+        lines = ls_output.strip().split('\n')[1:]  # Skip total line
+        
+        for line in lines:
+            if not line.strip():
+                continue
+                
+            parts = line.split(None, 8)
+            if len(parts) < 9:
+                continue
+                
+            permissions = parts[0]
+            size_str = parts[4]
+            date_str = f"{parts[5]} {parts[6]}"
+            filename = parts[8]
+            
+            # Skip . and .. entries
+            if filename in ['.', '..']:
+                continue
+            
+            # Determine if it's a directory
+            is_dir = permissions.startswith('d')
+            
+            # Parse size
+            try:
+                size = int(size_str) if not is_dir else 0
+            except ValueError:
+                size = 0
+            
+            entries.append({
+                'filename': filename,
+                'size': size,
+                'modified': date_str,
+                'is_dir': is_dir
+            })
+        
+        # Sort: directories first, then files
+        entries.sort(key=lambda x: (not x['is_dir'], x['filename'].lower()))
+        return entries
+    
     def update_remote_store(self, entries):
         self.remote_store.clear()
         for entry in entries:
-            size = self.format_size(entry.st_size) if not stat.S_ISDIR(entry.st_mode) else ""
-            modified = datetime.fromtimestamp(entry.st_mtime).strftime("%Y-%m-%d %H:%M")
-            file_type = "Directory" if stat.S_ISDIR(entry.st_mode) else "File"
+            size = self.format_size(entry['size']) if not entry['is_dir'] else ""
+            file_type = "Directory" if entry['is_dir'] else "File"
             
             self.remote_store.append([
-                entry.filename, size, modified, file_type, stat.S_ISDIR(entry.st_mode)
+                entry['filename'], 
+                size, 
+                entry['modified'], 
+                file_type, 
+                entry['is_dir']
             ])
         
         self.remote_path_entry.set_text(self.current_remote_path)
@@ -380,7 +583,7 @@ class SftpFileManager(Adw.ApplicationWindow):
             self.refresh_local_view()
     
     def navigate_remote(self, path):
-        if not self.sftp_client:
+        if not self.connected:
             return
             
         if path == "..":
@@ -388,12 +591,35 @@ class SftpFileManager(Adw.ApplicationWindow):
         else:
             new_path = str(Path(self.current_remote_path) / path)
         
-        try:
-            self.sftp_client.listdir(new_path)
-            self.current_remote_path = new_path
-            self.refresh_remote_view()
-        except Exception as e:
-            self.show_error(f"Cannot navigate to {new_path}: {e}")
+        def test_path():
+            try:
+                # Test if path exists using your SSH utilities
+                if self.connection_info['auth_method'] == 'key':
+                    result = connect_ssh_with_key(
+                        self.connection_info['host'],
+                        self.connection_info['username'],
+                        self.connection_info['key_file'],
+                        f'test -d "{new_path}" && echo "OK"'
+                    )
+                else:  # password
+                    result = run_ssh_with_password(
+                        self.connection_info['host'],
+                        self.connection_info['username'],
+                        self.connection_info['password'],
+                        port=self.connection_info['port'],
+                        argv_tail=[f'test -d "{new_path}" && echo "OK"']
+                    )
+                
+                if result.returncode == 0 and "OK" in result.stdout:
+                    self.current_remote_path = new_path
+                    GLib.idle_add(self.refresh_remote_view)
+                else:
+                    GLib.idle_add(self.show_error, f"Cannot navigate to {new_path}")
+                    
+            except Exception as e:
+                GLib.idle_add(self.show_error, f"Cannot navigate to {new_path}: {e}")
+        
+        threading.Thread(target=test_path, daemon=True).start()
     
     def on_local_path_changed(self, entry):
         path = Path(entry.get_text())
@@ -402,17 +628,42 @@ class SftpFileManager(Adw.ApplicationWindow):
             self.refresh_local_view()
     
     def on_remote_path_changed(self, entry):
-        if not self.sftp_client:
+        if not self.connected:
             return
         
         path = entry.get_text()
-        try:
-            self.sftp_client.listdir(path)
-            self.current_remote_path = path
-            self.refresh_remote_view()
-        except Exception as e:
-            self.show_error(f"Cannot navigate to {path}: {e}")
-            entry.set_text(self.current_remote_path)
+        
+        def test_path():
+            try:
+                # Test if path exists using your SSH utilities
+                if self.connection_info['auth_method'] == 'key':
+                    result = connect_ssh_with_key(
+                        self.connection_info['host'],
+                        self.connection_info['username'],
+                        self.connection_info['key_file'],
+                        f'test -d "{path}" && echo "OK"'
+                    )
+                else:  # password
+                    result = run_ssh_with_password(
+                        self.connection_info['host'],
+                        self.connection_info['username'],
+                        self.connection_info['password'],
+                        port=self.connection_info['port'],
+                        argv_tail=[f'test -d "{path}" && echo "OK"']
+                    )
+                
+                if result.returncode == 0 and "OK" in result.stdout:
+                    self.current_remote_path = path
+                    GLib.idle_add(self.refresh_remote_view)
+                else:
+                    GLib.idle_add(self.show_error, f"Cannot navigate to {path}")
+                    GLib.idle_add(entry.set_text, self.current_remote_path)
+                    
+            except Exception as e:
+                GLib.idle_add(self.show_error, f"Cannot navigate to {path}: {e}")
+                GLib.idle_add(entry.set_text, self.current_remote_path)
+        
+        threading.Thread(target=test_path, daemon=True).start()
     
     def on_local_row_activated(self, tree_view, path, column):
         model = tree_view.get_model()
@@ -452,9 +703,85 @@ class SftpFileManager(Adw.ApplicationWindow):
         
         def do_upload():
             try:
-                self.sftp_client.put(str(local_path), remote_path)
-                GLib.idle_add(self.refresh_remote_view)
-                GLib.idle_add(self.show_info, f"Uploaded {filename}")
+                if self.connection_info['auth_method'] == 'key':
+                    # For key-based auth, use scp with proper SSH options
+                    env = get_ssh_env_with_askpass("force")
+                    
+                    cmd = [
+                        'scp',
+                        '-o', 'IdentitiesOnly=yes',
+                        '-i', self.connection_info['key_file'],
+                        '-P', str(self.connection_info['port']),
+                        '-o', 'StrictHostKeyChecking=accept-new',
+                        str(local_path),
+                        f"{self.connection_info['username']}@{self.connection_info['host']}:{remote_path}"
+                    ]
+                    
+                    result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=60)
+                else:
+                    # For password auth, use your scp utility
+                    result = run_scp_with_password(
+                        self.connection_info['host'],
+                        self.connection_info['username'],
+                        self.connection_info['password'],
+                        [str(local_path)],
+                        str(Path(self.current_remote_path)),
+                        port=self.connection_info['port']
+                    )
+                
+                if result.returncode == 0:
+                    GLib.idle_add(self.refresh_remote_view)
+                    GLib.idle_add(self.show_info, f"Uploaded {filename}")
+                else:
+                    GLib.idle_add(self.show_error, f"Upload failed: {result.stderr}")
+                    
+            except subprocess.TimeoutExpired:
+                GLib.idle_add(self.show_error, f"Upload timeout for {filename}")
+            except Exception as e:
+                GLib.idle_add(self.show_error, f"Upload failed: {e}")
+        
+        threading.Thread(target=do_upload, daemon=True).start() = self.local_tree_view.get_selection()
+        model, iterator = selection.get_selected()
+        
+        if not iterator:
+            self.show_error("Please select a file to upload")
+            return
+        
+        filename = model.get_value(iterator, 0)
+        is_dir = model.get_value(iterator, 4)
+        
+        if is_dir:
+            self.show_error("Directory upload not supported yet")
+            return
+        
+        local_path = self.current_local_path / filename
+        remote_path = str(Path(self.current_remote_path) / filename)
+        
+        def do_upload():
+            try:
+                cmd = [
+                    'scp',
+                    '-o', 'BatchMode=yes',
+                    '-o', 'ConnectTimeout=10',
+                    '-o', 'StrictHostKeyChecking=no',
+                    '-P', str(self.ssh_connection['port']),
+                    str(local_path),
+                    f"{self.ssh_connection['username']}@{self.ssh_connection['host']}:{remote_path}"
+                ]
+                
+                if self.ssh_connection.get('password'):
+                    cmd = ['sshpass', '-p', self.ssh_connection['password']] + cmd
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                
+                if result.returncode == 0:
+                    GLib.idle_add(self.refresh_remote_view)
+                    GLib.idle_add(self.show_info, f"Uploaded {filename}")
+                else:
+                    GLib.idle_add(self.show_error, f"Upload failed: {result.stderr}")
+                    
+            except subprocess.TimeoutExpired:
+                GLib.idle_add(self.show_error, f"Upload timeout for {filename}")
             except Exception as e:
                 GLib.idle_add(self.show_error, f"Upload failed: {e}")
         
@@ -480,9 +807,29 @@ class SftpFileManager(Adw.ApplicationWindow):
         
         def do_download():
             try:
-                self.sftp_client.get(remote_path, str(local_path))
-                GLib.idle_add(self.refresh_local_view)
-                GLib.idle_add(self.show_info, f"Downloaded {filename}")
+                cmd = [
+                    'scp',
+                    '-o', 'BatchMode=yes',
+                    '-o', 'ConnectTimeout=10', 
+                    '-o', 'StrictHostKeyChecking=no',
+                    '-P', str(self.ssh_connection['port']),
+                    f"{self.ssh_connection['username']}@{self.ssh_connection['host']}:{remote_path}",
+                    str(local_path)
+                ]
+                
+                if self.ssh_connection.get('password'):
+                    cmd = ['sshpass', '-p', self.ssh_connection['password']] + cmd
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                
+                if result.returncode == 0:
+                    GLib.idle_add(self.refresh_local_view)
+                    GLib.idle_add(self.show_info, f"Downloaded {filename}")
+                else:
+                    GLib.idle_add(self.show_error, f"Download failed: {result.stderr}")
+                    
+            except subprocess.TimeoutExpired:
+                GLib.idle_add(self.show_error, f"Download timeout for {filename}")
             except Exception as e:
                 GLib.idle_add(self.show_error, f"Download failed: {e}")
         
