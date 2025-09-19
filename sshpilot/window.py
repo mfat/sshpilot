@@ -558,6 +558,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self._focus_most_recent_tab_or_open_new(connection)
                 return True  # Consume the event to prevent row-activated
             return False  # Allow group rows to be handled by row-activated
+
+        # Handle deletion keys to remove selected connections
+        if keyval in (
+            Gdk.KEY_Delete,
+            Gdk.KEY_KP_Delete,
+            Gdk.KEY_BackSpace,
+        ):
+            target_rows = self._get_target_connection_rows()
+            connections = self._connections_from_rows(target_rows)
+
+            if connections:
+                neighbor_row = self._determine_neighbor_connection_row(target_rows)
+                self._prompt_delete_connections(connections, neighbor_row)
+                return True
+
+            return False
         return False
 
     def _stop_pulse_on_interaction(self, controller, *args):
