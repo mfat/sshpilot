@@ -701,30 +701,32 @@ class FilePane(Gtk.Box):
         return self._entries[index]
 
     def _on_upload_clicked(self, _button: Gtk.Button) -> None:
-        dialog = Gtk.FileDialog()
-        dialog.set_title("Select items to upload")
+        if not self._is_remote:
+            return
 
-        def _on_finish(dlg: Gtk.FileDialog, result: Gio.AsyncResult) -> None:
-            try:
-                files = dlg.open_multiple_finish(result)
-            except GLib.Error as exc:
-                if not self._dialog_dismissed(exc):
-                    self.show_toast(str(exc))
-                return
+        window = self.get_root()
+        if not isinstance(window, FileManagerWindow):
+            return
 
-            paths: List[pathlib.Path] = []
-            if files is not None:
-                for index in range(files.get_n_items()):
-                    file_obj = files.get_item(index)
-                    if isinstance(file_obj, Gio.File):
-                        path = file_obj.get_path()
-                        if path:
-                            paths.append(pathlib.Path(path))
-            if not paths:
-                return
-            self.emit("request-operation", "upload", paths)
+        local_pane = getattr(window, "_left_pane", None)
+        if local_pane is None:
+            self.show_toast("Local pane is unavailable")
+            return
 
-        dialog.open_multiple(self.get_root(), None, _on_finish)
+        entry = local_pane.get_selected_entry()
+        if entry is None:
+            self.show_toast("Select an item in the local pane to upload")
+            return
+
+        base_dir = window._normalize_local_path(local_pane.toolbar.path_entry.get_text())
+        source_path = pathlib.Path(os.path.join(base_dir, entry.name))
+        if not source_path.exists():
+            self.show_toast("Selected local item is not accessible")
+            return
+
+        destination = self.toolbar.path_entry.get_text() or "/"
+        payload = {"paths": [source_path], "destination": destination}
+        self.emit("request-operation", "upload", payload)
 
     def _on_download_clicked(self, _button: Gtk.Button) -> None:
         entry = self.get_selected_entry()
@@ -732,30 +734,26 @@ class FilePane(Gtk.Box):
             self.show_toast("Select an item to download")
             return
 
-        dialog = Gtk.FileDialog()
-        dialog.set_title("Choose download destination")
+        window = self.get_root()
+        if not isinstance(window, FileManagerWindow):
+            return
 
-        def _on_finish(dlg: Gtk.FileDialog, result: Gio.AsyncResult) -> None:
-            try:
-                folder = dlg.select_folder_finish(result)
-            except GLib.Error as exc:
-                if not self._dialog_dismissed(exc):
-                    self.show_toast(str(exc))
-                return
-            if folder is None:
-                return
-            folder_path = folder.get_path()
-            if not folder_path:
-                self.show_toast("Destination is not accessible")
-                return
-            payload = {
-                "source": os.path.join(self._current_path, entry.name),
-                "is_dir": entry.is_dir,
-                "destination": pathlib.Path(folder_path),
-            }
-            self.emit("request-operation", "download", payload)
+        local_pane = getattr(window, "_left_pane", None)
+        if local_pane is None:
+            self.show_toast("Local pane is unavailable")
+            return
 
-        dialog.select_folder(self.get_root(), None, _on_finish)
+        destination_root = window._normalize_local_path(local_pane.toolbar.path_entry.get_text())
+        if not os.path.isdir(destination_root):
+            self.show_toast("Local destination is not accessible")
+            return
+
+        payload = {
+            "source": posixpath.join(self._current_path or "/", entry.name),
+            "is_dir": entry.is_dir,
+            "destination": pathlib.Path(destination_root),
+        }
+        self.emit("request-operation", "download", payload)
 
     @staticmethod
     def _dialog_dismissed(error: GLib.Error) -> bool:
@@ -1156,27 +1154,62 @@ class FileManagerWindow(Adw.Window):
             if pane is not self._right_pane:
                 return
 
+            remote_root = pane.toolbar.path_entry.get_text() or "/"
+            raw_items: object | None = None
+
+            if isinstance(payload, dict):
+                destination = payload.get("destination")
+                if isinstance(destination, pathlib.Path):
+                    remote_root = destination.as_posix()
+                elif isinstance(destination, str) and destination:
+                    remote_root = destination
+                raw_items = payload.get("paths")
+            else:
+                raw_items = payload
+
             paths: List[pathlib.Path] = []
-            if isinstance(payload, Gio.File):
-                local_path = payload.get_path()
-                if local_path:
-                    paths.append(pathlib.Path(local_path))
-            elif isinstance(payload, list):
-                for item in payload:
-                    if isinstance(item, pathlib.Path):
-                        paths.append(item)
-                    elif isinstance(item, Gio.File):
-                        item_path = item.get_path()
-                        if item_path:
-                            paths.append(pathlib.Path(item_path))
+
+            def _collect(item: object | None) -> None:
+                if item is None:
+                    return
+                if isinstance(item, (list, tuple, set, frozenset)):
+                    for value in item:
+                        _collect(value)
+                    return
+                if isinstance(item, pathlib.Path):
+                    paths.append(item)
+                elif isinstance(item, Gio.File):
+                    local_path = item.get_path()
+                    if local_path:
+                        paths.append(pathlib.Path(local_path))
+                elif isinstance(item, str):
+                    paths.append(pathlib.Path(item))
+
+            _collect(raw_items)
 
             if not paths:
                 pane.show_toast("No files selected for upload")
                 return
 
-            remote_root = pane.toolbar.path_entry.get_text() or "/"
-            for path_obj in paths:
-                destination = os.path.join(remote_root, path_obj.name)
+            available_paths: List[pathlib.Path] = []
+            missing: List[pathlib.Path] = []
+            for candidate in paths:
+                try:
+                    if candidate.exists():
+                        available_paths.append(candidate)
+                    else:
+                        missing.append(candidate)
+                except OSError:
+                    missing.append(candidate)
+
+            if missing and not available_paths:
+                pane.show_toast("Selected items are not accessible")
+                return
+            if missing and available_paths:
+                pane.show_toast(f"Skipping inaccessible items: {missing[0].name}")
+
+            for path_obj in available_paths:
+                destination = posixpath.join(remote_root or "/", path_obj.name)
                 toast_message = f"Uploading {path_obj.name}"
                 self._toast_overlay.add_toast(Adw.Toast.new(toast_message))
                 if path_obj.is_dir():
