@@ -500,11 +500,11 @@ class FilePane(Gtk.Box):
             "clicked", lambda *_: self.emit("request-operation", "mkdir", None)
         )
         if self._is_remote:
-            self.toolbar.controls.upload_button.set_visible(False)
-            self.toolbar.controls.download_button.connect("clicked", self._on_download_clicked)
-        else:
             self.toolbar.controls.upload_button.connect("clicked", self._on_upload_clicked)
             self.toolbar.controls.download_button.set_visible(False)
+        else:
+            self.toolbar.controls.upload_button.set_visible(False)
+            self.toolbar.controls.download_button.connect("clicked", self._on_download_clicked)
 
         self._history: List[str] = []
         self._current_path = "/"
@@ -674,8 +674,15 @@ class FilePane(Gtk.Box):
             if action is not None:
                 action.set_enabled(enabled)
 
+        window = self.get_root()
+        local_has_selection = False
+        if self._is_remote and isinstance(window, FileManagerWindow):
+            local_pane = getattr(window, "_left_pane", None)
+            if isinstance(local_pane, FilePane):
+                local_has_selection = local_pane.get_selected_entry() is not None
+
         _set_enabled("download", self._is_remote and has_selection)
-        _set_enabled("upload", (not self._is_remote) and has_selection)
+        _set_enabled("upload", self._is_remote and local_has_selection)
         _set_enabled("rename", has_selection)
         _set_enabled("delete", has_selection)
         _set_enabled("new_folder", True)
@@ -708,16 +715,25 @@ class FilePane(Gtk.Box):
         return self._entries[index]
 
     def _on_upload_clicked(self, _button: Gtk.Button) -> None:
-        if not self._is_remote:
-            return
-
         window = self.get_root()
         if not isinstance(window, FileManagerWindow):
             return
 
         local_pane = getattr(window, "_left_pane", None)
-        if local_pane is None:
+        if not isinstance(local_pane, FilePane):
             self.show_toast("Local pane is unavailable")
+            return
+
+        destination_pane: Optional[FilePane]
+        if self._is_remote:
+            destination_pane = self
+        else:
+            destination_pane = getattr(window, "_right_pane", None)
+            if not isinstance(destination_pane, FilePane) or not destination_pane._is_remote:
+                destination_pane = None
+
+        if destination_pane is None:
+            self.show_toast("Remote pane is unavailable")
             return
 
         entry = local_pane.get_selected_entry()
@@ -731,7 +747,7 @@ class FilePane(Gtk.Box):
             self.show_toast("Selected local item is not accessible")
             return
 
-        destination = self.toolbar.path_entry.get_text() or "/"
+        destination = destination_pane.toolbar.path_entry.get_text() or "/"
         payload = {"paths": [source_path], "destination": destination}
         self.emit("request-operation", "upload", payload)
 
