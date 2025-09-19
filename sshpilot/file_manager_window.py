@@ -398,11 +398,11 @@ class PaneControls(Gtk.Box):
 class PaneToolbar(Gtk.Box):
     def __init__(self) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
-        
+
         # Create the actual header bar
         self._header_bar = Adw.HeaderBar()
         self._header_bar.set_title_widget(Gtk.Label(label=""))
-        
+
         self.controls = PaneControls()
         self.path_entry = PathEntry()
         self.list_toggle = ViewToggle("view-list-symbolic", "List view")
@@ -412,10 +412,32 @@ class PaneToolbar(Gtk.Box):
         action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         action_box.append(self.list_toggle)
         action_box.append(self.grid_toggle)
+
+        sort_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        sort_box.set_valign(Gtk.Align.CENTER)
+
+        sort_label = Gtk.Label(label="Sort")
+        sort_label.add_css_class("dim-label")
+        sort_label.set_valign(Gtk.Align.CENTER)
+
+        self.sort_dropdown = Gtk.DropDown.new_from_strings(["Name", "Size", "Modified"])
+        self.sort_dropdown.set_selected(0)
+        self.sort_dropdown.set_valign(Gtk.Align.CENTER)
+        self.sort_dropdown.set_tooltip_text("Choose how to sort entries")
+
+        self.sort_direction_button = Gtk.ToggleButton()
+        self.sort_direction_button.set_valign(Gtk.Align.CENTER)
+        self.sort_direction_button.set_tooltip_text("Toggle ascending or descending order")
+
+        sort_box.append(sort_label)
+        sort_box.append(self.sort_dropdown)
+        sort_box.append(self.sort_direction_button)
+
+        action_box.append(sort_box)
         self._header_bar.pack_start(self.controls)
         self._header_bar.pack_start(self.path_entry)
         self._header_bar.pack_end(action_box)
-        
+
         self.append(self._header_bar)
     
     def get_header_bar(self):
@@ -512,6 +534,9 @@ class FilePane(Gtk.Box):
         self._history: List[str] = []
         self._current_path = "/"
         self._entries: List[FileEntry] = []
+        self._raw_entries: List[FileEntry] = []
+        self._sort_key: str = "name"
+        self._sort_descending: bool = False
         self._suppress_history_push: bool = False
         self._selection_model.connect("selection-changed", self._on_selection_changed)
 
@@ -534,6 +559,9 @@ class FilePane(Gtk.Box):
         drop_target.connect("drop", self._on_drop)
         self.add_controller(drop_target)
         self._update_menu_state()
+        self.toolbar.sort_dropdown.connect("notify::selected", self._on_sort_key_changed)
+        self.toolbar.sort_direction_button.connect("toggled", self._on_sort_direction_toggled)
+        self._update_sort_direction_icon()
 
         self._typeahead_buffer: str = ""
         self._typeahead_last_time: float = 0.0
@@ -594,6 +622,27 @@ class FilePane(Gtk.Box):
 
     def _on_selection_changed(self, model, position, n_items):
         self._update_menu_state()
+
+    def _on_sort_key_changed(self, dropdown: Gtk.DropDown, _param: GObject.ParamSpec) -> None:
+        mapping = {0: "name", 1: "size", 2: "modified"}
+        selected = dropdown.get_selected()
+        new_key = mapping.get(selected, "name")
+        if new_key != self._sort_key:
+            self._sort_key = new_key
+            self._refresh_sorted_entries(preserve_selection=True)
+
+    def _on_sort_direction_toggled(self, button: Gtk.ToggleButton) -> None:
+        self._sort_descending = button.get_active()
+        self._update_sort_direction_icon()
+        self._refresh_sorted_entries(preserve_selection=True)
+
+    def _update_sort_direction_icon(self) -> None:
+        icon = "view-sort-descending-symbolic" if self._sort_descending else "view-sort-ascending-symbolic"
+        tooltip = "Sorted descending" if self._sort_descending else "Sorted ascending"
+        self.toolbar.sort_direction_button.set_icon_name(icon)
+        self.toolbar.sort_direction_button.set_tooltip_text(
+            f"{tooltip}. Click to toggle order"
+        )
 
     def _create_menu_model(self) -> Gtk.PopoverMenu:
         if not self._menu_actions:
@@ -800,18 +849,12 @@ class FilePane(Gtk.Box):
     # -- public API -----------------------------------------------------
 
     def show_entries(self, path: str, entries: Iterable[FileEntry]) -> None:
-        self._list_store.remove_all()
-        # Store entries so we can determine directories on activation
-        self._entries = list(entries)
-        for entry in self._entries:
-            suffix = "/" if entry.is_dir else ""
-            self._list_store.append(Gtk.StringObject.new(entry.name + suffix))
+        # Store raw entries so they can be re-sorted if preferences change
+        self._raw_entries = list(entries)
+        self._refresh_sorted_entries(preserve_selection=False)
         self._current_path = path
         self.toolbar.path_entry.set_text(path)
-        self._selection_model.unselect_all()
-        self._update_menu_state()
-        self._typeahead_buffer = ""
-        self._typeahead_last_time = 0.0
+
 
     # -- navigation helpers --------------------------------------------
 
@@ -820,6 +863,46 @@ class FilePane(Gtk.Box):
             entry = self._entries[position]
             if entry.is_dir:
                 self.emit("path-changed", os.path.join(self._current_path, entry.name))
+
+    def _sort_entries(self, entries: Iterable[FileEntry]) -> List[FileEntry]:
+        def key_func(item: FileEntry):
+            if self._sort_key == "size":
+                return item.size
+            if self._sort_key == "modified":
+                return item.modified
+            return item.name.casefold()
+
+        dirs = [entry for entry in entries if entry.is_dir]
+        files = [entry for entry in entries if not entry.is_dir]
+
+        dirs_sorted = sorted(dirs, key=key_func, reverse=self._sort_descending)
+        files_sorted = sorted(files, key=key_func, reverse=self._sort_descending)
+        return dirs_sorted + files_sorted
+
+    def _refresh_sorted_entries(self, *, preserve_selection: bool) -> None:
+        selected_name: Optional[str] = None
+        if preserve_selection:
+            selected_entry = self.get_selected_entry()
+            if selected_entry is not None:
+                selected_name = selected_entry.name
+
+        self._entries = self._sort_entries(self._raw_entries)
+        self._list_store.remove_all()
+        for entry in self._entries:
+            suffix = "/" if entry.is_dir else ""
+            self._list_store.append(Gtk.StringObject.new(entry.name + suffix))
+
+        if preserve_selection and selected_name is not None:
+            for index, entry in enumerate(self._entries):
+                if entry.name == selected_name:
+                    self._selection_model.select(index)
+                    break
+            else:
+                self._selection_model.unselect_all()
+        else:
+            self._selection_model.unselect_all()
+
+        self._update_menu_state()
 
     def _on_grid_activate(self, _grid_view: Gtk.GridView, position: int) -> None:
         if position is not None and 0 <= position < len(self._entries):
