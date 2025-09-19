@@ -391,10 +391,14 @@ class PaneToolbar(Gtk.Box):
 
         # Create the actual header bar
         self._header_bar = Adw.HeaderBar()
-        self._header_bar.set_title_widget(Gtk.Label(label=""))
+        # Create label for the pane name (Local/Remote)
+        self._pane_label = Gtk.Label()
+        self._pane_label.set_css_classes(["title"])
         # Disable window buttons for individual panes - only main window should have them
         self._header_bar.set_show_start_title_buttons(False)
         self._header_bar.set_show_end_title_buttons(False)
+        # Add pane label to the start (far left) of the header bar
+        self._header_bar.pack_start(self._pane_label)
 
         self.controls = PaneControls()
         self.path_entry = PathEntry()
@@ -480,7 +484,7 @@ class FilePane(Gtk.Box):
     def __init__(self, label: str) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.toolbar = PaneToolbar()
-        self.toolbar.get_header_bar().get_title_widget().set_text(label)
+        self.toolbar._pane_label.set_text(label)
         self.append(self.toolbar)
 
         self._is_remote = label.lower() == "remote"
@@ -544,10 +548,23 @@ class FilePane(Gtk.Box):
             callback: Callable[[Gtk.Button], None],
         ) -> Gtk.Button:
             button = Gtk.Button()
-            content = Adw.ButtonContent()
-            content.set_icon_name(icon_name)
-            content.set_label(label)
-            button.set_child(content)
+            
+            # Only upload and download buttons get text labels
+            if name in ["upload", "download"]:
+                content = Adw.ButtonContent()
+                content.set_icon_name(icon_name)
+                content.set_label(label)
+                button.set_child(content)
+            else:
+                # Icon-only buttons for other actions
+                button.set_icon_name(icon_name)
+                button.set_tooltip_text(label)
+            
+            # Improve button alignment and styling
+            button.set_valign(Gtk.Align.CENTER)
+            button.set_has_frame(False)
+            button.add_css_class("flat")
+            
             button.connect("clicked", callback)
             self._action_buttons[name] = button
             return button
@@ -576,13 +593,6 @@ class FilePane(Gtk.Box):
             "Delete",
             lambda _button: self._emit_entry_operation("delete"),
         )
-        new_folder_button = _create_action_button(
-            "new_folder",
-            "folder-new-symbolic",
-            "New Folder",
-            lambda _button: self.emit("request-operation", "mkdir", None),
-        )
-
         download_button.set_visible(self._is_remote)
         upload_button.set_visible(not self._is_remote)
 
@@ -590,7 +600,6 @@ class FilePane(Gtk.Box):
         action_bar.pack_start(download_button)
         action_bar.pack_end(delete_button)
         action_bar.pack_end(rename_button)
-        action_bar.set_center_widget(new_folder_button)
 
         self._action_bar = action_bar
         self.append(action_bar)
@@ -763,8 +772,9 @@ class FilePane(Gtk.Box):
         desc_action.set_state(GLib.Variant.new_boolean(self._sort_descending))
 
     def _create_menu_model(self) -> Gtk.PopoverMenu:
-        if not self._menu_actions:
-            def _add_action(name: str, callback: Callable[[], None]) -> None:
+        # Create menu actions first
+        def _add_action(name: str, callback: Callable[[], None]) -> None:
+            if name not in self._menu_actions:
                 action = Gio.SimpleAction.new(name, None)
 
                 def _on_activate(_action: Gio.SimpleAction, _param: Optional[GLib.Variant]) -> None:
@@ -774,15 +784,20 @@ class FilePane(Gtk.Box):
                 self._menu_action_group.add_action(action)
                 self._menu_actions[name] = action
 
-            _add_action("download", self._on_menu_download)
-            _add_action("upload", self._on_menu_upload)
-            _add_action("rename", lambda: self._emit_entry_operation("rename"))
-            _add_action("delete", lambda: self._emit_entry_operation("delete"))
-            _add_action("new_folder", lambda: self.emit("request-operation", "mkdir", None))
+        _add_action("download", self._on_menu_download)
+        _add_action("upload", self._on_menu_upload)
+        _add_action("rename", lambda: self._emit_entry_operation("rename"))
+        _add_action("delete", lambda: self._emit_entry_operation("delete"))
+        _add_action("new_folder", lambda: self.emit("request-operation", "mkdir", None))
 
+        # Create menu model dynamically based on pane type
         menu_model = Gio.Menu()
-        menu_model.append("Download", "pane.download")
-        menu_model.append("Upload…", "pane.upload")
+        
+        # Add Download/Upload based on pane type
+        if self._is_remote:
+            menu_model.append("Download", "pane.download")
+        else:
+            menu_model.append("Upload…", "pane.upload")
 
         manage_section = Gio.Menu()
         manage_section.append("Rename…", "pane.rename")
@@ -790,8 +805,10 @@ class FilePane(Gtk.Box):
         menu_model.append_section(None, manage_section)
         menu_model.append("New Folder", "pane.new_folder")
 
+        # Create popover and connect action group
         popover = Gtk.PopoverMenu.new_from_model(menu_model)
         popover.set_has_arrow(True)
+        popover.insert_action_group("pane", self._menu_action_group)
         return popover
 
     def _add_context_controller(self, widget: Gtk.Widget) -> None:
@@ -819,29 +836,29 @@ class FilePane(Gtk.Box):
             widget.grab_focus()
         except Exception:
             pass
+        
+        # Create a rectangle for the popover positioning
         rect = Gdk.Rectangle()
         rect.x = int(x)
         rect.y = int(y)
         rect.width = 1
         rect.height = 1
-        self._menu_popover.set_parent(widget)
+        
+        # Set parent and show popover
+        if self._menu_popover.get_parent() != widget:
+            self._menu_popover.set_parent(widget)
+        
         self._menu_popover.set_pointing_to(rect)
         self._menu_popover.popup()
 
     def _update_selection_for_menu(self, widget: Gtk.Widget, x: float, y: float) -> None:
-        position = Gtk.INVALID_LIST_POSITION
-        int_x, int_y = int(x), int(y)
-
-        if widget is self._list_view:
-            item = self._list_view.get_item_at_pos(int_x, int_y)
-            if item is not None:
-                position = item.get_position()
-        elif widget is self._grid_view:
-            item = self._grid_view.get_item_at_pos(int_x, int_y)
-            if item is not None:
-                position = item.get_position()
-
-        self._selection_model.set_selected(position)
+        # In GTK4, we can't easily get the item at a specific position
+        # Instead, we'll show the context menu based on the current selection
+        # The user should select items first, then right-click for context menu
+        # This is actually more consistent with modern file manager behavior
+        
+        # Keep the current selection as-is for the context menu
+        pass
 
     def _update_menu_state(self) -> None:
         entry = self.get_selected_entry()
@@ -858,23 +875,23 @@ class FilePane(Gtk.Box):
                 button.set_sensitive(enabled)
 
 
-        _set_enabled("download", self._is_remote and has_selection)
-        _set_enabled("upload", (not self._is_remote) and has_selection)
+        # For context menu, actions are always enabled since menu items are shown/hidden dynamically
+        _set_enabled("download", True)
+        _set_enabled("upload", True)
         _set_enabled("rename", has_selection)
         _set_enabled("delete", has_selection)
-        _set_enabled("new_folder", True)
+        # new_folder is available in context menu only now
 
+        # Action bar buttons still use the old logic
         _set_button("download", self._is_remote and has_selection)
         _set_button("upload", (not self._is_remote) and has_selection)
         _set_button("rename", has_selection)
         _set_button("delete", has_selection)
-        _set_button("new_folder", True)
 
     def _emit_entry_operation(self, action: str) -> None:
         entry = self.get_selected_entry()
         if entry is None:
-            if action != "new_folder":
-                self.show_toast("Select an item first")
+            self.show_toast("Select an item first")
             return
         payload = {"entry": entry, "directory": self._current_path}
         self.emit("request-operation", action, payload)
@@ -882,9 +899,19 @@ class FilePane(Gtk.Box):
     def _on_menu_download(self) -> None:
         if not self._is_remote:
             return
+        entry = self.get_selected_entry()
+        if entry is None:
+            self.show_toast("Select files to download first")
+            return
         self._on_download_clicked(None)
 
     def _on_menu_upload(self) -> None:
+        if self._is_remote:
+            return
+        entry = self.get_selected_entry()
+        if entry is None:
+            self.show_toast("Select files to upload first")
+            return
         self._on_upload_clicked(None)
 
     def _on_drop(self, target: Gtk.DropTarget, value: Gio.File, x: float, y: float):
@@ -1137,7 +1164,7 @@ class FilePane(Gtk.Box):
 
         if state & (
             Gdk.ModifierType.CONTROL_MASK
-            | Gdk.ModifierType.MOD1_MASK
+            | Gdk.ModifierType.ALT_MASK
             | getattr(Gdk.ModifierType, "ALT_MASK", 0)
             | getattr(Gdk.ModifierType, "SUPER_MASK", 0)
         ):
@@ -1203,7 +1230,7 @@ class FileManagerWindow(Adw.Window):
         port: int = 22,
         initial_path: str = "~",
     ) -> None:
-        super().__init__(title="Remote Files")
+        super().__init__(title="")
         # Set default and minimum sizes following GNOME HIG
         self.set_default_size(1000, 640)
         # Set minimum size to ensure usability (GNOME HIG recommends minimum 360px width)
@@ -1448,11 +1475,7 @@ class FileManagerWindow(Adw.Window):
 
     def _on_request_operation(self, pane: FilePane, action: str, payload, user_data=None) -> None:
         if action == "mkdir":
-            dialog = Adw.MessageDialog.new(
-                self,
-                title="New Folder",
-                body="Enter a name for the new folder",
-            )
+            dialog = Adw.AlertDialog.new("New Folder", "Enter a name for the new folder")
             entry = Gtk.Entry()
             dialog.set_extra_child(entry)
             dialog.add_response("cancel", "Cancel")
@@ -1483,7 +1506,7 @@ class FileManagerWindow(Adw.Window):
                         else:
                             future = self._manager.mkdir(new_path)
                             self._attach_refresh(future, refresh_remote=pane)
-                dialog.destroy()
+                dialog.close()
 
             dialog.connect("response", _on_response)
             dialog.present()
@@ -1502,11 +1525,7 @@ class FileManagerWindow(Adw.Window):
                 source = posixpath.join(base_dir, entry.name)
                 join = posixpath.join
 
-            dialog = Adw.MessageDialog.new(
-                self,
-                title="Rename Item",
-                body=f"Enter a new name for {entry.name}",
-            )
+            dialog = Adw.AlertDialog.new("Rename Item", f"Enter a new name for {entry.name}")
             name_entry = Gtk.Entry()
             name_entry.set_text(entry.name)
             dialog.set_extra_child(name_entry)
@@ -1517,15 +1536,15 @@ class FileManagerWindow(Adw.Window):
 
             def _on_rename(_dialog, response: str) -> None:
                 if response != "ok":
-                    dialog.destroy()
+                    dialog.close()
                     return
                 new_name = name_entry.get_text().strip()
                 if not new_name:
                     pane.show_toast("Name cannot be empty")
-                    dialog.destroy()
+                    dialog.close()
                     return
                 if new_name == entry.name:
-                    dialog.destroy()
+                    dialog.close()
                     return
                 target = join(base_dir, new_name)
                 if pane is self._left_pane:
@@ -1539,7 +1558,7 @@ class FileManagerWindow(Adw.Window):
                 else:
                     future = self._manager.rename(source, target)
                     self._attach_refresh(future, refresh_remote=pane)
-                dialog.destroy()
+                dialog.close()
 
             dialog.connect("response", _on_rename)
             dialog.present()
@@ -1556,11 +1575,7 @@ class FileManagerWindow(Adw.Window):
                 base_dir = directory or "/"
                 target_path = posixpath.join(base_dir, entry.name)
 
-            dialog = Adw.MessageDialog.new(
-                self,
-                title="Delete Item",
-                body=f"Delete {entry.name}?",
-            )
+            dialog = Adw.AlertDialog.new("Delete Item", f"Delete {entry.name}?")
             dialog.add_response("cancel", "Cancel")
             dialog.add_response("ok", "Delete")
             dialog.set_default_response("cancel")
@@ -1568,7 +1583,7 @@ class FileManagerWindow(Adw.Window):
 
             def _on_delete(_dialog, response: str) -> None:
                 if response != "ok":
-                    dialog.destroy()
+                    dialog.close()
                     return
                 if pane is self._left_pane:
                     try:
@@ -1586,15 +1601,22 @@ class FileManagerWindow(Adw.Window):
                 else:
                     future = self._manager.remove(target_path)
                     self._attach_refresh(future, refresh_remote=pane)
-                dialog.destroy()
+                dialog.close()
 
             dialog.connect("response", _on_delete)
             dialog.present()
         elif action == "upload":
-            if pane is not self._right_pane:
+            # Upload can be triggered from either pane, but we need to determine the target pane
+            if pane is self._left_pane:
+                # Upload from local to remote
+                target_pane = self._right_pane
+            elif pane is self._right_pane:
+                # Upload from local to remote (when triggered from remote pane)
+                target_pane = pane
+            else:
                 return
 
-            remote_root = pane.toolbar.path_entry.get_text() or "/"
+            remote_root = target_pane.toolbar.path_entry.get_text() or "/"
             raw_items: object | None = None
 
             if isinstance(payload, dict):
@@ -1656,7 +1678,7 @@ class FileManagerWindow(Adw.Window):
                     future = self._manager.upload_directory(path_obj, destination)
                 else:
                     future = self._manager.upload(path_obj, destination)
-                self._attach_refresh(future, refresh_remote=self._right_pane)
+                self._attach_refresh(future, refresh_remote=target_pane)
         elif action == "download" and isinstance(payload, dict):
             source = payload.get("source")
             destination_base = payload.get("destination")
