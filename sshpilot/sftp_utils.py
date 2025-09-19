@@ -44,6 +44,7 @@ def open_remote_in_file_manager(
                 port=port or 22,
                 path=p,
                 parent=parent_window,
+                transient_for_parent=False,
             )
         except Exception as exc:
             logger.exception("Failed to launch in-app file manager: %s", exc)

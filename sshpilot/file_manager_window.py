@@ -361,14 +361,6 @@ class PathEntry(Gtk.Entry):
         self.set_placeholder_text("/remote/path")
 
 
-class ViewToggle(Gtk.ToggleButton):
-    def __init__(self, icon_name: str, tooltip: str) -> None:
-        super().__init__()
-        self.set_icon_name(icon_name)
-        self.set_valign(Gtk.Align.CENTER)
-        self.set_tooltip_text(tooltip)
-
-
 class PaneControls(Gtk.Box):
     def __init__(self) -> None:
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -376,17 +368,10 @@ class PaneControls(Gtk.Box):
         self.back_button = Gtk.Button.new_from_icon_name("go-previous-symbolic")
         self.up_button = Gtk.Button.new_from_icon_name("go-up-symbolic")
         self.new_folder_button = Gtk.Button.new_from_icon_name("folder-new-symbolic")
-        self.upload_button = Gtk.Button(label="Upload")
-        self.download_button = Gtk.Button(label="Download")
-        self.show_hidden_toggle = Gtk.ToggleButton(label="Show Hidden")
-        self.show_hidden_toggle.set_tooltip_text("Toggle display of hidden files")
         for widget in (
             self.back_button,
             self.up_button,
             self.new_folder_button,
-            self.upload_button,
-            self.download_button,
-            self.show_hidden_toggle,
         ):
             widget.set_valign(Gtk.Align.CENTER)
         for widget in (self.back_button, self.up_button, self.new_folder_button):
@@ -394,50 +379,34 @@ class PaneControls(Gtk.Box):
         self.append(self.back_button)
         self.append(self.up_button)
         self.append(self.new_folder_button)
-        self.append(self.upload_button)
-        self.append(self.download_button)
-        self.append(self.show_hidden_toggle)
 
 
 class PaneToolbar(Gtk.Box):
+    __gsignals__ = {
+        "view-changed": (GObject.SignalFlags.RUN_LAST, None, (str,)),
+    }
+    
     def __init__(self) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
 
         # Create the actual header bar
         self._header_bar = Adw.HeaderBar()
         self._header_bar.set_title_widget(Gtk.Label(label=""))
+        # Disable window buttons for individual panes - only main window should have them
+        self._header_bar.set_show_start_title_buttons(False)
+        self._header_bar.set_show_end_title_buttons(False)
 
         self.controls = PaneControls()
         self.path_entry = PathEntry()
-        self.list_toggle = ViewToggle("view-list-symbolic", "List view")
-        self.grid_toggle = ViewToggle("view-grid-symbolic", "Icon view")
-        self.grid_toggle.set_group(self.list_toggle)
-        self.list_toggle.set_active(True)
         action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        action_box.append(self.list_toggle)
-        action_box.append(self.grid_toggle)
+        
+        # Initialize view state
+        self._current_view = "list"
 
-        sort_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        sort_box.set_valign(Gtk.Align.CENTER)
+        # Create unified sorting split button like Nautilus
+        self.sort_split_button = self._create_sort_split_button()
 
-        sort_label = Gtk.Label(label="Sort")
-        sort_label.add_css_class("dim-label")
-        sort_label.set_valign(Gtk.Align.CENTER)
-
-        self.sort_dropdown = Gtk.DropDown.new_from_strings(["Name", "Size", "Modified"])
-        self.sort_dropdown.set_selected(0)
-        self.sort_dropdown.set_valign(Gtk.Align.CENTER)
-        self.sort_dropdown.set_tooltip_text("Choose how to sort entries")
-
-        self.sort_direction_button = Gtk.ToggleButton()
-        self.sort_direction_button.set_valign(Gtk.Align.CENTER)
-        self.sort_direction_button.set_tooltip_text("Toggle ascending or descending order")
-
-        sort_box.append(sort_label)
-        sort_box.append(self.sort_dropdown)
-        sort_box.append(self.sort_direction_button)
-
-        action_box.append(sort_box)
+        action_box.append(self.sort_split_button)
         self._header_bar.pack_start(self.controls)
         self._header_bar.pack_start(self.path_entry)
         self._header_bar.pack_end(action_box)
@@ -447,6 +416,51 @@ class PaneToolbar(Gtk.Box):
     def get_header_bar(self):
         """Get the actual header bar for toolbar view."""
         return self._header_bar
+
+    def _create_sort_split_button(self) -> Adw.SplitButton:
+        """Create a unified sorting split button like Nautilus."""
+        # Create menu model for sort options
+        menu_model = Gio.Menu()
+        
+        # Create sort by section with all options
+        sort_section = Gio.Menu()
+        sort_section.append("Name", "pane.sort-by-name")
+        sort_section.append("Size", "pane.sort-by-size") 
+        sort_section.append("Modified", "pane.sort-by-modified")
+        menu_model.append_section("Sort by", sort_section)
+        
+        # Create sort direction section with radio buttons
+        direction_section = Gio.Menu()
+        direction_section.append("Ascending", "pane.sort-direction-asc")
+        direction_section.append("Descending", "pane.sort-direction-desc")
+        menu_model.append_section("Order", direction_section)
+        
+        # Create split button
+        split_button = Adw.SplitButton()
+        split_button.set_menu_model(menu_model)
+        split_button.set_tooltip_text("Toggle view mode")
+        split_button.set_dropdown_tooltip("Sort files and folders")
+        
+        # Set icon to current view mode (will be updated dynamically)
+        split_button.set_icon_name("view-list-symbolic")
+        
+        # Connect the main button click to toggle view mode
+        split_button.connect("clicked", self._on_view_toggle_clicked)
+        
+        return split_button
+
+    def _on_view_toggle_clicked(self, button: Adw.SplitButton) -> None:
+        """Handle split button click to toggle view mode."""
+        # Toggle between list and grid view
+        if hasattr(self, '_current_view') and self._current_view == "list":
+            # Currently in list view, switch to grid view
+            self._current_view = "grid"
+        else:
+            # Currently in grid view, switch to list view
+            self._current_view = "list"
+        
+        # Emit the view change signal to update the pane
+        self.emit("view-changed", self._current_view)
 
 
 class FilePane(Gtk.Box):
@@ -520,7 +534,7 @@ class FilePane(Gtk.Box):
         self.append(overlay)
 
         self._action_buttons: Dict[str, Gtk.Button] = {}
-        action_bar = Adw.ActionBar()
+        action_bar = Gtk.ActionBar()
         action_bar.add_css_class("inline-toolbar")
 
         def _create_action_button(
@@ -581,8 +595,8 @@ class FilePane(Gtk.Box):
         self._action_bar = action_bar
         self.append(action_bar)
 
-        self.toolbar.list_toggle.connect("toggled", self._on_view_toggle, "list")
-        self.toolbar.grid_toggle.connect("toggled", self._on_view_toggle, "grid")
+        # Connect to view-changed signal from toolbar
+        self.toolbar.connect("view-changed", self._on_view_toggle)
         self.toolbar.path_entry.connect("activate", self._on_path_entry)
         # Wire navigation buttons
         self.toolbar.controls.up_button.connect("clicked", self._on_up_clicked)
@@ -590,22 +604,16 @@ class FilePane(Gtk.Box):
         self.toolbar.controls.new_folder_button.connect(
             "clicked", lambda *_: self.emit("request-operation", "mkdir", None)
         )
-        if self._is_remote:
-            self.toolbar.controls.upload_button.connect("clicked", self._on_upload_clicked)
-            self.toolbar.controls.download_button.set_visible(False)
-        else:
-            self.toolbar.controls.upload_button.set_visible(False)
-            self.toolbar.controls.download_button.connect("clicked", self._on_download_clicked)
+        # Upload/download functionality is now available through action bar and context menu only
 
         self._history: List[str] = []
         self._current_path = "/"
         self._entries: List[FileEntry] = []
         self._cached_entries: List[FileEntry] = []
+        self._raw_entries: List[FileEntry] = []
         self._show_hidden = False
-        self.toolbar.controls.show_hidden_toggle.set_active(self._show_hidden)
-        self.toolbar.controls.show_hidden_toggle.connect(
-            "toggled", self._on_show_hidden_toggled
-        )
+        self._sort_key = "name"  # Default sort by name
+        self._sort_descending = False  # Default ascending order
 
         self._suppress_history_push: bool = False
         self._selection_model.connect("selection-changed", self._on_selection_changed)
@@ -629,18 +637,22 @@ class FilePane(Gtk.Box):
         drop_target.connect("drop", self._on_drop)
         self.add_controller(drop_target)
         self._update_menu_state()
-        self.toolbar.sort_dropdown.connect("notify::selected", self._on_sort_key_changed)
-        self.toolbar.sort_direction_button.connect("toggled", self._on_sort_direction_toggled)
-        self._update_sort_direction_icon()
+        # Set up sorting actions for the split button
+        self._setup_sorting_actions()
+        
+        # Initialize view button icon and direction states
+        self._update_view_button_icon()
+        self._update_sort_direction_states()
 
         self._typeahead_buffer: str = ""
         self._typeahead_last_time: float = 0.0
 
     # -- callbacks ------------------------------------------------------
 
-    def _on_view_toggle(self, button: Gtk.ToggleButton, name: str) -> None:
-        if button.get_active():
-            self._stack.set_visible_child_name(name)
+    def _on_view_toggle(self, toolbar, view_name: str) -> None:
+        self._stack.set_visible_child_name(view_name)
+        # Update the split button icon to reflect current view
+        self._update_view_button_icon()
 
     def _on_path_entry(self, entry: Gtk.Entry) -> None:
         self.emit("path-changed", entry.get_text() or "/")
@@ -693,26 +705,62 @@ class FilePane(Gtk.Box):
     def _on_selection_changed(self, model, position, n_items):
         self._update_menu_state()
 
-    def _on_sort_key_changed(self, dropdown: Gtk.DropDown, _param: GObject.ParamSpec) -> None:
-        mapping = {0: "name", 1: "size", 2: "modified"}
-        selected = dropdown.get_selected()
-        new_key = mapping.get(selected, "name")
-        if new_key != self._sort_key:
-            self._sort_key = new_key
+    def _setup_sorting_actions(self) -> None:
+        """Set up sorting actions for the split button menu."""
+        # Create actions for sorting
+        self._menu_actions["sort-by-name"] = Gio.SimpleAction.new("sort-by-name", None)
+        self._menu_actions["sort-by-size"] = Gio.SimpleAction.new("sort-by-size", None)
+        self._menu_actions["sort-by-modified"] = Gio.SimpleAction.new("sort-by-modified", None)
+        
+        # Create stateful actions for sort direction (radio buttons)
+        self._menu_actions["sort-direction-asc"] = Gio.SimpleAction.new_stateful(
+            "sort-direction-asc", None, GLib.Variant.new_boolean(not self._sort_descending)
+        )
+        self._menu_actions["sort-direction-desc"] = Gio.SimpleAction.new_stateful(
+            "sort-direction-desc", None, GLib.Variant.new_boolean(self._sort_descending)
+        )
+        
+        # Connect action handlers
+        self._menu_actions["sort-by-name"].connect("activate", lambda *_: self._on_sort_by("name"))
+        self._menu_actions["sort-by-size"].connect("activate", lambda *_: self._on_sort_by("size"))
+        self._menu_actions["sort-by-modified"].connect("activate", lambda *_: self._on_sort_by("modified"))
+        self._menu_actions["sort-direction-asc"].connect("activate", lambda *_: self._on_sort_direction(False))
+        self._menu_actions["sort-direction-desc"].connect("activate", lambda *_: self._on_sort_direction(True))
+        
+        # Add actions to action group
+        for action in self._menu_actions.values():
+            self._menu_action_group.add_action(action)
+
+    def _on_sort_by(self, sort_key: str) -> None:
+        """Handle sort by selection from menu."""
+        if self._sort_key != sort_key:
+            self._sort_key = sort_key
             self._refresh_sorted_entries(preserve_selection=True)
 
-    def _on_sort_direction_toggled(self, button: Gtk.ToggleButton) -> None:
-        self._sort_descending = button.get_active()
-        self._update_sort_direction_icon()
-        self._refresh_sorted_entries(preserve_selection=True)
+    def _on_sort_direction(self, descending: bool) -> None:
+        """Handle sort direction selection from menu."""
+        if self._sort_descending != descending:
+            self._sort_descending = descending
+            self._refresh_sorted_entries(preserve_selection=True)
+            self._update_sort_direction_states()
 
-    def _update_sort_direction_icon(self) -> None:
-        icon = "view-sort-descending-symbolic" if self._sort_descending else "view-sort-ascending-symbolic"
-        tooltip = "Sorted descending" if self._sort_descending else "Sorted ascending"
-        self.toolbar.sort_direction_button.set_icon_name(icon)
-        self.toolbar.sort_direction_button.set_tooltip_text(
-            f"{tooltip}. Click to toggle order"
-        )
+    def _update_view_button_icon(self) -> None:
+        """Update the split button icon based on current view mode."""
+        # Check which view is currently active
+        if hasattr(self.toolbar, '_current_view') and self.toolbar._current_view == "list":
+            icon = "view-list-symbolic"
+        else:
+            icon = "view-grid-symbolic"
+        
+        self.toolbar.sort_split_button.set_icon_name(icon)
+
+    def _update_sort_direction_states(self) -> None:
+        """Update the radio button states for sort direction."""
+        asc_action = self._menu_actions["sort-direction-asc"]
+        desc_action = self._menu_actions["sort-direction-desc"]
+        
+        asc_action.set_state(GLib.Variant.new_boolean(not self._sort_descending))
+        desc_action.set_state(GLib.Variant.new_boolean(self._sort_descending))
 
     def _create_menu_model(self) -> Gtk.PopoverMenu:
         if not self._menu_actions:
@@ -811,7 +859,7 @@ class FilePane(Gtk.Box):
 
 
         _set_enabled("download", self._is_remote and has_selection)
-        _set_enabled("upload", self._is_remote and local_has_selection)
+        _set_enabled("upload", (not self._is_remote) and has_selection)
         _set_enabled("rename", has_selection)
         _set_enabled("delete", has_selection)
         _set_enabled("new_folder", True)
@@ -936,17 +984,20 @@ class FilePane(Gtk.Box):
             if selected is not None:
                 selected_name = selected.name
 
-        filtered = [
+        # Filter for hidden files and store as raw entries
+        self._raw_entries = [
             entry
             for entry in self._cached_entries
             if self._show_hidden or not entry.name.startswith(".")
         ]
 
+        # Apply sorting to get final entries
+        self._entries = self._sort_entries(self._raw_entries)
+        
+        # Update the list store
         self._list_store.remove_all()
-        self._entries = []
         restored_selection: Optional[int] = None
-        for idx, entry in enumerate(filtered):
-            self._entries.append(entry)
+        for idx, entry in enumerate(self._entries):
             suffix = "/" if entry.is_dir else ""
             self._list_store.append(Gtk.StringObject.new(entry.name + suffix))
             if preserve_selection and selected_name == entry.name:
@@ -960,12 +1011,6 @@ class FilePane(Gtk.Box):
         self._update_menu_state()
 
 
-    def _on_show_hidden_toggled(self, button: Gtk.ToggleButton) -> None:
-        new_value = button.get_active()
-        if self._show_hidden == new_value:
-            return
-        self._show_hidden = new_value
-        self._apply_entry_filter(preserve_selection=True)
 
     # -- navigation helpers --------------------------------------------
 
@@ -991,29 +1036,8 @@ class FilePane(Gtk.Box):
         return dirs_sorted + files_sorted
 
     def _refresh_sorted_entries(self, *, preserve_selection: bool) -> None:
-        selected_name: Optional[str] = None
-        if preserve_selection:
-            selected_entry = self.get_selected_entry()
-            if selected_entry is not None:
-                selected_name = selected_entry.name
-
-        self._entries = self._sort_entries(self._raw_entries)
-        self._list_store.remove_all()
-        for entry in self._entries:
-            suffix = "/" if entry.is_dir else ""
-            self._list_store.append(Gtk.StringObject.new(entry.name + suffix))
-
-        if preserve_selection and selected_name is not None:
-            for index, entry in enumerate(self._entries):
-                if entry.name == selected_name:
-                    self._selection_model.select(index)
-                    break
-            else:
-                self._selection_model.unselect_all()
-        else:
-            self._selection_model.unselect_all()
-
-        self._update_menu_state()
+        # Simply re-apply the filter which now includes sorting
+        self._apply_entry_filter(preserve_selection=preserve_selection)
 
     def _on_grid_activate(self, _grid_view: Gtk.GridView, position: int) -> None:
         if position is not None and 0 <= position < len(self._entries):
@@ -1199,6 +1223,10 @@ class FileManagerWindow(Adw.Window):
         # Enable window controls (minimize, maximize, close) following GNOME HIG
         header_bar.set_show_start_title_buttons(True)
         header_bar.set_show_end_title_buttons(True)
+        
+        # Create menu button for headerbar
+        self._create_headerbar_menu(header_bar)
+        
         toolbar_view.add_top_bar(header_bar)
 
         self._toast_overlay = Adw.ToastOverlay()
@@ -1269,6 +1297,51 @@ class FileManagerWindow(Adw.Window):
         toast = Adw.Toast.new(message)
         self._toast_overlay.add_toast(toast)
         self._progress_toast = toast
+
+    def _create_headerbar_menu(self, header_bar: Adw.HeaderBar) -> None:
+        """Create and add menu button to headerbar."""
+        # Create menu model
+        menu_model = Gio.Menu()
+        
+        # Add "Show Hidden Files" toggle action
+        menu_model.append("Show Hidden Files", "win.show-hidden")
+        
+        # Create action group for window actions
+        self._window_action_group = Gio.SimpleActionGroup()
+        self.insert_action_group("win", self._window_action_group)
+        
+        # Create action for show hidden files
+        self._show_hidden_action = Gio.SimpleAction.new_stateful(
+            "show-hidden", 
+            None, 
+            GLib.Variant.new_boolean(False)
+        )
+        self._show_hidden_action.connect("activate", self._on_show_hidden_action)
+        self._window_action_group.add_action(self._show_hidden_action)
+        
+        # Create menu button
+        menu_button = Gtk.MenuButton()
+        menu_button.set_icon_name("open-menu-symbolic")
+        menu_button.set_menu_model(menu_model)
+        menu_button.set_tooltip_text("Main menu")
+        
+        # Add to headerbar
+        header_bar.pack_end(menu_button)
+
+    def _on_show_hidden_action(self, action: Gio.SimpleAction, _parameter: Optional[GLib.Variant]) -> None:
+        """Handle show hidden files action from menu."""
+        # Toggle the state
+        current_state = action.get_state().get_boolean()
+        new_state = not current_state
+        action.set_state(GLib.Variant.new_boolean(new_state))
+        
+        # Apply to both panes
+        self._left_pane._show_hidden = new_state
+        self._right_pane._show_hidden = new_state
+        
+        # Refresh both panes
+        self._left_pane._apply_entry_filter(preserve_selection=True)
+        self._right_pane._apply_entry_filter(preserve_selection=True)
 
     def _on_connected(self, *_args) -> None:
         self._show_progress(0.4, "Connected")
@@ -1583,7 +1656,7 @@ class FileManagerWindow(Adw.Window):
                     future = self._manager.upload_directory(path_obj, destination)
                 else:
                     future = self._manager.upload(path_obj, destination)
-                self._attach_refresh(future, refresh_remote=remote_pane)
+                self._attach_refresh(future, refresh_remote=self._right_pane)
         elif action == "download" and isinstance(payload, dict):
             source = payload.get("source")
             destination_base = payload.get("destination")
