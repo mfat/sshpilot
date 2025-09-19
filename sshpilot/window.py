@@ -2741,6 +2741,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to open known hosts editor: {e}")
 
+    def show_shortcut_editor(self):
+        """Launch the shortcut editor window"""
+        logger.info("Show shortcut editor window")
+        try:
+            from .shortcut_editor import ShortcutEditorWindow
+            editor = ShortcutEditorWindow(self)
+            editor.present()
+        except Exception as e:
+            logger.error(f"Failed to open shortcut editor: {e}")
+
     def show_preferences(self):
         """Show preferences dialog"""
         logger.info("Show preferences dialog")
@@ -2816,6 +2826,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         primary = '<Meta>' if mac else '<primary>'
 
         win = Gtk.ShortcutsWindow(transient_for=self, modal=True)
+
+        # Build header bar with shortcut editor button only once per overlay instance
+        if not hasattr(win, '_header_initialized'):
+            header_bar = Adw.HeaderBar()
+            header_bar.set_show_start_title_buttons(False)
+
+            edit_button = Gtk.Button.new_with_mnemonic(_("Edit _Shortcuts…"))
+            edit_button.add_css_class('flat')
+            edit_button.set_tooltip_text(_("Open the shortcut editor"))
+            edit_button.connect('clicked', lambda _btn: self.show_shortcut_editor())
+            header_bar.pack_end(edit_button)
+
+            win.set_titlebar(header_bar)
+            win._header_initialized = True
+            win._edit_shortcuts_button = edit_button
 
         section = Gtk.ShortcutsSection()
         section.set_property('title', _('Keyboard Shortcuts'))
