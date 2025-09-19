@@ -1112,6 +1112,12 @@ class TerminalWidget(Gtk.Box):
                     'cursor_color': '#000000',
                     'highlight_background': '#4A90E2',
                     'highlight_foreground': '#FFFFFF',
+                    'palette': [
+                        '#000000', '#CC0000', '#4E9A06', '#C4A000',
+                        '#3465A4', '#75507B', '#06989A', '#D3D7CF',
+                        '#555753', '#EF2929', '#8AE234', '#FCE94F',
+                        '#729FCF', '#AD7FA8', '#34E2E2', '#EEEEEC'
+                    ]
                 }
             
             # Set colors
@@ -1130,8 +1136,30 @@ class TerminalWidget(Gtk.Box):
             highlight_fg = Gdk.RGBA()
             highlight_fg.parse(profile.get('highlight_foreground', profile['foreground']))
             
+            # Prepare palette colors (16 ANSI colors)
+            palette_colors = None
+            if 'palette' in profile and profile['palette']:
+                palette_colors = []
+                for color_hex in profile['palette']:
+                    color = Gdk.RGBA()
+                    if color.parse(color_hex):
+                        palette_colors.append(color)
+                    else:
+                        logger.warning(f"Failed to parse palette color: {color_hex}")
+                        # Use a fallback color
+                        fallback = Gdk.RGBA()
+                        fallback.parse('#000000')
+                        palette_colors.append(fallback)
+                
+                # Ensure we have exactly 16 colors
+                while len(palette_colors) < 16:
+                    fallback = Gdk.RGBA()
+                    fallback.parse('#000000')
+                    palette_colors.append(fallback)
+                palette_colors = palette_colors[:16]  # Limit to 16 colors
+            
             # Apply colors to terminal
-            self.vte.set_colors(fg_color, bg_color, None)
+            self.vte.set_colors(fg_color, bg_color, palette_colors)
             self.vte.set_color_cursor(cursor_color)
             self.vte.set_color_highlight(highlight_bg)
             self.vte.set_color_highlight_foreground(highlight_fg)

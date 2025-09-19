@@ -65,11 +65,8 @@ class TerminalManager:
 
         def _set_terminal_colors():
             try:
-                fg = Gdk.RGBA(); fg.parse('rgb(0,0,0)')
-                bg = Gdk.RGBA(); bg.parse('rgb(255,255,255)')
-                terminal.vte.set_color_foreground(fg)
-                terminal.vte.set_color_background(bg)
-                terminal.vte.set_colors(fg, bg, None)
+                # Apply the configured theme instead of hardcoded colors
+                terminal.apply_theme()
                 terminal.vte.queue_draw()
                 if not terminal._connect_ssh():
                     logger.error('Failed to establish SSH connection')
