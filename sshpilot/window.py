@@ -157,6 +157,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # If startup_behavior == 'welcome', the welcome view is already shown by default
         except Exception as e:
             logger.error(f"Error handling startup behavior: {e}")
+        
+        # Mark startup as complete after a short delay to allow all initialization to finish
+        GLib.timeout_add(500, lambda: setattr(self, '_startup_complete', True) or False)
 
     def _install_sidebar_css(self):
         """Install sidebar focus CSS"""
@@ -1143,9 +1146,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         sidebar_box.append(search_container)
 
         # Connection list
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_vexpand(True)
+        self.connection_scrolled = Gtk.ScrolledWindow()
+        self.connection_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.connection_scrolled.set_vexpand(True)
         
         self.connection_list = Gtk.ListBox()
         self.connection_list.add_css_class("navigation-sidebar")
@@ -1435,8 +1438,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 f"Failed to add {get_primary_modifier_label()}+Enter shortcut: {e}"
             )
         
-        scrolled.set_child(self.connection_list)
-        sidebar_box.append(scrolled)
+        self.connection_scrolled.set_child(self.connection_list)
+        sidebar_box.append(self.connection_scrolled)
         
         # Sidebar toolbar
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -1909,6 +1912,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     def rebuild_connection_list(self):
         """Rebuild the connection list with groups"""
+        # Save current scroll position
+        scroll_position = None
+        if hasattr(self, 'connection_scrolled') and self.connection_scrolled:
+            vadj = self.connection_scrolled.get_vadjustment()
+            if vadj:
+                scroll_position = vadj.get_value()
+        
         # Clear existing rows
         child = self.connection_list.get_first_child()
         while child:
@@ -1928,6 +1938,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
             self._ungrouped_area_row = None
+            # Restore scroll position
+            if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
+                vadj = self.connection_scrolled.get_vadjustment()
+                if vadj:
+                    GLib.idle_add(lambda: vadj.set_value(scroll_position))
             return
 
         connections_dict = {conn.nickname: conn for conn in connections}
@@ -1971,6 +1986,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Store reference to ungrouped area (hidden by default)
         self._ungrouped_area_row = None
+        
+        # Restore scroll position
+        if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
+            vadj = self.connection_scrolled.get_vadjustment()
+            if vadj:
+                GLib.idle_add(lambda: vadj.set_value(scroll_position))
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list"""
         for group_info in hierarchy:
@@ -2113,7 +2134,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         logger.info("Showing welcome view")
 
     def _focus_connection_list_first_row(self):
-        """Focus the connection list and ensure the first row is selected."""
+        """Focus the connection list and ensure the first row is selected (startup only)."""
         try:
             if not hasattr(self, 'connection_list') or self.connection_list is None:
                 return False
@@ -2122,19 +2143,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if not self.connection_list.get_parent():
                 return False
                 
-            # If the list has no selection, select the first row
-            try:
-                selected_rows = list(self.connection_list.get_selected_rows())
-            except Exception:
-                selected_row = self.connection_list.get_selected_row()
-                selected_rows = [selected_row] if selected_row else []
-            first_row = self.connection_list.get_row_at_index(0)
-            if not selected_rows and first_row:
-                self._select_only_row(first_row)
+            # Only auto-select first row during initial startup, not during normal operations
+            # Check if this is being called during startup vs normal operations
+            if not hasattr(self, '_startup_complete'):
+                # During startup - select first row if no selection exists
+                try:
+                    selected_rows = list(self.connection_list.get_selected_rows())
+                except Exception:
+                    selected_row = self.connection_list.get_selected_row()
+                    selected_rows = [selected_row] if selected_row else []
+                first_row = self.connection_list.get_row_at_index(0)
+                if not selected_rows and first_row:
+                    self._select_only_row(first_row)
             
-            # Always focus the connection list on startup, regardless of current focus
-            # This ensures the connection list gets focus instead of the search entry
-            if first_row and self.connection_list.get_parent():
+            # Always focus the connection list when requested
+            if self.connection_list.get_parent():
                 self.connection_list.grab_focus()
         except Exception as e:
             logger.debug(f"Focus connection list failed: {e}")
@@ -4355,47 +4378,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self._disconnect_connection_terminals(connection)
                 self.connection_manager.remove_connection(connection)
 
-            def _restore_selection():
-                try:
-                    listbox = getattr(self, 'connection_list', None)
-                    if not listbox:
-                        return False
-
-                    target_row = None
-                    if neighbor_row and getattr(neighbor_row, 'get_parent', None):
-                        # Ensure the neighbor row is still part of the list box
-                        parent = neighbor_row.get_parent()
-                        if parent is listbox:
-                            target_row = neighbor_row
-
-                    if not target_row:
-                        # Try to keep whichever row GTK selected automatically
-                        try:
-                            target_row = listbox.get_selected_row()
-                        except Exception:
-                            target_row = None
-
-                    if not target_row:
-                        for row in listbox:
-                            if hasattr(row, 'connection'):
-                                target_row = row
-                                break
-
-                    if target_row and hasattr(listbox, 'select_row'):
-                        try:
-                            listbox.select_row(target_row)
-                        except Exception:
-                            pass
-
-                    try:
-                        listbox.grab_focus()
-                    except Exception:
-                        pass
-                except Exception:
-                    logger.debug("Failed to restore selection after deletion", exc_info=True)
-                return False
-
-            GLib.idle_add(_restore_selection)
+            # No automatic selection or focus changes after deletion
+            # Let the connection removal handler manage the UI state
         except Exception as e:
             logger.error(f"Failed to delete connections: {e}")
 
@@ -4601,19 +4585,25 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
 
             
+
     def on_connection_added(self, manager, connection):
-        """Handle new connection added to the connection manager"""
-        logger.info(f"New connection added: {connection.nickname}")
+        """Handle new connection added"""
         self.group_manager.connections.setdefault(connection.nickname, None)
         if connection.nickname not in self.group_manager.root_connections:
             self.group_manager.root_connections.append(connection.nickname)
             self.group_manager._save_groups()
         self.rebuild_connection_list()
-        
-                
+
     def on_connection_removed(self, manager, connection):
         """Handle connection removed from the connection manager"""
         logger.info(f"Connection removed: {connection.nickname}")
+
+        # Save current scroll position before any UI changes
+        scroll_position = None
+        if hasattr(self, 'connection_scrolled') and self.connection_scrolled:
+            vadj = self.connection_scrolled.get_vadjustment()
+            if vadj:
+                scroll_position = vadj.get_value()
 
         # Remove from UI if it exists
         if connection in self.connection_rows:
@@ -4657,59 +4647,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if connection in self.active_terminals:
             del self.active_terminals[connection]
 
+        # Restore scroll position without auto-selecting any row
+        def _restore_scroll_only():
+            if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
+                vadj = self.connection_scrolled.get_vadjustment()
+                if vadj:
+                    vadj.set_value(scroll_position)
+            return False
 
-
-    def on_connection_added(self, manager, connection):
-        """Handle new connection added"""
-        self.group_manager.connections.setdefault(connection.nickname, None)
-        if connection.nickname not in self.group_manager.root_connections:
-            self.group_manager.root_connections.append(connection.nickname)
-            self.group_manager._save_groups()
-        self.rebuild_connection_list()
-
-    def on_connection_removed(self, manager, connection):
-        """Handle connection removed (multi-tab aware)"""
-        # Remove from UI
-        if connection in self.connection_rows:
-            row = self.connection_rows[connection]
-            self.connection_list.remove(row)
-            del self.connection_rows[connection]
-
-        # Remove from group manager
-        self.group_manager.connections.pop(connection.nickname, None)
-        if connection.nickname in self.group_manager.root_connections:
-            self.group_manager.root_connections.remove(connection.nickname)
-        self.group_manager._save_groups()
-
-        # Close all terminals for this connection and clean up maps
-        terminals = list(self.connection_to_terminals.get(connection, []))
-        # Suppress confirmation while we programmatically close pages
-        self._suppress_close_confirmation = True
-        try:
-            for term in terminals:
-                try:
-                    page = self.tab_view.get_page(term)
-                    if page:
-                        self.tab_view.close_page(page)
-                except Exception:
-                    pass
-                try:
-                    if hasattr(term, 'disconnect'):
-                        term.disconnect()
-                except Exception:
-                    pass
-                # Remove reverse map entry for each terminal
-                try:
-                    if term in self.terminal_to_connection:
-                        del self.terminal_to_connection[term]
-                except Exception:
-                    pass
-        finally:
-            self._suppress_close_confirmation = False
-        if connection in self.connection_to_terminals:
-            del self.connection_to_terminals[connection]
-        if connection in self.active_terminals:
-            del self.active_terminals[connection]
+        # Use idle_add to restore scroll position after UI updates complete
+        GLib.idle_add(_restore_scroll_only)
 
     def on_connection_status_changed(self, manager, connection, is_connected):
         """Handle connection status change"""
