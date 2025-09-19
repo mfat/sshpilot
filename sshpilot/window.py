@@ -2814,12 +2814,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def show_shortcuts_window(self):
         """Display keyboard shortcuts using Gtk.ShortcutsWindow"""
-        if not hasattr(self, '_shortcuts_window') or self._shortcuts_window is None:
-            self._shortcuts_window = self._build_shortcuts_window()
-            try:
-                self.set_help_overlay(self._shortcuts_window)
-            except Exception:
-                pass
+        # Always rebuild to show current shortcuts (including user customizations)
+        self._shortcuts_window = self._build_shortcuts_window()
+        try:
+            self.set_help_overlay(self._shortcuts_window)
+        except Exception:
+            pass
         self._shortcuts_window.present()
 
     def _build_shortcuts_window(self):
@@ -2827,32 +2827,148 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         primary = '<Meta>' if mac else '<primary>'
 
         win = Gtk.ShortcutsWindow(transient_for=self, modal=True)
+        win.set_title(_('Keyboard Shortcuts'))
 
-        # Build header bar with shortcut editor button only once per overlay instance
-        if not hasattr(win, '_header_initialized'):
-            header_bar = Adw.HeaderBar()
-            header_bar.set_show_start_title_buttons(False)
+        # Build header bar with shortcut editor button
+        header_bar = Adw.HeaderBar()
+        header_bar.set_show_start_title_buttons(False)
 
-            edit_button = Gtk.Button.new_with_mnemonic(_("Edit _Shortcuts…"))
-            edit_button.add_css_class('flat')
-            edit_button.set_tooltip_text(_("Open the shortcut editor"))
-            edit_button.connect('clicked', lambda _btn: self.show_shortcut_editor())
-            header_bar.pack_end(edit_button)
+        edit_button = Gtk.Button.new_with_mnemonic(_("Edit _Shortcuts…"))
+        edit_button.add_css_class('flat')
+        edit_button.set_tooltip_text(_("Open the shortcut editor"))
+        edit_button.connect('clicked', lambda _btn: self.show_shortcut_editor())
+        header_bar.pack_end(edit_button)
 
-            win.set_titlebar(header_bar)
-            win._header_initialized = True
-            win._edit_shortcuts_button = edit_button
+        win.set_titlebar(header_bar)
 
         section = Gtk.ShortcutsSection()
         section.set_property('title', _('Keyboard Shortcuts'))
 
+        # Use enhanced static shortcuts that can show customizations without causing crashes
+        self._add_safe_current_shortcuts(section, primary)
+
+        win.add_section(section)
+        return win
+
+    def _add_safe_current_shortcuts(self, section, primary):
+        """Add shortcuts with current customizations using a safe approach"""
+        # Get current shortcuts safely
+        current_shortcuts = self._get_safe_current_shortcuts()
+        
+        # General shortcuts group
+        group_general = Gtk.ShortcutsGroup()
+        group_general.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Toggle Sidebar'), accelerator='F9'))
+        
+        # Add general shortcuts with current values
+        general_actions = [
+            ('quit', _('Quit')),
+            ('preferences', _('Preferences')),
+            ('help', _('Documentation')),
+            ('shortcuts', _('Keyboard Shortcuts')),
+            ('edit-ssh-config', _('SSH Config Editor')),
+        ]
+        
+        for action_name, title in general_actions:
+            shortcuts = current_shortcuts.get(action_name)
+            if shortcuts:
+                accelerator = ' '.join(shortcuts)
+                group_general.add_shortcut(Gtk.ShortcutsShortcut(
+                    title=title, accelerator=accelerator))
+        
+        section.add_group(group_general)
+
+        # Connection management shortcuts
+        group_connections = Gtk.ShortcutsGroup()
+        connection_actions = [
+            ('new-connection', _('New Connection')),
+            ('search', _('Search Connections')),
+            ('toggle-list', _('Focus Connection List')),
+            ('quick-connect', _('Quick Connect')),
+            ('open-new-connection-tab', _('Open New Tab')),
+            ('new-key', _('Copy Key to Server')),
+        ]
+        
+        for action_name, title in connection_actions:
+            shortcuts = current_shortcuts.get(action_name)
+            if shortcuts:
+                accelerator = ' '.join(shortcuts)
+                group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+                    title=title, accelerator=accelerator))
+        
+        section.add_group(group_connections)
+
+        # Terminal shortcuts
+        group_terminal = Gtk.ShortcutsGroup()
+        terminal_actions = [
+            ('local-terminal', _('Local Terminal')),
+            ('broadcast-command', _('Broadcast Command')),
+        ]
+        
+        for action_name, title in terminal_actions:
+            shortcuts = current_shortcuts.get(action_name)
+            if shortcuts:
+                accelerator = ' '.join(shortcuts)
+                group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
+                    title=title, accelerator=accelerator))
+        
+        section.add_group(group_terminal)
+
+        # Tab navigation shortcuts
+        group_tabs = Gtk.ShortcutsGroup()
+        tab_actions = [
+            ('tab-next', _('Next Tab')),
+            ('tab-prev', _('Previous Tab')),
+            ('tab-close', _('Close Tab')),
+            ('tab-overview', _('Tab Overview')),
+        ]
+        
+        for action_name, title in tab_actions:
+            shortcuts = current_shortcuts.get(action_name)
+            if shortcuts:
+                accelerator = ' '.join(shortcuts)
+                group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
+                    title=title, accelerator=accelerator))
+        
+        section.add_group(group_tabs)
+
+    def _get_safe_current_shortcuts(self):
+        """Safely get current shortcuts including customizations"""
+        shortcuts = {}
+        try:
+            app = self.get_application()
+            if not app:
+                return shortcuts
+            
+            # Get defaults first
+            if hasattr(app, 'get_registered_shortcut_defaults'):
+                defaults = app.get_registered_shortcut_defaults()
+                shortcuts.update(defaults)
+            
+            # Apply overrides
+            if hasattr(app, 'config') and app.config:
+                for action_name in shortcuts.keys():
+                    try:
+                        override = app.config.get_shortcut_override(action_name)
+                        if override is not None:
+                            if override:  # Not empty
+                                shortcuts[action_name] = override
+                            else:  # Disabled
+                                shortcuts.pop(action_name, None)
+                    except Exception:
+                        continue
+            
+        except Exception as e:
+            logger.debug(f"Error getting current shortcuts: {e}")
+        
+        return shortcuts
+
+    def _add_fallback_shortcuts(self, section, primary):
+        """Add fallback static shortcuts if dynamic generation fails"""
         # General shortcuts
         group_general = Gtk.ShortcutsGroup()
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Toggle Sidebar'), accelerator='F9'))
-        if mac:
-            group_general.add_shortcut(Gtk.ShortcutsShortcut(
-                title=_('Toggle Sidebar'), accelerator=f"{primary}b"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('SSH Config Editor'), accelerator=f"{primary}<Shift>e"))
         group_general.add_shortcut(Gtk.ShortcutsShortcut(
@@ -2870,12 +2986,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_connections.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('New Connection'), accelerator=f"{primary}n"))
         group_connections.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Local Terminal'), accelerator=f"{primary}<Shift>t"))
-        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Copy Key to Server'), accelerator=f"{primary}<Shift>k"))
-        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
-            title=_('Broadcast Command'), accelerator=f"{primary}<Shift>b"))
-        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Search Connections'), accelerator=f"{primary}f"))
         group_connections.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Focus Connection List'), accelerator=f"{primary}l"))
@@ -2883,9 +2993,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             title=_('Quick Connect'), accelerator=f"{primary}<Alt>c"))
         section.add_group(group_connections)
 
+        # Terminal shortcuts
+        group_terminal = Gtk.ShortcutsGroup()
+        group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Local Terminal'), accelerator=f"{primary}<Shift>t"))
+        group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Broadcast Command'), accelerator=f"{primary}<Shift>b"))
+        section.add_group(group_terminal)
+
         # Tab navigation shortcuts
         group_tabs = Gtk.ShortcutsGroup()
-
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Open New Tab'), accelerator=f"{primary}<Alt>n"))
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
@@ -2897,11 +3014,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_tabs.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Tab Overview'), accelerator=f"{primary}<Shift>Tab"))
         section.add_group(group_tabs)
-
-        win.add_section(section)
-
-
-        return win
 
     def toggle_list_focus(self):
         """Toggle focus between connection list and terminal"""

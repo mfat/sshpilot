@@ -384,6 +384,9 @@ class ShortcutEditorWindow(Adw.Window):
     def _apply_shortcuts(self):
         try:
             self._app.apply_shortcut_overrides()
+            # Notify parent window that shortcuts have changed
+            if hasattr(self._parent_window, '_shortcuts_window'):
+                self._parent_window._shortcuts_window = None  # Force rebuild
         except Exception as exc:
             logger.error('Failed to reapply shortcuts: %s', exc)
 
