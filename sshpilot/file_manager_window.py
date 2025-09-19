@@ -24,6 +24,7 @@ import pathlib
 import posixpath
 import shutil
 import threading
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -425,6 +426,8 @@ class PaneToolbar(Gtk.Box):
 class FilePane(Gtk.Box):
     """Represents a single pane in the manager."""
 
+    _TYPEAHEAD_TIMEOUT = 1.0
+
     __gsignals__ = {
         "path-changed": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "request-operation": (
@@ -519,6 +522,11 @@ class FilePane(Gtk.Box):
         self._add_context_controller(list_view)
         self._add_context_controller(grid_view)
 
+        for view in (list_view, grid_view):
+            controller = Gtk.EventControllerKey.new()
+            controller.connect("key-pressed", self._on_typeahead_key_pressed)
+            view.add_controller(controller)
+
         # Drag and drop controllers – these provide the visual affordance and
         # forward requests to the window which understands the context.
         drop_target = Gtk.DropTarget.new(Gio.File, Gdk.DragAction.COPY)
@@ -526,6 +534,9 @@ class FilePane(Gtk.Box):
         drop_target.connect("drop", self._on_drop)
         self.add_controller(drop_target)
         self._update_menu_state()
+
+        self._typeahead_buffer: str = ""
+        self._typeahead_last_time: float = 0.0
 
     # -- callbacks ------------------------------------------------------
 
@@ -783,6 +794,8 @@ class FilePane(Gtk.Box):
         self.toolbar.path_entry.set_text(path)
         self._selection_model.unselect_all()
         self._update_menu_state()
+        self._typeahead_buffer = ""
+        self._typeahead_last_time = 0.0
 
     # -- navigation helpers --------------------------------------------
 
@@ -824,6 +837,124 @@ class FilePane(Gtk.Box):
 
     def show_toast(self, text: str) -> None:
         self._overlay.add_toast(Adw.Toast.new(text))
+
+    # -- type-ahead search ----------------------------------------------
+
+    def _current_time(self) -> float:
+        getter = getattr(GLib, "get_monotonic_time", None)
+        if callable(getter):
+            try:
+                return getter() / 1_000_000
+            except Exception:
+                pass
+        return time.monotonic()
+
+    def _find_prefix_match(self, prefix: str, start_index: int) -> Optional[int]:
+        if not prefix or not self._entries:
+            return None
+
+        total = len(self._entries)
+        if total <= 0:
+            return None
+
+        start = 0 if start_index is None else start_index
+        if start < 0:
+            start = 0
+
+        prefix_casefold = prefix.casefold()
+        for offset in range(total):
+            index = (start + offset) % total
+            if self._entries[index].name.casefold().startswith(prefix_casefold):
+                return index
+        return None
+
+    def _scroll_to_position(self, position: int) -> None:
+        visible = self._stack.get_visible_child_name()
+        view: Optional[Gtk.Widget] = None
+        if visible == "list":
+            view = self._list_view
+        elif visible == "grid":
+            view = self._grid_view
+
+        if view is None:
+            return
+
+        scroll_to = getattr(view, "scroll_to", None)
+        if callable(scroll_to):
+            flags = getattr(Gtk, "ListScrollFlags", None)
+            none_flag = getattr(flags, "NONE", 0) if flags is not None else 0
+            try:
+                scroll_to(position, none_flag, 0.0)
+            except TypeError:
+                try:
+                    scroll_to(position, none_flag, 0)
+                except Exception:
+                    pass
+
+    def _on_typeahead_key_pressed(
+        self,
+        _controller: Gtk.EventControllerKey,
+        keyval: int,
+        _keycode: int,
+        state: Gdk.ModifierType,
+    ) -> bool:
+        if not self._entries:
+            return False
+
+        if state & (
+            Gdk.ModifierType.CONTROL_MASK
+            | Gdk.ModifierType.MOD1_MASK
+            | getattr(Gdk.ModifierType, "ALT_MASK", 0)
+            | getattr(Gdk.ModifierType, "SUPER_MASK", 0)
+        ):
+            return False
+
+        char_code = Gdk.keyval_to_unicode(keyval)
+        if not char_code:
+            return False
+
+        char = chr(char_code)
+        if not char or not char.isprintable():
+            return False
+
+        now = self._current_time()
+        if now - self._typeahead_last_time > self._TYPEAHEAD_TIMEOUT:
+            self._typeahead_buffer = ""
+
+        self._typeahead_last_time = now
+
+        repeat_cycle = (
+            bool(self._typeahead_buffer)
+            and len(self._typeahead_buffer) == 1
+            and char.casefold() == self._typeahead_buffer.casefold()
+        )
+
+        selected = self._selection_model.get_selected()
+        if selected is None or selected < 0:
+            selected_index = 0
+        else:
+            selected_index = selected
+
+        start_index = selected_index
+        if repeat_cycle:
+            start_index += 1
+            prefix = self._typeahead_buffer
+        else:
+            self._typeahead_buffer += char
+            prefix = self._typeahead_buffer
+
+        match = self._find_prefix_match(prefix, start_index)
+
+        if match is None and not repeat_cycle:
+            self._typeahead_buffer = char
+            match = self._find_prefix_match(self._typeahead_buffer, selected_index)
+
+        if match is None:
+            return False
+
+        self._selection_model.set_selected(match)
+        self._scroll_to_position(match)
+        return True
 
 
 class FileManagerWindow(Adw.Window):
