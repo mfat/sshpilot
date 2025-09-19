@@ -519,6 +519,68 @@ class FilePane(Gtk.Box):
         self._overlay = overlay
         self.append(overlay)
 
+        self._action_buttons: Dict[str, Gtk.Button] = {}
+        action_bar = Adw.ActionBar()
+        action_bar.add_css_class("inline-toolbar")
+
+        def _create_action_button(
+            name: str,
+            icon_name: str,
+            label: str,
+            callback: Callable[[Gtk.Button], None],
+        ) -> Gtk.Button:
+            button = Gtk.Button()
+            content = Adw.ButtonContent()
+            content.set_icon_name(icon_name)
+            content.set_label(label)
+            button.set_child(content)
+            button.connect("clicked", callback)
+            self._action_buttons[name] = button
+            return button
+
+        download_button = _create_action_button(
+            "download",
+            "document-save-symbolic",
+            "Download",
+            lambda _button: self._on_download_clicked(_button),
+        )
+        upload_button = _create_action_button(
+            "upload",
+            "document-send-symbolic",
+            "Upload",
+            lambda _button: self._on_upload_clicked(_button),
+        )
+        rename_button = _create_action_button(
+            "rename",
+            "document-edit-symbolic",
+            "Rename",
+            lambda _button: self._emit_entry_operation("rename"),
+        )
+        delete_button = _create_action_button(
+            "delete",
+            "user-trash-symbolic",
+            "Delete",
+            lambda _button: self._emit_entry_operation("delete"),
+        )
+        new_folder_button = _create_action_button(
+            "new_folder",
+            "folder-new-symbolic",
+            "New Folder",
+            lambda _button: self.emit("request-operation", "mkdir", None),
+        )
+
+        download_button.set_visible(self._is_remote)
+        upload_button.set_visible(not self._is_remote)
+
+        action_bar.pack_start(upload_button)
+        action_bar.pack_start(download_button)
+        action_bar.pack_end(delete_button)
+        action_bar.pack_end(rename_button)
+        action_bar.set_center_widget(new_folder_button)
+
+        self._action_bar = action_bar
+        self.append(action_bar)
+
         self.toolbar.list_toggle.connect("toggled", self._on_view_toggle, "list")
         self.toolbar.grid_toggle.connect("toggled", self._on_view_toggle, "grid")
         self.toolbar.path_entry.connect("activate", self._on_path_entry)
@@ -742,18 +804,23 @@ class FilePane(Gtk.Box):
             if action is not None:
                 action.set_enabled(enabled)
 
-        window = self.get_root()
-        local_has_selection = False
-        if self._is_remote and isinstance(window, FileManagerWindow):
-            local_pane = getattr(window, "_left_pane", None)
-            if isinstance(local_pane, FilePane):
-                local_has_selection = local_pane.get_selected_entry() is not None
+        def _set_button(name: str, enabled: bool) -> None:
+            button = self._action_buttons.get(name)
+            if button is not None:
+                button.set_sensitive(enabled)
+
 
         _set_enabled("download", self._is_remote and has_selection)
         _set_enabled("upload", self._is_remote and local_has_selection)
         _set_enabled("rename", has_selection)
         _set_enabled("delete", has_selection)
         _set_enabled("new_folder", True)
+
+        _set_button("download", self._is_remote and has_selection)
+        _set_button("upload", (not self._is_remote) and has_selection)
+        _set_button("rename", has_selection)
+        _set_button("delete", has_selection)
+        _set_button("new_folder", True)
 
     def _emit_entry_operation(self, action: str) -> None:
         entry = self.get_selected_entry()
