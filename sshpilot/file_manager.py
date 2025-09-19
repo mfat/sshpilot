@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 import paramiko
 from datetime import datetime
+from typing import Optional, Dict, Any
 
 if TYPE_CHECKING:
     from .connection_manager import Connection
@@ -25,6 +26,7 @@ class SftpFileManager(Adw.ApplicationWindow):
         restrict_to_file_manager: bool = False,
         auto_connect: bool = False,
     ):
+
         super().__init__(application=app)
 
         self.sftp_client = None
@@ -48,6 +50,7 @@ class SftpFileManager(Adw.ApplicationWindow):
 
         if connection is not None:
             self._apply_connection_defaults(connection)
+
 
         self.set_title("SFTP File Manager")
         self.set_default_size(1200, 800)
@@ -91,6 +94,7 @@ class SftpFileManager(Adw.ApplicationWindow):
         password = getattr(connection, "password", None)
         if isinstance(password, str) and password:
             self.prefill_password = password
+
         
     def setup_ui(self):
         # Main content
@@ -284,6 +288,7 @@ class SftpFileManager(Adw.ApplicationWindow):
             host_row.set_text(self.prefill_host)
         else:
             host_row.set_text("localhost")
+
         host_group.add(host_row)
         form_box.append(host_group)
 
@@ -292,6 +297,7 @@ class SftpFileManager(Adw.ApplicationWindow):
         port_row = Adw.EntryRow()
         port_row.set_title("Port")
         port_row.set_text(str(self.prefill_port))
+
         port_group.add(port_row)
         form_box.append(port_group)
 
@@ -301,6 +307,7 @@ class SftpFileManager(Adw.ApplicationWindow):
         user_row.set_title("Username")
         if self.prefill_username:
             user_row.set_text(self.prefill_username)
+
         user_group.add(user_row)
         form_box.append(user_group)
 
@@ -310,6 +317,7 @@ class SftpFileManager(Adw.ApplicationWindow):
         pass_row.set_title("Password")
         if self.prefill_password:
             pass_row.set_text(self.prefill_password)
+
         pass_group.add(pass_row)
         form_box.append(pass_group)
         
@@ -318,10 +326,22 @@ class SftpFileManager(Adw.ApplicationWindow):
         dialog.add_response("connect", "Connect")
         dialog.set_response_appearance("connect", Adw.ResponseAppearance.SUGGESTED)
         
-        dialog.connect("response", lambda d, r: self.on_connection_response(
-            d, r, host_row.get_text(), int(port_row.get_text() or 22), 
-            user_row.get_text(), pass_row.get_text()
-        ))
+        def _on_response(dialog_ref, response_id):
+            port_text = port_row.get_text()
+            try:
+                port_int = int(port_text or 22)
+            except (TypeError, ValueError):
+                port_int = 22
+            self.on_connection_response(
+                dialog_ref,
+                response_id,
+                host_row.get_text(),
+                port_int,
+                user_row.get_text(),
+                pass_row.get_text(),
+            )
+
+        dialog.connect("response", _on_response)
         
         dialog.present()
     
@@ -330,40 +350,82 @@ class SftpFileManager(Adw.ApplicationWindow):
         if response == "connect":
             self.connect_sftp(host, port, username, password)
     
-    def connect_sftp(self, host, port, username, password):
+    def connect_sftp(self, host: str, port: int, username: str, password: Optional[str]):
+        self._initial_connection_info = {
+            "host": host,
+            "port": port,
+            "username": username,
+        }
+        if password:
+            self._initial_connection_info["password"] = password
+        self._auto_focus_remote = True
+
         def do_connect():
             try:
                 self.ssh_client = paramiko.SSHClient()
                 self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                self.ssh_client.connect(host, port, username, password)
+                self.ssh_client.connect(
+                    host,
+                    port,
+                    username=username or None,
+                    password=password or None,
+                )
                 self.sftp_client = self.ssh_client.open_sftp()
-                
+
                 GLib.idle_add(self.on_connected, host)
             except Exception as e:
                 GLib.idle_add(self.on_connection_error, str(e))
-        
+
         threading.Thread(target=do_connect, daemon=True).start()
-        self.status_label.set_text("Connecting...")
+        self.status_label.set_text(f"Connecting to {host}…")
+        self.connect_btn.set_sensitive(False)
+
+    def _attempt_initial_connection(self):
+        host = self._initial_connection_info.get("host")
+        username = self._initial_connection_info.get("username")
+        if not host or not username:
+            return False
+
+        port_value = self._initial_connection_info.get("port", 22)
+        try:
+            port = int(port_value)
+        except (TypeError, ValueError):
+            port = 22
+
+        password = self._initial_connection_info.get("password")
+        self.connect_sftp(host, port, username, password)
+        return False
     
     def on_connected(self, host):
         self.status_label.set_text(f"Connected to {host}")
+        self.connect_btn.set_sensitive(True)
         self.connect_btn.set_label("Disconnect")
         self.connect_btn.remove_css_class("suggested-action")
         self.connect_btn.add_css_class("destructive-action")
         self.connect_btn.disconnect_by_func(self.show_connection_dialog)
         self.connect_btn.connect("clicked", self.disconnect_sftp)
-        
+
         self.remote_path_entry.set_sensitive(True)
         if self.upload_btn:
             self.upload_btn.set_sensitive(True)
         if self.download_btn:
             self.download_btn.set_sensitive(True)
         
+
         self.refresh_remote_view()
+
+        if getattr(self, "remote_tree_view", None) and self._auto_focus_remote:
+            try:
+                self.remote_tree_view.grab_focus()
+            except Exception:
+                pass
+            self._auto_focus_remote = False
     
     def on_connection_error(self, error):
         self.status_label.set_text("Connection failed")
-        
+        self.connect_btn.set_sensitive(True)
+        self.connect_btn.set_label("Connect to Server")
+
         dialog = Adw.MessageDialog(
             transient_for=self,
             heading="Connection Error",
@@ -377,11 +439,12 @@ class SftpFileManager(Adw.ApplicationWindow):
             self.sftp_client.close()
         if self.ssh_client:
             self.ssh_client.close()
-        
+
         self.sftp_client = None
         self.ssh_client = None
-        
+
         self.status_label.set_text("Not connected")
+        self.connect_btn.set_sensitive(True)
         self.connect_btn.set_label("Connect to Server")
         self.connect_btn.remove_css_class("destructive-action")
         self.connect_btn.add_css_class("suggested-action")
@@ -629,3 +692,4 @@ class SftpFileManagerApp(Adw.Application):
 if __name__ == "__main__":
     app = SftpFileManagerApp()
     app.run()
+

@@ -53,6 +53,7 @@ from .groups import GroupManager
 from .sidebar import GroupRow, ConnectionRow, build_sidebar
 
 from .file_manager import launch_sftp_file_manager_for_connection
+
 from .welcome_page import WelcomePage
 from .actions import WindowActions, register_window_actions
 from . import shutdown
@@ -60,7 +61,6 @@ from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos, get_config_dir
 from .ssh_utils import ensure_writable_ssh_home
-from .scp_utils import assemble_scp_transfer_args
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +101,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_rows = {}   # connection -> row_widget
         self._context_menu_row = None
         self._file_manager_windows: Dict[Connection, Any] = {}
+
         # Hide hosts toggle state
         try:
             self._hide_hosts = bool(self.config.get_setting('ui.hide_hosts', False))
@@ -1499,9 +1500,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.copy_key_button.connect('clicked', self.on_copy_key_to_server_clicked)
         self.connection_toolbar.append(self.copy_key_button)
 
-        # SCP transfer button
+        # SFTP file manager button
         self.scp_button = Gtk.Button.new_from_icon_name('document-send-symbolic')
         self.scp_button.set_tooltip_text(_('Open SFTP transfer manager'))
+
         self.scp_button.set_sensitive(False)
         self.scp_button.connect('clicked', self.on_scp_button_clicked)
         self.connection_toolbar.append(self.scp_button)
@@ -3434,6 +3436,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def on_scp_button_clicked(self, button):
         """Open the integrated SFTP manager for the selected connection."""
+
         try:
             selected_row = self.connection_list.get_selected_row()
             if not selected_row:
@@ -3475,70 +3478,30 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             prompt.set_default_response('download')
             prompt.set_close_response('cancel')
 
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
 
-            remote_label = Gtk.Label(label=_('Remote path(s) (one per line)'))
-            remote_label.set_halign(Gtk.Align.START)
-            remote_label.set_wrap(True)
-            box.append(remote_label)
+            app = self.get_application()
+            if app is None:
+                logger.warning('Cannot open SFTP file manager without application reference')
+                return
 
-            remote_buffer = Gtk.TextBuffer()
-            remote_view = Gtk.TextView(buffer=remote_buffer)
-            remote_view.set_wrap_mode(Gtk.WrapMode.NONE)
+            connection_info = {
+                'host': host_value,
+                'port': int(getattr(connection, 'port', 22) or 22),
+                'username': getattr(connection, 'username', ''),
+            }
+            password = getattr(connection, 'password', None)
+            if password:
+                connection_info['password'] = password
+
+            file_manager = SftpFileManager(app, connection_info=connection_info)
             try:
-                remote_view.set_monospace(True)
+                file_manager.set_transient_for(self)
             except Exception:
                 pass
-
-            remote_scroller = Gtk.ScrolledWindow()
-            remote_scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-            remote_scroller.set_min_content_height(96)
-            remote_scroller.set_child(remote_view)
-            box.append(remote_scroller)
-
-            dest_row = Adw.EntryRow(title=_('Local destination'))
-            try:
-                default_download_dir = Path.home() / 'Downloads'
-                dest_row.set_text(str(default_download_dir))
-            except Exception:
-                dest_row.set_text('~/')
-            box.append(dest_row)
-
-            prompt.set_extra_child(box)
-
-            def _update_state(*_args):
-                start_iter = remote_buffer.get_start_iter()
-                end_iter = remote_buffer.get_end_iter()
-                remote_text = remote_buffer.get_text(start_iter, end_iter, False).strip()
-                has_remote = bool(self._parse_remote_sources_text(remote_text))
-                has_dest = bool(dest_row.get_text().strip())
-                try:
-                    prompt.set_response_enabled('download', has_remote and has_dest)
-                except Exception:
-                    pass
-
-            remote_buffer.connect('changed', _update_state)
-            dest_row.connect('notify::text', _update_state)
-            _update_state()
-
-            def _on_response(dlg, response):
-                if response != 'download':
-                    dlg.close()
-                    return
-                start_iter = remote_buffer.get_start_iter()
-                end_iter = remote_buffer.get_end_iter()
-                remote_text = remote_buffer.get_text(start_iter, end_iter, False)
-                sources = self._parse_remote_sources_text(remote_text)
-                destination = dest_row.get_text().strip()
-                dlg.close()
-                if not sources or not destination:
-                    return
-                self._start_scp_transfer(connection, sources, destination, direction='download')
-
-            prompt.connect('response', _on_response)
-            prompt.present()
+            self._last_sftp_file_manager = file_manager
+            file_manager.present()
         except Exception as e:
-            logger.error(f'SCP download prompt failed: {e}')
+            logger.error(f'Failed to open SFTP file manager: {e}')
 
     def on_manage_files_button_clicked(self, button):
         """Handle manage files button click from toolbar"""
@@ -4173,471 +4136,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         logger.debug(f"Main window: Final argv: {argv}")
         return argv
 
-    def _on_upload_files_chosen(self, dialog, result, connection):
-        try:
-            files_model = dialog.open_multiple_finish(result)
-            if not files_model or files_model.get_n_items() == 0:
-                return
-            files = [files_model.get_item(i) for i in range(files_model.get_n_items())]
-
-            prompt = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_('Remote destination'),
-                body=_('Enter a remote directory (e.g., ~/ or /var/tmp). Files will be uploaded using scp.')
-            )
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            dest_row = Adw.EntryRow(title=_('Remote directory'))
-            dest_row.set_text('~')
-            box.append(dest_row)
-            prompt.set_extra_child(box)
-            prompt.add_response('cancel', _('Cancel'))
-            prompt.add_response('upload', _('Upload'))
-            prompt.set_default_response('upload')
-            prompt.set_close_response('cancel')
-
-            def _go(d, resp):
-                d.close()
-                if resp != 'upload':
-                    return
-                remote_dir = dest_row.get_text().strip() or '~'
-                self._start_scp_transfer(
-                    connection,
-                    [f.get_path() for f in files],
-                    remote_dir,
-                    direction='upload',
-                )
-
-            prompt.connect('response', _go)
-            prompt.present()
-        except Exception as e:
-            logger.error(f'File selection failed: {e}')
-
-    def _parse_remote_sources_text(self, text: str) -> List[str]:
-        """Parse manual remote path input into a list of usable paths."""
-        stripped = (text or '').strip()
-        if not stripped:
-            return []
-        lines = [line.strip() for line in stripped.splitlines() if line.strip()]
-        if len(lines) > 1:
-            return lines
-        try:
-            return [token for token in shlex.split(stripped) if token]
-        except ValueError:
-            return [stripped]
-
-    def _start_scp_transfer(self, connection, sources, destination, *, direction: str):
-        """Run scp using the same terminal window layout as ssh-copy-id."""
-        try:
-            self._show_scp_terminal_window(connection, sources, destination, direction)
-        except Exception as e:
-            logger.error(f'scp {direction} failed to start: {e}')
-
-
-    def _show_scp_terminal_window(self, connection, sources, destination, direction):
-        try:
-            host_value = _get_connection_host(connection)
-            target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
-
-            if direction == 'upload':
-                title_text = _('Upload files (scp)')
-                subtitle_text = _('Uploading to {target}:{path}').format(target=target, path=destination)
-                info_text = _('We will use scp to upload file(s) to the selected server.')
-                start_message = _('Starting upload…')
-                success_message = _('Upload finished successfully.')
-                failure_message = _('Upload failed. See output above.')
-                result_heading_ok = _('Upload complete')
-                result_heading_fail = _('Upload failed')
-                result_body_ok = _('Files uploaded to {target}:{path}').format(target=target, path=destination)
-            elif direction == 'download':
-                title_text = _('Download files (scp)')
-                subtitle_text = _('Downloading from {target}').format(target=target)
-                info_text = _('We will use scp to download file(s) from the selected server into {dest}.').format(dest=destination)
-                start_message = _('Starting download…')
-                success_message = _('Download finished successfully.')
-                failure_message = _('Download failed. See output above.')
-                result_heading_ok = _('Download complete')
-                result_heading_fail = _('Download failed')
-                result_body_ok = _('Files downloaded to {dest}').format(dest=destination)
-            else:
-                raise ValueError(f'Unsupported scp direction: {direction}')
-
-            dlg = Adw.Window()
-            dlg.set_transient_for(self)
-            dlg.set_modal(True)
-            try:
-                dlg.set_title(title_text)
-            except Exception:
-                pass
-            try:
-                dlg.set_default_size(920, 520)
-            except Exception:
-                pass
-
-            header = Adw.HeaderBar()
-            title_widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            title_label = Gtk.Label(label=title_text)
-            title_label.set_halign(Gtk.Align.START)
-            subtitle_label = Gtk.Label(label=subtitle_text)
-            subtitle_label.set_halign(Gtk.Align.START)
-            try:
-                title_label.add_css_class('title-2')
-                subtitle_label.add_css_class('dim-label')
-            except Exception:
-                pass
-            title_widget.append(title_label)
-            title_widget.append(subtitle_label)
-            header.set_title_widget(title_widget)
-
-            cancel_btn = Gtk.Button(label=_('Cancel'))
-            try:
-                cancel_btn.add_css_class('flat')
-            except Exception:
-                pass
-            header.pack_start(cancel_btn)
-
-            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-            content_box.set_hexpand(True)
-            content_box.set_vexpand(True)
-            try:
-                content_box.set_margin_top(12)
-                content_box.set_margin_bottom(12)
-                content_box.set_margin_start(6)
-                content_box.set_margin_end(6)
-            except Exception:
-                pass
-
-            info_lbl = Gtk.Label(label=info_text)
-            info_lbl.set_halign(Gtk.Align.START)
-            try:
-                info_lbl.add_css_class('dim-label')
-                info_lbl.set_wrap(True)
-            except Exception:
-                pass
-            content_box.append(info_lbl)
-
-            term_widget = TerminalWidget(connection, self.config, self.connection_manager)
-            try:
-                term_widget._set_connecting_overlay_visible(False)
-                setattr(term_widget, '_suppress_disconnect_banner', True)
-                term_widget._set_disconnected_banner_visible(False)
-            except Exception:
-                pass
-            term_widget.set_hexpand(True)
-            term_widget.set_vexpand(True)
-            content_box.append(term_widget)
-
-            root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            root_box.append(header)
-            root_box.append(content_box)
-            dlg.set_content(root_box)
-
-            def _on_cancel(btn):
-                try:
-                    if hasattr(self, '_scp_askpass_helpers'):
-                        for helper_path in getattr(self, '_scp_askpass_helpers', []):
-                            try:
-                                os.unlink(helper_path)
-                            except Exception:
-                                pass
-                        self._scp_askpass_helpers.clear()
-                except Exception:
-                    pass
-
-                try:
-                    if hasattr(term_widget, 'disconnect'):
-                        term_widget.disconnect()
-                except Exception:
-                    pass
-                dlg.close()
-
-            cancel_btn.connect('clicked', _on_cancel)
-
-            argv = self._build_scp_argv(
-                connection,
-                sources,
-                destination,
-                direction=direction,
-                known_hosts_path=self.connection_manager.known_hosts_path,
-            )
-
-            env = os.environ.copy()
-
-            if hasattr(self, '_scp_askpass_env') and self._scp_askpass_env:
-                env.update(self._scp_askpass_env)
-                logger.debug(f"SCP: Using askpass environment for key passphrase: {list(self._scp_askpass_env.keys())}")
-                self._scp_askpass_env = {}
-
-            if getattr(self, '_scp_strip_askpass', False):
-                env.pop('SSH_ASKPASS', None)
-                env.pop('SSH_ASKPASS_REQUIRE', None)
-                logger.debug('SCP: Removed SSH_ASKPASS variables for interactive password prompt')
-                self._scp_strip_askpass = False
-
-                try:
-                    keyfile = getattr(connection, 'keyfile', '') or ''
-                    if keyfile and os.path.isfile(keyfile):
-                        if hasattr(self, 'connection_manager') and self.connection_manager:
-                            key_prepared = self.connection_manager.prepare_key_for_connection(keyfile)
-                            if key_prepared:
-                                logger.debug(f"SCP: Key prepared for connection: {keyfile}")
-                            else:
-                                logger.warning(f"SCP: Failed to prepare key for connection: {keyfile}")
-                except Exception as e:
-                    logger.warning(f"SCP: Error preparing key for connection: {e}")
-            else:
-                logger.debug('SCP: Password authentication handled by sshpass in command line')
-
-            if os.path.exists('/app/bin'):
-                current_path = env.get('PATH', '')
-                if '/app/bin' not in current_path:
-                    env['PATH'] = f"/app/bin:{current_path}"
-
-            cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
-            envv = [f"{k}={v}" for k, v in env.items()]
-            logger.debug(f"SCP: Final environment variables: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
-            logger.debug(f"SCP: Command line: {cmdline}")
-
-            def _feed_colored_line(text: str, color: str):
-                colors = {
-                    'red': '\x1b[31m',
-                    'green': '\x1b[32m',
-                    'yellow': '\x1b[33m',
-                    'blue': '\x1b[34m',
-                }
-                prefix = colors.get(color, '')
-                try:
-                    term_widget.vte.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
-                except Exception:
-                    pass
-
-            _feed_colored_line(start_message, 'yellow')
-
-            try:
-                term_widget.vte.spawn_async(
-                    Vte.PtyFlags.DEFAULT,
-                    os.path.expanduser('~') or '/',
-                    ['bash', '-lc', cmdline],
-                    envv,
-                    GLib.SpawnFlags.DEFAULT,
-                    None,
-                    None,
-                    -1,
-                    None,
-                    None
-                )
-
-                def _on_scp_exited(vte, status):
-                    exit_code = None
-                    try:
-                        if os.WIFEXITED(status):
-                            exit_code = os.WEXITSTATUS(status)
-                        else:
-                            exit_code = status if 0 <= int(status) < 256 else ((int(status) >> 8) & 0xFF)
-                    except Exception:
-                        try:
-                            exit_code = int(status)
-                        except Exception:
-                            exit_code = status
-                    ok = (exit_code == 0)
-                    if ok:
-                        _feed_colored_line(success_message, 'green')
-                    else:
-                        _feed_colored_line(failure_message, 'red')
-
-                    def _present_result_dialog():
-                        try:
-                            if hasattr(self, '_scp_askpass_helpers'):
-                                for helper_path in getattr(self, '_scp_askpass_helpers', []):
-                                    try:
-                                        os.unlink(helper_path)
-                                    except Exception:
-                                        pass
-                                self._scp_askpass_helpers.clear()
-                        except Exception:
-                            pass
-
-                        msg = Adw.MessageDialog(
-                            transient_for=dlg,
-                            modal=True,
-                            heading=result_heading_ok if ok else result_heading_fail,
-                            body=(result_body_ok if ok else _('scp exited with an error. Please review the log output.')),
-                        )
-                        msg.add_response('ok', _('OK'))
-                        msg.set_default_response('ok')
-                        msg.set_close_response('ok')
-                        msg.present()
-                        return False
-
-                    GLib.idle_add(_present_result_dialog)
-
-                try:
-                    term_widget.vte.connect('child-exited', _on_scp_exited)
-                except Exception:
-                    pass
-            except Exception as e:
-                logger.error(f'Failed to spawn scp in TerminalWidget: {e}')
-                dlg.close()
-                return
-
-            dlg.present()
-        except Exception as e:
-            logger.error(f'Failed to open scp terminal window: {e}')
-    def _build_scp_argv(
-        self,
-        connection,
-        sources,
-        destination,
-        *,
-        direction: str,
-        known_hosts_path: Optional[str] = None,
-    ):
-        argv = ['scp', '-v']
-        host_value = _get_connection_host(connection)
-        target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
-        transfer_sources, transfer_destination = assemble_scp_transfer_args(
-            target,
-            sources,
-            destination,
-            direction,
-        )
-        # Port
-        try:
-            if getattr(connection, 'port', 22) and connection.port != 22:
-                argv += ['-P', str(connection.port)]
-        except Exception:
-            pass
-        # Auth/SSH options similar to ssh-copy-id
-        try:
-            cfg = Config()
-            ssh_cfg = cfg.get_ssh_config() if hasattr(cfg, 'get_ssh_config') else {}
-            strict_val = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
-            auto_add = bool(ssh_cfg.get('auto_add_host_keys', True))
-            if strict_val:
-                argv += ['-o', f'StrictHostKeyChecking={strict_val}']
-            elif auto_add:
-                argv += ['-o', 'StrictHostKeyChecking=accept-new']
-        except Exception:
-            argv += ['-o', 'StrictHostKeyChecking=accept-new']
-
-        if known_hosts_path:
-            argv += ['-o', f'UserKnownHostsFile={known_hosts_path}']
-        # Prefer password if selected
-        prefer_password = False
-        key_mode = 0
-        keyfile = getattr(connection, 'keyfile', '') or ''
-        try:
-            auth_method = int(getattr(connection, 'auth_method', 0) or 0)
-            prefer_password = (auth_method == 1)
-        except Exception:
-            auth_method = 0
-            prefer_password = False
-        has_saved_password = bool(self.connection_manager.get_password(host_value, connection.username)) if hasattr(self, 'connection_manager') and self.connection_manager else False
-        combined_auth = (auth_method == 0 and has_saved_password)
-        try:
-            key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
-        except Exception:
-            key_mode = 0
-        try:
-            keyfile_ok = bool(keyfile) and os.path.isfile(keyfile)
-        except Exception:
-            keyfile_ok = False
-        # Handle authentication with saved credentials
-        if key_mode == 1 and keyfile_ok:
-            argv += ['-i', keyfile, '-o', 'IdentitiesOnly=yes']
-            
-            # Try to get saved passphrase for the key
-            try:
-                if hasattr(self, 'connection_manager') and self.connection_manager:
-                    saved_passphrase = self.connection_manager.get_key_passphrase(keyfile)
-                    if saved_passphrase:
-                        # Use the secure askpass script for passphrase authentication
-                        # This avoids storing passphrases in plain text temporary files
-                        from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
-                        askpass_env = get_ssh_env_with_forced_askpass()
-                        # Store for later use in the main execution
-                        if not hasattr(self, '_scp_askpass_env'):
-                            self._scp_askpass_env = {}
-                        self._scp_askpass_env.update(askpass_env)
-                        logger.debug(f"SCP: Stored askpass environment for key passphrase: {list(askpass_env.keys())}")
-                        
-                        # Add SSH options to force public key authentication and prevent password fallback
-                        argv += get_scp_ssh_options()
-            except Exception as e:
-                logger.debug(f"Failed to get saved passphrase for SCP: {e}")
-                
-        elif prefer_password or combined_auth:
-            if prefer_password:
-                argv += ['-o', 'PreferredAuthentications=password']
-                if getattr(connection, 'pubkey_auth_no', False):
-                    argv += ['-o', 'PubkeyAuthentication=no']
-            else:
-                argv += [
-                    '-o',
-                    'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
-                ]
-            
-            # Try to get saved password
-            try:
-                if hasattr(self, 'connection_manager') and self.connection_manager:
-                    saved_password = self.connection_manager.get_password(host_value, connection.username)
-                    if saved_password:
-                        # Use sshpass for password authentication
-                        import shutil
-                        sshpass_path = None
-                        
-                        # Check if sshpass is available and executable
-                        if os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
-                            sshpass_path = '/app/bin/sshpass'
-                            logger.debug("Found sshpass at /app/bin/sshpass")
-                        elif shutil.which('sshpass'):
-                            sshpass_path = shutil.which('sshpass')
-                            logger.debug(f"Found sshpass in PATH: {sshpass_path}")
-                        else:
-                            logger.debug("sshpass not found or not executable")
-                        
-                        if sshpass_path:
-                            # Use the same approach as ssh_password_exec.py for consistency
-                            from .ssh_password_exec import _mk_priv_dir, _write_once_fifo
-                            import threading
-                            
-                            # Create private temp directory and FIFO
-                            tmpdir = _mk_priv_dir()
-                            fifo = os.path.join(tmpdir, "pw.fifo")
-                            os.mkfifo(fifo, 0o600)
-                            
-                            # Start writer thread that writes the password exactly once
-                            t = threading.Thread(target=_write_once_fifo, args=(fifo, saved_password), daemon=True)
-                            t.start()
-                            
-                            # Use sshpass with FIFO
-                            argv = [sshpass_path, "-f", fifo] + argv
-                            
-                            logger.debug("Using sshpass with FIFO for SCP password authentication")
-                            
-                            # Store tmpdir for cleanup (will be cleaned up when process exits)
-                            def cleanup_tmpdir():
-                                try:
-                                    import shutil
-                                    shutil.rmtree(tmpdir, ignore_errors=True)
-                                except Exception:
-                                    pass
-                            import atexit
-                            atexit.register(cleanup_tmpdir)
-                        else:
-                            # sshpass not available – allow interactive password prompt
-                            logger.warning("SCP: sshpass unavailable, falling back to interactive prompt")
-                            self._scp_strip_askpass = True
-                    else:
-                        # No saved password - will use interactive prompt
-                        logger.debug("SCP: Password auth selected but no saved password - using interactive prompt")
-            except Exception as e:
-                logger.debug(f"Failed to get saved password for SCP: {e}")
-        
-        for p in transfer_sources:
-            argv.append(p)
-        argv.append(transfer_destination)
-        return argv
 
     def on_delete_connection_clicked(self, button):
         """Handle delete connection button click"""
