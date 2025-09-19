@@ -21,6 +21,8 @@ from __future__ import annotations
 import dataclasses
 import os
 import pathlib
+import posixpath
+import shutil
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
@@ -506,12 +508,20 @@ class FilePane(Gtk.Box):
         self._suppress_history_push: bool = False
         self._selection_model.connect("selection-changed", self._on_selection_changed)
 
+        self._menu_actions: Dict[str, Gio.SimpleAction] = {}
+        self._menu_action_group = Gio.SimpleActionGroup()
+        self.insert_action_group("pane", self._menu_action_group)
+        self._menu_popover: Gtk.PopoverMenu = self._create_menu_model()
+        self._add_context_controller(list_view)
+        self._add_context_controller(grid_view)
+
         # Drag and drop controllers – these provide the visual affordance and
         # forward requests to the window which understands the context.
         drop_target = Gtk.DropTarget.new(Gio.File, Gdk.DragAction.COPY)
         drop_target.connect("accept", lambda *_: True)
         drop_target.connect("drop", self._on_drop)
         self.add_controller(drop_target)
+        self._update_menu_state()
 
     # -- callbacks ------------------------------------------------------
 
@@ -565,7 +575,120 @@ class FilePane(Gtk.Box):
             image.set_from_icon_name("text-x-generic-symbolic")
 
     def _on_selection_changed(self, model, position, n_items):
-        pass  # Selection feedback handled by double click gestures (future)
+        self._update_menu_state()
+
+    def _create_menu_model(self) -> Gtk.PopoverMenu:
+        if not self._menu_actions:
+            def _add_action(name: str, callback: Callable[[], None]) -> None:
+                action = Gio.SimpleAction.new(name, None)
+
+                def _on_activate(_action: Gio.SimpleAction, _param: Optional[GLib.Variant]) -> None:
+                    callback()
+
+                action.connect("activate", _on_activate)
+                self._menu_action_group.add_action(action)
+                self._menu_actions[name] = action
+
+            _add_action("download", self._on_menu_download)
+            _add_action("upload", self._on_menu_upload)
+            _add_action("rename", lambda: self._emit_entry_operation("rename"))
+            _add_action("delete", lambda: self._emit_entry_operation("delete"))
+            _add_action("new_folder", lambda: self.emit("request-operation", "mkdir", None))
+
+        menu_model = Gio.Menu()
+        menu_model.append("Download", "pane.download")
+        menu_model.append("Upload…", "pane.upload")
+
+        manage_section = Gio.Menu()
+        manage_section.append("Rename…", "pane.rename")
+        manage_section.append("Delete", "pane.delete")
+        menu_model.append_section(None, manage_section)
+        menu_model.append("New Folder", "pane.new_folder")
+
+        popover = Gtk.PopoverMenu.new_from_model(menu_model)
+        popover.set_has_arrow(True)
+        return popover
+
+    def _add_context_controller(self, widget: Gtk.Widget) -> None:
+        gesture = Gtk.GestureClick()
+        gesture.set_button(Gdk.BUTTON_SECONDARY)
+
+        def _on_pressed(_gesture: Gtk.GestureClick, n_press: int, x: float, y: float) -> None:
+            self._show_context_menu(widget, x, y)
+
+        gesture.connect("pressed", _on_pressed)
+        widget.add_controller(gesture)
+
+        long_press = Gtk.GestureLongPress()
+
+        def _on_long_press(_gesture: Gtk.GestureLongPress, x: float, y: float) -> None:
+            self._show_context_menu(widget, x, y)
+
+        long_press.connect("pressed", _on_long_press)
+        widget.add_controller(long_press)
+
+    def _show_context_menu(self, widget: Gtk.Widget, x: float, y: float) -> None:
+        self._update_selection_for_menu(widget, x, y)
+        self._update_menu_state()
+        try:
+            widget.grab_focus()
+        except Exception:
+            pass
+        rect = Gdk.Rectangle()
+        rect.x = int(x)
+        rect.y = int(y)
+        rect.width = 1
+        rect.height = 1
+        self._menu_popover.set_parent(widget)
+        self._menu_popover.set_pointing_to(rect)
+        self._menu_popover.popup()
+
+    def _update_selection_for_menu(self, widget: Gtk.Widget, x: float, y: float) -> None:
+        position = Gtk.INVALID_LIST_POSITION
+        if widget is self._list_view:
+            row = self._list_view.get_row_at_y(int(y))
+            if row is not None:
+                position = row.get_position()
+        elif widget is self._grid_view:
+            item = self._grid_view.get_item_at_pos(int(x), int(y))
+            if item is not None:
+                position = item.get_position()
+
+        self._selection_model.set_selected(position)
+
+    def _update_menu_state(self) -> None:
+        entry = self.get_selected_entry()
+        has_selection = entry is not None
+
+        def _set_enabled(name: str, enabled: bool) -> None:
+            action = self._menu_actions.get(name)
+            if action is not None:
+                action.set_enabled(enabled)
+
+        _set_enabled("download", self._is_remote and has_selection)
+        _set_enabled("upload", self._is_remote)
+        _set_enabled("rename", has_selection)
+        _set_enabled("delete", has_selection)
+        _set_enabled("new_folder", True)
+
+    def _emit_entry_operation(self, action: str) -> None:
+        entry = self.get_selected_entry()
+        if entry is None:
+            if action != "new_folder":
+                self.show_toast("Select an item first")
+            return
+        payload = {"entry": entry, "directory": self._current_path}
+        self.emit("request-operation", action, payload)
+
+    def _on_menu_download(self) -> None:
+        if not self._is_remote:
+            return
+        self._on_download_clicked(None)
+
+    def _on_menu_upload(self) -> None:
+        if not self._is_remote:
+            return
+        self._on_upload_clicked(None)
 
     def _on_drop(self, target: Gtk.DropTarget, value: Gio.File, x: float, y: float):
         self.emit("request-operation", "upload", value)
@@ -652,6 +775,8 @@ class FilePane(Gtk.Box):
             self._list_store.append(Gtk.StringObject.new(entry.name + suffix))
         self._current_path = path
         self.toolbar.path_entry.set_text(path)
+        self._selection_model.unselect_all()
+        self._update_menu_state()
 
     # -- navigation helpers --------------------------------------------
 
@@ -901,7 +1026,12 @@ class FileManagerWindow(Adw.Window):
                 if response == "ok":
                     name = entry.get_text().strip()
                     if name:
-                        new_path = os.path.join(pane.toolbar.path_entry.get_text(), name)
+                        current_dir = pane.toolbar.path_entry.get_text() or "/"
+                        if pane is self._left_pane:
+                            target_dir = self._normalize_local_path(current_dir)
+                            new_path = os.path.join(target_dir, name)
+                        else:
+                            new_path = posixpath.join(current_dir or "/", name)
                         if pane is self._left_pane:
                             try:
                                 os.makedirs(new_path, exist_ok=False)
@@ -913,10 +1043,114 @@ class FileManagerWindow(Adw.Window):
                                 # Refresh local listing
                                 self._load_local(os.path.dirname(new_path) or "/")
                         else:
-                            self._manager.mkdir(new_path)
+                            future = self._manager.mkdir(new_path)
+                            self._attach_refresh(future, refresh_remote=pane)
                 dialog.destroy()
 
             dialog.connect("response", _on_response)
+            dialog.present()
+        elif action == "rename" and isinstance(payload, dict):
+            entry = payload.get("entry")
+            directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
+            if not isinstance(entry, FileEntry):
+                return
+
+            if pane is self._left_pane:
+                base_dir = self._normalize_local_path(directory)
+                source = os.path.join(base_dir, entry.name)
+                join = os.path.join
+            else:
+                base_dir = directory or "/"
+                source = posixpath.join(base_dir, entry.name)
+                join = posixpath.join
+
+            dialog = Adw.MessageDialog.new(
+                self,
+                title="Rename Item",
+                body=f"Enter a new name for {entry.name}",
+            )
+            name_entry = Gtk.Entry()
+            name_entry.set_text(entry.name)
+            dialog.set_extra_child(name_entry)
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response("ok", "Rename")
+            dialog.set_default_response("ok")
+            dialog.set_close_response("cancel")
+
+            def _on_rename(_dialog, response: str) -> None:
+                if response != "ok":
+                    dialog.destroy()
+                    return
+                new_name = name_entry.get_text().strip()
+                if not new_name:
+                    pane.show_toast("Name cannot be empty")
+                    dialog.destroy()
+                    return
+                if new_name == entry.name:
+                    dialog.destroy()
+                    return
+                target = join(base_dir, new_name)
+                if pane is self._left_pane:
+                    try:
+                        os.rename(source, target)
+                    except Exception as exc:
+                        pane.show_toast(str(exc))
+                    else:
+                        pane.show_toast("Item renamed")
+                        self._load_local(base_dir)
+                else:
+                    future = self._manager.rename(source, target)
+                    self._attach_refresh(future, refresh_remote=pane)
+                dialog.destroy()
+
+            dialog.connect("response", _on_rename)
+            dialog.present()
+        elif action == "delete" and isinstance(payload, dict):
+            entry = payload.get("entry")
+            directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
+            if not isinstance(entry, FileEntry):
+                return
+
+            if pane is self._left_pane:
+                base_dir = self._normalize_local_path(directory)
+                target_path = os.path.join(base_dir, entry.name)
+            else:
+                base_dir = directory or "/"
+                target_path = posixpath.join(base_dir, entry.name)
+
+            dialog = Adw.MessageDialog.new(
+                self,
+                title="Delete Item",
+                body=f"Delete {entry.name}?",
+            )
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response("ok", "Delete")
+            dialog.set_default_response("cancel")
+            dialog.set_close_response("cancel")
+
+            def _on_delete(_dialog, response: str) -> None:
+                if response != "ok":
+                    dialog.destroy()
+                    return
+                if pane is self._left_pane:
+                    try:
+                        if entry.is_dir:
+                            shutil.rmtree(target_path)
+                        else:
+                            os.remove(target_path)
+                    except FileNotFoundError:
+                        pane.show_toast("Item no longer exists")
+                    except Exception as exc:
+                        pane.show_toast(str(exc))
+                    else:
+                        pane.show_toast("Item deleted")
+                        self._load_local(base_dir)
+                else:
+                    future = self._manager.remove(target_path)
+                    self._attach_refresh(future, refresh_remote=pane)
+                dialog.destroy()
+
+            dialog.connect("response", _on_delete)
             dialog.present()
         elif action == "upload":
             if pane is not self._right_pane:
