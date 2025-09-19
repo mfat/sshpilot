@@ -111,7 +111,7 @@ class AsyncSFTPManager(GObject.GObject):
 
     # -- connection -----------------------------------------------------
 
-    def connect(self) -> None:
+    def connect_to_server(self) -> None:
         self._submit(self._connect_impl, on_success=lambda *_: self.emit("connected"))
 
     def close(self) -> None:
@@ -175,7 +175,21 @@ class AsyncSFTPManager(GObject.GObject):
         def _impl() -> Tuple[str, List[FileEntry]]:
             entries: List[FileEntry] = []
             assert self._sftp is not None
-            for attr in self._sftp.listdir_attr(path):
+            
+            # Expand ~ to user's home directory
+            expanded_path = path
+            if path == "~" or path.startswith("~/"):
+                try:
+                    # Get the home directory from the SFTP server
+                    expanded_path = self._sftp.normalize(".")
+                    if path.startswith("~/"):
+                        # Handle ~/subpath
+                        expanded_path = expanded_path + path[1:]
+                except Exception:
+                    # Fallback to assuming /home/username if normalize fails
+                    expanded_path = f"/home/{self._username}" + (path[1:] if path.startswith("~/") else "")
+            
+            for attr in self._sftp.listdir_attr(expanded_path):
                 entries.append(
                     FileEntry(
                         name=attr.filename,
@@ -184,7 +198,7 @@ class AsyncSFTPManager(GObject.GObject):
                         modified=attr.st_mtime,
                     )
                 )
-            return path, entries
+            return expanded_path, entries
 
         self._submit(
             _impl,
@@ -394,6 +408,11 @@ class FilePane(Gtk.Box):
         list_factory.connect("bind", self._on_list_bind)
         list_view = Gtk.ListView(model=self._selection_model, factory=list_factory)
         list_view.add_css_class("rich-list")
+        
+        # Wrap list view in a scrolled window for proper scrolling
+        list_scrolled = Gtk.ScrolledWindow()
+        list_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        list_scrolled.set_child(list_view)
 
         grid_factory = Gtk.SignalListItemFactory()
         grid_factory.connect("setup", self._on_grid_setup)
@@ -404,9 +423,14 @@ class FilePane(Gtk.Box):
             max_columns=6,
         )
         grid_view.add_css_class("iconview")
+        
+        # Wrap grid view in a scrolled window for proper scrolling
+        grid_scrolled = Gtk.ScrolledWindow()
+        grid_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        grid_scrolled.set_child(grid_view)
 
-        self._stack.add_named(list_view, "list")
-        self._stack.add_named(grid_view, "grid")
+        self._stack.add_named(list_scrolled, "list")
+        self._stack.add_named(grid_scrolled, "grid")
 
         overlay = Adw.ToastOverlay()
         overlay.set_child(self._stack)
@@ -502,7 +526,7 @@ class FilePane(Gtk.Box):
         self._overlay.add_toast(Adw.Toast.new(text))
 
 
-class FileManagerWindow(Adw.ApplicationWindow):
+class FileManagerWindow(Adw.Window):
     """Top-level window hosting two :class:`FilePane` instances."""
 
     def __init__(
@@ -512,32 +536,56 @@ class FileManagerWindow(Adw.ApplicationWindow):
         host: str,
         username: str,
         port: int = 22,
-        initial_path: str = "/",
+        initial_path: str = "~",
     ) -> None:
-        super().__init__(application=application, title="Remote Files")
+        super().__init__(title="Remote Files")
+        # Set default and minimum sizes following GNOME HIG
         self.set_default_size(1000, 640)
+        # Set minimum size to ensure usability (GNOME HIG recommends minimum 360px width)
+        self.set_size_request(600, 400)
+        # Ensure window is resizable (this is the default, but being explicit)
+        self.set_resizable(True)
+        # Ensure window decorations are shown (minimize, maximize, close buttons)
+        self.set_decorated(True)
 
-        self._toast_overlay = Adw.ToastOverlay()
-        self.set_content(self._toast_overlay)
-
+        # Use ToolbarView like other Adw.Window instances
         toolbar_view = Adw.ToolbarView()
-        self._toast_overlay.set_child(toolbar_view)
-
+        self.set_content(toolbar_view)
+        
+        # Create header bar with window controls
         header_bar = Adw.HeaderBar()
         header_bar.set_title_widget(Gtk.Label(label=f"{username}@{host}"))
+        # Enable window controls (minimize, maximize, close) following GNOME HIG
+        header_bar.set_show_start_title_buttons(True)
+        header_bar.set_show_end_title_buttons(True)
         toolbar_view.add_top_bar(header_bar)
+
+        self._toast_overlay = Adw.ToastOverlay()
+        toolbar_view.set_content(self._toast_overlay)
 
         panes = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
         panes.set_wide_handle(True)
-        toolbar_view.set_content(panes)
+        # Set position to split evenly by default (50%)
+        panes.set_position(500)  # This will be adjusted when window is resized
+        # Enable resizing and shrinking for both panes following GNOME HIG
+        panes.set_resize_start_child(True)
+        panes.set_resize_end_child(True)
+        panes.set_shrink_start_child(False)
+        panes.set_shrink_end_child(False)
+        self._toast_overlay.set_child(panes)
 
         self._left_pane = FilePane("Left Pane")
         self._right_pane = FilePane("Right Pane")
         panes.set_start_child(self._left_pane)
         panes.set_end_child(self._right_pane)
+        
+        # Store reference to panes for resize handling
+        self._panes = panes
+        
+        # Connect to size-allocate to maintain proportional split
+        self.connect("notify::default-width", self._on_window_resize)
 
         self._manager = AsyncSFTPManager(host, username, port)
-        self._manager.connect()
         self._manager.connect("connected", self._on_connected)
         self._manager.connect(
             "connection-error", lambda *_: self._toast_overlay.add_toast(Adw.Toast.new("Connection failed"))
@@ -545,6 +593,7 @@ class FileManagerWindow(Adw.ApplicationWindow):
         self._manager.connect("progress", self._on_progress)
         self._manager.connect("operation-error", self._on_operation_error)
         self._manager.connect("directory-loaded", self._on_directory_loaded)
+        self._manager.connect_to_server()
 
         for pane in (self._left_pane, self._right_pane):
             pane.connect("path-changed", self._on_path_changed, pane)
@@ -593,13 +642,13 @@ class FileManagerWindow(Adw.ApplicationWindow):
         target.push_history(path)
         target.show_toast(f"Loaded {path}")
 
-    def _on_path_changed(self, pane: FilePane, path: str) -> None:
+    def _on_path_changed(self, pane: FilePane, path: str, user_data=None) -> None:
         self._pending_paths[pane] = path
 
         pane.push_history(path)
         self._manager.listdir(path)
 
-    def _on_request_operation(self, pane: FilePane, action: str, payload) -> None:
+    def _on_request_operation(self, pane: FilePane, action: str, payload, user_data=None) -> None:
         if action == "mkdir":
             dialog = Adw.MessageDialog.new(
                 self,
@@ -629,6 +678,14 @@ class FileManagerWindow(Adw.ApplicationWindow):
                 pathlib.Path(payload.get_path()),
                 os.path.join(pane.toolbar.path_entry.get_text(), payload.get_basename()),
             )
+    
+    def _on_window_resize(self, window, pspec) -> None:
+        """Maintain proportional paned split when window is resized following GNOME HIG"""
+        # Get current window width
+        width = self.get_width()
+        if width > 0:
+            # Set paned position to half the window width (maintaining 50/50 split)
+            self._panes.set_position(width // 2)
 
 
 def launch_file_manager_window(
@@ -636,7 +693,7 @@ def launch_file_manager_window(
     host: str,
     username: str,
     port: int = 22,
-    path: str = "/",
+    path: str = "~",
     parent: Optional[Gtk.Window] = None,
 ) -> FileManagerWindow:
     """Create and present the :class:`FileManagerWindow`.
