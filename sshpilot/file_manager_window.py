@@ -516,8 +516,14 @@ class FilePane(Gtk.Box):
     def _on_list_bind(self, factory, item):
         box = item.get_child()
         label = box.get_last_child()
+        icon = box.get_first_child()
         value = item.get_item().get_string()
         label.set_text(value)
+        # Choose icon based on whether value ends with '/'
+        if value.endswith('/'):
+            icon.set_from_icon_name("folder-symbolic")
+        else:
+            icon.set_from_icon_name("text-x-generic-symbolic")
 
     def _on_grid_setup(self, factory, item):
         button = Gtk.Button()
@@ -532,6 +538,12 @@ class FilePane(Gtk.Box):
         button = item.get_child()
         value = item.get_item().get_string()
         button.set_tooltip_text(value)
+        # Update the image icon based on type
+        image = button.get_child()
+        if value.endswith('/'):
+            image.set_from_icon_name("folder-symbolic")
+        else:
+            image.set_from_icon_name("text-x-generic-symbolic")
 
     def _on_selection_changed(self, model, position, n_items):
         pass  # Selection feedback handled by double click gestures (future)
