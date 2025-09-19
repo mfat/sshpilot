@@ -1554,12 +1554,26 @@ def launch_file_manager_window(
     port: int = 22,
     path: str = "~",
     parent: Optional[Gtk.Window] = None,
+    transient_for_parent: bool = True,
 ) -> FileManagerWindow:
     """Create and present the :class:`FileManagerWindow`.
 
     The function obtains the default application instance (``Gtk.Application``)
     if available; otherwise the caller must ensure the returned window remains
     referenced for the duration of its lifetime.
+
+    Parameters
+    ----------
+    host, username, port, path
+        Connection details used by :class:`FileManagerWindow`.
+    parent
+        Optional window that should act as the logical parent for stacking
+        purposes.  When provided the new window may be set as transient for
+        this parent depending on ``transient_for_parent``.
+    transient_for_parent
+        Set to ``False`` to avoid establishing a transient relationship with
+        ``parent``.  This allows callers to request a free-floating window even
+        when a parent reference is supplied.
     """
 
     app = Gtk.Application.get_default()
@@ -1573,9 +1587,8 @@ def launch_file_manager_window(
         port=port,
         initial_path=path,
     )
-    if parent is not None:
+    if parent is not None and transient_for_parent:
         window.set_transient_for(parent)
-        window.set_modal(True)
     window.present()
     return window
 
