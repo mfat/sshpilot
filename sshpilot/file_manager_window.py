@@ -645,12 +645,14 @@ class FilePane(Gtk.Box):
 
     def _update_selection_for_menu(self, widget: Gtk.Widget, x: float, y: float) -> None:
         position = Gtk.INVALID_LIST_POSITION
+        int_x, int_y = int(x), int(y)
+
         if widget is self._list_view:
-            row = self._list_view.get_row_at_y(int(y))
-            if row is not None:
-                position = row.get_position()
+            item = self._list_view.get_item_at_pos(int_x, int_y)
+            if item is not None:
+                position = item.get_position()
         elif widget is self._grid_view:
-            item = self._grid_view.get_item_at_pos(int(x), int(y))
+            item = self._grid_view.get_item_at_pos(int_x, int_y)
             if item is not None:
                 position = item.get_position()
 
