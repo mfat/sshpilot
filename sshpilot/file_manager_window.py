@@ -378,12 +378,15 @@ class PaneControls(Gtk.Box):
         self.new_folder_button = Gtk.Button.new_from_icon_name("folder-new-symbolic")
         self.upload_button = Gtk.Button(label="Upload")
         self.download_button = Gtk.Button(label="Download")
+        self.show_hidden_toggle = Gtk.ToggleButton(label="Show Hidden")
+        self.show_hidden_toggle.set_tooltip_text("Toggle display of hidden files")
         for widget in (
             self.back_button,
             self.up_button,
             self.new_folder_button,
             self.upload_button,
             self.download_button,
+            self.show_hidden_toggle,
         ):
             widget.set_valign(Gtk.Align.CENTER)
         for widget in (self.back_button, self.up_button, self.new_folder_button):
@@ -393,6 +396,7 @@ class PaneControls(Gtk.Box):
         self.append(self.new_folder_button)
         self.append(self.upload_button)
         self.append(self.download_button)
+        self.append(self.show_hidden_toggle)
 
 
 class PaneToolbar(Gtk.Box):
@@ -534,9 +538,13 @@ class FilePane(Gtk.Box):
         self._history: List[str] = []
         self._current_path = "/"
         self._entries: List[FileEntry] = []
-        self._raw_entries: List[FileEntry] = []
-        self._sort_key: str = "name"
-        self._sort_descending: bool = False
+        self._cached_entries: List[FileEntry] = []
+        self._show_hidden = False
+        self.toolbar.controls.show_hidden_toggle.set_active(self._show_hidden)
+        self.toolbar.controls.show_hidden_toggle.connect(
+            "toggled", self._on_show_hidden_toggled
+        )
+
         self._suppress_history_push: bool = False
         self._selection_model.connect("selection-changed", self._on_selection_changed)
 
@@ -849,12 +857,48 @@ class FilePane(Gtk.Box):
     # -- public API -----------------------------------------------------
 
     def show_entries(self, path: str, entries: Iterable[FileEntry]) -> None:
-        # Store raw entries so they can be re-sorted if preferences change
-        self._raw_entries = list(entries)
-        self._refresh_sorted_entries(preserve_selection=False)
         self._current_path = path
         self.toolbar.path_entry.set_text(path)
+        self._cached_entries = list(entries)
+        self._apply_entry_filter(preserve_selection=False)
 
+    def _apply_entry_filter(self, *, preserve_selection: bool) -> None:
+        selected_name: Optional[str] = None
+        if preserve_selection:
+            selected = self.get_selected_entry()
+            if selected is not None:
+                selected_name = selected.name
+
+        filtered = [
+            entry
+            for entry in self._cached_entries
+            if self._show_hidden or not entry.name.startswith(".")
+        ]
+
+        self._list_store.remove_all()
+        self._entries = []
+        restored_selection: Optional[int] = None
+        for idx, entry in enumerate(filtered):
+            self._entries.append(entry)
+            suffix = "/" if entry.is_dir else ""
+            self._list_store.append(Gtk.StringObject.new(entry.name + suffix))
+            if preserve_selection and selected_name == entry.name:
+                restored_selection = idx
+
+        if preserve_selection and restored_selection is not None:
+            self._selection_model.set_selected(restored_selection)
+        else:
+            self._selection_model.unselect_all()
+
+        self._update_menu_state()
+
+
+    def _on_show_hidden_toggled(self, button: Gtk.ToggleButton) -> None:
+        new_value = button.get_active()
+        if self._show_hidden == new_value:
+            return
+        self._show_hidden = new_value
+        self._apply_entry_filter(preserve_selection=True)
 
     # -- navigation helpers --------------------------------------------
 
