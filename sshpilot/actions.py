@@ -4,7 +4,7 @@ import logging
 from gi.repository import Gio, Gtk, Adw, GLib
 from gettext import gettext as _
 
-from .file_manager import open_connection_in_file_manager
+from .sftp_utils import open_remote_in_file_manager
 from .preferences import (
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
@@ -91,10 +91,12 @@ class WindowActions:
                     # Show error dialog to user
                     self._show_manage_files_error(connection.nickname, error_msg or "Failed to open file manager")
 
-                success, error_msg = open_connection_in_file_manager(
-                    connection,
+                success, error_msg = open_remote_in_file_manager(
+                    user=connection.username,
+                    host=connection.host,
+                    port=connection.port if connection.port != 22 else None,
                     error_callback=error_callback,
-                    parent_window=self,
+                    parent_window=self
                 )
                 if success:
                     logger.info(f"Started file manager process for {connection.nickname}")
