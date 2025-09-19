@@ -53,7 +53,7 @@ stub_modules = {
     "sshpilot.sshcopyid_window": types.SimpleNamespace(SshCopyIdWindow=object),
     "sshpilot.groups": types.SimpleNamespace(GroupManager=object),
     "sshpilot.sidebar": types.SimpleNamespace(GroupRow=object, ConnectionRow=object, build_sidebar=lambda *a, **k: None),
-    "sshpilot.file_manager": types.SimpleNamespace(open_connection_in_file_manager=lambda *a, **k: None),
+    "sshpilot.sftp_utils": types.SimpleNamespace(open_remote_in_file_manager=lambda *a, **k: None),
     "sshpilot.welcome_page": types.SimpleNamespace(WelcomePage=object),
     "sshpilot.actions": types.SimpleNamespace(WindowActions=object, register_window_actions=lambda *a, **k: None),
     "sshpilot.shutdown": types.SimpleNamespace(),
