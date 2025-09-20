@@ -1264,8 +1264,10 @@ class FilePane(Gtk.Box):
 
         # Drag and drop controllers – these provide the visual affordance and
         # forward requests to the window which understands the context.
-        drop_target = Gtk.DropTarget.new(Gio.File, Gdk.DragAction.COPY)
-        drop_target.connect("accept", lambda *_: True)
+        # Accept multiple formats: Gio.File, text/uri-list, and text/plain
+        drop_target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.COPY)
+        drop_target.set_gtypes([Gio.File, GObject.TYPE_STRING])
+        drop_target.connect("accept", self._on_drop_accept)
         drop_target.connect("enter", self._on_drop_enter)
         drop_target.connect("motion", self._on_drop_motion)
         drop_target.connect("leave", self._on_drop_leave)
@@ -1273,8 +1275,8 @@ class FilePane(Gtk.Box):
         self.add_controller(drop_target)
         self._drop_target = drop_target
 
-        if not self._is_remote:
-            self._setup_drag_sources((list_view, grid_view))
+        # Set up drag sources for both local and remote panes
+        self._setup_drag_sources((list_view, grid_view))
 
         self._update_menu_state()
         # Set up sorting actions for the split button
@@ -1347,56 +1349,124 @@ class FilePane(Gtk.Box):
             self._drag_sources.append(drag_source)
 
     def _on_drag_prepare(self, _source: Gtk.DragSource, _x: float, _y: float):
-        if self._is_remote:
-            return None
-
-        entries = self.get_selected_entries()
-        if not entries:
-            return None
-
-        window = self.get_root()
-        if not isinstance(window, FileManagerWindow):
-            return None
-
-        base_dir = window._normalize_local_path(self.toolbar.path_entry.get_text())
-        uris: List[str] = []
-        files: List[Gio.File] = []
-        for entry in entries:
-            local_path = os.path.join(base_dir, entry.name)
-            if not os.path.exists(local_path):
-                continue
-            try:
-                gfile = Gio.File.new_for_path(local_path)
-            except Exception:
-                continue
-            uri = gfile.get_uri()
-            if not uri:
-                continue
-            uris.append(uri)
-            files.append(gfile)
-
-        if not uris:
-            return None
-
-        payload = ("\r\n".join(uris) + "\r\n").encode("utf-8")
-        bytes_cls = getattr(GLib, "Bytes", None)
-        bytes_new = getattr(bytes_cls, "new", None) if bytes_cls is not None else None
+        print(f"=== DRAG PREPARE CALLED on {'remote' if self._is_remote else 'local'} pane ===")
+        
         try:
-            data = bytes_new(payload) if callable(bytes_new) else payload
-            provider_ctor = getattr(Gdk.ContentProvider, "new_for_bytes", None)
-            if not callable(provider_ctor):
+            entries = self.get_selected_entries()
+            print(f"Selected entries: {[e.name for e in entries] if entries else 'None'}")
+            if not entries:
+                print("No entries selected, returning None")
                 return None
-            provider = provider_ctor("text/uri-list", data)
-        except Exception:
+
+            window = self.get_root()
+            print(f"Window type: {type(window)}")
+            if not isinstance(window, FileManagerWindow):
+                print("No FileManagerWindow found, returning None")
+                return None
+                
+            print(f"Window is FileManagerWindow: {isinstance(window, FileManagerWindow)}")
+            
+        except Exception as e:
+            print(f"Exception in drag prepare early checks: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
-        self._current_drag_file = files[0] if files else None
-        return provider
+        if self._is_remote:
+            # For remote panes, create a string content provider
+            # According to GTK4 docs, we need to use proper GType formats
+            file_names = [entry.name for entry in entries]
+            payload = "\n".join(file_names)
+            print(f"Creating remote drag payload: {payload}")
+            
+            try:
+                # Method 1: Try new_typed if available (GTK 4.6+)
+                if hasattr(Gdk.ContentProvider, 'new_typed'):
+                    provider = Gdk.ContentProvider.new_typed(GObject.TYPE_STRING, payload)
+                    if provider is not None:
+                        print(f"Created new_typed string provider for remote files: {file_names}")
+                        return provider
+                
+                # Method 2: Use new_for_value with proper GValue
+                value = GObject.Value()
+                value.init(GObject.TYPE_STRING)
+                value.set_string(payload)
+                provider = Gdk.ContentProvider.new_for_value(value)
+                if provider is not None:
+                    print(f"Created GValue string provider for remote files: {file_names}")
+                    return provider
+                    
+                print("Both typed methods failed, trying fallback")
+                
+            except Exception as e:
+                print(f"Error creating typed content provider: {e}")
+            
+            # Fallback: Use text/plain MIME type with bytes
+            try:
+                data = GLib.Bytes.new(payload.encode("utf-8"))
+                provider = Gdk.ContentProvider.new_for_bytes("text/plain", data)
+                if provider is not None:
+                    print(f"Created text/plain bytes provider for remote files: {file_names}")
+                    return provider
+                print("text/plain provider creation failed")
+                
+            except Exception as e:
+                print(f"Error creating bytes content provider: {e}")
+                
+            return None
+        else:
+            # For local panes, create URI list as before
+            base_dir = window._normalize_local_path(self.toolbar.path_entry.get_text())
+            uris: List[str] = []
+            files: List[Gio.File] = []
+            for entry in entries:
+                local_path = os.path.join(base_dir, entry.name)
+                if not os.path.exists(local_path):
+                    continue
+                try:
+                    gfile = Gio.File.new_for_path(local_path)
+                except Exception:
+                    continue
+                uri = gfile.get_uri()
+                if not uri:
+                    continue
+                uris.append(uri)
+                files.append(gfile)
+
+            if not uris:
+                return None
+
+            # Create content provider for URI list
+            try:
+                # Use GLib.Bytes for proper data handling
+                payload = ("\r\n".join(uris) + "\r\n").encode("utf-8")
+                data = GLib.Bytes.new(payload)
+                
+                # Create content provider with proper MIME type
+                provider = Gdk.ContentProvider.new_for_bytes("text/uri-list", data)
+                if provider is None:
+                    return None
+                    
+            except Exception as e:
+                print(f"Error creating drag content provider: {e}")
+                return None
+
+            self._current_drag_file = files[0] if files else None
+            return provider
 
     def _on_drag_source_begin(self, _source: Gtk.DragSource, _drag: Gdk.Drag) -> None:
+        print(f"Drag begin from {'remote' if self._is_remote else 'local'} pane")
+        
+        # Check if we have selected entries
+        selected = self.get_selected_entries()
+        print(f"Selected entries at drag begin: {[e.name for e in selected] if selected else 'None'}")
+        
         partner = getattr(self, "_partner_pane", None)
         if partner is not None:
+            print(f"Showing drop zone on {'remote' if partner._is_remote else 'local'} partner pane")
             partner.show_drop_zone()
+        else:
+            print("No partner pane found!")
 
         window = self.get_root()
         if isinstance(window, FileManagerWindow):
@@ -1404,10 +1474,13 @@ class FilePane(Gtk.Box):
 
 
     def _on_drag_source_end(self, _source: Gtk.DragSource, _drag: Gdk.Drag, _delete: bool) -> None:
+        print(f"Drag end from {'remote' if self._is_remote else 'local'} pane, delete={_delete}")
         self._current_drag_file = None
         partner = getattr(self, "_partner_pane", None)
         if partner is not None:
             partner.hide_drop_zone()
+            # Also reset pointer state to ensure drop zone hides
+            partner._set_drop_zone_pointer(False)
 
         window = self.get_root()
         if isinstance(window, FileManagerWindow):
@@ -1415,17 +1488,42 @@ class FilePane(Gtk.Box):
 
 
     def _on_drag_source_cancel(self, _source: Gtk.DragSource, _drag: Gdk.Drag, _reason) -> None:
+        print(f"Drag cancel from {'remote' if self._is_remote else 'local'} pane, reason={_reason}")
         self._current_drag_file = None
         partner = getattr(self, "_partner_pane", None)
         if partner is not None:
             partner.hide_drop_zone()
+            # Also reset pointer state to ensure drop zone hides
+            partner._set_drop_zone_pointer(False)
 
         window = self.get_root()
         if isinstance(window, FileManagerWindow):
             window._register_drag_finish(self)
 
 
+    def _on_drop_accept(self, target: Gtk.DropTarget, drop: Gdk.Drop) -> bool:
+        """Accept drops that contain files, URI lists, or plain text."""
+        try:
+            formats = drop.get_formats()
+            print(f"Drop accept check on {'remote' if self._is_remote else 'local'} pane")
+            print(f"Available formats: {[formats.to_string()]}")
+            
+            has_file = formats.contain_gtype(Gio.File)
+            has_uri_list = formats.contain_mime_type("text/uri-list")
+            has_plain_text = formats.contain_mime_type("text/plain")
+            has_string = formats.contain_gtype(GObject.TYPE_STRING)
+            
+            print(f"Format check: File={has_file}, URI-list={has_uri_list}, Plain-text={has_plain_text}, String={has_string}")
+            
+            result = has_file or has_uri_list or has_plain_text or has_string
+            print(f"Drop accept result: {result}")
+            return result
+        except Exception as e:
+            print(f"Drop accept error: {e}")
+            return False
+
     def _on_drop_enter(self, _target: Gtk.DropTarget, _x: float, _y: float):
+        print(f"Drop enter on {'remote' if self._is_remote else 'local'} pane")
         self._set_drop_zone_pointer(True)
         return Gdk.DragAction.COPY
 
@@ -1433,7 +1531,11 @@ class FilePane(Gtk.Box):
         return Gdk.DragAction.COPY
 
     def _on_drop_leave(self, _target: Gtk.DropTarget) -> None:
+        print(f"Drop leave on {'remote' if self._is_remote else 'local'} pane")
         self._set_drop_zone_pointer(False)
+        # Ensure drop zone is hidden when drag leaves
+        if not getattr(self, "_drop_zone_forced", False):
+            self.hide_drop_zone()
 
     # -- callbacks ------------------------------------------------------
 
@@ -1510,16 +1612,18 @@ class FilePane(Gtk.Box):
         box.append(name_label)
         box.append(metadata_label)
         box.set_hexpand(True)
-        box.set_data("icon", icon)
-        box.set_data("name_label", name_label)
-        box.set_data("metadata_label", metadata_label)
+        # Store references as Python attributes instead of deprecated set_data
+        box.icon = icon
+        box.name_label = name_label
+        box.metadata_label = metadata_label
         item.set_child(box)
 
     def _on_list_bind(self, factory, item):
         box = item.get_child()
-        icon: Gtk.Image = box.get_data("icon")
-        name_label: Gtk.Label = box.get_data("name_label")
-        metadata_label: Gtk.Label = box.get_data("metadata_label")
+        # Access references as Python attributes instead of deprecated get_data
+        icon: Gtk.Image = box.icon
+        name_label: Gtk.Label = box.name_label
+        metadata_label: Gtk.Label = box.metadata_label
 
         position = item.get_position()
         entry: Optional[FileEntry] = None
@@ -1755,8 +1859,12 @@ class FilePane(Gtk.Box):
         return [pathlib.Path(os.path.join(base_dir, entry.name)) for entry in entries]
 
     def _on_drag_prepare(self, drag_source: Gtk.DragSource, _x: float, _y: float):
+        print(f"=== OLD DRAG PREPARE CALLED on {'remote' if self._is_remote else 'local'} pane ===")
+        
         payload = self._build_drag_payload()
+        print(f"Built drag payload: {payload}")
         if payload is None:
+            print("No payload built, canceling drag")
             self._drag_payload = None
             try:
                 drag_source.drag_cancel()
@@ -1768,9 +1876,77 @@ class FilePane(Gtk.Box):
             return None
 
         self._drag_payload = payload
-        return Gdk.ContentProvider.new_for_value(
-            GObject.Value(GObject.TYPE_PYOBJECT, payload)
-        )
+        
+        # Create proper content provider instead of PyObject
+        if self._is_remote:
+            # For remote files, create string content with file names
+            try:
+                if hasattr(payload, '__iter__') and not isinstance(payload, str):
+                    file_names = [getattr(item, 'name', str(item)) for item in payload]
+                else:
+                    file_names = [str(payload)]
+                
+                content = "\n".join(file_names)
+                print(f"Creating string content provider with: {content}")
+                
+                # Try multiple methods for string content provider
+                try:
+                    value = GObject.Value()
+                    value.init(GObject.TYPE_STRING)
+                    value.set_string(content)
+                    provider = Gdk.ContentProvider.new_for_value(value)
+                    print("Created GValue string provider")
+                    return provider
+                except Exception as e:
+                    print(f"GValue method failed: {e}")
+                    # Fallback to bytes
+                    data = GLib.Bytes.new(content.encode("utf-8"))
+                    provider = Gdk.ContentProvider.new_for_bytes("text/plain", data)
+                    print("Created text/plain bytes provider")
+                    return provider
+                    
+            except Exception as e:
+                print(f"Error creating remote content provider: {e}")
+                # Final fallback to PyObject (but we'll know why)
+                print("Falling back to PyObject provider")
+                return Gdk.ContentProvider.new_for_value(
+                    GObject.Value(GObject.TYPE_PYOBJECT, payload)
+                )
+        else:
+            # For local files, try to create URI list
+            try:
+                if hasattr(payload, '__iter__') and not isinstance(payload, str):
+                    # Assume payload contains file entries with paths
+                    uris = []
+                    for item in payload:
+                        if hasattr(item, 'name'):
+                            # Build full path and convert to URI
+                            window = self.get_root()
+                            if isinstance(window, FileManagerWindow):
+                                base_dir = window._normalize_local_path(self.toolbar.path_entry.get_text())
+                                full_path = os.path.join(base_dir, item.name)
+                                if os.path.exists(full_path):
+                                    gfile = Gio.File.new_for_path(full_path)
+                                    uri = gfile.get_uri()
+                                    if uri:
+                                        uris.append(uri)
+                    
+                    if uris:
+                        uri_list = "\r\n".join(uris) + "\r\n"
+                        data = GLib.Bytes.new(uri_list.encode("utf-8"))
+                        provider = Gdk.ContentProvider.new_for_bytes("text/uri-list", data)
+                        print(f"Created URI list provider with {len(uris)} URIs")
+                        return provider
+                
+                print("Could not create URI list, falling back to PyObject")
+                        
+            except Exception as e:
+                print(f"Error creating local content provider: {e}")
+            
+            # Fallback to original PyObject method for local
+            return Gdk.ContentProvider.new_for_value(
+                GObject.Value(GObject.TYPE_PYOBJECT, payload)
+            )
 
     def _on_drag_begin(self, drag_source: Gtk.DragSource, _drag: Gdk.Drag) -> None:
         if self._drag_payload is None:
@@ -1929,17 +2105,78 @@ class FilePane(Gtk.Box):
             return
         self._on_upload_clicked(None)
 
-    def _on_drop(self, target: Gtk.DropTarget, value: Gio.File, x: float, y: float):
+    def _on_drop(self, target: Gtk.DropTarget, value, x: float, y: float):
+        print(f"Drop received on {'remote' if self._is_remote else 'local'} pane")
+        print(f"Drop value type: {type(value)}, value: {repr(value)}")
+        
         self._set_drop_zone_pointer(False)
         self.hide_drop_zone()
+        
         window = self.get_root()
         if isinstance(window, FileManagerWindow):
             origin = window.get_active_drag_source()
+            print(f"Drop origin: {'remote' if origin and origin._is_remote else 'local' if origin else 'None'}")
+            
             if origin is self:
+                print("Ignoring drop on same pane")
                 return False
 
-        self.emit("request-operation", "upload", value)
+            # Handle remote-to-local file transfers
+            if origin and origin._is_remote and not self._is_remote:
+                print(f"Processing remote-to-local drop: {value}")
+                # For remote files, the value is a plain text list of filenames
+                if isinstance(value, str):
+                    file_names = [name.strip() for name in value.strip().split('\n') if name.strip()]
+                    print(f"Parsed file names: {file_names}")
+                    if file_names:
+                        # Get the selected entries from the origin pane
+                        selected_entries = origin.get_selected_entries()
+                        print(f"Selected entries from origin: {[e.name for e in selected_entries]}")
+                        
+                        # Get current directory on local pane (destination)
+                        local_dir = self.toolbar.path_entry.get_text() or os.path.expanduser("~")
+                        destination = pathlib.Path(window._normalize_local_path(local_dir))
+                        
+                        # Create proper download payload
+                        payload = {
+                            "entries": selected_entries,
+                            "destination": destination,
+                            "directory": origin.toolbar.path_entry.get_text() or "/"
+                        }
+                        print(f"Download payload: entries={len(payload['entries'])}, destination={payload['destination']}")
+                        
+                        # Emit download operation with proper payload
+                        print("Emitting download request-operation")
+                        self.emit("request-operation", "download", payload)
+                        return True
+                print("No valid file names found in remote drop")
+                return False
 
+        # Handle regular file drops (local-to-remote or external files)
+        print("Processing regular file drop")
+        file_to_upload = None
+        if isinstance(value, Gio.File):
+            file_to_upload = value
+            print(f"Direct Gio.File: {file_to_upload.get_path()}")
+        elif isinstance(value, str):
+            # Handle URI list format
+            try:
+                # Take the first URI from the list
+                uri = value.strip().split('\n')[0].strip()
+                print(f"Parsing URI: {uri}")
+                if uri.startswith('file://'):
+                    file_to_upload = Gio.File.new_for_uri(uri)
+                    print(f"Created Gio.File from URI: {file_to_upload.get_path()}")
+            except Exception as e:
+                print(f"Error parsing URI from drop: {e}")
+                return False
+        
+        if file_to_upload is None:
+            print("No file to upload found")
+            return False
+
+        print("Emitting upload request-operation")
+        self.emit("request-operation", "upload", file_to_upload)
         return True
 
     def get_selected_entry(self) -> Optional[FileEntry]:
