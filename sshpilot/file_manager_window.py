@@ -1811,27 +1811,52 @@ class FilePane(Gtk.Box):
         _add_action("new_folder", lambda: self.emit("request-operation", "mkdir", None))
         _add_action("properties", self._on_menu_properties)
 
-        # Create menu model dynamically based on pane type
-        menu_model = Gio.Menu()
-        
-        # Add Download/Upload based on pane type
-        if self._is_remote:
-            menu_model.append("Download", "pane.download")
-        else:
-            menu_model.append("Upload…", "pane.upload")
-
-        manage_section = Gio.Menu()
-        manage_section.append("Rename…", "pane.rename")
-        manage_section.append("Delete", "pane.delete")
-        menu_model.append_section(None, manage_section)
-        menu_model.append("Properties…", "pane.properties")
-        menu_model.append("New Folder", "pane.new_folder")
+        # Create menu model dynamically based on pane type and selection state
+        menu_model = self._create_context_menu_model()
 
         # Create popover and connect action group
         popover = Gtk.PopoverMenu.new_from_model(menu_model)
         popover.set_has_arrow(True)
         popover.insert_action_group("pane", self._menu_action_group)
         return popover
+
+    def _create_context_menu_model(self) -> Gio.Menu:
+        """Create context menu model based on current selection state."""
+        menu_model = Gio.Menu()
+        
+        # Check if items are selected
+        try:
+            # Check if _entries is initialized
+            if not hasattr(self, '_entries') or not self._entries:
+                has_selection = False
+            else:
+                selected_entries = self.get_selected_entries()
+                has_selection = len(selected_entries) > 0
+        except AttributeError:
+            # Handle case where _entries is not initialized yet (during testing)
+            has_selection = False
+        
+        # Add Download/Upload based on pane type and selection
+        if self._is_remote and has_selection:
+            menu_model.append("Download", "pane.download")
+        elif not self._is_remote and has_selection:
+            menu_model.append("Upload…", "pane.upload")
+
+        # Add management section only if items are selected
+        if has_selection:
+            manage_section = Gio.Menu()
+            manage_section.append("Rename…", "pane.rename")
+            manage_section.append("Delete", "pane.delete")
+            menu_model.append_section(None, manage_section)
+        
+        # Always add Properties (it will be enabled/disabled by _update_menu_state)
+        menu_model.append("Properties…", "pane.properties")
+        
+        # Add New Folder only if no items are selected (this is the main change)
+        if not has_selection:
+            menu_model.append("New Folder", "pane.new_folder")
+        
+        return menu_model
 
     def _add_context_controller(self, widget: Gtk.Widget) -> None:
         gesture = Gtk.GestureClick()
@@ -2002,6 +2027,10 @@ class FilePane(Gtk.Box):
             widget.grab_focus()
         except Exception:
             pass
+        
+        # Create a new menu model based on current selection state
+        new_menu_model = self._create_context_menu_model()
+        self._menu_popover.set_menu_model(new_menu_model)
         
         # Create a rectangle for the popover positioning
         rect = Gdk.Rectangle()
