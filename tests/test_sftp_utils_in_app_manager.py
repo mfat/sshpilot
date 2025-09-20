@@ -268,6 +268,70 @@ def test_open_remote_uses_in_app_manager_when_flatpak(monkeypatch):
     assert called["kwargs"]["port"] == 2222
 
 
+def test_open_remote_path_none_defaults(monkeypatch):
+    called = {}
+    setup_gi(monkeypatch)
+    stub = types.ModuleType("sshpilot.file_manager_window")
+
+    def fake_launch(**kwargs):
+        called["kwargs"] = kwargs
+
+    stub.launch_file_manager_window = fake_launch
+    monkeypatch.setitem(sys.modules, "sshpilot.file_manager_window", stub)
+    sftp_utils = importlib.reload(importlib.import_module("sshpilot.sftp_utils"))
+    monkeypatch.setattr(sftp_utils, "_should_use_in_app_file_manager", lambda: True)
+
+    success, message = sftp_utils.open_remote_in_file_manager(
+        "carol", "example.org", path=None, parent_window=None
+    )
+
+    assert success
+    assert message is None
+    assert called["kwargs"]["path"] == "~"
+
+    sftp_utils = import_sftp_utils(monkeypatch)
+    monkeypatch.setattr(sftp_utils, "_should_use_in_app_file_manager", lambda: False)
+    monkeypatch.setattr(sftp_utils, "is_flatpak", lambda: False)
+
+    class DummyProgress:
+        def __init__(self, *_args, **_kwargs):
+            self.is_cancelled = False
+
+        def present(self):
+            return None
+
+        def start_progress_updates(self):
+            return None
+
+        def update_progress(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(sftp_utils, "MountProgressDialog", DummyProgress)
+
+    recorded = {}
+
+    def fake_mount(uri, user, host, error_callback=None, progress_dialog=None):
+        recorded["uri"] = uri
+        recorded["user"] = user
+        recorded["host"] = host
+        return True, None
+
+    monkeypatch.setattr(sftp_utils, "_mount_and_open_sftp", fake_mount)
+    monkeypatch.setattr(
+        sftp_utils,
+        "_verify_ssh_connection_async",
+        lambda user, host, port, callback: callback(True),
+    )
+
+    success, message = sftp_utils.open_remote_in_file_manager(
+        "dave", "gvfs-host", path=None, parent_window=None
+    )
+
+    assert success
+    assert message is None
+    assert recorded["uri"] == "sftp://dave@gvfs-host/"
+
+
 def test_open_remote_uses_gvfs_flow_when_available(monkeypatch):
     sftp_utils = import_sftp_utils(monkeypatch)
     monkeypatch.setattr(sftp_utils, "_should_use_in_app_file_manager", lambda: False)
