@@ -23,24 +23,37 @@ if sys.platform == "darwin":
     os.environ["GSETTINGS_SCHEMA_DIR"] = str(resources / "share" / "glib-2.0" / "schemas")
     os.environ["XDG_DATA_DIRS"] = str(resources / "share")
     
-    # Set up GDK-Pixbuf loaders (bundled under Resources/lib/gdk-pixbuf-2.0/2.10.0)
-    gdkpixbuf_root = resources / "lib" / "gdk-pixbuf-2.0" / "2.10.0"
-    if gdkpixbuf_root.exists():
-        print(f"DEBUG: Found GDK-Pixbuf root at {gdkpixbuf_root}")
+    # Set up GDK-Pixbuf loaders (handle both new and legacy bundle layouts)
+    gdkpixbuf_candidates = [
+        resources / "lib" / "gdk-pixbuf-2.0" / "2.10.0",
+        frameworks / "lib" / "gdk-pixbuf",
+    ]
+
+    gdkpixbuf_root = None
+    for candidate in gdkpixbuf_candidates:
+        print(f"DEBUG: Checking GDK-Pixbuf candidate {candidate}")
+        if candidate.exists():
+            gdkpixbuf_root = candidate
+            print(f"DEBUG: Using GDK-Pixbuf root {gdkpixbuf_root}")
+            break
+
+    if gdkpixbuf_root is None:
+        print("DEBUG: No GDK-Pixbuf root found; GDK pixbuf environment variables not set")
     else:
-        print(f"DEBUG: GDK-Pixbuf root not found at {gdkpixbuf_root}")
-    gdkpixbuf_module_dir = gdkpixbuf_root / "loaders"
-    gdkpixbuf_module_file = gdkpixbuf_root / "loaders.cache"
-    if gdkpixbuf_module_dir.exists():
-        os.environ["GDK_PIXBUF_MODULEDIR"] = str(gdkpixbuf_module_dir)
-        print(f"DEBUG: Set GDK_PIXBUF_MODULEDIR = {gdkpixbuf_module_dir}")
-    else:
-        print(f"DEBUG: GDK_PIXBUF_MODULEDIR not set; missing {gdkpixbuf_module_dir}")
-    if gdkpixbuf_module_file.exists():
-        os.environ["GDK_PIXBUF_MODULE_FILE"] = str(gdkpixbuf_module_file)
-        print(f"DEBUG: Set GDK_PIXBUF_MODULE_FILE = {gdkpixbuf_module_file}")
-    else:
-        print(f"DEBUG: GDK_PIXBUF_MODULE_FILE not set; missing {gdkpixbuf_module_file}")
+        gdkpixbuf_module_dir = gdkpixbuf_root / "loaders"
+        gdkpixbuf_module_file = gdkpixbuf_root / "loaders.cache"
+
+        if gdkpixbuf_module_dir.exists():
+            os.environ["GDK_PIXBUF_MODULEDIR"] = str(gdkpixbuf_module_dir)
+            print(f"DEBUG: Set GDK_PIXBUF_MODULEDIR = {gdkpixbuf_module_dir}")
+        else:
+            print(f"DEBUG: GDK_PIXBUF_MODULEDIR not set; missing {gdkpixbuf_module_dir}")
+
+        if gdkpixbuf_module_file.exists():
+            os.environ["GDK_PIXBUF_MODULE_FILE"] = str(gdkpixbuf_module_file)
+            print(f"DEBUG: Set GDK_PIXBUF_MODULE_FILE = {gdkpixbuf_module_file}")
+        else:
+            print(f"DEBUG: GDK_PIXBUF_MODULE_FILE not set; missing {gdkpixbuf_module_file}")
     
     # Set up keyring environment for macOS (like the working bundle)
     os.environ["KEYRING_BACKEND"] = "keyring.backends.macOS.Keyring"
