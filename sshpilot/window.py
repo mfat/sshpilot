@@ -5165,6 +5165,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.error(f"Failed to open file manager for {nickname}: {message}")
             self._show_manage_files_error(str(nickname), message)
 
+        ssh_config = None
+        if hasattr(self, 'config') and self.config is not None:
+            try:
+                ssh_config = self.config.get_ssh_config()
+            except Exception as exc:
+                logger.debug("Failed to read SSH configuration for file manager: %s", exc)
+                ssh_config = None
+
         success, error_msg, window = launch_remote_file_manager(
             user=str(username or ''),
             host=str(host_value or ''),
@@ -5172,6 +5180,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             nickname=str(nickname),
             parent_window=self,
             error_callback=error_callback,
+            connection=connection,
+            connection_manager=self.connection_manager,
+            ssh_config=ssh_config,
         )
 
         if success:

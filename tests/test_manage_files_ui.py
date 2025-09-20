@@ -179,6 +179,11 @@ def test_launch_remote_file_manager_uses_internal(monkeypatch):
     assert window is sentinel
     assert captured["kwargs"]["user"] == "bob"
     assert captured["kwargs"]["host"] == "example.net"
+    assert captured["kwargs"]["nickname"] == "Internal"
+    assert "connection" in captured["kwargs"]
+    assert captured["kwargs"]["connection"] is None
+    assert captured["kwargs"].get("connection_manager") is None
+    assert captured["kwargs"].get("ssh_config") is None
 
 
 def test_launch_remote_file_manager_no_backend(monkeypatch):
