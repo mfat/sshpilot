@@ -75,6 +75,13 @@ if os.path.exists(libadwaita_locale):
     datas.append((libadwaita_locale, "Resources/share/locale"))
     print(f"Added libadwaita locale files: {libadwaita_locale}")
 
+# Add GDK-Pixbuf loaders and cache
+gdkpixbuf_loaders = f"{homebrew}/lib/gdk-pixbuf-2.0/2.10.0"
+if os.path.exists(gdkpixbuf_loaders):
+    datas.append((gdkpixbuf_loaders, "Resources/lib/gdk-pixbuf-2.0/2.10.0"))
+    print(f"Added GDK-Pixbuf loaders: {gdkpixbuf_loaders}")
+
+
 # Add keyring package files explicitly
 keyring_package = f"{homebrew}/lib/python3.13/site-packages/keyring"
 if os.path.exists(keyring_package):
