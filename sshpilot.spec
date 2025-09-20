@@ -64,11 +64,16 @@ datas += [
     (os.path.join(hb_share, "glib-2.0", "schemas"), "Resources/share/glib-2.0/schemas"),
     (os.path.join(hb_share, "icons", "Adwaita"),    "Resources/share/icons/Adwaita"),
     (os.path.join(hb_share, "gtk-4.0"),               "Resources/share/gtk-4.0"),
-    (os.path.join(hb_share, "libadwaita-1"),          "Resources/share/libadwaita-1"),
     ("sshpilot", "sshpilot"),
     ("sshpilot/resources/sshpilot.gresource", "Resources/sshpilot"),
     ("sshpilot/io.github.mfat.sshpilot.svg", "share/icons"),
 ]
+
+# Add libadwaita locale files if they exist
+libadwaita_locale = "/opt/homebrew/Cellar/libadwaita/1.7.6/share/locale"
+if os.path.exists(libadwaita_locale):
+    datas.append((libadwaita_locale, "Resources/share/locale"))
+    print(f"Added libadwaita locale files: {libadwaita_locale}")
 
 # Add keyring package files explicitly
 keyring_package = f"{homebrew}/lib/python3.13/site-packages/keyring"
