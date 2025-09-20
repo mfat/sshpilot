@@ -1209,18 +1209,46 @@ class FilePane(Gtk.Box):
     def _on_grid_setup(self, factory, item):
         button = Gtk.Button()
         button.set_has_frame(False)
+        content = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=6,
+        )
+        content.set_halign(Gtk.Align.CENTER)
+        content.set_valign(Gtk.Align.CENTER)
+
         image = Gtk.Image.new_from_icon_name("folder-symbolic")
-        button.set_child(image)
+        image.set_pixel_size(64)
+        image.set_halign(Gtk.Align.CENTER)
+        content.append(image)
+
+        label = Gtk.Label()
+        label.set_halign(Gtk.Align.CENTER)
+        label.set_justify(Gtk.Justification.CENTER)
+        label.set_ellipsize(Pango.EllipsizeMode.END)
+        label.set_wrap(True)
+        label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        label.set_lines(2)
+        content.append(label)
+
+        button.set_child(content)
         item.set_child(button)
 
     def _on_grid_bind(self, factory, item):
         # Grid view uses the same icon for now but honours the entry name as
         # tooltip so users can differentiate.
         button = item.get_child()
+        content = button.get_child()
+        image = content.get_first_child()
+        label = content.get_last_child()
+
         value = item.get_item().get_string()
-        button.set_tooltip_text(value)
+        display_text = value[:-1] if value.endswith('/') else value
+
+        label.set_text(display_text)
+        label.set_tooltip_text(display_text)
+        button.set_tooltip_text(display_text)
+
         # Update the image icon based on type
-        image = button.get_child()
         if value.endswith('/'):
             image.set_from_icon_name("folder-symbolic")
         else:
