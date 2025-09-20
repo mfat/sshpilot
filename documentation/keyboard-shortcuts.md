@@ -83,6 +83,16 @@ SSH Pilot is designed for efficient keyboard navigation. This guide covers all a
 
 ---
 
+## 📁 File Manager
+
+| Action | Linux/Windows | macOS | Description |
+|--------|---------------|-------|-------------|
+| **Focus path entry** | `Ctrl+L` | `Cmd+L` | Focus the active pane's path entry and select its contents |
+| **Refresh directory** | `F5` or `Ctrl+R` | `F5` or `Cmd+R` | Reload the visible directory in the focused pane |
+| **Delete selection** | `Delete` or `Shift+Delete` | `Delete` or `Shift+Delete` | Delete the selected files or folders in the focused pane |
+
+---
+
 ## 🗂️ Connection Dialog Shortcuts
 
 When editing connection settings:

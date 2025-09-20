@@ -993,7 +993,7 @@ class FilePane(Gtk.Box):
         self._grid_view = grid_view
         # Navigate on grid item activation (double click / Enter)
         grid_view.connect("activate", self._on_grid_activate)
-        
+
         # Wrap grid view in a scrolled window for proper scrolling
         grid_scrolled = Gtk.ScrolledWindow()
         grid_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -1109,6 +1109,7 @@ class FilePane(Gtk.Box):
             controller = Gtk.EventControllerKey.new()
             controller.connect("key-pressed", self._on_typeahead_key_pressed)
             view.add_controller(controller)
+            self._attach_shortcuts(view)
 
         # Drag and drop controllers – these provide the visual affordance and
         # forward requests to the window which understands the context.
@@ -1128,6 +1129,55 @@ class FilePane(Gtk.Box):
         self._typeahead_last_time: float = 0.0
 
     # -- callbacks ------------------------------------------------------
+
+    def _attach_shortcuts(self, view: Gtk.Widget) -> None:
+        controller = Gtk.ShortcutController()
+        controller.set_scope(Gtk.ShortcutScope.LOCAL)
+
+        def add_shortcut(trigger: Gtk.ShortcutTrigger, handler: Callable[[], bool]) -> None:
+            if trigger is None:
+                return
+            action = Gtk.CallbackAction.new(lambda _widget, _args: handler())
+            controller.add_shortcut(Gtk.Shortcut.new(trigger, action))
+
+        def add_trigger_string(trigger_str: str, handler: Callable[[], bool]) -> None:
+            if not trigger_str:
+                return
+            trigger = Gtk.ShortcutTrigger.parse_string(trigger_str)
+            add_shortcut(trigger, handler)
+
+        add_trigger_string("<primary>l", self._shortcut_focus_path_entry)
+        add_trigger_string("<primary>r", self._shortcut_refresh)
+        add_shortcut(Gtk.KeyvalTrigger.new(Gdk.KEY_F5, Gdk.ModifierType(0)), self._shortcut_refresh)
+
+        delete_triggers = [
+            Gtk.KeyvalTrigger.new(Gdk.KEY_Delete, Gdk.ModifierType(0)),
+            Gtk.KeyvalTrigger.new(Gdk.KEY_KP_Delete, Gdk.ModifierType(0)),
+            Gtk.KeyvalTrigger.new(Gdk.KEY_Delete, Gdk.ModifierType.SHIFT_MASK),
+            Gtk.KeyvalTrigger.new(Gdk.KEY_KP_Delete, Gdk.ModifierType.SHIFT_MASK),
+        ]
+        for trigger in delete_triggers:
+            add_shortcut(trigger, self._shortcut_delete)
+
+        view.add_controller(controller)
+
+    def _shortcut_focus_path_entry(self) -> bool:
+        entry = getattr(self.toolbar, "path_entry", None)
+        if isinstance(entry, Gtk.Entry):
+            try:
+                entry.grab_focus()
+                entry.select_region(0, -1)
+            except Exception:
+                pass
+        return True
+
+    def _shortcut_refresh(self) -> bool:
+        self._on_refresh_clicked(None)
+        return True
+
+    def _shortcut_delete(self) -> bool:
+        self._emit_entry_operation("delete")
+        return True
 
     def _on_view_toggle(self, toolbar, view_name: str) -> None:
         self._stack.set_visible_child_name(view_name)
