@@ -1058,6 +1058,7 @@ class FilePane(Gtk.Box):
         list_factory.connect("bind", self._on_list_bind)
         list_view = Gtk.ListView(model=self._selection_model, factory=list_factory)
         list_view.add_css_class("rich-list")
+        list_view.set_can_focus(True)  # Enable keyboard focus for typeahead
         # Navigate on row activation (double click / Enter)
         self._list_view = list_view
         list_view.connect("activate", self._on_list_activate)
@@ -1083,6 +1084,7 @@ class FilePane(Gtk.Box):
         )
         grid_view.set_enable_rubberband(True)
         grid_view.add_css_class("iconview")
+        grid_view.set_can_focus(True)  # Enable keyboard focus for typeahead
         self._grid_view = grid_view
         # Navigate on grid item activation (double click / Enter)
         grid_view.connect("activate", self._on_grid_activate)
@@ -2598,9 +2600,9 @@ class FilePane(Gtk.Box):
         scroll_to = getattr(view, "scroll_to", None)
         if callable(scroll_to):
             flags = getattr(Gtk, "ListScrollFlags", None)
-            none_flag = getattr(flags, "NONE", 0) if flags is not None else 0
+            focus_flag = getattr(flags, "FOCUS", 1) if flags is not None else 1
             try:
-                scroll_to(position, none_flag, 0.0, 0.0)
+                scroll_to(position, focus_flag)
             except Exception:
                 pass
 

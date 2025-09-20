@@ -227,7 +227,7 @@ def test_typeahead_repeated_letter_extends_prefix():
 
 def test_typeahead_scrolls_list_view_with_full_signature():
     module = _load_file_manager_window()
-    module.Gtk.ListScrollFlags = types.SimpleNamespace(NONE="flag")
+    module.Gtk.ListScrollFlags = types.SimpleNamespace(FOCUS="flag")
     pane = _make_pane(module, ["alpha", "alpine", "zulu"])
 
     class _DummySelection:
@@ -255,12 +255,12 @@ def test_typeahead_scrolls_list_view_with_full_signature():
 
     assert pane._on_typeahead_key_pressed(None, ord("z"), 0, 0) is True
     assert pane._selection_model.get_selected() == 2
-    assert calls == [(2, "flag", 0.0, 0.0)]
+    assert calls == [(2, "flag")]
 
 
 def test_typeahead_scrolls_grid_view_with_full_signature():
     module = _load_file_manager_window()
-    module.Gtk.ListScrollFlags = types.SimpleNamespace(NONE="flag")
+    module.Gtk.ListScrollFlags = types.SimpleNamespace(FOCUS="flag")
     pane = _make_pane(module, ["alpha", "alpine", "zulu"])
 
     class _DummySelection:
@@ -287,7 +287,7 @@ def test_typeahead_scrolls_grid_view_with_full_signature():
     assert pane._on_typeahead_key_pressed(None, ord("z"), 0, 0) is True
     assert pane._selection_model.get_selected() == 2
     assert list_calls == []
-    assert grid_calls == [(2, "flag", 0.0, 0.0)]
+    assert grid_calls == [(2, "flag")]
 
 
 def test_context_menu_includes_properties(monkeypatch):
