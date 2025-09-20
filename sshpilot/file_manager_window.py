@@ -651,8 +651,10 @@ class AsyncSFTPManager(GObject.GObject):
         if not password and self._connection_manager is not None:
             lookup_host = self._host
             if connection is not None:
+                # Use nickname first (for SSH config lookup), then hostname, then IP
                 lookup_host = (
-                    getattr(connection, "hostname", None)
+                    getattr(connection, "nickname", None)
+                    or getattr(connection, "hostname", None)
                     or getattr(connection, "host", None)
                     or self._host
                 )
@@ -674,6 +676,7 @@ class AsyncSFTPManager(GObject.GObject):
         key_filename: Optional[str] = None
         passphrase: Optional[str] = None
 
+        logger.debug("File manager: connection object is %s", "None" if connection is None else "present")
         if connection is not None:
             try:
                 auth_method = int(getattr(connection, "auth_method", 0) or 0)
@@ -689,18 +692,37 @@ class AsyncSFTPManager(GObject.GObject):
             keyfile = raw_keyfile.strip()
             if keyfile.lower().startswith("select key file"):
                 keyfile = ""
+            
+            logger.debug("File manager: connection nickname='%s', hostname='%s', key_mode=%d, keyfile='%s', auth_method=%d", 
+                        getattr(connection, 'nickname', 'None'), 
+                        getattr(connection, 'hostname', 'None'), 
+                        key_mode, keyfile, auth_method)
+        else:
+            logger.debug("File manager: No connection object provided")
 
-            if key_mode == 1 and keyfile and os.path.isfile(keyfile):
+        if connection is not None and key_mode == 1 and keyfile and os.path.isfile(keyfile):
                 key_filename = keyfile
                 look_for_keys = False
+                logger.debug("File manager: Using specific key file: %s", keyfile)
+                # Prepare key for connection (add to ssh-agent if needed)
+                key_prepared = False
                 if (
                     self._connection_manager is not None
                     and hasattr(self._connection_manager, "prepare_key_for_connection")
                 ):
                     try:
-                        self._connection_manager.prepare_key_for_connection(keyfile)
+                        key_prepared = self._connection_manager.prepare_key_for_connection(keyfile)
+                        if key_prepared:
+                            logger.debug("Successfully prepared key for file manager: %s", keyfile)
+                        else:
+                            logger.warning("Failed to prepare key for file manager: %s", keyfile)
                     except Exception as exc:  # pragma: no cover - defensive
-                        logger.debug("Failed to prepare key %s: %s", keyfile, exc)
+                        logger.warning("Error preparing key for file manager %s: %s", keyfile, exc)
+                        key_prepared = False
+                
+                # If key preparation failed, we still try to connect but may prompt for passphrase
+                if not key_prepared:
+                    logger.info("Key preparation failed for %s, connection may prompt for passphrase", keyfile)
 
                 passphrase = getattr(connection, "key_passphrase", None) or None
                 if (
@@ -713,13 +735,20 @@ class AsyncSFTPManager(GObject.GObject):
                     except Exception as exc:  # pragma: no cover - defensive
                         logger.debug("Failed to load key passphrase for %s: %s", keyfile, exc)
 
-            if getattr(connection, "pubkey_auth_no", False):
-                allow_agent = False
-                look_for_keys = False
+                # Only disable agent if explicitly configured to do so
+                if getattr(connection, "pubkey_auth_no", False):
+                    allow_agent = False
+                    look_for_keys = False
+                elif key_prepared:
+                    # If we successfully prepared a key, ensure agent is enabled
+                    allow_agent = True
+                    look_for_keys = True
+                    logger.debug("Key was prepared successfully, enabling SSH agent usage")
 
-            if auth_method == 1:
-                allow_agent = False
-                look_for_keys = False
+                # Only disable agent for password auth method
+                if auth_method == 1:
+                    allow_agent = False
+                    look_for_keys = False
 
         connect_kwargs: Dict[str, Any] = {
             "hostname": self._host,
@@ -2103,7 +2132,7 @@ class FilePane(Gtk.Box):
         box.metadata_label = metadata_label
         item.set_child(box)
 
-    def _on_list_bind(self, factory, item):
+    def _on_list_bind(self, factory: Gtk.SignalListItemFactory, item):
         box = item.get_child()
         # Access references as Python attributes instead of deprecated get_data
         icon: Gtk.Image = box.icon
@@ -2158,7 +2187,7 @@ class FilePane(Gtk.Box):
                 return f"{value:.1f} {unit}"
         return f"{value:.1f} EB"
 
-    def _on_grid_setup(self, factory, item):
+    def _on_grid_setup(self, factory: Gtk.SignalListItemFactory, item):
         button = Gtk.Button()
         button.set_has_frame(False)
         content = Gtk.Box(
@@ -2185,7 +2214,7 @@ class FilePane(Gtk.Box):
         button.set_child(content)
         item.set_child(button)
 
-    def _on_grid_bind(self, factory, item):
+    def _on_grid_bind(self, factory: Gtk.SignalListItemFactory, item):
         # Grid view uses the same icon for now but honours the entry name as
         # tooltip so users can differentiate.
         button = item.get_child()

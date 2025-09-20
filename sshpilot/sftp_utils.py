@@ -7,7 +7,7 @@ import logging
 import shutil
 import subprocess
 import threading
-from typing import Optional, Tuple, Callable
+from typing import Optional, Tuple, Callable, Any
 
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk
 
@@ -23,6 +23,9 @@ def open_remote_in_file_manager(
     path: Optional[str] = None,
     error_callback: Optional[Callable] = None,
     parent_window=None,
+    connection: Any = None,
+    connection_manager: Any = None,
+    ssh_config: Optional[dict] = None,
 ) -> Tuple[bool, Optional[str]]:
     """Open remote server in file manager using SFTP URI with asynchronous verification"""
 
@@ -44,9 +47,11 @@ def open_remote_in_file_manager(
                 username=user,
                 port=port or 22,
                 path=p,
-
                 parent=parent_window,
                 transient_for_parent=False,
+                connection=connection,
+                connection_manager=connection_manager,
+                ssh_config=ssh_config,
             )
         except Exception as exc:
             logger.exception("Failed to launch in-app file manager: %s", exc)

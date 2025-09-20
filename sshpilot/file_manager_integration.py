@@ -113,6 +113,9 @@ def launch_remote_file_manager(
             port=port,
             error_callback=error_callback,
             parent_window=parent_window,
+            connection=connection,
+            connection_manager=connection_manager,
+            ssh_config=ssh_config,
         )
         return success, error_msg, None
 

@@ -111,7 +111,10 @@ class WindowActions:
                     host=host_value,
                     port=connection.port if connection.port != 22 else None,
                     error_callback=error_callback,
-                    parent_window=self
+                    parent_window=self,
+                    connection=connection,
+                    connection_manager=getattr(self, 'connection_manager', None),
+                    ssh_config=getattr(self.config, 'get_ssh_config', lambda: {})()
                 )
                 if success:
                     logger.info(f"Started file manager process for {connection.nickname}")
