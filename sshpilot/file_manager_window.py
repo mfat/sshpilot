@@ -25,6 +25,7 @@ import posixpath
 import shutil
 import threading
 import time
+from datetime import datetime
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -1044,7 +1045,13 @@ class FilePane(Gtk.Box):
         # Navigate on row activation (double click / Enter)
         self._list_view = list_view
         list_view.connect("activate", self._on_list_activate)
-        
+        self._list_drag_source = Gtk.DragSource()
+        self._list_drag_source.set_actions(Gdk.DragAction.COPY)
+        self._list_drag_source.connect("prepare", self._on_drag_prepare)
+        self._list_drag_source.connect("drag-begin", self._on_drag_begin)
+        self._list_drag_source.connect("drag-end", self._on_drag_end)
+        list_view.add_controller(self._list_drag_source)
+
         # Wrap list view in a scrolled window for proper scrolling
         list_scrolled = Gtk.ScrolledWindow()
         list_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -1063,6 +1070,12 @@ class FilePane(Gtk.Box):
         self._grid_view = grid_view
         # Navigate on grid item activation (double click / Enter)
         grid_view.connect("activate", self._on_grid_activate)
+        self._grid_drag_source = Gtk.DragSource()
+        self._grid_drag_source.set_actions(Gdk.DragAction.COPY)
+        self._grid_drag_source.connect("prepare", self._on_drag_prepare)
+        self._grid_drag_source.connect("drag-begin", self._on_drag_begin)
+        self._grid_drag_source.connect("drag-end", self._on_drag_end)
+        grid_view.add_controller(self._grid_drag_source)
 
         # Wrap grid view in a scrolled window for proper scrolling
         grid_scrolled = Gtk.ScrolledWindow()
@@ -1230,6 +1243,8 @@ class FilePane(Gtk.Box):
         self._show_hidden = False
         self._sort_key = "name"  # Default sort by name
         self._sort_descending = False  # Default ascending order
+        self._drag_in_progress = False
+        self._drag_payload: Optional[object] = None
 
         self._suppress_history_push: bool = False
         self._selection_model.connect("selection-changed", self._on_selection_changed)
@@ -1260,6 +1275,7 @@ class FilePane(Gtk.Box):
 
         if not self._is_remote:
             self._setup_drag_sources((list_view, grid_view))
+
         self._update_menu_state()
         # Set up sorting actions for the split button
         self._setup_sorting_actions()
@@ -1659,6 +1675,7 @@ class FilePane(Gtk.Box):
         _add_action("rename", lambda: self._emit_entry_operation("rename"))
         _add_action("delete", lambda: self._emit_entry_operation("delete"))
         _add_action("new_folder", lambda: self.emit("request-operation", "mkdir", None))
+        _add_action("properties", self._on_menu_properties)
 
         # Create menu model dynamically based on pane type
         menu_model = Gio.Menu()
@@ -1673,6 +1690,7 @@ class FilePane(Gtk.Box):
         manage_section.append("Rename…", "pane.rename")
         manage_section.append("Delete", "pane.delete")
         menu_model.append_section(None, manage_section)
+        menu_model.append("Properties…", "pane.properties")
         menu_model.append("New Folder", "pane.new_folder")
 
         # Create popover and connect action group
@@ -1698,6 +1716,68 @@ class FilePane(Gtk.Box):
 
         long_press.connect("pressed", _on_long_press)
         widget.add_controller(long_press)
+
+    def _build_drag_payload(self) -> Optional[object]:
+        entries = self.get_selected_entries()
+        if not entries:
+            return None
+
+        if self._is_remote:
+            return {
+                "type": "remote",
+                "directory": self._current_path,
+                "entries": [dataclasses.asdict(entry) for entry in entries],
+            }
+
+        window = self.get_root()
+        base_dir_text = self.toolbar.path_entry.get_text()
+        base_dir = base_dir_text or "/"
+        if isinstance(window, FileManagerWindow):
+            base_dir = window._normalize_local_path(base_dir)
+        else:
+            base_dir = os.path.abspath(os.path.expanduser(base_dir))
+
+        return [pathlib.Path(os.path.join(base_dir, entry.name)) for entry in entries]
+
+    def _on_drag_prepare(self, drag_source: Gtk.DragSource, _x: float, _y: float):
+        payload = self._build_drag_payload()
+        if payload is None:
+            self._drag_payload = None
+            try:
+                drag_source.drag_cancel()
+            except (AttributeError, TypeError):
+                try:
+                    drag_source.drag_cancel(Gdk.DragCancelReason.NO_TARGET)
+                except Exception:
+                    pass
+            return None
+
+        self._drag_payload = payload
+        return Gdk.ContentProvider.new_for_value(
+            GObject.Value(GObject.TYPE_PYOBJECT, payload)
+        )
+
+    def _on_drag_begin(self, drag_source: Gtk.DragSource, _drag: Gdk.Drag) -> None:
+        if self._drag_payload is None:
+            try:
+                drag_source.drag_cancel()
+            except (AttributeError, TypeError):
+                try:
+                    drag_source.drag_cancel(Gdk.DragCancelReason.NO_TARGET)
+                except Exception:
+                    pass
+            return
+
+        self._drag_in_progress = True
+
+    def _on_drag_end(
+        self,
+        _drag_source: Gtk.DragSource,
+        _drag: Optional[Gdk.Drag],
+        _delete_data: bool,
+    ) -> None:
+        self._drag_in_progress = False
+        self._drag_payload = None
 
     def _show_context_menu(self, widget: Gtk.Widget, x: float, y: float) -> None:
         self._update_selection_for_menu(widget, x, y)
@@ -1758,6 +1838,12 @@ class FilePane(Gtk.Box):
     def get_selected_entries(self) -> List[FileEntry]:
         return [self._entries[index] for index in self._get_selected_indices()]
 
+    def is_drag_in_progress(self) -> bool:
+        return self._drag_in_progress
+
+    def get_drag_payload(self) -> Optional[object]:
+        return self._drag_payload
+
     def _update_menu_state(self) -> None:
         selected_entries = self.get_selected_entries()
         selection_count = len(selected_entries)
@@ -1780,6 +1866,7 @@ class FilePane(Gtk.Box):
         _set_enabled("upload", (not self._is_remote) and has_selection)
         _set_enabled("rename", single_selection)
         _set_enabled("delete", has_selection)
+        _set_enabled("properties", single_selection)
         # new_folder is available in context menu only now
 
         # Action bar buttons still use the old logic
@@ -1821,6 +1908,7 @@ class FilePane(Gtk.Box):
         self._set_drop_zone_pointer(False)
         self.hide_drop_zone()
         self.emit("request-operation", "upload", value)
+
         return True
 
     def get_selected_entry(self) -> Optional[FileEntry]:
@@ -1904,6 +1992,149 @@ class FilePane(Gtk.Box):
         if dialog_error is not None and error.matches(dialog_error, dialog_error.DISMISSED):
             return True
         return error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)
+
+    def _build_properties_details(self, entry: FileEntry) -> Dict[str, str]:
+        base_path = self._current_path or "/"
+        location = os.path.join(base_path, entry.name)
+
+        entry_type = "Folder" if entry.is_dir else "File"
+        if entry.is_dir:
+            size_text = "—"
+        else:
+            size_text = self._format_size(entry.size)
+
+        try:
+            modified_dt = datetime.fromtimestamp(entry.modified)
+            modified_text = modified_dt.strftime("%Y-%m-%d %H:%M:%S")
+        except (OSError, OverflowError, ValueError, TypeError):
+            modified_text = "Unknown"
+
+        return {
+            "name": entry.name,
+            "type": entry_type,
+            "size": size_text,
+            "modified": modified_text,
+            "location": location,
+        }
+
+    def _on_menu_properties(self) -> None:
+        entry = self.get_selected_entry()
+        if entry is None:
+            self.show_toast("Select a single item to view properties")
+            return
+        details = self._build_properties_details(entry)
+        self._show_properties_dialog(entry, details)
+
+    def _show_properties_dialog(self, entry: FileEntry, details: Dict[str, str]) -> None:
+        window = self.get_root()
+        heading = f"{entry.name} Properties" if entry.name else "Properties"
+        body_lines = [
+            f"Name: {details['name']}",
+            f"Type: {details['type']}",
+            f"Size: {details['size']}",
+            f"Modified: {details['modified']}",
+            f"Location: {details['location']}",
+        ]
+        body_text = "\n".join(body_lines)
+
+        dialog: Optional[object] = None
+        message_dialog_cls = getattr(Adw, "MessageDialog", None)
+        if message_dialog_cls is not None:
+            try:
+                dialog = message_dialog_cls.new(window, heading, body_text)
+            except AttributeError:
+                try:
+                    dialog = message_dialog_cls(
+                        transient_for=window,
+                        modal=True,
+                        heading=heading,
+                        body=body_text,
+                    )
+                except TypeError:
+                    dialog = message_dialog_cls()
+            if dialog is not None:
+                for name, value in (("set_transient_for", window), ("set_modal", True)):
+                    setter = getattr(dialog, name, None)
+                    if callable(setter):
+                        try:
+                            setter(value)
+                        except Exception:
+                            pass
+                setters = {
+                    "set_heading": heading,
+                    "set_title": heading,
+                    "set_body": body_text,
+                    "set_body_text": body_text,
+                    "set_text": body_text,
+                }
+                for method, value in setters.items():
+                    setter = getattr(dialog, method, None)
+                    if callable(setter):
+                        try:
+                            setter(value)
+                        except Exception:
+                            pass
+                present = getattr(dialog, "present", None)
+                if not callable(present):
+                    present = getattr(dialog, "show", None)
+                if callable(present):
+                    try:
+                        present()
+                    except Exception:
+                        pass
+                return
+
+        dialog_cls = getattr(Gtk, "Dialog", None)
+        if dialog_cls is None:
+            return
+        try:
+            dialog = dialog_cls(transient_for=window, modal=True)
+        except TypeError:
+            dialog = dialog_cls()
+        if dialog is None:
+            return
+
+        if hasattr(dialog, "set_title"):
+            try:
+                dialog.set_title(heading)
+            except Exception:
+                pass
+        if hasattr(dialog, "set_transient_for") and window is not None:
+            try:
+                dialog.set_transient_for(window)
+            except Exception:
+                pass
+        if hasattr(dialog, "set_modal"):
+            try:
+                dialog.set_modal(True)
+            except Exception:
+                pass
+
+        box_cls = getattr(Gtk, "Box", None)
+        label_cls = getattr(Gtk, "Label", None)
+        if callable(box_cls) and callable(label_cls):
+            try:
+                content_box = box_cls(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+                for line in body_lines:
+                    label = label_cls()
+                    if hasattr(label, "set_xalign"):
+                        label.set_xalign(0.0)
+                    if hasattr(label, "set_text"):
+                        label.set_text(line)
+                    content_box.append(label)
+                if hasattr(dialog, "set_child"):
+                    dialog.set_child(content_box)
+            except Exception:
+                pass
+
+        presenter = getattr(dialog, "present", None)
+        if not callable(presenter):
+            presenter = getattr(dialog, "show", None)
+        if callable(presenter):
+            try:
+                presenter()
+            except Exception:
+                pass
 
     # -- public API -----------------------------------------------------
 
@@ -2717,8 +2948,22 @@ class FileManagerWindow(Adw.Window):
                     highlight_name=path_obj.name,
                 )
         elif action == "download" and isinstance(payload, dict):
+            if pane is self._left_pane and payload.get("entries"):
+                remote_pane = getattr(self, "_right_pane", None)
+                if isinstance(remote_pane, FilePane):
+                    pane = remote_pane
+
             entries = payload.get("entries") or []
-            directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
+            directory = payload.get("directory")
+            if not directory:
+                if pane is self._right_pane:
+                    directory = pane.toolbar.path_entry.get_text() or "/"
+                else:
+                    remote_pane = getattr(self, "_right_pane", None)
+                    if isinstance(remote_pane, FilePane):
+                        directory = remote_pane.toolbar.path_entry.get_text() or "/"
+                    else:
+                        directory = "/"
             destination_base = payload.get("destination")
 
             if not entries or destination_base is None:
