@@ -65,11 +65,8 @@ class TerminalManager:
 
         def _set_terminal_colors():
             try:
-                fg = Gdk.RGBA(); fg.parse('rgb(0,0,0)')
-                bg = Gdk.RGBA(); bg.parse('rgb(255,255,255)')
-                terminal.vte.set_color_foreground(fg)
-                terminal.vte.set_color_background(bg)
-                terminal.vte.set_colors(fg, bg, None)
+                # Apply the configured theme instead of hardcoded colors
+                terminal.apply_theme()
                 terminal.vte.queue_draw()
                 if not terminal._connect_ssh():
                     logger.error('Failed to establish SSH connection')
@@ -122,10 +119,11 @@ class TerminalManager:
             return
         confirm_disconnect = window.config.get_setting('confirm-disconnect', True)
         if confirm_disconnect:
+            host_value = getattr(connection, 'hostname', getattr(connection, 'host', getattr(connection, 'nickname', '')))
             dialog = Adw.MessageDialog(
                 transient_for=window,
                 modal=True,
-                heading=_("Disconnect from {}").format(connection.nickname or connection.host),
+                heading=_("Disconnect from {}").format(connection.nickname or host_value),
                 body=_("Are you sure you want to disconnect from this host?")
             )
             dialog.add_response('cancel', _("Cancel"))
@@ -157,7 +155,8 @@ class TerminalManager:
             class LocalConnection:
                 def __init__(self):
                     self.nickname = "Local Terminal"
-                    self.host = "localhost"
+                    self.hostname = "localhost"
+                    self.host = self.hostname
                     self.username = os.getenv('USER', 'user')
                     self.port = 22
                     self.is_connected = True
@@ -205,7 +204,7 @@ class TerminalManager:
                 if (hasattr(terminal_widget.connection, 'nickname') and
                         terminal_widget.connection.nickname == "Local Terminal"):
                     continue
-                if not hasattr(terminal_widget.connection, 'host'):
+                if not hasattr(terminal_widget.connection, 'hostname'):
                     continue
                 try:
                     terminal_widget.vte.feed_child(cmd)
@@ -233,8 +232,9 @@ class TerminalManager:
 
         self.window._is_controlled_reconnect = False
         if not getattr(self.window, '_is_controlled_reconnect', False):
+            host_value = getattr(terminal.connection, 'hostname', getattr(terminal.connection, 'host', getattr(terminal.connection, 'nickname', '')))
             logger.info(
-                f"Terminal connected: {terminal.connection.nickname} ({terminal.connection.username}@{terminal.connection.host})"
+                f"Terminal connected: {terminal.connection.nickname} ({terminal.connection.username}@{host_value})"
             )
         else:
             logger.debug(
@@ -246,8 +246,13 @@ class TerminalManager:
             row = self.window.connection_rows[terminal.connection]
             row.update_status()
             row.queue_draw()
+        host_value = getattr(
+            terminal.connection,
+            'hostname',
+            getattr(terminal.connection, 'host', getattr(terminal.connection, 'nickname', ''))
+        )
         logger.info(
-            f"Terminal disconnected: {terminal.connection.nickname} ({terminal.connection.username}@{terminal.connection.host})"
+            f"Terminal disconnected: {terminal.connection.nickname} ({terminal.connection.username}@{host_value})"
         )
 
     def on_terminal_title_changed(self, terminal, title):

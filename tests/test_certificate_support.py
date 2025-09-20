@@ -79,7 +79,7 @@ def test_certificate_support(tmp_path):
 
     data = {
         'nickname': 'cert-test',
-        'host': 'localhost',
+        'hostname': 'localhost',
         'username': 'testuser',
         'keyfile': key_path,
         'certificate': cert_path,
@@ -104,6 +104,6 @@ def test_certificate_support(tmp_path):
     assert parsed['certificate'] == cert_path
 
     # Ensure updates propagate the certificate field
-    conn2 = Connection({'host': 'localhost'})
+    conn2 = Connection({'hostname': 'localhost'})
     conn2.update_data({'certificate': cert_path})
     assert conn2.certificate == cert_path

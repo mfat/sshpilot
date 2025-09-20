@@ -7,16 +7,30 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-# Provide minimal gi stubs so connection_manager can be imported without GTK
-if 'gi' not in sys.modules:
-    gi = types.ModuleType('gi')
-    gi.require_version = lambda *args, **kwargs: None
-    repository = types.ModuleType('gi.repository')
-    gi.repository = repository
-    repository.GObject = types.SimpleNamespace(Object=object, SignalFlags=types.SimpleNamespace(RUN_FIRST=None))
-    repository.GLib = types.SimpleNamespace(idle_add=lambda *a, **k: None)
-    repository.Gtk = types.SimpleNamespace()
-    repository.Secret = types.SimpleNamespace(
+
+class _DummyGITypeMeta(type):
+    def __getattr__(cls, name):
+        value = _DummyGITypeMeta(name, (object,), {})
+        setattr(cls, name, value)
+        return value
+
+    def __call__(cls, *args, **kwargs):
+        return object()
+
+
+def _make_dummy_gi_type(name: str):
+    return _DummyGITypeMeta(name, (object,), {})
+
+
+class _DummyGIModule(types.ModuleType):
+    def __getattr__(self, name):
+        value = _make_dummy_gi_type(name)
+        setattr(self, name, value)
+        return value
+
+
+def _build_secret_stub():
+    return types.SimpleNamespace(
         Schema=types.SimpleNamespace(new=lambda *a, **k: object()),
         SchemaFlags=types.SimpleNamespace(NONE=0),
         SchemaAttributeType=types.SimpleNamespace(STRING=0),
@@ -25,9 +39,34 @@ if 'gi' not in sys.modules:
         password_clear_sync=lambda *a, **k: None,
         COLLECTION_DEFAULT=None,
     )
+
+
+if 'gi' not in sys.modules:
+    gi = types.ModuleType('gi')
+    gi.require_version = lambda *args, **kwargs: None
+    repository = _DummyGIModule('gi.repository')
+
+    gi.repository = repository
     sys.modules['gi'] = gi
     sys.modules['gi.repository'] = repository
-    sys.modules['gi.repository.GObject'] = repository.GObject
-    sys.modules['gi.repository.GLib'] = repository.GLib
-    sys.modules['gi.repository.Gtk'] = repository.Gtk
-    sys.modules['gi.repository.Secret'] = repository.Secret
+
+    # Provide concrete stubs for modules referenced in tests
+    gobject_module = _DummyGIModule('gi.repository.GObject')
+    setattr(gobject_module, 'Object', _make_dummy_gi_type('Object'))
+    setattr(gobject_module, 'SignalFlags', types.SimpleNamespace(RUN_FIRST=None))
+    setattr(repository, 'GObject', gobject_module)
+    sys.modules['gi.repository.GObject'] = gobject_module
+
+    glib_module = _DummyGIModule('gi.repository.GLib')
+    setattr(glib_module, 'idle_add', lambda *a, **k: None)
+    setattr(repository, 'GLib', glib_module)
+    sys.modules['gi.repository.GLib'] = glib_module
+
+    secret_module = _build_secret_stub()
+    setattr(repository, 'Secret', secret_module)
+    sys.modules['gi.repository.Secret'] = secret_module
+
+    for name in ['Gtk', 'Adw', 'Gio', 'Gdk', 'Pango', 'PangoFT2']:
+        submodule = _DummyGIModule(f'gi.repository.{name}')
+        setattr(repository, name, submodule)
+        sys.modules[f'gi.repository.{name}'] = submodule
