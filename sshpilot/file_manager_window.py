@@ -53,25 +53,26 @@ def _ensure_drop_zone_css() -> None:
     provider = css_provider_cls()
     css_lines = [
         b".file-pane-drop-zone {",
-        b"    border: 2px dashed alpha(@accent_color, 0.35);",
-        b"    border-radius: 12px;",
-        b"    background-color: alpha(@accent_color, 0.10);",
-        b"    transition: border-color 120ms ease, background-color 120ms ease;",
+        b"    border: 2px dashed alpha(@accent_color, 0.5);",
+        b"    border-radius: 24px;",
+        b"    background-color: alpha(@accent_color, 0.15);",
+        b"    padding: 12px 20px;",
+        b"    box-shadow: 0 4px 12px alpha(@shade_color, 0.15);",
+        b"    backdrop-filter: blur(8px);",
+        b"    transition: all 150ms ease;",
         b"}",
         b"",
         b".file-pane-drop-zone.visible {",
         b"    border-style: solid;",
         b"    border-color: @accent_color;",
-        b"    background-color: alpha(@accent_color, 0.18);",
-        b"}",
-        b"",
-        b".file-pane-drop-zone .drop-zone-content {",
-        b"    padding: 32px;",
-        b"    border-radius: 12px;",
+        b"    background-color: alpha(@accent_color, 0.25);",
+        b"    box-shadow: 0 6px 16px alpha(@shade_color, 0.25);",
+        b"    transform: translateY(-2px);",
         b"}",
         b"",
         b".file-pane-drop-zone .drop-zone-title {",
         b"    font-weight: 600;",
+        b"    color: @accent_color;",
         b"}",
     ]
     css_data = b"\n".join(css_lines)
@@ -1094,50 +1095,42 @@ class FilePane(Gtk.Box):
         content_overlay.set_child(self._stack)
 
         drop_zone_revealer = Gtk.Revealer()
-        drop_zone_revealer.set_transition_type(Gtk.RevealerTransitionType.CROSSFADE)
-        drop_zone_revealer.set_halign(Gtk.Align.FILL)
-        drop_zone_revealer.set_valign(Gtk.Align.FILL)
+        drop_zone_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
+        drop_zone_revealer.set_halign(Gtk.Align.CENTER)
+        drop_zone_revealer.set_valign(Gtk.Align.END)
         if hasattr(drop_zone_revealer, "set_can_target"):
             drop_zone_revealer.set_can_target(False)
 
         drop_zone_box = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL,
+            orientation=Gtk.Orientation.HORIZONTAL,
             spacing=12,
         )
-        drop_zone_box.set_hexpand(True)
-        drop_zone_box.set_vexpand(True)
-        drop_zone_box.set_halign(Gtk.Align.FILL)
-        drop_zone_box.set_valign(Gtk.Align.FILL)
-        drop_zone_box.set_margin_top(24)
+        drop_zone_box.set_hexpand(False)
+        drop_zone_box.set_vexpand(False)
+        drop_zone_box.set_halign(Gtk.Align.CENTER)
+        drop_zone_box.set_valign(Gtk.Align.CENTER)
+        drop_zone_box.set_margin_top(12)
         drop_zone_box.set_margin_bottom(24)
-        drop_zone_box.set_margin_start(24)
-        drop_zone_box.set_margin_end(24)
+        drop_zone_box.set_margin_start(16)
+        drop_zone_box.set_margin_end(16)
         if hasattr(drop_zone_box, "set_can_target"):
             drop_zone_box.set_can_target(False)
         drop_zone_box.add_css_class("file-pane-drop-zone")
 
-        drop_zone_content = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL,
-            spacing=12,
-        )
-        drop_zone_content.set_halign(Gtk.Align.CENTER)
-        drop_zone_content.set_valign(Gtk.Align.CENTER)
-        drop_zone_content.add_css_class("drop-zone-content")
-        drop_zone_box.append(drop_zone_content)
-
+        # Create a compact horizontal layout
         icon_name = "folder-upload-symbolic" if self._is_remote else "folder-download-symbolic"
         drop_zone_icon = Gtk.Image.new_from_icon_name(icon_name)
-        drop_zone_icon.set_pixel_size(48)
+        drop_zone_icon.set_pixel_size(24)
         drop_zone_icon.add_css_class("accent")
-        drop_zone_content.append(drop_zone_icon)
+        drop_zone_box.append(drop_zone_icon)
 
         drop_zone_title = Gtk.Label()
         drop_zone_title.set_text("Drop files to upload" if self._is_remote else "Drop items here")
         drop_zone_title.set_justify(Gtk.Justification.CENTER)
         drop_zone_title.set_halign(Gtk.Align.CENTER)
         drop_zone_title.add_css_class("drop-zone-title")
-        drop_zone_title.add_css_class("title-3")
-        drop_zone_content.append(drop_zone_title)
+        drop_zone_title.add_css_class("heading")
+        drop_zone_box.append(drop_zone_title)
 
         drop_zone_revealer.set_child(drop_zone_box)
         drop_zone_revealer.set_reveal_child(False)
