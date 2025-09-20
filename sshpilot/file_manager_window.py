@@ -3228,6 +3228,62 @@ class FileManagerWindow(Adw.Window):
         self._toast_overlay = Adw.ToastOverlay()
         self._progress_dialog: Optional[SFTPProgressDialog] = None
         self._connection_error_reported = False
+        
+        # Apply custom styling to toasts
+        css_provider = Gtk.CssProvider()
+        toast_css = """
+        toast {
+            /* Frosted glass effect */
+            background-color: alpha(black, 0.6);
+
+            /* Pill shape */
+            border-radius: 99px; /* A large value creates the pill shape */
+
+            /* Clean typography */
+            color: white;
+            font-weight: 500; /* Medium weight for a modern feel */
+            font-size: 1.05em;
+
+            /* Subtle details */
+            padding: 8px 20px;
+            margin: 10px;
+            border: 1px solid alpha(white, 0.1);
+            box-shadow: 0 5px 15px alpha(black, 0.2);
+        }
+        
+        toast label {
+            /* Style toast labels */
+            color: white;
+            font-weight: 500;
+        }
+        
+        toast button {
+            /* Style toast buttons if any */
+            color: white;
+            background-color: alpha(white, 0.2);
+            border: 1px solid alpha(white, 0.3);
+            border-radius: 6px;
+            padding: 4px 8px;
+        }
+        
+        toast button.circular.flat {
+            /* Style close button */
+            color: white;
+            background-color: alpha(black, 0.6);
+            border: 1px solid alpha(white, 0.1);
+        }
+        """
+        css_provider.load_from_data(toast_css.encode())
+        self._toast_overlay.get_style_context().add_provider(
+            css_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+        )
+        
+        # Also apply to the main window's display for global coverage
+        display = Gdk.Display.get_default()
+        Gtk.StyleContext.add_provider_for_display(
+            display, css_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+        )
+        
         toolbar_view.set_content(self._toast_overlay)
         toolbar_view.add_top_bar(header_bar)
 
@@ -3314,6 +3370,13 @@ class FileManagerWindow(Adw.Window):
             self._show_progress(0.1, "Connecting…")
         except Exception as exc:
             print(f"Error showing progress: {exc}")
+        
+        # Show loading toast in remote pane
+        try:
+            self._right_pane.show_toast("Loading remote directory...")
+        except (AttributeError, RuntimeError, GLib.GError):
+            # Overlay might be destroyed or invalid, ignore
+            pass
         
         # Start connection after everything is set up
         try:
@@ -3415,6 +3478,7 @@ class FileManagerWindow(Adw.Window):
 
     def _on_connected(self, *_args) -> None:
         self._show_progress(0.4, "Connected")
+        
         # Trigger directory loads for all panes that have a pending initial path
         for pane, pending in self._pending_paths.items():
             if pending:
@@ -3437,6 +3501,7 @@ class FileManagerWindow(Adw.Window):
     def _on_connection_error(self, _manager, message: str) -> None:
         """Handle connection error with toast."""
         self._clear_progress_toast()
+        
         if self._connection_error_reported:
             return
         
@@ -3465,7 +3530,6 @@ class FileManagerWindow(Adw.Window):
         target.show_entries(path, entries)
         self._apply_pending_highlight(target)
         target.push_history(path)
-        target.show_toast(f"Loaded {path}")
 
     # -- local filesystem helpers ---------------------------------------
 
