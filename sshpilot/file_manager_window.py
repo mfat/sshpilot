@@ -2116,7 +2116,10 @@ class FilePane(Gtk.Box):
 
             # Handle remote-to-local file transfers
             if origin and origin._is_remote and not self._is_remote:
-                print(f"Processing remote-to-local drop: {value}")
+                print(f"=== PROCESSING REMOTE-TO-LOCAL DROP ===")
+                print(f"Value received: {repr(value)}")
+                print(f"Value type: {type(value)}")
+                
                 # For remote files, the value is a plain text list of filenames
                 if isinstance(value, str):
                     file_names = [name.strip() for name in value.strip().split('\n') if name.strip()]
@@ -2129,6 +2132,13 @@ class FilePane(Gtk.Box):
                         # Get current directory on local pane (destination)
                         local_dir = self.toolbar.path_entry.get_text() or os.path.expanduser("~")
                         destination = pathlib.Path(window._normalize_local_path(local_dir))
+                        print(f"Local destination directory: {destination}")
+                        
+                        # Test if files would conflict
+                        for entry in selected_entries:
+                            target_path = destination / entry.name
+                            exists = target_path.exists()
+                            print(f"  {entry.name} -> {target_path} (exists: {exists})")
                         
                         # Create proper download payload
                         payload = {
@@ -2139,7 +2149,8 @@ class FilePane(Gtk.Box):
                         print(f"Download payload: entries={len(payload['entries'])}, destination={payload['destination']}")
                         
                         # Emit download operation with proper payload
-                        print("Emitting download request-operation")
+                        print("=== EMITTING DOWNLOAD REQUEST-OPERATION ===")
+                        print(f"Payload being emitted: {payload}")
                         self.emit("request-operation", "download", payload)
                         return True
                 print("No valid file names found in remote drop")
@@ -2975,6 +2986,86 @@ class FileManagerWindow(Adw.Window):
                 pane.push_history(path)
             self._manager.listdir(path)
 
+    def _check_file_conflicts(self, files_to_transfer: List[Tuple[str, str]], operation_type: str, callback: Callable[[List[Tuple[str, str]]], None]) -> None:
+        """Check for file conflicts and show resolution dialog if needed.
+        
+        Args:
+            files_to_transfer: List of (source, destination) tuples
+            operation_type: "upload" or "download"
+            callback: Function to call with resolved file list
+        """
+        print(f"=== CHECKING FILE CONFLICTS ===")
+        print(f"Operation type: {operation_type}")
+        print(f"Files to transfer: {files_to_transfer}")
+        
+        conflicts = []
+        
+        # Check for conflicts
+        for source, dest in files_to_transfer:
+            print(f"Checking: {source} -> {dest}")
+            if operation_type == "download":
+                # For downloads, check if local file exists
+                exists = os.path.exists(dest)
+                print(f"  Local file exists: {exists}")
+                if exists:
+                    conflicts.append((source, dest))
+                    print(f"  CONFLICT DETECTED: {dest}")
+            else:  # upload
+                # For uploads, we'd need to check remote files - this is more complex
+                # For now, let the upload proceed (remote conflict handling would require SFTP stat calls)
+                print(f"  Upload conflict checking not implemented yet")
+                pass
+        
+        print(f"Total conflicts found: {len(conflicts)}")
+        
+        if not conflicts:
+            # No conflicts, proceed with all transfers
+            print("No conflicts, proceeding with transfers")
+            callback(files_to_transfer)
+            return
+            
+        # Show conflict resolution dialog
+        conflict_count = len(conflicts)
+        total_count = len(files_to_transfer)
+        
+        if conflict_count == 1:
+            filename = os.path.basename(conflicts[0][1])
+            title = "File Already Exists"
+            message = f"'{filename}' already exists in the destination folder."
+        else:
+            title = "Files Already Exist"
+            message = f"{conflict_count} of {total_count} files already exist in the destination folder."
+            
+        dialog = Adw.AlertDialog.new(title, message)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("skip", "Skip Existing")
+        dialog.add_response("replace", "Replace All")
+        dialog.set_default_response("skip")
+        dialog.set_close_response("cancel")
+        
+        def _on_conflict_response(_dialog, response: str) -> None:
+            dialog.close()
+            
+            if response == "cancel":
+                return
+            elif response == "skip":
+                # Only transfer files that don't conflict
+                non_conflicting = [item for item in files_to_transfer if item not in conflicts]
+                if non_conflicting:
+                    callback(non_conflicting)
+                    # Show toast about skipped files
+                    if conflict_count == 1:
+                        filename = os.path.basename(conflicts[0][1])
+                        self._left_pane.show_toast(f"Skipped existing file: {filename}")
+                    else:
+                        self._left_pane.show_toast(f"Skipped {conflict_count} existing files")
+            elif response == "replace":
+                # Transfer all files, replacing existing ones
+                callback(files_to_transfer)
+                
+        dialog.connect("response", _on_conflict_response)
+        dialog.present()
+
     def _on_request_operation(self, pane: FilePane, action: str, payload, user_data=None) -> None:
         if action == "mkdir":
             dialog = Adw.AlertDialog.new("New Folder", "Enter a name for the new folder")
@@ -3208,21 +3299,38 @@ class FileManagerWindow(Adw.Window):
             if missing and available_paths:
                 pane.show_toast(f"Skipping inaccessible items: {missing[0].name}")
 
+            # Prepare list of files to transfer for conflict checking
+            files_to_transfer = []
             for path_obj in available_paths:
                 destination = posixpath.join(remote_root or "/", path_obj.name)
-                if path_obj.is_dir():
-                    future = self._manager.upload_directory(path_obj, destination)
-                else:
-                    future = self._manager.upload(path_obj, destination)
+                files_to_transfer.append((str(path_obj), destination))
+            
+            # Check for conflicts and handle accordingly  
+            def _proceed_with_upload(resolved_files: List[Tuple[str, str]]) -> None:
+                for local_path_str, destination in resolved_files:
+                    path_obj = pathlib.Path(local_path_str)
+                    
+                    try:
+                        if path_obj.is_dir():
+                            future = self._manager.upload_directory(path_obj, destination)
+                        else:
+                            future = self._manager.upload(path_obj, destination)
 
-                # Show progress dialog for upload
-                self._show_progress_dialog("upload", path_obj.name, future)
-                self._attach_refresh(
-                    future,
-                    refresh_remote=target_pane,
-                    highlight_name=path_obj.name,
-                )
+                        # Show progress dialog for upload
+                        self._show_progress_dialog("upload", path_obj.name, future)
+                        self._attach_refresh(
+                            future,
+                            refresh_remote=target_pane,
+                            highlight_name=path_obj.name,
+                        )
+                    except Exception as e:
+                        pane.show_toast(f"Error uploading {path_obj.name}: {str(e)}")
+            
+            self._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
         elif action == "download" and isinstance(payload, dict):
+            print(f"=== DOWNLOAD OPERATION CALLED ===")
+            print(f"Payload: {payload}")
+            
             if pane is self._left_pane and payload.get("entries"):
                 remote_pane = getattr(self, "_right_pane", None)
                 if isinstance(remote_pane, FilePane):
@@ -3230,6 +3338,8 @@ class FileManagerWindow(Adw.Window):
 
             entries = payload.get("entries") or []
             directory = payload.get("directory")
+            print(f"Entries to download: {[e.name for e in entries]}")
+            print(f"Directory: {directory}")
             if not directory:
                 if pane is self._right_pane:
                     directory = pane.toolbar.path_entry.get_text() or "/"
@@ -3248,22 +3358,41 @@ class FileManagerWindow(Adw.Window):
             if not isinstance(destination_base, pathlib.Path):
                 destination_base = pathlib.Path(destination_base)
 
+            # Prepare list of files to transfer for conflict checking
+            files_to_transfer = []
             for entry in entries:
                 source = posixpath.join(directory or "/", entry.name)
                 target_path = destination_base / entry.name
-                try:
-                    if entry.is_dir:
-                        future = self._manager.download_directory(source, target_path)
-                    else:
-                        future = self._manager.download(source, target_path)
-                    self._show_progress_dialog("download", entry.name, future)
-                    self._attach_refresh(
-                        future,
-                        refresh_local_path=str(destination_base),
-                        highlight_name=entry.name,
-                    )
-                except Exception as exc:
-                    pane.show_toast(f"Download failed: {exc}")
+                files_to_transfer.append((source, str(target_path)))
+            
+            # Check for conflicts and handle accordingly
+            def _proceed_with_download(resolved_files: List[Tuple[str, str]]) -> None:
+                for source, target_path_str in resolved_files:
+                    target_path = pathlib.Path(target_path_str)
+                    entry_name = os.path.basename(target_path_str)
+                    
+                    # Find the original entry to check if it's a directory
+                    entry_is_dir = False
+                    for entry in entries:
+                        if entry.name == entry_name:
+                            entry_is_dir = entry.is_dir
+                            break
+                    
+                    try:
+                        if entry_is_dir:
+                            future = self._manager.download_directory(source, target_path)
+                        else:
+                            future = self._manager.download(source, target_path)
+                        self._show_progress_dialog("download", entry_name, future)
+                        self._attach_refresh(
+                            future,
+                            refresh_local_path=str(destination_base),
+                            highlight_name=entry_name,
+                        )
+                    except Exception as e:
+                        pane.show_toast(f"Error downloading {entry_name}: {str(e)}")
+            
+            self._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
 
     def _on_window_resize(self, window, pspec) -> None:
         """Maintain proportional paned split when window is resized following GNOME HIG"""
