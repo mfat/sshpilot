@@ -35,6 +35,7 @@ def open_remote_in_file_manager(
 
     if _should_use_in_app_file_manager():
         logger.info("Using in-app file manager window for remote browsing")
+        in_app_path = path or "~"
         try:
             from .file_manager_window import launch_file_manager_window
 
@@ -42,7 +43,7 @@ def open_remote_in_file_manager(
                 host=host,
                 username=user,
                 port=port or 22,
-                path=p,
+                path=in_app_path,
                 parent=parent_window,
                 transient_for_parent=False,
             )
