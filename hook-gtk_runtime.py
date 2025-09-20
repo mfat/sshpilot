@@ -34,6 +34,7 @@ if sys.platform == "darwin":
 
     gdkpixbuf_candidates.append(frameworks / "lib" / "gdk-pixbuf")
 
+
     gdkpixbuf_root = None
     for candidate in gdkpixbuf_candidates:
         print(f"DEBUG: Checking GDK-Pixbuf candidate {candidate}")
@@ -61,6 +62,7 @@ if sys.platform == "darwin":
 
     if gdkpixbuf_root is None:
         print("DEBUG: No GDK-Pixbuf root found; GDK pixbuf environment variables not set")
+
     
     # Set up keyring environment for macOS (like the working bundle)
     os.environ["KEYRING_BACKEND"] = "keyring.backends.macOS.Keyring"
