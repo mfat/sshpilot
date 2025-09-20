@@ -447,6 +447,7 @@ class FileEntry:
     is_dir: bool
     size: int
     modified: float
+    item_count: Optional[int] = None  # Number of items in directory (for folders only)
 
 
 class _MainThreadDispatcher:
@@ -639,12 +640,26 @@ class AsyncSFTPManager(GObject.GObject):
                         expanded_path = f"/home/{self._username}" + (path[1:] if path.startswith("~/") else "")
             
             for attr in self._sftp.listdir_attr(expanded_path):
+                is_dir = stat_isdir(attr)
+                item_count = None
+                
+                # Count items in directory
+                if is_dir:
+                    try:
+                        dir_path = os.path.join(expanded_path, attr.filename)
+                        dir_attrs = self._sftp.listdir_attr(dir_path)
+                        item_count = len(dir_attrs)
+                    except Exception:
+                        # If we can't read the directory, set count to None
+                        item_count = None
+                
                 entries.append(
                     FileEntry(
                         name=attr.filename,
-                        is_dir=stat_isdir(attr),
+                        is_dir=is_dir,
                         size=attr.st_size,
                         modified=attr.st_mtime,
+                        item_count=item_count,
                     )
                 )
             return expanded_path, entries
@@ -1637,8 +1652,13 @@ class FilePane(Gtk.Box):
         name_label.set_tooltip_text(display_name)
 
         if entry.is_dir:
-            metadata_label.set_text("—")
-            metadata_label.set_tooltip_text(None)
+            if entry.item_count is not None:
+                count_text = f"{entry.item_count} items"
+                metadata_label.set_text(count_text)
+                metadata_label.set_tooltip_text(count_text)
+            else:
+                metadata_label.set_text("—")
+                metadata_label.set_tooltip_text(None)
         else:
             size_text = self._format_size(entry.size)
             metadata_label.set_text(size_text)
@@ -2942,12 +2962,25 @@ class FileManagerWindow(Adw.Window):
                 for dirent in it:
                     try:
                         stat = dirent.stat(follow_symlinks=False)
+                        is_dir = dirent.is_dir(follow_symlinks=False)
+                        item_count = None
+                        
+                        # Count items in directory
+                        if is_dir:
+                            try:
+                                with os.scandir(dirent.path) as dir_it:
+                                    item_count = len(list(dir_it))
+                            except Exception:
+                                # If we can't read the directory, set count to None
+                                item_count = None
+                        
                         entries.append(
                             FileEntry(
                                 name=dirent.name,
-                                is_dir=dirent.is_dir(follow_symlinks=False),
+                                is_dir=is_dir,
                                 size=getattr(stat, "st_size", 0) or 0,
                                 modified=getattr(stat, "st_mtime", 0.0) or 0.0,
+                                item_count=item_count,
                             )
                         )
                     except Exception:

@@ -159,7 +159,7 @@ def _make_pane(module, names):
     FilePane = module.FilePane
     FileEntry = module.FileEntry
     pane = FilePane.__new__(FilePane)
-    pane._entries = [FileEntry(name, False, 0, 0) for name in names]
+    pane._entries = [FileEntry(name, False, 0, 0, None) for name in names]
     return pane
 
 
@@ -321,7 +321,7 @@ def test_context_menu_includes_properties(monkeypatch):
     assert "Properties…" in menu_labels
 
     pane._action_buttons = {}
-    pane._entries = [FileEntry("example.txt", False, 512, 1700000000)]
+    pane._entries = [FileEntry("example.txt", False, 512, 1700000000, None)]
 
     class _Selection:
         def is_selected(self, index):

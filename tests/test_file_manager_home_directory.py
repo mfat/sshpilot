@@ -21,11 +21,12 @@ def stat_isdir(attr):
 
 class FileEntry:
     """Mock FileEntry class."""
-    def __init__(self, name, is_dir, size, modified):
+    def __init__(self, name, is_dir, size, modified, item_count=None):
         self.name = name
         self.is_dir = is_dir
         self.size = size
         self.modified = modified
+        self.item_count = item_count
 
 
 def test_home_directory_expansion_with_tilde():
@@ -88,6 +89,7 @@ def test_home_directory_expansion_with_tilde():
                     is_dir=stat_isdir(attr),
                     size=attr.st_size,
                     modified=attr.st_mtime,
+                    item_count=None,
                 )
             )
         return expanded_path, entries
@@ -138,6 +140,7 @@ def test_home_directory_expansion_with_subpath():
                     is_dir=stat_isdir(attr),
                     size=attr.st_size,
                     modified=attr.st_mtime,
+                    item_count=None,
                 )
             )
         return expanded_path, entries
@@ -237,6 +240,7 @@ def test_home_directory_fallback_when_normalize_fails():
                     is_dir=stat_isdir(attr),
                     size=attr.st_size,
                     modified=attr.st_mtime,
+                    item_count=None,
                 )
             )
         return expanded_path, entries
