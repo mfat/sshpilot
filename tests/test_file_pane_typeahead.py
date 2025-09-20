@@ -154,3 +154,68 @@ def test_typeahead_repeated_letter_extends_prefix():
     _press("h")
     assert pane._selection_model.get_selected() == 2
     assert pane._typeahead_buffer == "ssh"
+
+
+def test_typeahead_scrolls_list_view_with_full_signature():
+    module = _load_file_manager_window()
+    module.Gtk.ListScrollFlags = types.SimpleNamespace(NONE="flag")
+    pane = _make_pane(module, ["alpha", "alpine", "zulu"])
+
+    class _DummySelection:
+        def __init__(self):
+            self.selected = 0
+
+        def get_selected(self):
+            return self.selected
+
+        def set_selected(self, value):
+            self.selected = value
+
+    calls = []
+
+    def _record(*args):
+        calls.append(args)
+
+    pane._selection_model = _DummySelection()
+    pane._list_view = types.SimpleNamespace(scroll_to=_record)
+    pane._grid_view = types.SimpleNamespace(scroll_to=lambda *args: None)
+    pane._stack = types.SimpleNamespace(get_visible_child_name=lambda: "list")
+    pane._typeahead_buffer = ""
+    pane._typeahead_last_time = 0.0
+    pane._current_time = lambda: 0.0
+
+    assert pane._on_typeahead_key_pressed(None, ord("z"), 0, 0) is True
+    assert pane._selection_model.get_selected() == 2
+    assert calls == [(2, "flag", 0.0, 0.0)]
+
+
+def test_typeahead_scrolls_grid_view_with_full_signature():
+    module = _load_file_manager_window()
+    module.Gtk.ListScrollFlags = types.SimpleNamespace(NONE="flag")
+    pane = _make_pane(module, ["alpha", "alpine", "zulu"])
+
+    class _DummySelection:
+        def __init__(self):
+            self.selected = 0
+
+        def get_selected(self):
+            return self.selected
+
+        def set_selected(self, value):
+            self.selected = value
+
+    list_calls = []
+    grid_calls = []
+
+    pane._selection_model = _DummySelection()
+    pane._list_view = types.SimpleNamespace(scroll_to=lambda *args: list_calls.append(args))
+    pane._grid_view = types.SimpleNamespace(scroll_to=lambda *args: grid_calls.append(args))
+    pane._stack = types.SimpleNamespace(get_visible_child_name=lambda: "grid")
+    pane._typeahead_buffer = ""
+    pane._typeahead_last_time = 0.0
+    pane._current_time = lambda: 0.0
+
+    assert pane._on_typeahead_key_pressed(None, ord("z"), 0, 0) is True
+    assert pane._selection_model.get_selected() == 2
+    assert list_calls == []
+    assert grid_calls == [(2, "flag", 0.0, 0.0)]
