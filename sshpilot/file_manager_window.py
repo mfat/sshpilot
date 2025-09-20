@@ -19,10 +19,12 @@ indicators and toast based feedback.
 from __future__ import annotations
 
 import dataclasses
+import mimetypes
 import os
 import pathlib
 import posixpath
 import shutil
+import stat
 import threading
 import time
 from datetime import datetime
@@ -910,8 +912,11 @@ class PathEntry(Gtk.Entry):
 
     def __init__(self) -> None:
         super().__init__()
-        self.set_hexpand(True)
+        # Don't set hexpand here - we'll set it explicitly in the toolbar
+        # self.set_hexpand(True)
         self.set_placeholder_text("/remote/path")
+        # Remove minimum width constraint to allow full expansion
+        # self.set_size_request(200, -1)  # Commented out to allow full width
 
 
 class PaneControls(Gtk.Box):
@@ -941,86 +946,403 @@ class PaneToolbar(Gtk.Box):
     __gsignals__ = {
         "view-changed": (GObject.SignalFlags.RUN_LAST, None, (str,)),
     }
-    
-    def __init__(self) -> None:
+
+    def __init__(self):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
 
-        # Create the actual header bar
-        self._header_bar = Adw.HeaderBar()
-        # Create label for the pane name (Local/Remote)
+        # Build a custom top bar: WindowHandle -> Box [ left | ENTRY (expands) | right ]
+        handle = Gtk.WindowHandle()                    # gives draggable area like a headerbar
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        handle.set_child(bar)
+
+        # Left side (compact)
         self._pane_label = Gtk.Label()
         self._pane_label.set_css_classes(["title"])
-        # Disable window buttons for individual panes - only main window should have them
-        self._header_bar.set_show_start_title_buttons(False)
-        self._header_bar.set_show_end_title_buttons(False)
-        # Add pane label to the start (far left) of the header bar
-        self._header_bar.pack_start(self._pane_label)
-
         self.controls = PaneControls()
+        left = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        left.set_margin_start(12)  # Add margin before Remote/Local labels
+        left.append(self._pane_label)
+        left.append(self.controls)
+        bar.append(left)
+
+        # Entry (fills all remaining space)
         self.path_entry = PathEntry()
-        action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        
-        # Initialize view state
+        self.path_entry.set_hexpand(True)
+        self.path_entry.set_halign(Gtk.Align.FILL)
+        self.path_entry.set_width_chars(0)
+        self.path_entry.set_max_width_chars(0)
+        bar.append(self.path_entry)
+
+        # Right side (compact, flush-right)
+        right = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self._current_view = "list"
-
-        # Create unified sorting split button like Nautilus
         self.sort_split_button = self._create_sort_split_button()
+        right.append(self.sort_split_button)
+        bar.append(right)
 
-        action_box.append(self.sort_split_button)
-        self._header_bar.pack_start(self.controls)
-        self._header_bar.pack_start(self.path_entry)
-        self._header_bar.pack_end(action_box)
+        # Wrap the bar in ToolbarView so it looks native
+        tv = Adw.ToolbarView()
+        tv.add_top_bar(handle)
+        # NOTE: Put your pane's main scroller/content with tv.set_content(content) elsewhere.
+        self.append(tv)
 
-        self.append(self._header_bar)
-    
-    def get_header_bar(self):
-        """Get the actual header bar for toolbar view."""
-        return self._header_bar
-
+    # Keep your factory
     def _create_sort_split_button(self) -> Adw.SplitButton:
-        """Create a unified sorting split button like Nautilus."""
-        # Create menu model for sort options
         menu_model = Gio.Menu()
-        
-        # Create sort by section with all options
         sort_section = Gio.Menu()
         sort_section.append("Name", "pane.sort-by-name")
-        sort_section.append("Size", "pane.sort-by-size") 
+        sort_section.append("Size", "pane.sort-by-size")
         sort_section.append("Modified", "pane.sort-by-modified")
         menu_model.append_section("Sort by", sort_section)
-        
-        # Create sort direction section with radio buttons
         direction_section = Gio.Menu()
         direction_section.append("Ascending", "pane.sort-direction-asc")
         direction_section.append("Descending", "pane.sort-direction-desc")
         menu_model.append_section("Order", direction_section)
-        
-        # Create split button
         split_button = Adw.SplitButton()
         split_button.set_menu_model(menu_model)
         split_button.set_tooltip_text("Toggle view mode")
         split_button.set_dropdown_tooltip("Sort files and folders")
-        
-        # Set icon to current view mode (will be updated dynamically)
         split_button.set_icon_name("view-list-symbolic")
-        
-        # Connect the main button click to toggle view mode
         split_button.connect("clicked", self._on_view_toggle_clicked)
-        
         return split_button
 
-    def _on_view_toggle_clicked(self, button: Adw.SplitButton) -> None:
-        """Handle split button click to toggle view mode."""
-        # Toggle between list and grid view
-        if hasattr(self, '_current_view') and self._current_view == "list":
-            # Currently in list view, switch to grid view
-            self._current_view = "grid"
-        else:
-            # Currently in grid view, switch to list view
-            self._current_view = "list"
-        
-        # Emit the view change signal to update the pane
+    # Example handler
+    def _on_view_toggle_clicked(self, *_):
+        self._current_view = "grid" if self._current_view == "list" else "list"
+        self.sort_split_button.set_icon_name("view-grid-symbolic" if self._current_view == "grid" else "view-list-symbolic")
         self.emit("view-changed", self._current_view)
+    
+    def get_header_bar(self):
+        """Get the actual header bar for toolbar view."""
+        return None  # No longer using Adw.HeaderBar
+
+
+# ---------- Helper functions for properties dialog ----------
+def _human_size(n: int) -> str:
+    """Convert bytes to human readable format."""
+    for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
+        if n < 1024 or unit == "PB":
+            return f"{n:.0f} {unit}" if n >= 10 or unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+    return "0 B"
+
+
+def _human_time(ts: float) -> str:
+    """Convert timestamp to human readable format."""
+    try:
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return "—"
+
+
+def _mode_to_str(mode: int) -> str:
+    """Convert file mode to string representation like -rw-r--r--."""
+    is_dir = "d" if stat.S_ISDIR(mode) else "-"
+    perm = ""
+    for who, shift in (("USR", 6), ("GRP", 3), ("OTH", 0)):
+        r = "r" if mode & (4 << shift) else "-"
+        w = "w" if mode & (2 << shift) else "-"
+        x = "x" if mode & (1 << shift) else "-"
+        perm += r + w + x
+    return is_dir + perm
+
+
+class PropertiesDialog(Adw.Window):
+    """Nautilus-style properties dialog using card-based design."""
+    __gtype_name__ = "PropertiesDialog"
+
+    def __init__(self, entry: "FileEntry", current_path: str, parent: Gtk.Window):
+        super().__init__()
+        self._entry = entry
+        self._current_path = current_path
+        self._parent_window = parent
+        self.set_title("Properties")
+        
+        # Set window properties
+        self.set_default_size(400, 500)
+        self.set_resizable(True)
+        self.set_modal(True)
+        self.set_transient_for(parent)
+        
+        # Position window relative to parent
+        if parent:
+            try:
+                # Get parent window position and size
+                parent_alloc = parent.get_allocation()
+                parent_width = parent_alloc.width
+                parent_height = parent_alloc.height
+                
+                # Center the dialog on the parent window
+                # For GTK4, we'll let the window manager handle positioning
+                # The modal and transient_for properties should handle this
+            except Exception:
+                # Fallback: let window manager handle positioning
+                pass
+
+        # Build the dialog content
+        self._build_dialog()
+
+    def _build_dialog(self) -> None:
+        """Build the Nautilus-style properties dialog content."""
+        # Create AdwToolbarView as the main content (proper Adw.Window structure)
+        toolbar_view = Adw.ToolbarView()
+        
+        # Create proper header bar for dragging
+        header_bar = Adw.HeaderBar()
+        header_bar.set_title_widget(Gtk.Label(label="Properties"))
+        
+        # Add header bar to toolbar view
+        toolbar_view.add_top_bar(header_bar)
+        
+        # Main content box
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16,
+                         margin_top=16, margin_bottom=16, margin_start=16, margin_end=16)
+        
+        # Header with icon and name
+        content.append(self._create_header_block())
+        
+        # Parent folder row
+        content.append(self._create_parent_folder_row())
+        
+        # Size row
+        content.append(self._create_size_row())
+        
+        # Modified and Created rows
+        content.append(self._create_modified_row())
+        content.append(self._create_created_row())
+        
+        # Permissions row
+        content.append(self._create_permissions_row())
+        
+        # Set content in toolbar view
+        toolbar_view.set_content(content)
+        
+        # Set the toolbar view as the window content
+        self.set_content(toolbar_view)
+
+
+    def _create_header_block(self) -> Gtk.Widget:
+        """Create the header block with icon, name, and summary."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, halign=Gtk.Align.CENTER)
+        
+        # Icon
+        if self._entry.is_dir:
+            icon = Gtk.Image.new_from_icon_name("folder-symbolic")
+        else:
+            icon = Gtk.Image.new_from_icon_name("text-x-generic-symbolic")
+        # Set a larger custom size instead of using predefined sizes
+        icon.set_pixel_size(64)
+        icon.add_css_class("icon-dropshadow")
+        icon.add_css_class("card")
+        box.append(icon)
+        
+        # Name (centered, bold)
+        name_label = Gtk.Label(label=self._entry.name)
+        name_label.add_css_class("title-3")
+        box.append(name_label)
+        
+        # Summary
+        summary_parts = []
+        if self._entry.is_dir:
+            if self._entry.item_count is not None:
+                summary_parts.append(f"{self._entry.item_count} item{'s' if self._entry.item_count != 1 else ''}")
+            else:
+                summary_parts.append("Folder")
+        else:
+            if self._entry.size:
+                summary_parts.append(_human_size(self._entry.size))
+        
+        # Add free space for local files
+        if not self._is_remote_file():
+            try:
+                path = os.path.join(self._current_path, self._entry.name)
+                if os.path.exists(path):
+                    stat = os.statvfs(path)
+                    free = stat.f_bavail * stat.f_frsize
+                    summary_parts.append(f"{_human_size(free)} Free")
+            except Exception:
+                pass
+        
+        summary_text = " — ".join(summary_parts) if summary_parts else ""
+        summary_label = Gtk.Label(label=summary_text)
+        summary_label.add_css_class("dim-label")
+        box.append(summary_label)
+        
+        return box
+
+    def _create_size_row(self) -> Gtk.Widget:
+        """Create the size row."""
+        if self._entry.is_dir:
+            if self._entry.item_count is not None:
+                size_text = f"{self._entry.item_count} item{'s' if self._entry.item_count != 1 else ''}"
+                # For local folders, start calculating actual size
+                if not self._is_remote_file():
+                    size_text += " (calculating size...)"
+                    self._start_folder_size_calculation()
+            else:
+                size_text = "—"
+        else:
+            size_text = _human_size(self._entry.size) if self._entry.size else "—"
+        
+        # Store reference to size row for updating
+        self._size_row = Adw.ActionRow(title="Size", subtitle=size_text)
+        self._size_row.add_css_class("card")
+        return self._size_row
+
+    def _create_parent_folder_row(self) -> Gtk.Widget:
+        """Create the parent folder row."""
+        parent_path = os.path.dirname(os.path.join(self._current_path, self._entry.name))
+        if not parent_path:
+            parent_path = "/"
+        
+        row = Adw.ActionRow(title="Parent Folder", subtitle=parent_path)
+        row.add_css_class("card")
+        
+        # Add folder open button for local files
+        if not self._is_remote_file():
+            btn = Gtk.Button.new_from_icon_name("folder-open-symbolic")
+            btn.add_css_class("flat")
+            btn.connect("clicked", self._on_open_parent)
+            row.add_suffix(btn)
+            row.set_activatable_widget(btn)
+        
+        return row
+
+    def _create_modified_row(self) -> Gtk.Widget:
+        """Create the modified date row."""
+        modified_time = _human_time(self._entry.modified) if self._entry.modified else "—"
+        row = Adw.ActionRow(title="Modified", subtitle=modified_time)
+        row.add_css_class("card")
+        return row
+
+    def _create_created_row(self) -> Gtk.Widget:
+        """Create the created date row (if available)."""
+        # For remote files, we typically don't have creation time
+        if self._is_remote_file():
+            return Gtk.Box()  # Empty box widget
+        
+        # Try to get creation time for local files
+        try:
+            path = os.path.join(self._current_path, self._entry.name)
+            if os.path.exists(path):
+                stat_result = os.stat(path)
+                if hasattr(stat_result, 'st_birthtime'):  # macOS
+                    created_time = _human_time(stat_result.st_birthtime)
+                elif hasattr(stat_result, 'st_ctime'):  # Linux
+                    created_time = _human_time(stat_result.st_ctime)
+                else:
+                    return Gtk.Box()  # Empty box widget
+            else:
+                return Gtk.Box()  # Empty box widget
+        except Exception:
+            return Gtk.Box()  # Empty box widget
+        
+        row = Adw.ActionRow(title="Created", subtitle=created_time)
+        row.add_css_class("card")
+        return row
+
+    def _create_permissions_row(self) -> Gtk.Widget:
+        """Create the permissions row."""
+        # Get actual permissions for local files
+        if not self._is_remote_file():
+            try:
+                path = os.path.join(self._current_path, self._entry.name)
+                if os.path.exists(path):
+                    stat_result = os.stat(path)
+                    mode = stat_result.st_mode
+                    perms_text = _mode_to_str(mode)
+                else:
+                    perms_text = "—"
+            except Exception:
+                perms_text = "—"
+        else:
+            # For remote files, show simplified permissions
+            if self._entry.is_dir:
+                perms_text = "Create and Delete Files"
+            else:
+                perms_text = "Read and Write"
+        
+        row = Adw.ActionRow(title="Permissions", subtitle=perms_text)
+        row.add_css_class("card")
+        
+        return row
+
+    def _is_remote_file(self) -> bool:
+        """Check if this is a remote file (from SFTP)."""
+        # Simple heuristic - in a real implementation, you'd pass connection info
+        return "://" in self._current_path or (self._current_path.startswith("/") and 
+                not os.path.exists(os.path.join(self._current_path, self._entry.name)))
+
+    def _on_open_parent(self, *_) -> None:
+        """Open parent directory in system file manager."""
+        try:
+            if not self._is_remote_file():
+                parent_dir = os.path.dirname(os.path.join(self._current_path, self._entry.name))
+                if os.path.exists(parent_dir):
+                    Gio.AppInfo.launch_default_for_uri(f"file://{parent_dir}", None)
+        except Exception:
+            pass
+
+    def _start_folder_size_calculation(self):
+        """Start calculating folder size in background thread."""
+        import threading
+        
+        folder_path = os.path.join(self._current_path, self._entry.name)
+        
+        # Create and start the background thread
+        thread = threading.Thread(target=self._calculate_folder_size, args=(folder_path,))
+        thread.daemon = True  # Allows main program to exit even if thread is running
+        thread.start()
+
+    def _calculate_folder_size(self, path):
+        """
+        Recursively calculates the size of a folder.
+        THIS RUNS ON A BACKGROUND THREAD.
+        """
+        total_size = 0
+        try:
+            for dirpath, dirnames, filenames in os.walk(path):
+                for f in filenames:
+                    fp = os.path.join(dirpath, f)
+                    # Skip if it is a symlink or file doesn't exist
+                    if not os.path.islink(fp):
+                        try:
+                            total_size += os.path.getsize(fp)
+                        except FileNotFoundError:
+                            # File might have been deleted while scanning
+                            pass
+                        except OSError:
+                            # Permissions error, etc.
+                            pass
+
+        except Exception:
+            total_size = -1  # Use a negative value to signal an error
+
+        # When done, schedule the UI update on the main GTK thread
+        GLib.idle_add(self._update_folder_size_ui, total_size)
+        
+    def _update_folder_size_ui(self, total_size):
+        """
+        Updates the size row with the final folder size.
+        THIS RUNS ON THE MAIN GTK THREAD.
+        """
+        if hasattr(self, '_size_row') and self._size_row:
+            if total_size >= 0:
+                human_readable_size = _human_size(total_size)
+                if self._entry.item_count is not None:
+                    size_text = f"{self._entry.item_count} item{'s' if self._entry.item_count != 1 else ''} ({human_readable_size})"
+                else:
+                    size_text = human_readable_size
+            else:
+                if self._entry.item_count is not None:
+                    size_text = f"{self._entry.item_count} item{'s' if self._entry.item_count != 1 else ''} (size unavailable)"
+                else:
+                    size_text = "Size unavailable"
+            
+            self._size_row.set_subtitle(size_text)
+            
+        # Returning GLib.SOURCE_REMOVE ensures this function only runs once
+        return GLib.SOURCE_REMOVE
 
 
 class FilePane(Gtk.Box):
@@ -2349,7 +2671,21 @@ class FilePane(Gtk.Box):
         self._show_properties_dialog(entry, details)
 
     def _show_properties_dialog(self, entry: FileEntry, details: Dict[str, str]) -> None:
+        """Show modern properties dialog."""
         window = self.get_root()
+        if window is None:
+            return
+        
+        try:
+            # Create and show the modern properties dialog
+            dialog = PropertiesDialog(entry, self._current_path, window)
+            dialog.present()
+        except Exception as e:
+            # Fallback to simple message dialog if modern dialog fails
+            self._show_fallback_properties_dialog(entry, details, window)
+
+    def _show_fallback_properties_dialog(self, entry: FileEntry, details: Dict[str, str], window: Gtk.Window) -> None:
+        """Fallback to simple properties dialog if modern dialog fails."""
         heading = f"{entry.name} Properties" if entry.name else "Properties"
         body_lines = [
             f"Name: {details['name']}",
@@ -2360,104 +2696,29 @@ class FilePane(Gtk.Box):
         ]
         body_text = "\n".join(body_lines)
 
-        dialog: Optional[object] = None
-        message_dialog_cls = getattr(Adw, "MessageDialog", None)
-        if message_dialog_cls is not None:
-            try:
-                dialog = message_dialog_cls.new(window, heading, body_text)
-            except AttributeError:
-                try:
-                    dialog = message_dialog_cls(
-                        transient_for=window,
-                        modal=True,
-                        heading=heading,
-                        body=body_text,
-                    )
-                except TypeError:
-                    dialog = message_dialog_cls()
-            if dialog is not None:
-                for name, value in (("set_transient_for", window), ("set_modal", True)):
-                    setter = getattr(dialog, name, None)
-                    if callable(setter):
-                        try:
-                            setter(value)
-                        except Exception:
-                            pass
-                setters = {
-                    "set_heading": heading,
-                    "set_title": heading,
-                    "set_body": body_text,
-                    "set_body_text": body_text,
-                    "set_text": body_text,
-                }
-                for method, value in setters.items():
-                    setter = getattr(dialog, method, None)
-                    if callable(setter):
-                        try:
-                            setter(value)
-                        except Exception:
-                            pass
-                present = getattr(dialog, "present", None)
-                if not callable(present):
-                    present = getattr(dialog, "show", None)
-                if callable(present):
-                    try:
-                        present()
-                    except Exception:
-                        pass
-                return
-
-        dialog_cls = getattr(Gtk, "Dialog", None)
-        if dialog_cls is None:
-            return
         try:
-            dialog = dialog_cls(transient_for=window, modal=True)
-        except TypeError:
-            dialog = dialog_cls()
-        if dialog is None:
-            return
-
-        if hasattr(dialog, "set_title"):
-            try:
-                dialog.set_title(heading)
-            except Exception:
-                pass
-        if hasattr(dialog, "set_transient_for") and window is not None:
-            try:
-                dialog.set_transient_for(window)
-            except Exception:
-                pass
-        if hasattr(dialog, "set_modal"):
-            try:
-                dialog.set_modal(True)
-            except Exception:
-                pass
-
-        box_cls = getattr(Gtk, "Box", None)
-        label_cls = getattr(Gtk, "Label", None)
-        if callable(box_cls) and callable(label_cls):
-            try:
-                content_box = box_cls(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-                for line in body_lines:
-                    label = label_cls()
-                    if hasattr(label, "set_xalign"):
-                        label.set_xalign(0.0)
-                    if hasattr(label, "set_text"):
-                        label.set_text(line)
-                    content_box.append(label)
-                if hasattr(dialog, "set_child"):
-                    dialog.set_child(content_box)
-            except Exception:
-                pass
-
-        presenter = getattr(dialog, "present", None)
-        if not callable(presenter):
-            presenter = getattr(dialog, "show", None)
-        if callable(presenter):
-            try:
-                presenter()
-            except Exception:
-                pass
+            dialog = Adw.MessageDialog(
+                transient_for=window,
+                modal=True,
+                heading=heading,
+                body=body_text
+            )
+            dialog.add_response("ok", "OK")
+            dialog.set_default_response("ok")
+            dialog.connect("response", lambda d, *_: d.destroy())
+            dialog.present()
+        except Exception:
+            # Final fallback to basic Gtk dialog
+            dialog = Gtk.MessageDialog(
+                transient_for=window,
+                modal=True,
+                message_type=Gtk.MessageType.INFO,
+                buttons=Gtk.ButtonsType.OK,
+                text=heading,
+                secondary_text=body_text
+            )
+            dialog.connect("response", lambda d, *_: d.destroy())
+            dialog.present()
 
     # -- public API -----------------------------------------------------
 
