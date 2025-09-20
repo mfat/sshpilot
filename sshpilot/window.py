@@ -677,6 +677,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Create header bar
         self.header_bar = Adw.HeaderBar()
+        self.header_bar.set_use_native_controls(True)
         self.header_bar.set_title_widget(Gtk.Label(label="sshPilot"))
         
         # Add window controls (minimize, maximize, close)
