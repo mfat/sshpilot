@@ -268,6 +268,7 @@ def test_open_remote_uses_in_app_manager_when_flatpak(monkeypatch):
     assert called["kwargs"]["port"] == 2222
 
 
+
 def test_open_remote_uses_gvfs_flow_when_available(monkeypatch):
     sftp_utils = import_sftp_utils(monkeypatch)
     monkeypatch.setattr(sftp_utils, "_should_use_in_app_file_manager", lambda: False)

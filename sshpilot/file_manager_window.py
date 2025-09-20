@@ -1402,6 +1402,7 @@ class FilePane(Gtk.Box):
         if isinstance(window, FileManagerWindow):
             window._register_drag_begin(self)
 
+
     def _on_drag_source_end(self, _source: Gtk.DragSource, _drag: Gdk.Drag, _delete: bool) -> None:
         self._current_drag_file = None
         partner = getattr(self, "_partner_pane", None)
@@ -1412,6 +1413,7 @@ class FilePane(Gtk.Box):
         if isinstance(window, FileManagerWindow):
             window._register_drag_finish(self)
 
+
     def _on_drag_source_cancel(self, _source: Gtk.DragSource, _drag: Gdk.Drag, _reason) -> None:
         self._current_drag_file = None
         partner = getattr(self, "_partner_pane", None)
@@ -1421,6 +1423,7 @@ class FilePane(Gtk.Box):
         window = self.get_root()
         if isinstance(window, FileManagerWindow):
             window._register_drag_finish(self)
+
 
     def _on_drop_enter(self, _target: Gtk.DropTarget, _x: float, _y: float):
         self._set_drop_zone_pointer(True)
@@ -1786,6 +1789,7 @@ class FilePane(Gtk.Box):
         if isinstance(window, FileManagerWindow):
             window._register_drag_begin(self)
 
+
     def _on_drag_end(
         self,
         _drag_source: Gtk.DragSource,
@@ -1798,6 +1802,7 @@ class FilePane(Gtk.Box):
         window = self.get_root()
         if isinstance(window, FileManagerWindow):
             window._register_drag_finish(self)
+
 
     def _show_context_menu(self, widget: Gtk.Widget, x: float, y: float) -> None:
         self._update_selection_for_menu(widget, x, y)
@@ -1932,6 +1937,7 @@ class FilePane(Gtk.Box):
             origin = window.get_active_drag_source()
             if origin is self:
                 return False
+
         self.emit("request-operation", "upload", value)
 
         return True
@@ -2504,6 +2510,7 @@ class FileManagerWindow(Adw.Window):
 
         self._active_drag_source: Optional[FilePane] = None
 
+
         # Prime the left (local) pane immediately with local home directory
         try:
             local_home = os.path.expanduser("~")
@@ -2553,6 +2560,7 @@ class FileManagerWindow(Adw.Window):
 
     def get_active_drag_source(self) -> Optional[FilePane]:
         return self._active_drag_source
+
 
     def _clear_progress_toast(self) -> None:
         """Clear the progress dialog safely."""
