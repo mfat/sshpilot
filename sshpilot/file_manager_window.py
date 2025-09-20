@@ -964,7 +964,7 @@ class FilePane(Gtk.Box):
         self._stack.set_vexpand(True)
 
         self._list_store = Gio.ListStore(item_type=Gtk.StringObject)
-        self._selection_model = Gtk.SingleSelection(model=self._list_store)
+        self._selection_model = Gtk.MultiSelection.new(self._list_store)
 
         list_factory = Gtk.SignalListItemFactory()
         list_factory.connect("setup", self._on_list_setup)
@@ -988,6 +988,7 @@ class FilePane(Gtk.Box):
             factory=grid_factory,
             max_columns=6,
         )
+        grid_view.set_enable_rubberband(True)
         grid_view.add_css_class("iconview")
         self._grid_view = grid_view
         # Navigate on grid item activation (double click / Enter)
@@ -1330,9 +1331,39 @@ class FilePane(Gtk.Box):
         # Keep the current selection as-is for the context menu
         pass
 
+    def _get_selected_indices(self) -> List[int]:
+        indices: List[int] = []
+        total = len(self._entries)
+        if hasattr(self._selection_model, "is_selected"):
+            for index in range(total):
+                try:
+                    if self._selection_model.is_selected(index):
+                        indices.append(index)
+                except AttributeError:
+                    break
+        else:
+            getter = getattr(self._selection_model, "get_selected", None)
+            if callable(getter):
+                try:
+                    selected_index = getter()
+                except Exception:
+                    selected_index = None
+                if isinstance(selected_index, int) and 0 <= selected_index < total:
+                    indices.append(selected_index)
+        return indices
+
+    def _get_primary_selection_index(self) -> Optional[int]:
+        indices = self._get_selected_indices()
+        return indices[0] if indices else None
+
+    def get_selected_entries(self) -> List[FileEntry]:
+        return [self._entries[index] for index in self._get_selected_indices()]
+
     def _update_menu_state(self) -> None:
-        entry = self.get_selected_entry()
-        has_selection = entry is not None
+        selected_entries = self.get_selected_entries()
+        selection_count = len(selected_entries)
+        has_selection = selection_count > 0
+        single_selection = selection_count == 1
 
         def _set_enabled(name: str, enabled: bool) -> None:
             action = self._menu_actions.get(name)
@@ -1346,41 +1377,44 @@ class FilePane(Gtk.Box):
 
 
         # For context menu, actions are always enabled since menu items are shown/hidden dynamically
-        _set_enabled("download", True)
-        _set_enabled("upload", True)
-        _set_enabled("rename", has_selection)
+        _set_enabled("download", self._is_remote and has_selection)
+        _set_enabled("upload", (not self._is_remote) and has_selection)
+        _set_enabled("rename", single_selection)
         _set_enabled("delete", has_selection)
         # new_folder is available in context menu only now
 
         # Action bar buttons still use the old logic
         _set_button("download", self._is_remote and has_selection)
         _set_button("upload", (not self._is_remote) and has_selection)
-        _set_button("rename", has_selection)
+        _set_button("rename", single_selection)
         _set_button("delete", has_selection)
 
     def _emit_entry_operation(self, action: str) -> None:
-        entry = self.get_selected_entry()
-        if entry is None:
-            self.show_toast("Select an item first")
+        entries = self.get_selected_entries()
+        if not entries:
+            self.show_toast("Select at least one item first")
             return
-        payload = {"entry": entry, "directory": self._current_path}
+        if action == "rename" and len(entries) != 1:
+            self.show_toast("Select a single item to rename")
+            return
+        payload = {"entries": entries, "directory": self._current_path}
         self.emit("request-operation", action, payload)
 
     def _on_menu_download(self) -> None:
         if not self._is_remote:
             return
-        entry = self.get_selected_entry()
-        if entry is None:
-            self.show_toast("Select files to download first")
+        entries = self.get_selected_entries()
+        if not entries:
+            self.show_toast("Select items to download first")
             return
         self._on_download_clicked(None)
 
     def _on_menu_upload(self) -> None:
         if self._is_remote:
             return
-        entry = self.get_selected_entry()
-        if entry is None:
-            self.show_toast("Select files to upload first")
+        entries = self.get_selected_entries()
+        if not entries:
+            self.show_toast("Select items to upload first")
             return
         self._on_upload_clicked(None)
 
@@ -1389,10 +1423,10 @@ class FilePane(Gtk.Box):
         return True
 
     def get_selected_entry(self) -> Optional[FileEntry]:
-        index = self._selection_model.get_selected()
-        if index is None or index < 0 or index >= len(self._entries):
+        selected_entries = self.get_selected_entries()
+        if not selected_entries:
             return None
-        return self._entries[index]
+        return selected_entries[0]
 
     def _on_upload_clicked(self, _button: Gtk.Button) -> None:
         window = self.get_root()
@@ -1416,26 +1450,27 @@ class FilePane(Gtk.Box):
             self.show_toast("Remote pane is unavailable")
             return
 
-        entry = local_pane.get_selected_entry()
-        if entry is None:
-            self.show_toast("Select an item in the local pane to upload")
+        entries = local_pane.get_selected_entries()
+        if not entries:
+            self.show_toast("Select items in the local pane to upload")
             return
 
         base_dir = window._normalize_local_path(local_pane.toolbar.path_entry.get_text())
-        source_path = pathlib.Path(os.path.join(base_dir, entry.name))
-        if not source_path.exists():
-            self.show_toast("Selected local item is not accessible")
-            return
+        source_paths = [pathlib.Path(os.path.join(base_dir, entry.name)) for entry in entries]
 
         destination = destination_pane.toolbar.path_entry.get_text() or "/"
-        payload = {"paths": [source_path], "destination": destination}
+        payload = {"paths": source_paths, "destination": destination}
         self.emit("request-operation", "upload", payload)
+        if len(entries) == 1:
+            self.show_toast(f"Uploading {entries[0].name}…")
+        else:
+            self.show_toast(f"Uploading {len(entries)} items…")
 
 
     def _on_download_clicked(self, _button: Gtk.Button) -> None:
-        entry = self.get_selected_entry()
-        if entry is None:
-            self.show_toast("Select an item to download")
+        entries = self.get_selected_entries()
+        if not entries:
+            self.show_toast("Select items to download")
             return
 
         window = self.get_root()
@@ -1451,13 +1486,16 @@ class FilePane(Gtk.Box):
         if not os.path.isdir(destination_root):
             self.show_toast("Local destination is not accessible")
             return
-
         payload = {
-            "source": posixpath.join(self._current_path or "/", entry.name),
-            "is_dir": entry.is_dir,
+            "entries": entries,
+            "directory": self._current_path,
             "destination": pathlib.Path(destination_root),
         }
         self.emit("request-operation", "download", payload)
+        if len(entries) == 1:
+            self.show_toast(f"Downloading {entries[0].name}…")
+        else:
+            self.show_toast(f"Downloading {len(entries)} items…")
 
     @staticmethod
     def _dialog_dismissed(error: GLib.Error) -> bool:
@@ -1475,11 +1513,10 @@ class FilePane(Gtk.Box):
         self._apply_entry_filter(preserve_selection=False)
 
     def _apply_entry_filter(self, *, preserve_selection: bool) -> None:
-        selected_name: Optional[str] = None
+        selected_names: set[str] = set()
         if preserve_selection:
-            selected = self.get_selected_entry()
-            if selected is not None:
-                selected_name = selected.name
+            for entry in self.get_selected_entries():
+                selected_names.add(entry.name)
 
         # Filter for hidden files and store as raw entries
         self._raw_entries = [
@@ -1493,17 +1530,16 @@ class FilePane(Gtk.Box):
         
         # Update the list store
         self._list_store.remove_all()
-        restored_selection: Optional[int] = None
+        restored_selection: List[int] = []
         for idx, entry in enumerate(self._entries):
             suffix = "/" if entry.is_dir else ""
             self._list_store.append(Gtk.StringObject.new(entry.name + suffix))
-            if preserve_selection and selected_name == entry.name:
-                restored_selection = idx
+            if preserve_selection and entry.name in selected_names:
+                restored_selection.append(idx)
 
-        if preserve_selection and restored_selection is not None:
-            self._selection_model.set_selected(restored_selection)
-        else:
-            self._selection_model.unselect_all()
+        self._selection_model.unselect_all()
+        for index in restored_selection:
+            self._selection_model.select_item(index, False)
 
         self._update_menu_state()
 
@@ -1668,7 +1704,7 @@ class FilePane(Gtk.Box):
             and char.casefold() == self._typeahead_buffer.casefold()
         )
 
-        selected = self._selection_model.get_selected()
+        selected = self._get_primary_selection_index()
         if selected is None or selected < 0:
             selected_index = 0
         else:
@@ -1700,7 +1736,14 @@ class FilePane(Gtk.Box):
         if match is None:
             return False
 
-        self._selection_model.set_selected(match)
+        setter = getattr(self._selection_model, "select_item", None)
+        if callable(setter):
+            setter(match, True)
+        else:
+            fallback = getattr(self._selection_model, "set_selected", None)
+            if callable(fallback):
+                fallback(match)
+
         self._scroll_to_position(match)
         return True
 
@@ -2041,10 +2084,12 @@ class FileManagerWindow(Adw.Window):
             dialog.connect("response", _on_response)
             dialog.present()
         elif action == "rename" and isinstance(payload, dict):
-            entry = payload.get("entry")
+            entries = payload.get("entries") or []
             directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
-            if not isinstance(entry, FileEntry):
+            if not entries:
                 return
+
+            entry = entries[0]
 
             if pane is self._left_pane:
                 base_dir = self._normalize_local_path(directory)
@@ -2083,29 +2128,36 @@ class FileManagerWindow(Adw.Window):
                     except Exception as exc:
                         pane.show_toast(str(exc))
                     else:
-                        pane.show_toast("Item renamed")
+                        pane.show_toast(f"Renamed to {new_name}")
                         self._load_local(base_dir)
                 else:
                     future = self._manager.rename(source, target)
                     self._attach_refresh(future, refresh_remote=pane)
+                    pane.show_toast(f"Renaming to {new_name}…")
                 dialog.close()
 
             dialog.connect("response", _on_rename)
             dialog.present()
         elif action == "delete" and isinstance(payload, dict):
-            entry = payload.get("entry")
+            entries = payload.get("entries") or []
             directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
-            if not isinstance(entry, FileEntry):
+            if not entries:
                 return
 
             if pane is self._left_pane:
                 base_dir = self._normalize_local_path(directory)
-                target_path = os.path.join(base_dir, entry.name)
             else:
                 base_dir = directory or "/"
-                target_path = posixpath.join(base_dir, entry.name)
 
-            dialog = Adw.AlertDialog.new("Delete Item", f"Delete {entry.name}?")
+            count = len(entries)
+            if count == 1:
+                message = f"Delete {entries[0].name}?"
+                title = "Delete Item"
+            else:
+                message = f"Delete {count} items?"
+                title = "Delete Items"
+
+            dialog = Adw.AlertDialog.new(title, message)
             dialog.add_response("cancel", "Cancel")
             dialog.add_response("ok", "Delete")
             dialog.set_default_response("cancel")
@@ -2116,21 +2168,38 @@ class FileManagerWindow(Adw.Window):
                     dialog.close()
                     return
                 if pane is self._left_pane:
-                    try:
-                        if entry.is_dir:
-                            shutil.rmtree(target_path)
-                        else:
-                            os.remove(target_path)
-                    except FileNotFoundError:
-                        pane.show_toast("Item no longer exists")
-                    except Exception as exc:
-                        pane.show_toast(str(exc))
-                    else:
-                        pane.show_toast("Item deleted")
+                    deleted = 0
+                    errors: List[str] = []
+                    for selected_entry in entries:
+                        target_path = os.path.join(base_dir, selected_entry.name)
+                        try:
+                            if selected_entry.is_dir:
+                                shutil.rmtree(target_path)
+                            else:
+                                os.remove(target_path)
+                            deleted += 1
+                        except FileNotFoundError:
+                            errors.append(f"{selected_entry.name} no longer exists")
+                        except Exception as exc:
+                            errors.append(str(exc))
+                    if deleted:
+                        message = (
+                            "Deleted 1 item"
+                            if deleted == 1
+                            else f"Deleted {deleted} items"
+                        )
+                        pane.show_toast(message)
                         self._load_local(base_dir)
+                    if errors:
+                        pane.show_toast(errors[0])
                 else:
-                    future = self._manager.remove(target_path)
-                    self._attach_refresh(future, refresh_remote=pane)
+                    for selected_entry in entries:
+                        target_path = posixpath.join(base_dir, selected_entry.name)
+                        future = self._manager.remove(target_path)
+                        self._attach_refresh(future, refresh_remote=pane)
+                    pane.show_toast(
+                        "Deleting 1 item…" if count == 1 else f"Deleting {count} items…"
+                    )
                 dialog.close()
 
             dialog.connect("response", _on_delete)
@@ -2211,42 +2280,29 @@ class FileManagerWindow(Adw.Window):
                 self._show_progress_dialog("upload", path_obj.name, future)
                 self._attach_refresh(future, refresh_remote=target_pane)
         elif action == "download" and isinstance(payload, dict):
-            try:
-                print(f"DEBUG: Starting download operation")
-                source = payload.get("source")
-                destination_base = payload.get("destination")
-                is_dir = payload.get("is_dir", False)
+            entries = payload.get("entries") or []
+            directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
+            destination_base = payload.get("destination")
 
-                if not source or destination_base is None:
-                    pane.show_toast("Invalid download request")
-                    return
+            if not entries or destination_base is None:
+                pane.show_toast("Invalid download request")
+                return
 
-                if not isinstance(destination_base, pathlib.Path):
-                    destination_base = pathlib.Path(destination_base)
+            if not isinstance(destination_base, pathlib.Path):
+                destination_base = pathlib.Path(destination_base)
 
-                name = os.path.basename(source.rstrip("/"))
-                print(f"DEBUG: Downloading {name} from {source} to {destination_base}")
-                
-                if is_dir:
-                    target_path = destination_base / name
-                    print(f"DEBUG: Starting directory download")
-                    future = self._manager.download_directory(source, target_path)
-                else:
-                    target_path = destination_base / name
-                    print(f"DEBUG: Starting file download")
-                    future = self._manager.download(source, target_path)
-
-                print(f"DEBUG: Download future created, showing progress dialog")
-                # Show progress dialog for download
-                self._show_progress_dialog("download", name, future)
-                print(f"DEBUG: Progress dialog shown, attaching refresh")
-                self._attach_refresh(future, refresh_local_path=str(destination_base))
-                print(f"DEBUG: Download operation setup complete")
-            except Exception as exc:
-                print(f"DEBUG: Error in download operation: {exc}")
-                import traceback
-                traceback.print_exc()
-                pane.show_toast(f"Download failed: {exc}")
+            for entry in entries:
+                source = posixpath.join(directory or "/", entry.name)
+                target_path = destination_base / entry.name
+                try:
+                    if entry.is_dir:
+                        future = self._manager.download_directory(source, target_path)
+                    else:
+                        future = self._manager.download(source, target_path)
+                    self._show_progress_dialog("download", entry.name, future)
+                    self._attach_refresh(future, refresh_local_path=str(destination_base))
+                except Exception as exc:
+                    pane.show_toast(f"Download failed: {exc}")
 
     def _on_window_resize(self, window, pspec) -> None:
         """Maintain proportional paned split when window is resized following GNOME HIG"""
