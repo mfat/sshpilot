@@ -1132,6 +1132,22 @@ class FilePane(Gtk.Box):
         drop_target.connect("accept", lambda *_: True)
         drop_target.connect("drop", self._on_drop)
         self.add_controller(drop_target)
+
+        # Internal drags share structured metadata via a Python payload so the
+        # window can reuse the existing upload/download handlers without
+        # guessing the operation context.
+        payload_target = Gtk.DropTarget.new(GObject.TYPE_PYOBJECT, Gdk.DragAction.COPY)
+        payload_target.connect("accept", lambda _t, value: isinstance(value, dict))
+        payload_target.connect("drop", self._on_drop)
+        self.add_controller(payload_target)
+
+        self._drag_sources: List[Gtk.DragSource] = []
+        for view in (list_view, grid_view):
+            drag_source = Gtk.DragSource()
+            drag_source.set_actions(Gdk.DragAction.COPY)
+            drag_source.connect("prepare", self._on_drag_prepare)
+            view.add_controller(drag_source)
+            self._drag_sources.append(drag_source)
         self._update_menu_state()
         # Set up sorting actions for the split button
         self._setup_sorting_actions()
@@ -1627,8 +1643,143 @@ class FilePane(Gtk.Box):
             return
         self._on_upload_clicked(None)
 
-    def _on_drop(self, target: Gtk.DropTarget, value: Gio.File, x: float, y: float):
-        self.emit("request-operation", "upload", value)
+    def _build_drag_payload(self) -> Optional[Dict[str, object]]:
+        entries = self.get_selected_entries()
+        if not entries:
+            return None
+
+        window = self.get_root()
+        if not isinstance(window, FileManagerWindow):
+            return None
+
+        if self._is_remote:
+            payload: Dict[str, object] = {
+                "entries": list(entries),
+                "directory": self._current_path,
+            }
+            local_pane = getattr(window, "_left_pane", None)
+            if isinstance(local_pane, FilePane):
+                local_root = window._normalize_local_path(local_pane.toolbar.path_entry.get_text())
+                if local_root:
+                    payload["destination"] = pathlib.Path(local_root)
+            return payload
+
+        base_dir = window._normalize_local_path(self.toolbar.path_entry.get_text())
+        if not base_dir:
+            return None
+
+        payload = {
+            "paths": [pathlib.Path(os.path.join(base_dir, entry.name)) for entry in entries],
+        }
+
+        remote_pane = getattr(window, "_right_pane", None)
+        if isinstance(remote_pane, FilePane):
+            remote_root = remote_pane.toolbar.path_entry.get_text() or "/"
+            if remote_root:
+                payload["destination"] = remote_root
+
+        return payload
+
+    def _on_drag_prepare(self, source: Gtk.DragSource, x: float, y: float) -> Optional[Gdk.ContentProvider]:
+        payload = self._build_drag_payload()
+        if payload is None:
+            return None
+        return Gdk.ContentProvider.new_for_value(payload)
+
+    def _extract_drop_names(self, raw_items: object) -> List[str]:
+        names: List[str] = []
+
+        def _collect(item: object) -> None:
+            if item is None:
+                return
+            if isinstance(item, (list, tuple, set, frozenset)):
+                for value in item:
+                    _collect(value)
+                return
+            if isinstance(item, pathlib.Path):
+                names.append(item.name)
+            elif isinstance(item, Gio.File):
+                basename = item.get_basename()
+                if basename:
+                    names.append(basename)
+                else:
+                    path = item.get_path()
+                    if path:
+                        names.append(os.path.basename(path))
+            elif isinstance(item, str):
+                names.append(os.path.basename(item.rstrip("/")))
+
+        _collect(raw_items)
+        return names
+
+    def _on_drop(self, target: Gtk.DropTarget, value, x: float, y: float):
+        window = self.get_root()
+        if not isinstance(window, FileManagerWindow):
+            return False
+
+        if self._is_remote:
+            remote_destination = self.toolbar.path_entry.get_text() or "/"
+            payload: Dict[str, object]
+            if isinstance(value, dict):
+                payload = dict(value)
+                payload["destination"] = remote_destination
+            else:
+                payload = {
+                    "paths": value,
+                    "destination": remote_destination,
+                }
+
+            self.emit("request-operation", "upload", payload)
+
+            names = self._extract_drop_names(payload.get("paths"))
+            count = len(names)
+            if count == 1:
+                self.show_toast(f"Uploading {names[0]}…")
+            elif count > 1:
+                self.show_toast(f"Uploading {count} items…")
+            return True
+
+        destination_root = window._normalize_local_path(self.toolbar.path_entry.get_text())
+        if not destination_root:
+            self.show_toast("Local destination is not accessible")
+            return False
+
+        if not isinstance(value, dict):
+            return False
+
+        payload = dict(value)
+        entries = payload.get("entries") or []
+        if not entries:
+            self.show_toast("Invalid download request")
+            return False
+
+        destination_path = pathlib.Path(destination_root)
+        destination_override = payload.get("destination")
+        if destination_override is not None:
+            if isinstance(destination_override, pathlib.Path):
+                destination_path = destination_override
+            else:
+                destination_path = pathlib.Path(destination_override)
+
+        payload["entries"] = list(entries)
+        payload["destination"] = destination_path
+
+        directory = payload.get("directory")
+        if not directory:
+            remote_pane = getattr(window, "_right_pane", None)
+            if isinstance(remote_pane, FilePane):
+                directory = remote_pane._current_path
+            else:
+                directory = "/"
+            payload["directory"] = directory
+
+        self.emit("request-operation", "download", payload)
+
+        count = len(entries)
+        if count == 1:
+            self.show_toast(f"Downloading {entries[0].name}…")
+        else:
+            self.show_toast(f"Downloading {count} items…")
         return True
 
     def get_selected_entry(self) -> Optional[FileEntry]:
@@ -2666,8 +2817,22 @@ class FileManagerWindow(Adw.Window):
                     highlight_name=path_obj.name,
                 )
         elif action == "download" and isinstance(payload, dict):
+            if pane is self._left_pane and payload.get("entries"):
+                remote_pane = getattr(self, "_right_pane", None)
+                if isinstance(remote_pane, FilePane):
+                    pane = remote_pane
+
             entries = payload.get("entries") or []
-            directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
+            directory = payload.get("directory")
+            if not directory:
+                if pane is self._right_pane:
+                    directory = pane.toolbar.path_entry.get_text() or "/"
+                else:
+                    remote_pane = getattr(self, "_right_pane", None)
+                    if isinstance(remote_pane, FilePane):
+                        directory = remote_pane.toolbar.path_entry.get_text() or "/"
+                    else:
+                        directory = "/"
             destination_base = payload.get("destination")
 
             if not entries or destination_base is None:
