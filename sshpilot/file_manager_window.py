@@ -1626,12 +1626,9 @@ class FilePane(Gtk.Box):
             flags = getattr(Gtk, "ListScrollFlags", None)
             none_flag = getattr(flags, "NONE", 0) if flags is not None else 0
             try:
-                scroll_to(position, none_flag, 0.0)
-            except TypeError:
-                try:
-                    scroll_to(position, none_flag, 0)
-                except Exception:
-                    pass
+                scroll_to(position, none_flag, 0.0, 0.0)
+            except Exception:
+                pass
 
     def _on_typeahead_key_pressed(
         self,
