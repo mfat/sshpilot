@@ -69,23 +69,25 @@ def open_internal_file_manager(
     port: Optional[int] = None,
     parent_window: Any = None,
     nickname: Optional[str] = None,
+    connection: Any = None,
+    connection_manager: Any = None,
+    ssh_config: Optional[dict] = None,
 ):
     """Instantiate and present the built-in file manager window."""
 
-    from .file_manager_window import FileManagerWindow
+    from .file_manager_window import launch_file_manager_window
 
-    window = FileManagerWindow(
-        user=user,
+    window = launch_file_manager_window(
         host=host,
-        port=port,
+        username=user,
+        port=port or 22,
+        path="~",
         parent=parent_window,
         nickname=nickname,
+        connection=connection,
+        connection_manager=connection_manager,
+        ssh_config=ssh_config,
     )
-
-    try:
-        window.present()
-    except Exception:  # pragma: no cover - testing stubs may not implement present
-        pass
 
     return window
 
@@ -98,6 +100,9 @@ def launch_remote_file_manager(
     nickname: Optional[str] = None,
     parent_window: Any = None,
     error_callback: Optional[Any] = None,
+    connection: Any = None,
+    connection_manager: Any = None,
+    ssh_config: Optional[dict] = None,
 ) -> Tuple[bool, Optional[str], Optional[Any]]:
     """Launch the appropriate file manager for the supplied connection."""
 
@@ -119,6 +124,9 @@ def launch_remote_file_manager(
                 port=port,
                 parent_window=parent_window,
                 nickname=nickname,
+                connection=connection,
+                connection_manager=connection_manager,
+                ssh_config=ssh_config,
             )
             return True, None, window
         except Exception as exc:

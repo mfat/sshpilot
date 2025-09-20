@@ -29,12 +29,17 @@ import threading
 import time
 from datetime import datetime
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 
 import paramiko
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
+
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 _DROP_ZONE_CSS_PROVIDER: Optional[Gtk.CssProvider] = None
 
@@ -501,12 +506,15 @@ class AsyncSFTPManager(GObject.GObject):
         password: Optional[str] = None,
         *,
         dispatcher: Callable[[Callable, tuple, dict], None] | None = None,
+        connection: Any = None,
+        connection_manager: Any = None,
+        ssh_config: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
         self._host = host
         self._username = username
         self._password = password
-        self._port = port
+        self._port = port or 22
         self._client: Optional[paramiko.SSHClient] = None
         self._sftp: Optional[paramiko.SFTPClient] = None
         self._executor = ThreadPoolExecutor(max_workers=4)
@@ -517,6 +525,9 @@ class AsyncSFTPManager(GObject.GObject):
         )
         self._lock = threading.Lock()
         self._cancelled_operations = set()  # Track cancelled operation IDs
+        self._connection = connection
+        self._connection_manager = connection_manager
+        self._ssh_config = dict(ssh_config) if ssh_config else None
     
     def _format_size(self, size_bytes):
         """Format file size for display"""
@@ -576,22 +587,164 @@ class AsyncSFTPManager(GObject.GObject):
 
     # -- actual work ----------------------------------------------------
 
+    @staticmethod
+    def _select_host_key_policy(strict_host: str, auto_add: bool) -> paramiko.MissingHostKeyPolicy:
+        """Return an appropriate Paramiko host key policy based on settings."""
+
+        normalized = (strict_host or "").strip().lower()
+        try:
+            if normalized in {"yes", "always"}:
+                return paramiko.RejectPolicy()
+            if normalized in {"no", "off", "accept-new", "accept_new"}:
+                return paramiko.AutoAddPolicy()
+            if normalized in {"ask", "accept-new-once", "ask-new"}:
+                return paramiko.WarningPolicy()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Failed to create host key policy for '%s': %s", normalized, exc)
+
+        return paramiko.AutoAddPolicy() if auto_add else paramiko.RejectPolicy()
+
     def _connect_impl(self) -> None:
         client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(
-            hostname=self._host,
-            username=self._username,
-            password=self._password,
-            port=self._port,
-            allow_agent=True,
-            look_for_keys=True,
-            timeout=15,
-        )
+
+        try:
+            client.load_system_host_keys()
+        except Exception as exc:
+            logger.debug("Unable to load system host keys: %s", exc)
+
+        ssh_cfg: Dict[str, Any] = {}
+        if self._ssh_config is not None:
+            ssh_cfg = dict(self._ssh_config)
+        else:
+            try:
+                from .config import Config  # Lazy import to avoid circular dependency
+
+                cfg = Config()
+                ssh_cfg = cfg.get_ssh_config() or {}
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Failed to load SSH configuration for file manager: %s", exc)
+                ssh_cfg = {}
+
+        strict_host = str(ssh_cfg.get("strict_host_key_checking", "") or "").strip()
+        auto_add = bool(ssh_cfg.get("auto_add_host_keys", True))
+        policy = self._select_host_key_policy(strict_host, auto_add)
+        client.set_missing_host_key_policy(policy)
+
+        known_hosts_path = None
+        if self._connection_manager is not None:
+            known_hosts_path = getattr(self._connection_manager, "known_hosts_path", None)
+
+        if known_hosts_path:
+            try:
+                if os.path.exists(known_hosts_path):
+                    client.load_host_keys(known_hosts_path)
+                else:
+                    logger.debug("Known hosts file not found at %s", known_hosts_path)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Failed to load known hosts from %s: %s", known_hosts_path, exc)
+
+        password = self._password or None
+        connection = self._connection
+        if not password and connection is not None:
+            password = getattr(connection, "password", None) or None
+
+        if not password and self._connection_manager is not None:
+            lookup_host = self._host
+            if connection is not None:
+                lookup_host = (
+                    getattr(connection, "hostname", None)
+                    or getattr(connection, "host", None)
+                    or self._host
+                )
+            lookup_user = self._username
+            if connection is not None:
+                lookup_user = getattr(connection, "username", None) or self._username
+
+            try:
+                retrieved = self._connection_manager.get_password(lookup_host, lookup_user)
+                if retrieved:
+                    password = retrieved
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(
+                    "Password lookup failed for %s@%s: %s", lookup_user, lookup_host, exc
+                )
+
+        allow_agent = True
+        look_for_keys = True
+        key_filename: Optional[str] = None
+        passphrase: Optional[str] = None
+
+        if connection is not None:
+            try:
+                auth_method = int(getattr(connection, "auth_method", 0) or 0)
+            except Exception:
+                auth_method = 0
+
+            try:
+                key_mode = int(getattr(connection, "key_select_mode", 0) or 0)
+            except Exception:
+                key_mode = 0
+
+            raw_keyfile = getattr(connection, "keyfile", "") or ""
+            keyfile = raw_keyfile.strip()
+            if keyfile.lower().startswith("select key file"):
+                keyfile = ""
+
+            if key_mode == 1 and keyfile and os.path.isfile(keyfile):
+                key_filename = keyfile
+                look_for_keys = False
+                if (
+                    self._connection_manager is not None
+                    and hasattr(self._connection_manager, "prepare_key_for_connection")
+                ):
+                    try:
+                        self._connection_manager.prepare_key_for_connection(keyfile)
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.debug("Failed to prepare key %s: %s", keyfile, exc)
+
+                passphrase = getattr(connection, "key_passphrase", None) or None
+                if (
+                    not passphrase
+                    and self._connection_manager is not None
+                    and hasattr(self._connection_manager, "get_key_passphrase")
+                ):
+                    try:
+                        passphrase = self._connection_manager.get_key_passphrase(keyfile)
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.debug("Failed to load key passphrase for %s: %s", keyfile, exc)
+
+            if getattr(connection, "pubkey_auth_no", False):
+                allow_agent = False
+                look_for_keys = False
+
+            if auth_method == 1:
+                allow_agent = False
+                look_for_keys = False
+
+        connect_kwargs: Dict[str, Any] = {
+            "hostname": self._host,
+            "username": self._username,
+            "port": self._port,
+            "allow_agent": allow_agent,
+            "look_for_keys": look_for_keys,
+            "timeout": 15,
+        }
+
+        if password:
+            connect_kwargs["password"] = password
+
+        if key_filename:
+            connect_kwargs["key_filename"] = key_filename
+
+        if passphrase:
+            connect_kwargs["passphrase"] = passphrase
+
+        client.connect(**connect_kwargs)
         sftp = client.open_sftp()
         with self._lock:
             self._client = client
             self._sftp = sftp
+            self._password = password
 
     # -- public operations ----------------------------------------------
 
@@ -2989,8 +3142,18 @@ class FileManagerWindow(Adw.Window):
         username: str,
         port: int = 22,
         initial_path: str = "~",
+        nickname: Optional[str] = None,
+        connection: Any = None,
+        connection_manager: Any = None,
+        ssh_config: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(title="")
+        self._host = host
+        self._username = username
+        self._nickname = nickname
+        self._connection = connection
+        self._connection_manager = connection_manager
+        self._ssh_config = dict(ssh_config) if ssh_config else None
         # Set default and minimum sizes following GNOME HIG
         self.set_default_size(1000, 640)
         # Set minimum size to ensure usability (GNOME HIG recommends minimum 360px width)
@@ -3009,7 +3172,13 @@ class FileManagerWindow(Adw.Window):
         
         # Create header bar with window controls
         header_bar = Adw.HeaderBar()
-        header_bar.set_title_widget(Gtk.Label(label=f"{username}@{host}"))
+        title_parts = []
+        if nickname and nickname.strip():
+            title_parts.append(str(nickname).strip())
+        base_identity = f"{username}@{host}"
+        if not title_parts or title_parts[0] != base_identity:
+            title_parts.append(base_identity)
+        header_bar.set_title_widget(Gtk.Label(label=" ".join(title_parts)))
         # Enable window controls (minimize, maximize, close) following GNOME HIG
         header_bar.set_show_start_title_buttons(True)
         header_bar.set_show_end_title_buttons(True)
@@ -3087,7 +3256,19 @@ class FileManagerWindow(Adw.Window):
             pane.connect("request-operation", self._on_request_operation, pane)
 
         # Initialize SFTP manager and connect signals
-        self._manager = AsyncSFTPManager(host, username, port)
+        initial_password = None
+        if connection is not None:
+            initial_password = getattr(connection, "password", None) or None
+
+        self._manager = AsyncSFTPManager(
+            host,
+            username,
+            port,
+            password=initial_password,
+            connection=connection,
+            connection_manager=connection_manager,
+            ssh_config=self._ssh_config,
+        )
         
         # Connect signals with error handling
         try:
@@ -3906,6 +4087,10 @@ def launch_file_manager_window(
     path: str = "~",
     parent: Optional[Gtk.Window] = None,
     transient_for_parent: bool = True,
+    nickname: Optional[str] = None,
+    connection: Any = None,
+    connection_manager: Any = None,
+    ssh_config: Optional[Dict[str, Any]] = None,
 ) -> FileManagerWindow:
     """Create and present the :class:`FileManagerWindow`.
 
@@ -3925,6 +4110,9 @@ def launch_file_manager_window(
         Set to ``False`` to avoid establishing a transient relationship with
         ``parent``.  This allows callers to request a free-floating window even
         when a parent reference is supplied.
+    nickname, connection, connection_manager, ssh_config
+        Optional context propagated to :class:`FileManagerWindow` so it can
+        reuse saved credentials and SSH preferences.
     """
 
     app = Gtk.Application.get_default()
@@ -3937,6 +4125,10 @@ def launch_file_manager_window(
         username=username,
         port=port,
         initial_path=path,
+        nickname=nickname,
+        connection=connection,
+        connection_manager=connection_manager,
+        ssh_config=ssh_config,
     )
     if parent is not None and transient_for_parent:
         window.set_transient_for(parent)
