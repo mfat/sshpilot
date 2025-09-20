@@ -677,11 +677,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Create header bar
         self.header_bar = Adw.HeaderBar()
-        try:
-            if hasattr(self.header_bar, 'set_use_native_controls'):
-                self.header_bar.set_use_native_controls(True)
-        except Exception:
-            logger.debug('Failed to enable native window controls on header bar', exc_info=True)
         self.header_bar.set_title_widget(Gtk.Label(label="sshPilot"))
         
         # Add window controls (minimize, maximize, close)
