@@ -60,6 +60,7 @@ def _ensure_gi_stub():
 
     glib_module = _DummyModule("gi.repository.GLib")
     setattr(glib_module, "idle_add", lambda *args, **kwargs: None)
+    setattr(glib_module, "markup_escape_text", lambda text: text)
     repository.GLib = glib_module
     sys.modules["gi.repository.GLib"] = glib_module
 
@@ -67,6 +68,74 @@ def _ensure_gi_stub():
         module = _DummyModule(f"gi.repository.{name}")
         repository.__dict__[name] = module
         sys.modules[f"gi.repository.{name}"] = module
+
+    class _DummySimpleAction:
+        def __init__(self, name=None, parameter_type=None):
+            self.name = name
+            self.parameter_type = parameter_type
+            self.enabled = True
+            self._callback = None
+
+        @classmethod
+        def new(cls, name, parameter_type):
+            return cls(name, parameter_type)
+
+        def connect(self, _signal_name, callback):
+            self._callback = callback
+
+        def set_enabled(self, value):
+            self.enabled = value
+
+    class _DummySimpleActionGroup:
+        def __init__(self):
+            self.actions = []
+
+        def add_action(self, action):
+            self.actions.append(action)
+
+    class _DummyMenu:
+        def __init__(self):
+            self.items = []
+
+        def append(self, label, detailed_action):
+            self.items.append(("item", label, detailed_action))
+
+        def append_section(self, label, section):
+            self.items.append(("section", label, section))
+
+    class _DummyPopoverMenu:
+        def __init__(self, model=None):
+            self.model = model
+            self._parent = None
+            self.has_arrow = True
+            self.pointing_to = None
+
+        @classmethod
+        def new_from_model(cls, model):
+            return cls(model)
+
+        def set_has_arrow(self, value):
+            self.has_arrow = value
+
+        def insert_action_group(self, _name, _group):
+            pass
+
+        def get_parent(self):
+            return self._parent
+
+        def set_parent(self, parent):
+            self._parent = parent
+
+        def set_pointing_to(self, rect):
+            self.pointing_to = rect
+
+        def popup(self):
+            pass
+
+    repository.Gio.SimpleAction = _DummySimpleAction
+    repository.Gio.SimpleActionGroup = _DummySimpleActionGroup
+    repository.Gio.Menu = _DummyMenu
+    repository.Gtk.PopoverMenu = _DummyPopoverMenu
 
     gdk_module = repository.Gdk
     gdk_module.ModifierType = types.SimpleNamespace(
@@ -219,3 +288,46 @@ def test_typeahead_scrolls_grid_view_with_full_signature():
     assert pane._selection_model.get_selected() == 2
     assert list_calls == []
     assert grid_calls == [(2, "flag", 0.0, 0.0)]
+
+
+def test_context_menu_includes_properties(monkeypatch):
+    module = _load_file_manager_window()
+    FilePane = module.FilePane
+    FileEntry = module.FileEntry
+
+    pane = FilePane.__new__(FilePane)
+    pane._is_remote = True
+    pane._menu_actions = {}
+
+    class _ActionGroup:
+        def __init__(self):
+            self.actions = []
+
+        def add_action(self, action):
+            self.actions.append(action)
+
+    pane._menu_action_group = _ActionGroup()
+    popover = pane._create_menu_model()
+
+    menu_labels = []
+    for item_type, label, payload in popover.model.items:
+        if item_type == "item":
+            menu_labels.append(label)
+        elif item_type == "section" and hasattr(payload, "items"):
+            for section_item in payload.items:
+                if section_item[0] == "item":
+                    menu_labels.append(section_item[1])
+
+    assert "Properties…" in menu_labels
+
+    pane._action_buttons = {}
+    pane._entries = [FileEntry("example.txt", False, 512, 1700000000)]
+
+    class _Selection:
+        def is_selected(self, index):
+            return index == 0
+
+    pane._selection_model = _Selection()
+    pane._current_path = "/tmp"
+    pane._update_menu_state()
+    assert pane._menu_actions["properties"].enabled is True
