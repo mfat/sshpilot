@@ -1635,6 +1635,20 @@ class FilePane(Gtk.Box):
         self._cached_entries = list(entries)
         self._apply_entry_filter(preserve_selection=False)
 
+    def highlight_entry(self, name: str) -> None:
+        if not name:
+            return
+        match: Optional[int] = None
+        for index, entry in enumerate(self._entries):
+            if entry.name == name:
+                match = index
+                break
+        if match is None:
+            return
+        self._selection_model.unselect_all()
+        self._selection_model.select_item(match, False)
+        self._scroll_to_position(match)
+
     def _apply_entry_filter(self, *, preserve_selection: bool) -> None:
         selected_names: set[str] = set()
         if preserve_selection:
@@ -1947,6 +1961,10 @@ class FileManagerWindow(Adw.Window):
             self._left_pane: None,
             self._right_pane: initial_path,
         }
+        self._pending_highlights: Dict[FilePane, Optional[str]] = {
+            self._left_pane: None,
+            self._right_pane: None,
+        }
 
         # Prime the left (local) pane immediately with local home directory
         try:
@@ -2104,6 +2122,7 @@ class FileManagerWindow(Adw.Window):
         self._pending_paths[target] = None
 
         target.show_entries(path, entries)
+        self._apply_pending_highlight(target)
         target.push_history(path)
         target.show_toast(f"Loaded {path}")
 
@@ -2140,6 +2159,7 @@ class FileManagerWindow(Adw.Window):
 
             # Show results in the left pane
             self._left_pane.show_entries(path, entries)
+            self._apply_pending_highlight(self._left_pane)
         except Exception as exc:
             self._left_pane.show_toast(str(exc))
 
@@ -2198,10 +2218,15 @@ class FileManagerWindow(Adw.Window):
                                 pane.show_toast(str(exc))
                             else:
                                 # Refresh local listing
+                                self._pending_highlights[self._left_pane] = name
                                 self._load_local(os.path.dirname(new_path) or "/")
                         else:
                             future = self._manager.mkdir(new_path)
-                            self._attach_refresh(future, refresh_remote=pane)
+                            self._attach_refresh(
+                                future,
+                                refresh_remote=pane,
+                                highlight_name=name,
+                            )
                 dialog.close()
 
             dialog.connect("response", _on_response)
@@ -2252,10 +2277,15 @@ class FileManagerWindow(Adw.Window):
                         pane.show_toast(str(exc))
                     else:
                         pane.show_toast(f"Renamed to {new_name}")
+                        self._pending_highlights[self._left_pane] = new_name
                         self._load_local(base_dir)
                 else:
                     future = self._manager.rename(source, target)
-                    self._attach_refresh(future, refresh_remote=pane)
+                    self._attach_refresh(
+                        future,
+                        refresh_remote=pane,
+                        highlight_name=new_name,
+                    )
                     pane.show_toast(f"Renaming to {new_name}…")
                 dialog.close()
 
@@ -2398,10 +2428,14 @@ class FileManagerWindow(Adw.Window):
                     future = self._manager.upload_directory(path_obj, destination)
                 else:
                     future = self._manager.upload(path_obj, destination)
-                
+
                 # Show progress dialog for upload
                 self._show_progress_dialog("upload", path_obj.name, future)
-                self._attach_refresh(future, refresh_remote=target_pane)
+                self._attach_refresh(
+                    future,
+                    refresh_remote=target_pane,
+                    highlight_name=path_obj.name,
+                )
         elif action == "download" and isinstance(payload, dict):
             entries = payload.get("entries") or []
             directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
@@ -2423,7 +2457,11 @@ class FileManagerWindow(Adw.Window):
                     else:
                         future = self._manager.download(source, target_path)
                     self._show_progress_dialog("download", entry.name, future)
-                    self._attach_refresh(future, refresh_local_path=str(destination_base))
+                    self._attach_refresh(
+                        future,
+                        refresh_local_path=str(destination_base),
+                        highlight_name=entry.name,
+                    )
                 except Exception as exc:
                     pane.show_toast(f"Download failed: {exc}")
 
@@ -2441,6 +2479,7 @@ class FileManagerWindow(Adw.Window):
         *,
         refresh_remote: Optional[FilePane] = None,
         refresh_local_path: Optional[str] = None,
+        highlight_name: Optional[str] = None,
     ) -> None:
         if future is None:
             return
@@ -2450,12 +2489,24 @@ class FileManagerWindow(Adw.Window):
                 completed.result()
             except Exception:
                 return
+            if highlight_name:
+                if refresh_remote is not None:
+                    self._pending_highlights[refresh_remote] = highlight_name
+                elif refresh_local_path is not None:
+                    self._pending_highlights[self._left_pane] = highlight_name
             if refresh_remote is not None:
                 GLib.idle_add(self._refresh_remote_listing, refresh_remote)
             if refresh_local_path:
                 GLib.idle_add(self._refresh_local_listing, refresh_local_path)
 
         future.add_done_callback(_on_done)
+
+    def _apply_pending_highlight(self, pane: FilePane) -> None:
+        name = self._pending_highlights.get(pane)
+        if not name:
+            return
+        self._pending_highlights[pane] = None
+        pane.highlight_entry(name)
 
     def _refresh_remote_listing(self, pane: FilePane) -> bool:
         path = pane.toolbar.path_entry.get_text() or "/"
@@ -2468,6 +2519,8 @@ class FileManagerWindow(Adw.Window):
         current = self._normalize_local_path(self._left_pane.toolbar.path_entry.get_text())
         if target == current:
             self._load_local(target)
+        else:
+            self._pending_highlights[self._left_pane] = None
         return False
 
     
