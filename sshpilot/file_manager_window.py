@@ -1140,26 +1140,71 @@ class FilePane(Gtk.Box):
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         icon = Gtk.Image.new_from_icon_name("folder-symbolic")
         icon.set_valign(Gtk.Align.CENTER)
-        label = Gtk.Label(xalign=0)
-        label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
-        label.set_max_width_chars(40)
-        label.set_hexpand(True)
+        name_label = Gtk.Label(xalign=0)
+        name_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        name_label.set_max_width_chars(40)
+        name_label.set_hexpand(True)
+        metadata_label = Gtk.Label(xalign=1)
+        metadata_label.set_halign(Gtk.Align.END)
+        metadata_label.set_ellipsize(Pango.EllipsizeMode.END)
+        metadata_label.add_css_class("dim-label")
         box.append(icon)
-        box.append(label)
+        box.append(name_label)
+        box.append(metadata_label)
+        box.set_hexpand(True)
+        box.set_data("icon", icon)
+        box.set_data("name_label", name_label)
+        box.set_data("metadata_label", metadata_label)
         item.set_child(box)
 
     def _on_list_bind(self, factory, item):
         box = item.get_child()
-        label = box.get_last_child()
-        icon = box.get_first_child()
-        value = item.get_item().get_string()
-        label.set_text(value)
-        label.set_tooltip_text(value)
-        # Choose icon based on whether value ends with '/'
-        if value.endswith('/'):
+        icon: Gtk.Image = box.get_data("icon")
+        name_label: Gtk.Label = box.get_data("name_label")
+        metadata_label: Gtk.Label = box.get_data("metadata_label")
+
+        position = item.get_position()
+        entry: Optional[FileEntry] = None
+        if position is not None and 0 <= position < len(self._entries):
+            entry = self._entries[position]
+
+        if entry is None:
+            value = item.get_item().get_string()
+            name_label.set_text(value)
+            name_label.set_tooltip_text(value)
+            metadata_label.set_text("—")
+            metadata_label.set_tooltip_text(None)
+            icon.set_from_icon_name("folder-symbolic" if value.endswith('/') else "text-x-generic-symbolic")
+            return
+
+        display_name = entry.name + ("/" if entry.is_dir else "")
+        name_label.set_text(display_name)
+        name_label.set_tooltip_text(display_name)
+
+        if entry.is_dir:
+            metadata_label.set_text("—")
+            metadata_label.set_tooltip_text(None)
+        else:
+            size_text = self._format_size(entry.size)
+            metadata_label.set_text(size_text)
+            metadata_label.set_tooltip_text(size_text)
+
+        if entry.is_dir:
             icon.set_from_icon_name("folder-symbolic")
         else:
             icon.set_from_icon_name("text-x-generic-symbolic")
+
+    @staticmethod
+    def _format_size(size_bytes: int) -> str:
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        units = ["KB", "MB", "GB", "TB", "PB"]
+        value = float(size_bytes)
+        for unit in units:
+            value /= 1024.0
+            if value < 1024.0:
+                return f"{value:.1f} {unit}"
+        return f"{value:.1f} EB"
 
     def _on_grid_setup(self, factory, item):
         button = Gtk.Button()
