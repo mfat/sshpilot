@@ -1398,17 +1398,32 @@ class FilePane(Gtk.Box):
         if partner is not None:
             partner.show_drop_zone()
 
+        window = self.get_root()
+        if isinstance(window, FileManagerWindow):
+            window._register_drag_begin(self)
+
+
     def _on_drag_source_end(self, _source: Gtk.DragSource, _drag: Gdk.Drag, _delete: bool) -> None:
         self._current_drag_file = None
         partner = getattr(self, "_partner_pane", None)
         if partner is not None:
             partner.hide_drop_zone()
 
+        window = self.get_root()
+        if isinstance(window, FileManagerWindow):
+            window._register_drag_finish(self)
+
+
     def _on_drag_source_cancel(self, _source: Gtk.DragSource, _drag: Gdk.Drag, _reason) -> None:
         self._current_drag_file = None
         partner = getattr(self, "_partner_pane", None)
         if partner is not None:
             partner.hide_drop_zone()
+
+        window = self.get_root()
+        if isinstance(window, FileManagerWindow):
+            window._register_drag_finish(self)
+
 
     def _on_drop_enter(self, _target: Gtk.DropTarget, _x: float, _y: float):
         self._set_drop_zone_pointer(True)
@@ -1770,6 +1785,11 @@ class FilePane(Gtk.Box):
 
         self._drag_in_progress = True
 
+        window = self.get_root()
+        if isinstance(window, FileManagerWindow):
+            window._register_drag_begin(self)
+
+
     def _on_drag_end(
         self,
         _drag_source: Gtk.DragSource,
@@ -1778,6 +1798,11 @@ class FilePane(Gtk.Box):
     ) -> None:
         self._drag_in_progress = False
         self._drag_payload = None
+
+        window = self.get_root()
+        if isinstance(window, FileManagerWindow):
+            window._register_drag_finish(self)
+
 
     def _show_context_menu(self, widget: Gtk.Widget, x: float, y: float) -> None:
         self._update_selection_for_menu(widget, x, y)
@@ -1907,6 +1932,12 @@ class FilePane(Gtk.Box):
     def _on_drop(self, target: Gtk.DropTarget, value: Gio.File, x: float, y: float):
         self._set_drop_zone_pointer(False)
         self.hide_drop_zone()
+        window = self.get_root()
+        if isinstance(window, FileManagerWindow):
+            origin = window.get_active_drag_source()
+            if origin is self:
+                return False
+
         self.emit("request-operation", "upload", value)
 
         return True
@@ -2477,6 +2508,9 @@ class FileManagerWindow(Adw.Window):
             self._right_pane: None,
         }
 
+        self._active_drag_source: Optional[FilePane] = None
+
+
         # Prime the left (local) pane immediately with local home directory
         try:
             local_home = os.path.expanduser("~")
@@ -2516,6 +2550,17 @@ class FileManagerWindow(Adw.Window):
             print(f"Error connecting to server: {exc}")
 
     # -- signal handlers ------------------------------------------------
+
+    def _register_drag_begin(self, pane: FilePane) -> None:
+        self._active_drag_source = pane
+
+    def _register_drag_finish(self, pane: FilePane) -> None:
+        if self._active_drag_source is pane:
+            self._active_drag_source = None
+
+    def get_active_drag_source(self) -> Optional[FilePane]:
+        return self._active_drag_source
+
 
     def _clear_progress_toast(self) -> None:
         """Clear the progress dialog safely."""
