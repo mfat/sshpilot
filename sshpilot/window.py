@@ -710,8 +710,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Add tab button to header bar (will be created later in setup_content_area)
         # This will be added after the tab view is created
         
-        # Add header bar to main container only when using traditional split views
-        if not (HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT):
+        # Attach the header bar directly to the window titlebar when split view
+        # widgets are available. This keeps the window controls outside the
+        # ToolbarView hierarchy used for the main content area and avoids
+        # double-parenting issues when the ToolbarView also expects a top bar.
+        if HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT:
+            try:
+                self.set_titlebar(self.header_bar)
+                logger.debug("Header bar attached to window titlebar")
+            except Exception as e:
+                logger.warning(f"Failed to set window titlebar: {e}")
+                main_box.append(self.header_bar)
+        else:
             main_box.append(self.header_bar)
         
         # Create main layout (fallback if split view widgets are unavailable)
@@ -1848,12 +1858,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Create tab content box
         tab_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        tab_content_box.append(self.tab_bar)
+        if not (HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT):
+            tab_content_box.append(self.tab_bar)
         tab_content_box.append(self.tab_view)
         # Ensure background matches terminal theme to avoid white flash
         if hasattr(tab_content_box, 'add_css_class'):
             tab_content_box.add_css_class('terminal-bg')
-        
+
         # Set the tab content box as the child of the tab overview
         self.tab_overview.set_child(tab_content_box)
         
@@ -1863,24 +1874,32 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tab_button.connect('clicked', self.on_tab_button_clicked)
         self.tab_button.set_visible(False)  # Hidden by default, shown when tabs exist
         self.header_bar.pack_start(self.tab_button)
-        
+
         self.content_stack.add_named(self.tab_overview, "tabs")
         # Also color the stack background
         if hasattr(self.content_stack, 'add_css_class'):
             self.content_stack.add_css_class('terminal-bg')
-        
+
         # Start with welcome view visible
         self.content_stack.set_visible_child_name("welcome")
 
+        toolbar = self.tab_bar
+
         if HAS_OVERLAY_SPLIT:
             content_box = Adw.ToolbarView()
-            content_box.add_top_bar(self.header_bar)
+            try:
+                content_box.add_top_bar(self.tab_bar)
+            except Exception:
+                pass
             content_box.set_content(self.content_stack)
             self._set_content_widget(content_box)
             logger.debug("Set content widget for OverlaySplitView")
         elif HAS_NAV_SPLIT:
             content_box = Adw.ToolbarView()
-            content_box.add_top_bar(self.header_bar)
+            try:
+                content_box.add_top_bar(self.tab_bar)
+            except Exception:
+                pass
             content_box.set_content(self.content_stack)
             self._set_content_widget(content_box)
             logger.debug("Set content widget for NavigationSplitView")
