@@ -23,6 +23,14 @@ if sys.platform == "darwin":
     os.environ["GSETTINGS_SCHEMA_DIR"] = str(resources / "share" / "glib-2.0" / "schemas")
     os.environ["XDG_DATA_DIRS"] = str(resources / "share")
     
+    # Set up GDK-Pixbuf loaders
+    gdkpixbuf_module_dir = resources / "lib" / "gdk-pixbuf-2.0" / "2.10.0" / "loaders"
+    gdkpixbuf_module_file = resources / "lib" / "gdk-pixbuf-2.0" / "2.10.0" / "loaders.cache"
+    if gdkpixbuf_module_dir.exists():
+        os.environ["GDK_PIXBUF_MODULEDIR"] = str(gdkpixbuf_module_dir)
+    if gdkpixbuf_module_file.exists():
+        os.environ["GDK_PIXBUF_MODULE_FILE"] = str(gdkpixbuf_module_file)
+    
     # Set up keyring environment for macOS (like the working bundle)
     os.environ["KEYRING_BACKEND"] = "keyring.backends.macOS.Keyring"
     os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.macOS.Keyring"
