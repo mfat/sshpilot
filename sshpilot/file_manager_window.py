@@ -1678,14 +1678,23 @@ class FilePane(Gtk.Box):
             selected_index = selected
 
         start_index = selected_index
+        match: Optional[int] = None
+        prefix: Optional[str] = None
+
         if repeat_cycle:
-            start_index += 1
-            prefix = self._typeahead_buffer
+            candidate = self._typeahead_buffer + char
+            match = self._find_prefix_match(candidate, start_index)
+            if match is not None:
+                self._typeahead_buffer = candidate
+            else:
+                start_index += 1
+                prefix = self._typeahead_buffer
         else:
             self._typeahead_buffer += char
             prefix = self._typeahead_buffer
 
-        match = self._find_prefix_match(prefix, start_index)
+        if match is None and prefix is not None:
+            match = self._find_prefix_match(prefix, start_index)
 
         if match is None and not repeat_cycle:
             self._typeahead_buffer = char
