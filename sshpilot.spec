@@ -64,7 +64,6 @@ datas += [
     (os.path.join(hb_share, "glib-2.0", "schemas"), "Resources/share/glib-2.0/schemas"),
     (os.path.join(hb_share, "icons", "Adwaita"),    "Resources/share/icons/Adwaita"),
     (os.path.join(hb_share, "gtk-4.0"),               "Resources/share/gtk-4.0"),
-    (os.path.join(hb_share, "libadwaita-1"),          "Resources/share/libadwaita-1"),
     ("sshpilot", "sshpilot"),
     ("sshpilot/resources/sshpilot.gresource", "Resources/sshpilot"),
     ("sshpilot/io.github.mfat.sshpilot.svg", "share/icons"),
