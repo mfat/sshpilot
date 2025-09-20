@@ -974,7 +974,13 @@ class FilePane(Gtk.Box):
         # Navigate on row activation (double click / Enter)
         self._list_view = list_view
         list_view.connect("activate", self._on_list_activate)
-        
+        self._list_drag_source = Gtk.DragSource()
+        self._list_drag_source.set_actions(Gdk.DragAction.COPY)
+        self._list_drag_source.connect("prepare", self._on_drag_prepare)
+        self._list_drag_source.connect("drag-begin", self._on_drag_begin)
+        self._list_drag_source.connect("drag-end", self._on_drag_end)
+        list_view.add_controller(self._list_drag_source)
+
         # Wrap list view in a scrolled window for proper scrolling
         list_scrolled = Gtk.ScrolledWindow()
         list_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -993,6 +999,12 @@ class FilePane(Gtk.Box):
         self._grid_view = grid_view
         # Navigate on grid item activation (double click / Enter)
         grid_view.connect("activate", self._on_grid_activate)
+        self._grid_drag_source = Gtk.DragSource()
+        self._grid_drag_source.set_actions(Gdk.DragAction.COPY)
+        self._grid_drag_source.connect("prepare", self._on_drag_prepare)
+        self._grid_drag_source.connect("drag-begin", self._on_drag_begin)
+        self._grid_drag_source.connect("drag-end", self._on_drag_end)
+        grid_view.add_controller(self._grid_drag_source)
 
         # Wrap grid view in a scrolled window for proper scrolling
         grid_scrolled = Gtk.ScrolledWindow()
@@ -1094,6 +1106,8 @@ class FilePane(Gtk.Box):
         self._show_hidden = False
         self._sort_key = "name"  # Default sort by name
         self._sort_descending = False  # Default ascending order
+        self._drag_in_progress = False
+        self._drag_payload: Optional[object] = None
 
         self._suppress_history_push: bool = False
         self._selection_model.connect("selection-changed", self._on_selection_changed)
@@ -1423,6 +1437,68 @@ class FilePane(Gtk.Box):
         long_press.connect("pressed", _on_long_press)
         widget.add_controller(long_press)
 
+    def _build_drag_payload(self) -> Optional[object]:
+        entries = self.get_selected_entries()
+        if not entries:
+            return None
+
+        if self._is_remote:
+            return {
+                "type": "remote",
+                "directory": self._current_path,
+                "entries": [dataclasses.asdict(entry) for entry in entries],
+            }
+
+        window = self.get_root()
+        base_dir_text = self.toolbar.path_entry.get_text()
+        base_dir = base_dir_text or "/"
+        if isinstance(window, FileManagerWindow):
+            base_dir = window._normalize_local_path(base_dir)
+        else:
+            base_dir = os.path.abspath(os.path.expanduser(base_dir))
+
+        return [pathlib.Path(os.path.join(base_dir, entry.name)) for entry in entries]
+
+    def _on_drag_prepare(self, drag_source: Gtk.DragSource, _x: float, _y: float):
+        payload = self._build_drag_payload()
+        if payload is None:
+            self._drag_payload = None
+            try:
+                drag_source.drag_cancel()
+            except (AttributeError, TypeError):
+                try:
+                    drag_source.drag_cancel(Gdk.DragCancelReason.NO_TARGET)
+                except Exception:
+                    pass
+            return None
+
+        self._drag_payload = payload
+        return Gdk.ContentProvider.new_for_value(
+            GObject.Value(GObject.TYPE_PYOBJECT, payload)
+        )
+
+    def _on_drag_begin(self, drag_source: Gtk.DragSource, _drag: Gdk.Drag) -> None:
+        if self._drag_payload is None:
+            try:
+                drag_source.drag_cancel()
+            except (AttributeError, TypeError):
+                try:
+                    drag_source.drag_cancel(Gdk.DragCancelReason.NO_TARGET)
+                except Exception:
+                    pass
+            return
+
+        self._drag_in_progress = True
+
+    def _on_drag_end(
+        self,
+        _drag_source: Gtk.DragSource,
+        _drag: Optional[Gdk.Drag],
+        _delete_data: bool,
+    ) -> None:
+        self._drag_in_progress = False
+        self._drag_payload = None
+
     def _show_context_menu(self, widget: Gtk.Widget, x: float, y: float) -> None:
         self._update_selection_for_menu(widget, x, y)
         self._update_menu_state()
@@ -1481,6 +1557,12 @@ class FilePane(Gtk.Box):
 
     def get_selected_entries(self) -> List[FileEntry]:
         return [self._entries[index] for index in self._get_selected_indices()]
+
+    def is_drag_in_progress(self) -> bool:
+        return self._drag_in_progress
+
+    def get_drag_payload(self) -> Optional[object]:
+        return self._drag_payload
 
     def _update_menu_state(self) -> None:
         selected_entries = self.get_selected_entries()
