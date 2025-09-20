@@ -34,6 +34,76 @@ import paramiko
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
 
+_DROP_ZONE_CSS_PROVIDER: Optional[Gtk.CssProvider] = None
+
+
+def _ensure_drop_zone_css() -> None:
+    """Ensure the CSS used to highlight drop zones is loaded once."""
+
+    global _DROP_ZONE_CSS_PROVIDER
+
+    if _DROP_ZONE_CSS_PROVIDER is not None:
+        return
+
+    css_provider_cls = getattr(Gtk, "CssProvider", None)
+    if css_provider_cls is None:
+        _DROP_ZONE_CSS_PROVIDER = None
+        return
+
+    provider = css_provider_cls()
+    css_lines = [
+        b".file-pane-drop-zone {",
+        b"    border: 2px dashed alpha(@accent_color, 0.35);",
+        b"    border-radius: 12px;",
+        b"    background-color: alpha(@accent_color, 0.10);",
+        b"    transition: border-color 120ms ease, background-color 120ms ease;",
+        b"}",
+        b"",
+        b".file-pane-drop-zone.visible {",
+        b"    border-style: solid;",
+        b"    border-color: @accent_color;",
+        b"    background-color: alpha(@accent_color, 0.18);",
+        b"}",
+        b"",
+        b".file-pane-drop-zone .drop-zone-content {",
+        b"    padding: 32px;",
+        b"    border-radius: 12px;",
+        b"}",
+        b"",
+        b".file-pane-drop-zone .drop-zone-title {",
+        b"    font-weight: 600;",
+        b"}",
+    ]
+    css_data = b"\n".join(css_lines)
+
+    try:
+        provider.load_from_data(css_data)
+    except Exception:
+        _DROP_ZONE_CSS_PROVIDER = provider
+        return
+
+    display = None
+    if hasattr(Gdk, "Display"):
+        get_default = getattr(Gdk.Display, "get_default", None)
+        if callable(get_default):
+            try:
+                display = get_default()
+            except Exception:
+                display = None
+
+    style_context = getattr(Gtk, "StyleContext", None)
+    add_provider = getattr(style_context, "add_provider_for_display", None) if style_context else None
+    priority = getattr(Gtk, "STYLE_PROVIDER_PRIORITY_APPLICATION", 600)
+
+    if display is not None and callable(add_provider):
+        try:
+            add_provider(display, provider, priority)
+        except Exception:
+            pass
+
+    _DROP_ZONE_CSS_PROVIDER = provider
+
+
 class TransferCancelledException(Exception):
     """Exception raised when a transfer is cancelled"""
     pass
@@ -1015,10 +1085,76 @@ class FilePane(Gtk.Box):
         self._stack.add_named(list_scrolled, "list")
         self._stack.add_named(grid_scrolled, "grid")
 
+        _ensure_drop_zone_css()
+
         overlay = Adw.ToastOverlay()
-        overlay.set_child(self._stack)
         self._overlay = overlay
+
+        content_overlay = Gtk.Overlay()
+        content_overlay.set_child(self._stack)
+
+        drop_zone_revealer = Gtk.Revealer()
+        drop_zone_revealer.set_transition_type(Gtk.RevealerTransitionType.CROSSFADE)
+        drop_zone_revealer.set_halign(Gtk.Align.FILL)
+        drop_zone_revealer.set_valign(Gtk.Align.FILL)
+        if hasattr(drop_zone_revealer, "set_can_target"):
+            drop_zone_revealer.set_can_target(False)
+
+        drop_zone_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=12,
+        )
+        drop_zone_box.set_hexpand(True)
+        drop_zone_box.set_vexpand(True)
+        drop_zone_box.set_halign(Gtk.Align.FILL)
+        drop_zone_box.set_valign(Gtk.Align.FILL)
+        drop_zone_box.set_margin_top(24)
+        drop_zone_box.set_margin_bottom(24)
+        drop_zone_box.set_margin_start(24)
+        drop_zone_box.set_margin_end(24)
+        if hasattr(drop_zone_box, "set_can_target"):
+            drop_zone_box.set_can_target(False)
+        drop_zone_box.add_css_class("file-pane-drop-zone")
+
+        drop_zone_content = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=12,
+        )
+        drop_zone_content.set_halign(Gtk.Align.CENTER)
+        drop_zone_content.set_valign(Gtk.Align.CENTER)
+        drop_zone_content.add_css_class("drop-zone-content")
+        drop_zone_box.append(drop_zone_content)
+
+        icon_name = "folder-upload-symbolic" if self._is_remote else "folder-download-symbolic"
+        drop_zone_icon = Gtk.Image.new_from_icon_name(icon_name)
+        drop_zone_icon.set_pixel_size(48)
+        drop_zone_icon.add_css_class("accent")
+        drop_zone_content.append(drop_zone_icon)
+
+        drop_zone_title = Gtk.Label()
+        drop_zone_title.set_text("Drop files to upload" if self._is_remote else "Drop items here")
+        drop_zone_title.set_justify(Gtk.Justification.CENTER)
+        drop_zone_title.set_halign(Gtk.Align.CENTER)
+        drop_zone_title.add_css_class("drop-zone-title")
+        drop_zone_title.add_css_class("title-3")
+        drop_zone_content.append(drop_zone_title)
+
+        drop_zone_revealer.set_child(drop_zone_box)
+        drop_zone_revealer.set_reveal_child(False)
+
+        content_overlay.add_overlay(drop_zone_revealer)
+        overlay.set_child(content_overlay)
         self.append(overlay)
+
+        self._drop_zone_revealer = drop_zone_revealer
+        self._drop_zone_box = drop_zone_box
+        self._drop_zone_visible = False
+        self._drop_zone_forced = False
+        self._drop_zone_pointer = False
+        self._partner_pane: Optional["FilePane"] = None
+        self._drop_target: Optional[Gtk.DropTarget] = None
+        self._drag_sources: List[Gtk.DragSource] = []
+        self._current_drag_file: Optional[Gio.File] = None
 
         self._action_buttons: Dict[str, Gtk.Button] = {}
         action_bar = Gtk.ActionBar()
@@ -1130,24 +1266,16 @@ class FilePane(Gtk.Box):
         # forward requests to the window which understands the context.
         drop_target = Gtk.DropTarget.new(Gio.File, Gdk.DragAction.COPY)
         drop_target.connect("accept", lambda *_: True)
+        drop_target.connect("enter", self._on_drop_enter)
+        drop_target.connect("motion", self._on_drop_motion)
+        drop_target.connect("leave", self._on_drop_leave)
         drop_target.connect("drop", self._on_drop)
         self.add_controller(drop_target)
+        self._drop_target = drop_target
 
-        # Internal drags share structured metadata via a Python payload so the
-        # window can reuse the existing upload/download handlers without
-        # guessing the operation context.
-        payload_target = Gtk.DropTarget.new(GObject.TYPE_PYOBJECT, Gdk.DragAction.COPY)
-        payload_target.connect("accept", lambda _t, value: isinstance(value, dict))
-        payload_target.connect("drop", self._on_drop)
-        self.add_controller(payload_target)
+        if not self._is_remote:
+            self._setup_drag_sources((list_view, grid_view))
 
-        self._drag_sources: List[Gtk.DragSource] = []
-        for view in (list_view, grid_view):
-            drag_source = Gtk.DragSource()
-            drag_source.set_actions(Gdk.DragAction.COPY)
-            drag_source.connect("prepare", self._on_drag_prepare)
-            view.add_controller(drag_source)
-            self._drag_sources.append(drag_source)
         self._update_menu_state()
         # Set up sorting actions for the split button
         self._setup_sorting_actions()
@@ -1158,6 +1286,139 @@ class FilePane(Gtk.Box):
 
         self._typeahead_buffer: str = ""
         self._typeahead_last_time: float = 0.0
+
+    # -- drop zone & drag support -------------------------------------
+
+    def set_partner_pane(self, partner: Optional["FilePane"]) -> None:
+        self._partner_pane = partner
+
+    def show_drop_zone(self) -> None:
+        self._set_drop_zone_forced(True)
+
+    def hide_drop_zone(self) -> None:
+        self._set_drop_zone_forced(False)
+
+    def _set_drop_zone_forced(self, forced: bool) -> None:
+        if getattr(self, "_drop_zone_forced", False) == forced:
+            return
+        self._drop_zone_forced = forced
+        self._update_drop_zone_visibility()
+
+    def _set_drop_zone_pointer(self, active: bool) -> None:
+        if getattr(self, "_drop_zone_pointer", False) == active:
+            return
+        self._drop_zone_pointer = active
+        self._update_drop_zone_visibility()
+
+    def _update_drop_zone_visibility(self) -> None:
+        revealer = getattr(self, "_drop_zone_revealer", None)
+        if revealer is None:
+            return
+        should_show = bool(getattr(self, "_drop_zone_forced", False) or getattr(self, "_drop_zone_pointer", False))
+        if getattr(self, "_drop_zone_visible", False) == should_show:
+            return
+        self._drop_zone_visible = should_show
+        try:
+            revealer.set_reveal_child(should_show)
+        except Exception:
+            pass
+        box = getattr(self, "_drop_zone_box", None)
+        if box is not None and hasattr(box, "add_css_class") and hasattr(box, "remove_css_class"):
+            try:
+                if should_show:
+                    box.add_css_class("visible")
+                else:
+                    box.remove_css_class("visible")
+            except Exception:
+                pass
+
+    def _setup_drag_sources(self, views: Iterable[Gtk.Widget]) -> None:
+        for view in views:
+            drag_source = Gtk.DragSource()
+            drag_source.set_actions(Gdk.DragAction.COPY)
+            drag_source.connect("prepare", self._on_drag_prepare)
+            drag_source.connect("drag-begin", self._on_drag_source_begin)
+            drag_source.connect("drag-end", self._on_drag_source_end)
+            try:
+                drag_source.connect("drag-cancel", self._on_drag_source_cancel)
+            except (TypeError, AttributeError):
+                pass
+            view.add_controller(drag_source)
+            self._drag_sources.append(drag_source)
+
+    def _on_drag_prepare(self, _source: Gtk.DragSource, _x: float, _y: float):
+        if self._is_remote:
+            return None
+
+        entries = self.get_selected_entries()
+        if not entries:
+            return None
+
+        window = self.get_root()
+        if not isinstance(window, FileManagerWindow):
+            return None
+
+        base_dir = window._normalize_local_path(self.toolbar.path_entry.get_text())
+        uris: List[str] = []
+        files: List[Gio.File] = []
+        for entry in entries:
+            local_path = os.path.join(base_dir, entry.name)
+            if not os.path.exists(local_path):
+                continue
+            try:
+                gfile = Gio.File.new_for_path(local_path)
+            except Exception:
+                continue
+            uri = gfile.get_uri()
+            if not uri:
+                continue
+            uris.append(uri)
+            files.append(gfile)
+
+        if not uris:
+            return None
+
+        payload = ("\r\n".join(uris) + "\r\n").encode("utf-8")
+        bytes_cls = getattr(GLib, "Bytes", None)
+        bytes_new = getattr(bytes_cls, "new", None) if bytes_cls is not None else None
+        try:
+            data = bytes_new(payload) if callable(bytes_new) else payload
+            provider_ctor = getattr(Gdk.ContentProvider, "new_for_bytes", None)
+            if not callable(provider_ctor):
+                return None
+            provider = provider_ctor("text/uri-list", data)
+        except Exception:
+            return None
+
+        self._current_drag_file = files[0] if files else None
+        return provider
+
+    def _on_drag_source_begin(self, _source: Gtk.DragSource, _drag: Gdk.Drag) -> None:
+        partner = getattr(self, "_partner_pane", None)
+        if partner is not None:
+            partner.show_drop_zone()
+
+    def _on_drag_source_end(self, _source: Gtk.DragSource, _drag: Gdk.Drag, _delete: bool) -> None:
+        self._current_drag_file = None
+        partner = getattr(self, "_partner_pane", None)
+        if partner is not None:
+            partner.hide_drop_zone()
+
+    def _on_drag_source_cancel(self, _source: Gtk.DragSource, _drag: Gdk.Drag, _reason) -> None:
+        self._current_drag_file = None
+        partner = getattr(self, "_partner_pane", None)
+        if partner is not None:
+            partner.hide_drop_zone()
+
+    def _on_drop_enter(self, _target: Gtk.DropTarget, _x: float, _y: float):
+        self._set_drop_zone_pointer(True)
+        return Gdk.DragAction.COPY
+
+    def _on_drop_motion(self, _target: Gtk.DropTarget, _x: float, _y: float):
+        return Gdk.DragAction.COPY
+
+    def _on_drop_leave(self, _target: Gtk.DropTarget) -> None:
+        self._set_drop_zone_pointer(False)
 
     # -- callbacks ------------------------------------------------------
 
@@ -1643,143 +1904,11 @@ class FilePane(Gtk.Box):
             return
         self._on_upload_clicked(None)
 
-    def _build_drag_payload(self) -> Optional[Dict[str, object]]:
-        entries = self.get_selected_entries()
-        if not entries:
-            return None
+    def _on_drop(self, target: Gtk.DropTarget, value: Gio.File, x: float, y: float):
+        self._set_drop_zone_pointer(False)
+        self.hide_drop_zone()
+        self.emit("request-operation", "upload", value)
 
-        window = self.get_root()
-        if not isinstance(window, FileManagerWindow):
-            return None
-
-        if self._is_remote:
-            payload: Dict[str, object] = {
-                "entries": list(entries),
-                "directory": self._current_path,
-            }
-            local_pane = getattr(window, "_left_pane", None)
-            if isinstance(local_pane, FilePane):
-                local_root = window._normalize_local_path(local_pane.toolbar.path_entry.get_text())
-                if local_root:
-                    payload["destination"] = pathlib.Path(local_root)
-            return payload
-
-        base_dir = window._normalize_local_path(self.toolbar.path_entry.get_text())
-        if not base_dir:
-            return None
-
-        payload = {
-            "paths": [pathlib.Path(os.path.join(base_dir, entry.name)) for entry in entries],
-        }
-
-        remote_pane = getattr(window, "_right_pane", None)
-        if isinstance(remote_pane, FilePane):
-            remote_root = remote_pane.toolbar.path_entry.get_text() or "/"
-            if remote_root:
-                payload["destination"] = remote_root
-
-        return payload
-
-    def _on_drag_prepare(self, source: Gtk.DragSource, x: float, y: float) -> Optional[Gdk.ContentProvider]:
-        payload = self._build_drag_payload()
-        if payload is None:
-            return None
-        return Gdk.ContentProvider.new_for_value(payload)
-
-    def _extract_drop_names(self, raw_items: object) -> List[str]:
-        names: List[str] = []
-
-        def _collect(item: object) -> None:
-            if item is None:
-                return
-            if isinstance(item, (list, tuple, set, frozenset)):
-                for value in item:
-                    _collect(value)
-                return
-            if isinstance(item, pathlib.Path):
-                names.append(item.name)
-            elif isinstance(item, Gio.File):
-                basename = item.get_basename()
-                if basename:
-                    names.append(basename)
-                else:
-                    path = item.get_path()
-                    if path:
-                        names.append(os.path.basename(path))
-            elif isinstance(item, str):
-                names.append(os.path.basename(item.rstrip("/")))
-
-        _collect(raw_items)
-        return names
-
-    def _on_drop(self, target: Gtk.DropTarget, value, x: float, y: float):
-        window = self.get_root()
-        if not isinstance(window, FileManagerWindow):
-            return False
-
-        if self._is_remote:
-            remote_destination = self.toolbar.path_entry.get_text() or "/"
-            payload: Dict[str, object]
-            if isinstance(value, dict):
-                payload = dict(value)
-                payload["destination"] = remote_destination
-            else:
-                payload = {
-                    "paths": value,
-                    "destination": remote_destination,
-                }
-
-            self.emit("request-operation", "upload", payload)
-
-            names = self._extract_drop_names(payload.get("paths"))
-            count = len(names)
-            if count == 1:
-                self.show_toast(f"Uploading {names[0]}…")
-            elif count > 1:
-                self.show_toast(f"Uploading {count} items…")
-            return True
-
-        destination_root = window._normalize_local_path(self.toolbar.path_entry.get_text())
-        if not destination_root:
-            self.show_toast("Local destination is not accessible")
-            return False
-
-        if not isinstance(value, dict):
-            return False
-
-        payload = dict(value)
-        entries = payload.get("entries") or []
-        if not entries:
-            self.show_toast("Invalid download request")
-            return False
-
-        destination_path = pathlib.Path(destination_root)
-        destination_override = payload.get("destination")
-        if destination_override is not None:
-            if isinstance(destination_override, pathlib.Path):
-                destination_path = destination_override
-            else:
-                destination_path = pathlib.Path(destination_override)
-
-        payload["entries"] = list(entries)
-        payload["destination"] = destination_path
-
-        directory = payload.get("directory")
-        if not directory:
-            remote_pane = getattr(window, "_right_pane", None)
-            if isinstance(remote_pane, FilePane):
-                directory = remote_pane._current_path
-            else:
-                directory = "/"
-            payload["directory"] = directory
-
-        self.emit("request-operation", "download", payload)
-
-        count = len(entries)
-        if count == 1:
-            self.show_toast(f"Downloading {entries[0].name}…")
-        else:
-            self.show_toast(f"Downloading {count} items…")
         return True
 
     def get_selected_entry(self) -> Optional[FileEntry]:
@@ -2327,6 +2456,8 @@ class FileManagerWindow(Adw.Window):
 
         self._left_pane = FilePane("Local")
         self._right_pane = FilePane("Remote")
+        self._left_pane.set_partner_pane(self._right_pane)
+        self._right_pane.set_partner_pane(self._left_pane)
         panes.set_start_child(self._left_pane)
         panes.set_end_child(self._right_pane)
         
