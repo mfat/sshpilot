@@ -3014,6 +3014,15 @@ class FileManagerWindow(Adw.Window):
         header_bar.set_show_start_title_buttons(True)
         header_bar.set_show_end_title_buttons(True)
         
+        # Add toggle button to hide/show local pane
+        self._local_pane_toggle = Gtk.ToggleButton()
+        self._local_pane_toggle.set_icon_name("view-dual-symbolic")
+        self._local_pane_toggle.set_tooltip_text("Hide Local Pane")
+        self._local_pane_toggle.set_active(False)  # Start unselected
+        self._local_pane_toggle.add_css_class("flat")  # Flat style
+        self._local_pane_toggle.connect("toggled", self._on_local_pane_toggle)
+        header_bar.pack_start(self._local_pane_toggle)
+        
         # Create menu button for headerbar
         self._create_headerbar_menu(header_bar)
         
@@ -3180,6 +3189,19 @@ class FileManagerWindow(Adw.Window):
         # Refresh both panes
         self._left_pane._apply_entry_filter(preserve_selection=True)
         self._right_pane._apply_entry_filter(preserve_selection=True)
+
+    def _on_local_pane_toggle(self, toggle_button: Gtk.ToggleButton) -> None:
+        """Handle local pane toggle button."""
+        is_active = toggle_button.get_active()
+        
+        if is_active:
+            # Hide local pane (button is pressed/selected)
+            self._left_pane.set_visible(False)
+            toggle_button.set_tooltip_text("Show Local Pane")
+        else:
+            # Show local pane (button is unpressed/unselected)
+            self._left_pane.set_visible(True)
+            toggle_button.set_tooltip_text("Hide Local Pane")
 
     def _on_connected(self, *_args) -> None:
         self._show_progress(0.4, "Connected")
