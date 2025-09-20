@@ -1,6 +1,6 @@
-import types
-import sys
 import importlib
+import sys
+import types
 
 
 def setup_gi(monkeypatch):
@@ -43,6 +43,16 @@ def prepare_actions(monkeypatch):
     sftp_stub.open_remote_in_file_manager = open_remote_in_file_manager
     monkeypatch.setitem(sys.modules, "sshpilot.sftp_utils", sftp_stub)
     return reload_module("sshpilot.actions")
+
+
+def prepare_file_manager_integration(monkeypatch):
+    setup_gi(monkeypatch)
+    sftp_stub = types.ModuleType("sshpilot.sftp_utils")
+    def open_remote_in_file_manager(*args, **kwargs):
+        return True, None
+    sftp_stub.open_remote_in_file_manager = open_remote_in_file_manager
+    monkeypatch.setitem(sys.modules, "sshpilot.sftp_utils", sftp_stub)
+    return reload_module("sshpilot.file_manager_integration")
 
 
 def create_window():
@@ -99,12 +109,101 @@ def test_manage_files_action_visible_on_other_platforms(monkeypatch):
 def test_should_hide_file_manager_options(monkeypatch):
     setup_gi(monkeypatch)
     prefs = reload_module("sshpilot.preferences")
-    monkeypatch.setattr(prefs, "is_macos", lambda: True)
-    monkeypatch.setattr(prefs, "is_flatpak", lambda: False)
+    monkeypatch.setattr(prefs, "has_native_gvfs_support", lambda: False)
+    monkeypatch.setattr(prefs, "has_internal_file_manager", lambda: False)
     assert prefs.should_hide_file_manager_options()
-    monkeypatch.setattr(prefs, "is_macos", lambda: False)
-    monkeypatch.setattr(prefs, "is_flatpak", lambda: True)
-    assert prefs.should_hide_file_manager_options()
-    monkeypatch.setattr(prefs, "is_macos", lambda: False)
-    monkeypatch.setattr(prefs, "is_flatpak", lambda: False)
+
+    monkeypatch.setattr(prefs, "has_internal_file_manager", lambda: True)
     assert not prefs.should_hide_file_manager_options()
+
+    monkeypatch.setattr(prefs, "has_internal_file_manager", lambda: False)
+    monkeypatch.setattr(prefs, "has_native_gvfs_support", lambda: True)
+    assert not prefs.should_hide_file_manager_options()
+
+
+def test_launch_remote_file_manager_prefers_gvfs(monkeypatch):
+    integration = prepare_file_manager_integration(monkeypatch)
+
+    calls = {}
+
+    def fake_open_remote_in_file_manager(**kwargs):
+        calls["kwargs"] = kwargs
+        return True, None
+
+    monkeypatch.setattr(integration, "open_remote_in_file_manager", fake_open_remote_in_file_manager)
+    monkeypatch.setattr(integration, "has_native_gvfs_support", lambda: True)
+    monkeypatch.setattr(integration, "has_internal_file_manager", lambda: False)
+
+    success, error, window = integration.launch_remote_file_manager(
+        user="alice",
+        host="example.com",
+        port=2022,
+        nickname="Example",
+    )
+
+    assert success
+    assert error is None
+    assert window is None
+    assert calls["kwargs"]["user"] == "alice"
+    assert calls["kwargs"]["port"] == 2022
+
+
+def test_launch_remote_file_manager_uses_internal(monkeypatch):
+    integration = prepare_file_manager_integration(monkeypatch)
+
+    monkeypatch.setattr(integration, "has_native_gvfs_support", lambda: False)
+    monkeypatch.setattr(integration, "has_internal_file_manager", lambda: True)
+
+    sentinel = object()
+    captured = {}
+
+    def fake_open_internal_file_manager(**kwargs):
+        captured["kwargs"] = kwargs
+        return sentinel
+
+    def fail_remote(**_kwargs):
+        raise AssertionError("GVFS backend should not be used when native support is disabled")
+
+    monkeypatch.setattr(integration, "open_internal_file_manager", fake_open_internal_file_manager)
+    monkeypatch.setattr(integration, "open_remote_in_file_manager", fail_remote)
+
+    success, error, window = integration.launch_remote_file_manager(
+        user="bob",
+        host="example.net",
+        port=2222,
+        nickname="Internal",
+    )
+
+    assert success
+    assert error is None
+    assert window is sentinel
+    assert captured["kwargs"]["user"] == "bob"
+    assert captured["kwargs"]["host"] == "example.net"
+    assert captured["kwargs"]["nickname"] == "Internal"
+    assert "connection" in captured["kwargs"]
+    assert captured["kwargs"]["connection"] is None
+    assert captured["kwargs"].get("connection_manager") is None
+    assert captured["kwargs"].get("ssh_config") is None
+
+
+def test_launch_remote_file_manager_no_backend(monkeypatch):
+    integration = prepare_file_manager_integration(monkeypatch)
+
+    monkeypatch.setattr(integration, "has_native_gvfs_support", lambda: False)
+    monkeypatch.setattr(integration, "has_internal_file_manager", lambda: False)
+
+    captured = {}
+
+    def error_callback(message):
+        captured["message"] = message
+
+    success, error, window = integration.launch_remote_file_manager(
+        user="carol",
+        host="example.org",
+        error_callback=error_callback,
+    )
+
+    assert not success
+    assert "No compatible" in error
+    assert captured["message"] == error
+    assert window is None

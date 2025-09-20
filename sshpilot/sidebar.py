@@ -451,7 +451,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         if hide:
             self.host_label.set_text("••••••••••")
         else:
-            self.host_label.set_text(f"{self.connection.username}@{self.connection.host}")
+            host_value = getattr(self.connection, 'hostname', getattr(self.connection, 'host', getattr(self.connection, 'nickname', '')))
+            self.host_label.set_text(f"{self.connection.username}@{host_value}")
 
     def apply_hide_hosts(self, hide: bool):
         self._apply_host_label_text()
@@ -475,8 +476,9 @@ class ConnectionRow(Gtk.ListBoxRow):
 
             if has_active_terminal:
                 self.status_icon.set_from_icon_name("network-idle-symbolic")
+                host_value = getattr(self.connection, 'hostname', getattr(self.connection, 'host', getattr(self.connection, 'nickname', '')))
                 self.status_icon.set_tooltip_text(
-                    f"Connected to {self.connection.host}"
+                    f"Connected to {host_value}"
                 )
             else:
                 self.status_icon.set_from_icon_name("network-offline-symbolic")
@@ -492,9 +494,10 @@ class ConnectionRow(Gtk.ListBoxRow):
         if hasattr(self.connection, "nickname") and hasattr(self, "nickname_label"):
             self.nickname_label.set_markup(f"<b>{self.connection.nickname}</b>")
 
-        if hasattr(self.connection, "username") and hasattr(self.connection, "host") and hasattr(self, "host_label"):
+        if hasattr(self.connection, "username") and hasattr(self, "host_label"):
+            host_value = getattr(self.connection, 'hostname', getattr(self.connection, 'host', getattr(self.connection, 'nickname', '')))
             port_text = f":{self.connection.port}" if getattr(self.connection, "port", 22) != 22 else ""
-            self.host_label.set_text(f"{self.connection.username}@{self.connection.host}{port_text}")
+            self.host_label.set_text(f"{self.connection.username}@{host_value}{port_text}")
         self._update_forwarding_indicators()
         self.update_status()
 
@@ -600,7 +603,7 @@ def _on_connection_list_leave(window, target):
     # Restore selection mode after drag
     if hasattr(window, '_drag_in_progress'):
         window._drag_in_progress = False
-        window.connection_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
     
     return True
 
@@ -726,7 +729,7 @@ def _on_connection_list_drop(window, target, value, x, y):
         # Restore selection mode after drag
         if hasattr(window, '_drag_in_progress'):
             window._drag_in_progress = False
-            window.connection_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
 
         # Extract Python object from GObject.Value drops
         if isinstance(value, GObject.Value):

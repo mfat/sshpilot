@@ -42,6 +42,7 @@ sudo dnf install python3-gobject gtk4 libadwaita vte291-gtk4 libsecret python3-p
 - Follow [PEP 8](https://peps.python.org/pep-0008/) for Python code style
 - Use type hints where appropriate
 - Prefer GTK4/Adwaita components over custom widgets and follow GNOME HIG guidelines. Prefer modern Adwaita UI elements over traditional GTK
+- Avoid using deprecated gtk3 methods
 - All UI should be defined in code, not UI files
 
 ## Testing Instructions

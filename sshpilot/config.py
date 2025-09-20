@@ -6,7 +6,8 @@ Handles application settings, themes, and preferences
 import json
 import logging
 import os
-from typing import Dict, Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
 
 from gi.repository import Gio, GLib, GObject
 from .platform_utils import get_config_dir, is_flatpak
@@ -14,7 +15,7 @@ from .platform_utils import get_config_dir, is_flatpak
 logger = logging.getLogger(__name__)
 
 # Increment this whenever the configuration format changes
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 
 class Config(GObject.Object):
     """Configuration manager for sshPilot"""
@@ -80,6 +81,10 @@ class Config(GObject.Object):
 
                     config = self.get_default_config()
                     self.save_json_config(config)
+                else:
+                    config, updated = self._ensure_config_defaults(config)
+                    if updated:
+                        self.save_json_config(config)
 
                 return config
             else:
@@ -96,19 +101,60 @@ class Config(GObject.Object):
         try:
             if config_data is None:
                 config_data = self.config_data
-            
+
             os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
             with open(self.config_file, 'w') as f:
                 json.dump(config_data, f, indent=2)
-            
+
             logger.debug("Configuration saved to JSON file")
         except Exception as e:
             logger.error(f"Failed to save JSON config: {e}")
+
+    # --- Shortcut helpers -------------------------------------------------
+
+    def get_shortcut_overrides(self) -> Dict[str, Any]:
+        """Return the stored shortcut overrides mapping."""
+        try:
+            overrides = self.get_setting('shortcuts', {})
+            if isinstance(overrides, dict):
+                return overrides
+        except Exception:
+            pass
+        return {}
+
+    def get_shortcut_override(self, action_name: str):
+        """Return the stored shortcut override for an action.
+
+        Returns ``None`` when no override is stored, an empty list when the
+        shortcut is disabled, or the list of accelerator strings otherwise.
+        """
+        overrides = self.get_shortcut_overrides()
+        value = overrides.get(action_name)
+        if value is None:
+            return None
+        if isinstance(value, list):
+            return value
+        # Coerce malformed entries back to sane defaults
+        return None
+
+    def set_shortcut_override(self, action_name: str, accelerators: Optional[List[str]]):
+        """Persist a shortcut override.
+
+        ``None`` clears the override, an empty list disables the shortcut, and
+        any other list stores custom accelerators for the action.
+        """
+        overrides = self.get_shortcut_overrides().copy()
+        if accelerators is None:
+            overrides.pop(action_name, None)
+        else:
+            overrides[action_name] = accelerators
+        self.set_setting('shortcuts', overrides)
 
     def get_default_config(self) -> Dict[str, Any]:
         """Get default configuration values"""
         return {
             'config_version': CONFIG_VERSION,
+            'shortcuts': {},
             'terminal': {
                 'theme': 'default',
                 'font': 'Monospace 12',
@@ -130,6 +176,7 @@ class Config(GObject.Object):
                 'tile_color': None,  # None for default, or hex color for custom
             },
             'connections_meta': {},  # per-connection metadata
+            'shortcuts': {},  # action -> list of custom accelerators
             'ssh': {
                 'connection_timeout': 30,
                 'keepalive_interval': 60,
@@ -138,6 +185,9 @@ class Config(GObject.Object):
                 'verbosity': 0,
                 'debug_enabled': False,
                 'use_isolated_config': is_flatpak(),
+            },
+            'file_manager': {
+                'force_internal': False,
             },
             'security': {
                 'store_passwords': True,
@@ -611,7 +661,98 @@ class Config(GObject.Object):
             
             logger.info(f"Configuration imported from {file_path}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to import configuration: {e}")
             return False
+
+    # --- Shortcut override helpers ---
+    def _ensure_config_defaults(self, config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
+        """Ensure newly added keys exist in the provided config dict."""
+        updated = False
+
+        shortcuts = config.get('shortcuts')
+        if not isinstance(shortcuts, dict):
+            config['shortcuts'] = {}
+            updated = True
+
+        file_manager_cfg = config.get('file_manager')
+        if not isinstance(file_manager_cfg, dict):
+            config['file_manager'] = {'force_internal': False}
+            updated = True
+        elif 'force_internal' not in file_manager_cfg:
+            file_manager_cfg['force_internal'] = False
+            updated = True
+
+        return config, updated
+
+    def get_shortcut_overrides(self) -> Dict[str, List[str]]:
+        """Return a mapping of action names to user-defined shortcut overrides."""
+        overrides = self.config_data.get('shortcuts')
+        changed = False
+        if not isinstance(overrides, dict):
+            overrides = {}
+            self.config_data['shortcuts'] = overrides
+            changed = True
+
+        cleaned: Dict[str, List[str]] = {}
+        for action_name, accels in overrides.items():
+            if isinstance(accels, list):
+                valid_accels = [str(accel) for accel in accels if isinstance(accel, str)]
+                if valid_accels != accels:
+                    changed = True
+                cleaned[action_name] = valid_accels
+            elif accels is None:
+                changed = True
+            else:
+                changed = True
+
+        if changed:
+            self.config_data['shortcuts'] = cleaned
+            self.save_json_config()
+            self.emit('setting-changed', 'shortcuts', self._clone_shortcut_overrides(cleaned))
+
+        return self._clone_shortcut_overrides(cleaned)
+
+    def get_shortcut_override(self, action_name: str) -> Optional[List[str]]:
+        """Return the stored accelerators for the given action, if any."""
+        overrides = self.get_shortcut_overrides()
+        shortcuts = overrides.get(action_name)
+        if shortcuts is None:
+            return None
+        return list(shortcuts)
+
+    def set_shortcut_override(self, action_name: str, shortcuts: Optional[List[str]]):
+        """Persist user-defined accelerators for a specific action.
+
+        Passing ``None`` removes the stored override, while an empty list is treated
+        as an explicit request to disable shortcuts for the action.
+        """
+        overrides = self.config_data.get('shortcuts')
+        if not isinstance(overrides, dict):
+            overrides = {}
+            self.config_data['shortcuts'] = overrides
+
+        if shortcuts is None:
+            if action_name in overrides:
+                del overrides[action_name]
+                self.save_json_config()
+                self.emit('setting-changed', f'shortcuts.{action_name}', None)
+                self.emit('setting-changed', 'shortcuts', self._clone_shortcut_overrides(overrides))
+            return
+
+        normalized: List[str] = [str(accel) for accel in shortcuts if isinstance(accel, str)]
+        overrides[action_name] = normalized
+        self.save_json_config()
+        self.emit('setting-changed', f'shortcuts.{action_name}', list(normalized))
+        self.emit('setting-changed', 'shortcuts', self._clone_shortcut_overrides(overrides))
+
+    def clear_shortcut_overrides(self):
+        """Remove all stored shortcut overrides."""
+        self.config_data['shortcuts'] = {}
+        self.save_json_config()
+        self.emit('setting-changed', 'shortcuts', {})
+
+    def _clone_shortcut_overrides(self, overrides: Dict[str, List[str]]) -> Dict[str, List[str]]:
+        """Return a shallow copy of the override mapping with cloned accelerator lists."""
+        return {action: list(accels) for action, accels in overrides.items()}

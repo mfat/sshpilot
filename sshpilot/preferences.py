@@ -5,7 +5,11 @@ import logging
 import subprocess
 import shutil
 
-from .platform_utils import is_macos, is_flatpak, get_config_dir
+from .platform_utils import get_config_dir, is_flatpak, is_macos
+from .file_manager_integration import (
+    has_internal_file_manager,
+    has_native_gvfs_support,
+)
 
 
 import gi
@@ -62,9 +66,20 @@ def should_hide_external_terminal_options() -> bool:
 def should_hide_file_manager_options() -> bool:
     """Check if file manager options should be hidden.
 
-    Returns True on macOS or when running inside a Flatpak sandbox.
+    File manager UI should only be hidden when neither the native GVFS
+    integration nor the built-in manager are available. This allows the
+    Manage Files button to remain visible on platforms like macOS or Flatpak
+    where the new in-app manager is preferred.
     """
-    return is_macos() or is_flatpak()
+
+    try:
+        if has_native_gvfs_support():
+            return False
+        if has_internal_file_manager():
+            return False
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("File manager capability detection failed: %s", exc)
+    return True
 
 class MonospaceFontDialog(Adw.Window):
     def __init__(self, parent=None, current_font="Monospace 12"):
@@ -700,6 +715,26 @@ class PreferencesWindow(Adw.PreferencesWindow):
 
             advanced_page.add(operation_group)
 
+            self.force_internal_file_manager_row = None
+            if has_internal_file_manager():
+                file_manager_group = Adw.PreferencesGroup()
+                file_manager_group.set_title("File Management")
+
+                self.force_internal_file_manager_row = Adw.SwitchRow()
+                self.force_internal_file_manager_row.set_title("Always Use Built-in File Manager")
+                self.force_internal_file_manager_row.set_subtitle(
+                    "Use the in-app file manager even when system integrations are available"
+                )
+                self.force_internal_file_manager_row.set_active(
+                    bool(self.config.get_setting('file_manager.force_internal', False))
+                )
+                self.force_internal_file_manager_row.connect(
+                    'notify::active', self.on_force_internal_file_manager_changed
+                )
+
+                file_manager_group.add(self.force_internal_file_manager_row)
+                advanced_page.add(file_manager_group)
+
             advanced_group = Adw.PreferencesGroup()
             advanced_group.set_title("SSH Settings")
 
@@ -1102,6 +1137,11 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 self.config.set_setting('ssh.verbosity', int(self.verbosity_row.get_value()))
             if hasattr(self, 'debug_enabled_row'):
                 self.config.set_setting('ssh.debug_enabled', bool(self.debug_enabled_row.get_active()))
+            if getattr(self, 'force_internal_file_manager_row', None) is not None:
+                self.config.set_setting(
+                    'file_manager.force_internal',
+                    bool(self.force_internal_file_manager_row.get_active()),
+                )
         except Exception as e:
             logger.error(f"Failed to save advanced SSH settings: {e}")
 
@@ -1137,6 +1177,11 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 self.verbosity_row.set_value(int(defaults.get('verbosity', 0)))
             if hasattr(self, 'debug_enabled_row'):
                 self.debug_enabled_row.set_active(bool(defaults.get('debug_enabled', False)))
+            file_manager_defaults = self.config.get_default_config().get('file_manager', {})
+            default_force_internal = bool(file_manager_defaults.get('force_internal', False))
+            self.config.set_setting('file_manager.force_internal', default_force_internal)
+            if getattr(self, 'force_internal_file_manager_row', None) is not None:
+                self.force_internal_file_manager_row.set_active(default_force_internal)
         except Exception as e:
             logger.error(f"Failed to reset advanced SSH settings: {e}")
 
@@ -1412,7 +1457,15 @@ class PreferencesWindow(Adw.PreferencesWindow):
         g = int(hex_color[2:4], 16) / 255.0
         b = int(hex_color[4:6], 16) / 255.0
         return (r, g, b, 1.0)
-        
+
+    def on_force_internal_file_manager_changed(self, switch, *args):
+        """Persist the preference for forcing the in-app file manager."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('file_manager.force_internal', active)
+        except Exception as exc:
+            logger.error("Failed to update file manager preference: %s", exc)
+
     def on_confirm_disconnect_changed(self, switch, *args):
         """Handle confirm disconnect setting change"""
         confirm = switch.get_active()

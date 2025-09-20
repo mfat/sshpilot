@@ -4,9 +4,10 @@ SFTP utilities and dialogs for mounting and opening remote directories
 
 import os
 import logging
+import shutil
 import subprocess
 import threading
-from typing import Optional, Tuple, Callable
+from typing import Optional, Tuple, Callable, Any
 
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk
 
@@ -22,15 +23,42 @@ def open_remote_in_file_manager(
     path: Optional[str] = None,
     error_callback: Optional[Callable] = None,
     parent_window=None,
+    connection: Any = None,
+    connection_manager: Any = None,
+    ssh_config: Optional[dict] = None,
 ) -> Tuple[bool, Optional[str]]:
     """Open remote server in file manager using SFTP URI with asynchronous verification"""
 
     # Build sftp URI
-    p = path or "/"
+    p = path or "~"
     port_part = f":{port}" if port else ""
     uri = f"sftp://{user}@{host}{port_part}{p}"
 
     logger.info(f"Opening SFTP URI: {uri}")
+
+    if _should_use_in_app_file_manager():
+        logger.info("Using in-app file manager window for remote browsing")
+
+        try:
+            from .file_manager_window import launch_file_manager_window
+
+            launch_file_manager_window(
+                host=host,
+                username=user,
+                port=port or 22,
+                path=p,
+                parent=parent_window,
+                transient_for_parent=False,
+                connection=connection,
+                connection_manager=connection_manager,
+                ssh_config=ssh_config,
+            )
+        except Exception as exc:
+            logger.exception("Failed to launch in-app file manager: %s", exc)
+            if error_callback:
+                error_callback(str(exc))
+            return False, str(exc)
+        return True, None
 
     # Create progress dialog and start verification asynchronously
     progress_dialog = MountProgressDialog(user, host, parent_window)
@@ -76,6 +104,47 @@ def open_remote_in_file_manager(
     _verify_ssh_connection_async(user, host, port, _on_verify_complete)
 
     return True, None
+
+
+def _should_use_in_app_file_manager() -> bool:
+    """Return ``True`` when the libadwaita based file manager should be used."""
+
+    if os.environ.get("SSHPILOT_FORCE_IN_APP_FILE_MANAGER") == "1":
+        return True
+    try:
+        app = Adw.Application.get_default()
+        config = getattr(app, 'config', None) if app else None
+        if config and bool(config.get_setting('file_manager.force_internal', False)):
+            return True
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Failed to read file manager preference: %s", exc)
+    if is_flatpak():
+        return True
+    if os.environ.get("SSHPILOT_DISABLE_GVFS") == "1":
+        return True
+    return not _gvfs_supports_sftp()
+
+
+def _gvfs_supports_sftp() -> bool:
+    """Heuristic detection of whether GVFS/GIO can handle SFTP mounts."""
+
+    # ``gio`` is required for the ``gio mount`` helpers used by the rest of the
+    # module.  If it is missing we assume GVFS support is not present.
+    if shutil.which("gio") is None:
+        logger.debug("gio binary missing – assuming GVFS unavailable")
+        return False
+
+    try:
+        monitor = Gio.VolumeMonitor.get()
+        if monitor is None:
+            return False
+        # Attempt to enumerate mounts which requires GVFS support.  We do not
+        # care about the result, only that no exception is raised.
+        monitor.get_mounts()
+        return True
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("GVFS detection failed: %s", exc)
+        return False
 
 
 def _mount_and_open_sftp(

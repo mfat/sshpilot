@@ -85,7 +85,7 @@ class SshCopyIdWindow(Adw.Window):
 
             # ---------- Intro text ----------
             server_name = getattr(self._conn, "nickname", None) or \
-                          f"{getattr(self._conn, 'username', 'user')}@{getattr(self._conn, 'host', 'host')}"
+                          f"{getattr(self._conn, 'username', 'user')}@{getattr(self._conn, 'hostname', getattr(self._conn, 'host', 'host'))}"
             
             # Create a simple label instead of StatusPage for normal font size
             intro_label = Gtk.Label()
