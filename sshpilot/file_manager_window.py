@@ -1038,47 +1038,25 @@ class FilePane(Gtk.Box):
         self._list_store = Gio.ListStore(item_type=Gtk.StringObject)
         self._selection_model = Gtk.MultiSelection.new(self._list_store)
 
-        # Create ColumnView for better column handling
-        column_view = Gtk.ColumnView(model=self._selection_model)
-        column_view.add_css_class("rich-list")
-        column_view.set_show_row_separators(False)
-        column_view.set_show_column_separators(False)
-        column_view.set_enable_rubberband(True)
-        column_view.set_reorderable(True)  # Enable column resizing
-        
+        list_factory = Gtk.SignalListItemFactory()
+        list_factory.connect("setup", self._on_list_setup)
+        list_factory.connect("bind", self._on_list_bind)
+        list_view = Gtk.ListView(model=self._selection_model, factory=list_factory)
+        list_view.add_css_class("rich-list")
         # Navigate on row activation (double click / Enter)
-        self._list_view = column_view  # Keep same reference name for compatibility
-        column_view.connect("activate", self._on_list_activate)
-        
-        # Create Name column
-        name_factory = Gtk.SignalListItemFactory()
-        name_factory.connect("setup", self._on_name_column_setup)
-        name_factory.connect("bind", self._on_name_column_bind)
-        name_column = Gtk.ColumnViewColumn(title="Name", factory=name_factory)
-        name_column.set_expand(True)  # Name column expands to fill space
-        name_column.set_resizable(True)
-        column_view.append_column(name_column)
-        
-        # Create Size column  
-        size_factory = Gtk.SignalListItemFactory()
-        size_factory.connect("setup", self._on_size_column_setup)
-        size_factory.connect("bind", self._on_size_column_bind)
-        size_column = Gtk.ColumnViewColumn(title="Size", factory=size_factory)
-        size_column.set_resizable(True)
-        column_view.append_column(size_column)
-        
-        # Add drag source to column view
+        self._list_view = list_view
+        list_view.connect("activate", self._on_list_activate)
         self._list_drag_source = Gtk.DragSource()
         self._list_drag_source.set_actions(Gdk.DragAction.COPY)
         self._list_drag_source.connect("prepare", self._on_drag_prepare)
         self._list_drag_source.connect("drag-begin", self._on_drag_begin)
         self._list_drag_source.connect("drag-end", self._on_drag_end)
-        column_view.add_controller(self._list_drag_source)
+        list_view.add_controller(self._list_drag_source)
 
-        # Wrap column view in a scrolled window for proper scrolling
+        # Wrap list view in a scrolled window for proper scrolling
         list_scrolled = Gtk.ScrolledWindow()
         list_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        list_scrolled.set_child(column_view)
+        list_scrolled.set_child(list_view)
 
         grid_factory = Gtk.SignalListItemFactory()
         grid_factory.connect("setup", self._on_grid_setup)
@@ -1268,10 +1246,10 @@ class FilePane(Gtk.Box):
         self._menu_action_group = Gio.SimpleActionGroup()
         self.insert_action_group("pane", self._menu_action_group)
         self._menu_popover: Gtk.PopoverMenu = self._create_menu_model()
-        self._add_context_controller(column_view)
+        self._add_context_controller(list_view)
         self._add_context_controller(grid_view)
 
-        for view in (column_view, grid_view):
+        for view in (list_view, grid_view):
             controller = Gtk.EventControllerKey.new()
             controller.connect("key-pressed", self._on_typeahead_key_pressed)
             view.add_controller(controller)
@@ -1291,7 +1269,7 @@ class FilePane(Gtk.Box):
         self._drop_target = drop_target
 
         # Set up drag sources for both local and remote panes
-        self._setup_drag_sources((column_view, grid_view))
+        self._setup_drag_sources((list_view, grid_view))
 
         self._update_menu_state()
         # Set up sorting actions for the split button
@@ -1611,35 +1589,35 @@ class FilePane(Gtk.Box):
     def _on_path_entry(self, entry: Gtk.Entry) -> None:
         self.emit("path-changed", entry.get_text() or "/")
 
-    def _on_name_column_setup(self, factory: Gtk.SignalListItemFactory, item):
-        """Setup the Name column with icon and label"""
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        
-        # Icon
+    def _on_list_setup(self, factory: Gtk.SignalListItemFactory, item):
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         icon = Gtk.Image.new_from_icon_name("folder-symbolic")
         icon.set_valign(Gtk.Align.CENTER)
-        box.append(icon)
-        
-        # Name label
         name_label = Gtk.Label(xalign=0)
         name_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        name_label.set_max_width_chars(40)
         name_label.set_hexpand(True)
+        metadata_label = Gtk.Label(xalign=1)
+        metadata_label.set_halign(Gtk.Align.END)
+        metadata_label.set_ellipsize(Pango.EllipsizeMode.END)
+        metadata_label.add_css_class("dim-label")
+        box.append(icon)
         box.append(name_label)
-        
-        # Store references
+        box.append(metadata_label)
+        box.set_hexpand(True)
+        # Store references as Python attributes instead of deprecated set_data
         box.icon = icon
         box.name_label = name_label
+        box.metadata_label = metadata_label
         item.set_child(box)
 
-    def _on_name_column_bind(self, factory, item):
-        """Bind data to the Name column"""
+    def _on_list_bind(self, factory, item):
         box = item.get_child()
-        if not hasattr(box, 'icon') or not hasattr(box, 'name_label'):
-            return
-            
-        icon = box.icon
-        name_label = box.name_label
-        
+        # Access references as Python attributes instead of deprecated get_data
+        icon: Gtk.Image = box.icon
+        name_label: Gtk.Label = box.name_label
+        metadata_label: Gtk.Label = box.metadata_label
+
         position = item.get_position()
         entry: Optional[FileEntry] = None
         if position is not None and 0 <= position < len(self._entries):
@@ -1649,80 +1627,39 @@ class FilePane(Gtk.Box):
             value = item.get_item().get_string()
             name_label.set_text(value)
             name_label.set_tooltip_text(value)
+            metadata_label.set_text("—")
+            metadata_label.set_tooltip_text(None)
             icon.set_from_icon_name("folder-symbolic" if value.endswith('/') else "text-x-generic-symbolic")
             return
 
         display_name = entry.name + ("/" if entry.is_dir else "")
         name_label.set_text(display_name)
         name_label.set_tooltip_text(display_name)
-        
-        # Set icon based on type
+
+        if entry.is_dir:
+            metadata_label.set_text("—")
+            metadata_label.set_tooltip_text(None)
+        else:
+            size_text = self._format_size(entry.size)
+            metadata_label.set_text(size_text)
+            metadata_label.set_tooltip_text(size_text)
+
         if entry.is_dir:
             icon.set_from_icon_name("folder-symbolic")
         else:
             icon.set_from_icon_name("text-x-generic-symbolic")
-            
-        # Debug: Print entry info for first few items
-        if position is not None and position < 5:
-            print(f"Debug: Entry {position}: name='{entry.name}', size={entry.size}, is_dir={entry.is_dir}")
-
-    def _on_size_column_setup(self, factory: Gtk.SignalListItemFactory, item):
-        """Setup the Size column"""
-        size_label = Gtk.Label(xalign=1)
-        size_label.set_halign(Gtk.Align.END)
-        size_label.set_ellipsize(Pango.EllipsizeMode.END)
-        size_label.add_css_class("dim-label")
-        item.set_child(size_label)
-
-    def _on_size_column_bind(self, factory, item):
-        """Bind data to the Size column"""
-        size_label = item.get_child()
-        
-        position = item.get_position()
-        entry: Optional[FileEntry] = None
-        if position is not None and 0 <= position < len(self._entries):
-            entry = self._entries[position]
-
-        if entry is None:
-            size_label.set_text("—")
-            size_label.set_tooltip_text(None)
-            return
-
-        if entry.is_dir:
-            size_label.set_text("—")
-            size_label.set_tooltip_text(None)
-        else:
-            size_text = self._format_size(entry.size)
-            size_label.set_text(size_text)
-            size_label.set_tooltip_text(size_text)
-            # Debug: Check if size text is being set correctly
-            if not size_text or size_text.strip() == "":
-                print(f"Warning: Empty size text for {entry.name}, size: {entry.size}")
-            elif len(size_text) < 3:  # Suspiciously short
-                print(f"Warning: Very short size text '{size_text}' for {entry.name}, size: {entry.size}")
 
     @staticmethod
     def _format_size(size_bytes: int) -> str:
-        try:
-            if size_bytes < 0:
-                return "—"
-            if size_bytes < 1024:
-                return f"{size_bytes} B"
-            units = ["KB", "MB", "GB", "TB", "PB"]
-            value = float(size_bytes)
-            for unit in units:
-                value /= 1024.0
-                if value < 1024.0:
-                    result = f"{value:.1f} {unit}"
-                    # Debug: Check for unusual formatting issues
-                    if len(result) < 3 or "_" in result:
-                        print(f"Debug: Unusual size format '{result}' for {size_bytes} bytes")
-                    return result
-            result = f"{value:.1f} EB"
-            return result
-        except Exception as e:
-            print(f"Error formatting size {size_bytes}: {e}")
-            return "—"
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        units = ["KB", "MB", "GB", "TB", "PB"]
+        value = float(size_bytes)
+        for unit in units:
+            value /= 1024.0
+            if value < 1024.0:
+                return f"{value:.1f} {unit}"
+        return f"{value:.1f} EB"
 
     def _on_grid_setup(self, factory, item):
         button = Gtk.Button()
