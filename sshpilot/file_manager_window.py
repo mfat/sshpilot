@@ -25,6 +25,7 @@ import posixpath
 import shutil
 import threading
 import time
+from datetime import datetime
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -1383,6 +1384,7 @@ class FilePane(Gtk.Box):
         _add_action("rename", lambda: self._emit_entry_operation("rename"))
         _add_action("delete", lambda: self._emit_entry_operation("delete"))
         _add_action("new_folder", lambda: self.emit("request-operation", "mkdir", None))
+        _add_action("properties", self._on_menu_properties)
 
         # Create menu model dynamically based on pane type
         menu_model = Gio.Menu()
@@ -1397,6 +1399,7 @@ class FilePane(Gtk.Box):
         manage_section.append("Rename…", "pane.rename")
         manage_section.append("Delete", "pane.delete")
         menu_model.append_section(None, manage_section)
+        menu_model.append("Properties…", "pane.properties")
         menu_model.append("New Folder", "pane.new_folder")
 
         # Create popover and connect action group
@@ -1504,6 +1507,7 @@ class FilePane(Gtk.Box):
         _set_enabled("upload", (not self._is_remote) and has_selection)
         _set_enabled("rename", single_selection)
         _set_enabled("delete", has_selection)
+        _set_enabled("properties", single_selection)
         # new_folder is available in context menu only now
 
         # Action bar buttons still use the old logic
@@ -1626,6 +1630,149 @@ class FilePane(Gtk.Box):
         if dialog_error is not None and error.matches(dialog_error, dialog_error.DISMISSED):
             return True
         return error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)
+
+    def _build_properties_details(self, entry: FileEntry) -> Dict[str, str]:
+        base_path = self._current_path or "/"
+        location = os.path.join(base_path, entry.name)
+
+        entry_type = "Folder" if entry.is_dir else "File"
+        if entry.is_dir:
+            size_text = "—"
+        else:
+            size_text = self._format_size(entry.size)
+
+        try:
+            modified_dt = datetime.fromtimestamp(entry.modified)
+            modified_text = modified_dt.strftime("%Y-%m-%d %H:%M:%S")
+        except (OSError, OverflowError, ValueError, TypeError):
+            modified_text = "Unknown"
+
+        return {
+            "name": entry.name,
+            "type": entry_type,
+            "size": size_text,
+            "modified": modified_text,
+            "location": location,
+        }
+
+    def _on_menu_properties(self) -> None:
+        entry = self.get_selected_entry()
+        if entry is None:
+            self.show_toast("Select a single item to view properties")
+            return
+        details = self._build_properties_details(entry)
+        self._show_properties_dialog(entry, details)
+
+    def _show_properties_dialog(self, entry: FileEntry, details: Dict[str, str]) -> None:
+        window = self.get_root()
+        heading = f"{entry.name} Properties" if entry.name else "Properties"
+        body_lines = [
+            f"Name: {details['name']}",
+            f"Type: {details['type']}",
+            f"Size: {details['size']}",
+            f"Modified: {details['modified']}",
+            f"Location: {details['location']}",
+        ]
+        body_text = "\n".join(body_lines)
+
+        dialog: Optional[object] = None
+        message_dialog_cls = getattr(Adw, "MessageDialog", None)
+        if message_dialog_cls is not None:
+            try:
+                dialog = message_dialog_cls.new(window, heading, body_text)
+            except AttributeError:
+                try:
+                    dialog = message_dialog_cls(
+                        transient_for=window,
+                        modal=True,
+                        heading=heading,
+                        body=body_text,
+                    )
+                except TypeError:
+                    dialog = message_dialog_cls()
+            if dialog is not None:
+                for name, value in (("set_transient_for", window), ("set_modal", True)):
+                    setter = getattr(dialog, name, None)
+                    if callable(setter):
+                        try:
+                            setter(value)
+                        except Exception:
+                            pass
+                setters = {
+                    "set_heading": heading,
+                    "set_title": heading,
+                    "set_body": body_text,
+                    "set_body_text": body_text,
+                    "set_text": body_text,
+                }
+                for method, value in setters.items():
+                    setter = getattr(dialog, method, None)
+                    if callable(setter):
+                        try:
+                            setter(value)
+                        except Exception:
+                            pass
+                present = getattr(dialog, "present", None)
+                if not callable(present):
+                    present = getattr(dialog, "show", None)
+                if callable(present):
+                    try:
+                        present()
+                    except Exception:
+                        pass
+                return
+
+        dialog_cls = getattr(Gtk, "Dialog", None)
+        if dialog_cls is None:
+            return
+        try:
+            dialog = dialog_cls(transient_for=window, modal=True)
+        except TypeError:
+            dialog = dialog_cls()
+        if dialog is None:
+            return
+
+        if hasattr(dialog, "set_title"):
+            try:
+                dialog.set_title(heading)
+            except Exception:
+                pass
+        if hasattr(dialog, "set_transient_for") and window is not None:
+            try:
+                dialog.set_transient_for(window)
+            except Exception:
+                pass
+        if hasattr(dialog, "set_modal"):
+            try:
+                dialog.set_modal(True)
+            except Exception:
+                pass
+
+        box_cls = getattr(Gtk, "Box", None)
+        label_cls = getattr(Gtk, "Label", None)
+        if callable(box_cls) and callable(label_cls):
+            try:
+                content_box = box_cls(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+                for line in body_lines:
+                    label = label_cls()
+                    if hasattr(label, "set_xalign"):
+                        label.set_xalign(0.0)
+                    if hasattr(label, "set_text"):
+                        label.set_text(line)
+                    content_box.append(label)
+                if hasattr(dialog, "set_child"):
+                    dialog.set_child(content_box)
+            except Exception:
+                pass
+
+        presenter = getattr(dialog, "present", None)
+        if not callable(presenter):
+            presenter = getattr(dialog, "show", None)
+        if callable(presenter):
+            try:
+                presenter()
+            except Exception:
+                pass
 
     # -- public API -----------------------------------------------------
 
