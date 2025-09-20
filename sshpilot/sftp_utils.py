@@ -27,7 +27,7 @@ def open_remote_in_file_manager(
     """Open remote server in file manager using SFTP URI with asynchronous verification"""
 
     # Build sftp URI
-    p = path or "/"
+    p = path or "~"
     port_part = f":{port}" if port else ""
     uri = f"sftp://{user}@{host}{port_part}{p}"
 
