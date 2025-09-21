@@ -19,6 +19,7 @@ indicators and toast based feedback.
 from __future__ import annotations
 
 import dataclasses
+import errno
 import mimetypes
 import os
 import pathlib
@@ -4342,9 +4343,19 @@ class FileManagerWindow(Adw.Window):
             self._right_pane.show_toast("Remote connection unavailable")
             return
 
+        skipped: List[str] = []
+        scheduled_any = False
+
         for entry in entries:
             source_path = self._resolve_remote_entry_path(source_dir, entry)
             destination_path = self._resolve_remote_entry_path(destination_dir, entry)
+
+            if entry.is_dir and self._is_remote_descendant(source_path, destination_path):
+                skipped.append(
+                    f"Cannot paste '{entry.name}' into its own subdirectory"
+                )
+                continue
+
 
             def _impl(src=source_path, dest=destination_path, is_dir=entry.is_dir):
                 sftp = getattr(manager, "_sftp", None)
@@ -4364,10 +4375,15 @@ class FileManagerWindow(Adw.Window):
             )
             if move:
                 self._schedule_remote_move_cleanup(future, source_path, self._right_pane)
+            scheduled_any = True
 
-        self._right_pane.show_toast(
-            "Moving items…" if move else "Copying items…"
-        )
+        if scheduled_any:
+            self._right_pane.show_toast(
+                "Moving items…" if move else "Copying items…"
+            )
+        elif skipped:
+            self._right_pane.show_toast(skipped[0])
+
 
     def _perform_local_to_remote_clipboard_operation(
         self,
@@ -4476,9 +4492,42 @@ class FileManagerWindow(Adw.Window):
             except IOError:
                 continue
 
+    @staticmethod
+    def _remote_path_exists(sftp: paramiko.SFTPClient, path: str) -> bool:
+        try:
+            sftp.stat(path)
+        except FileNotFoundError:
+            return False
+        except IOError as exc:
+            error_code = getattr(exc, "errno", None)
+            if error_code is None and exc.args:
+                first_arg = exc.args[0]
+                if isinstance(first_arg, int):
+                    error_code = first_arg
+            if error_code in {errno.ENOENT, errno.EINVAL}:
+                return False
+            raise
+        return True
+
+    @staticmethod
+    def _is_remote_descendant(source_path: str, destination_path: str) -> bool:
+        source_norm = posixpath.normpath(source_path)
+        dest_norm = posixpath.normpath(destination_path)
+        if source_norm in {"", ".", "/"}:
+            return False
+        if dest_norm == source_norm:
+            return True
+        source_prefix = source_norm.rstrip("/")
+        if not source_prefix:
+            return False
+        return dest_norm.startswith(f"{source_prefix}/")
+
     def _copy_remote_file(
         self, sftp: paramiko.SFTPClient, source_path: str, destination_path: str
     ) -> None:
+        if self._remote_path_exists(sftp, destination_path):
+            raise FileExistsError(f"{posixpath.basename(destination_path)} already exists")
+
         with sftp.open(source_path, "rb") as src_file, sftp.open(destination_path, "wb") as dst_file:
             while True:
                 chunk = src_file.read(32768)
@@ -4489,10 +4538,16 @@ class FileManagerWindow(Adw.Window):
     def _copy_remote_directory(
         self, sftp: paramiko.SFTPClient, source_path: str, destination_path: str
     ) -> None:
-        try:
-            sftp.mkdir(destination_path)
-        except IOError:
-            pass
+        if self._is_remote_descendant(source_path, destination_path):
+            raise ValueError(
+                f"Cannot paste '{posixpath.basename(posixpath.normpath(source_path))}' into itself"
+            )
+        if self._remote_path_exists(sftp, destination_path):
+            raise FileExistsError(
+                f"{posixpath.basename(posixpath.normpath(destination_path))} already exists"
+            )
+        sftp.mkdir(destination_path)
+
         for entry in sftp.listdir_attr(source_path):
             child_source = posixpath.join(source_path, entry.filename)
             child_destination = posixpath.join(destination_path, entry.filename)
