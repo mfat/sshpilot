@@ -4345,6 +4345,7 @@ class FileManagerWindow(Adw.Window):
 
         skipped: List[str] = []
         scheduled_any = False
+
         for entry in entries:
             source_path = self._resolve_remote_entry_path(source_dir, entry)
             destination_path = self._resolve_remote_entry_path(destination_dir, entry)
@@ -4354,6 +4355,7 @@ class FileManagerWindow(Adw.Window):
                     f"Cannot paste '{entry.name}' into its own subdirectory"
                 )
                 continue
+
 
             def _impl(src=source_path, dest=destination_path, is_dir=entry.is_dir):
                 sftp = getattr(manager, "_sftp", None)
@@ -4381,6 +4383,7 @@ class FileManagerWindow(Adw.Window):
             )
         elif skipped:
             self._right_pane.show_toast(skipped[0])
+
 
     def _perform_local_to_remote_clipboard_operation(
         self,
@@ -4524,6 +4527,7 @@ class FileManagerWindow(Adw.Window):
     ) -> None:
         if self._remote_path_exists(sftp, destination_path):
             raise FileExistsError(f"{posixpath.basename(destination_path)} already exists")
+
         with sftp.open(source_path, "rb") as src_file, sftp.open(destination_path, "wb") as dst_file:
             while True:
                 chunk = src_file.read(32768)
@@ -4543,6 +4547,7 @@ class FileManagerWindow(Adw.Window):
                 f"{posixpath.basename(posixpath.normpath(destination_path))} already exists"
             )
         sftp.mkdir(destination_path)
+
         for entry in sftp.listdir_attr(source_path):
             child_source = posixpath.join(source_path, entry.filename)
             child_destination = posixpath.join(destination_path, entry.filename)
