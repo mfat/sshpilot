@@ -3612,7 +3612,18 @@ class FileManagerWindow(Adw.Window):
         # initial dual loads robust even if the backend normalizes paths.
         target = next((pane for pane, pending in self._pending_paths.items() if pending == path), None)
         if target is None:
-            target = next((pane for pane, pending in self._pending_paths.items() if pending is not None), self._left_pane)
+            # Prefer whichever pane still has an outstanding remote refresh. If
+            # no pane recorded the request (e.g. backend normalised the path
+            # before we tracked it) make the remote pane the default so results
+            # are never routed to the local view.
+            target = next(
+                (pane for pane, pending in self._pending_paths.items() if pending is not None),
+                None,
+            )
+            if target is None and self._right_pane in self._pending_paths:
+                target = self._right_pane
+            if target is None:
+                target = self._left_pane
         # Clear the pending flag for the resolved pane
         self._pending_paths[target] = None
 
