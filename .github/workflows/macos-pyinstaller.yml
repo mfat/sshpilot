@@ -6,6 +6,10 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   build-arm64:
     name: macOS aarch64 PyInstaller
@@ -171,3 +175,15 @@ jobs:
           echo "=== DEBUG: Final dist directory contents ==="
           ls -la dist/ || echo "=== DEBUG: dist directory not found ==="
           echo "=== DEBUG: Workflow completed ==="
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/${{ steps.artifact-info.outputs.dmg }}
+            dist/${{ steps.artifact-info.outputs.dmg }}.sha256
+          generate_release_notes: false
+          body: ""
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
