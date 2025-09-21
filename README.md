@@ -23,7 +23,7 @@
 
 - Tabbed interface
 - Intuitive, minimal UI with keyboard navigation and shortcuts
-- File management in standard file managers using SFTP
+- File management using SFTP
 - Organize servers in groups
 - Option to use the built-in terminal or your favorite one
 - Broadcast commands to all open tabs
