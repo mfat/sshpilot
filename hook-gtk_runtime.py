@@ -10,18 +10,38 @@ if sys.platform == "darwin":
             contents = cur / "Contents"; break
         cur = cur.parent
     else:
-        contents = Path(getattr(sys, "_MEIPASS", Path.cwd())) / ".."
+        # For onedir bundles, resources are in _internal
+        bundle_root = Path(sys.executable).parent
+        if (bundle_root / "_internal").exists():
+            contents = bundle_root / "_internal"
+        else:
+            contents = Path(getattr(sys, "_MEIPASS", Path.cwd())) / ".."
 
     resources  = (contents / "Resources").resolve()
     frameworks = (contents / "Frameworks").resolve()
 
     gi_paths = [
+        str(contents / "girepository-1.0"),  # Direct in _internal for onedir
         str(resources / "girepository-1.0"),
-        str(resources / "gi_typelibs"),  # PyInstaller’s GI dump
+        str(resources / "gi_typelibs"),  # PyInstaller's GI dump
     ]
     os.environ["GI_TYPELIB_PATH"] = ":".join([p for p in gi_paths if Path(p).exists()])
-    os.environ["GSETTINGS_SCHEMA_DIR"] = str(resources / "share" / "glib-2.0" / "schemas")
-    os.environ["XDG_DATA_DIRS"] = str(resources / "share")
+    
+    # Try both Resources/share and direct share for onedir bundles
+    gsettings_paths = [
+        resources / "share" / "glib-2.0" / "schemas",
+        contents / "share" / "glib-2.0" / "schemas"
+    ]
+    for gspath in gsettings_paths:
+        if gspath.exists():
+            os.environ["GSETTINGS_SCHEMA_DIR"] = str(gspath)
+            break
+    
+    xdg_paths = [resources / "share", contents / "share"]
+    for xdgpath in xdg_paths:
+        if xdgpath.exists():
+            os.environ["XDG_DATA_DIRS"] = str(xdgpath)
+            break
     
     # Set up GDK-Pixbuf loaders
     gdkpixbuf_module_dir = frameworks / "lib" / "gdk-pixbuf" / "loaders"
@@ -93,5 +113,5 @@ if sys.platform == "darwin":
     print(f"DEBUG: frameworks = {frameworks}")
     print(f"DEBUG: frameworks/Frameworks = {frameworks / 'Frameworks'}")
     print(f"DEBUG: resources = {resources}")
-    print(f"DEBUG: GI_TYPELIB_PATH = {os.environ.get('GI_TYPELIB_PATH', 'NOT SET')}")
+    print(f"DEBUG: GI_TYPELIB_PATH = {os.environ.get('GI_TYPELIB_PATH', '')}")
     os.environ.pop("LD_LIBRARY_PATH", None)

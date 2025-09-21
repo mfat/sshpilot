@@ -676,15 +676,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         
         # Create header bar
-        self.header_bar = Adw.HeaderBar()
+        self.header_bar = Gtk.HeaderBar()
         self.header_bar.set_title_widget(Gtk.Label(label="sshPilot"))
         
-        # Add window controls (minimize, maximize, close)
-        self.header_bar.set_show_start_title_buttons(True)
-        self.header_bar.set_show_end_title_buttons(True)
+        # Disable native window controls (stoplight buttons on macOS)
+        self.header_bar.set_use_native_controls(False)
         
-        # Hide the title in headerbar to avoid NavigationPage title conflicts
-        self.header_bar.set_show_title(False)
         
         # Add sidebar toggle button to the left side of header bar
         self.sidebar_toggle_button = Gtk.ToggleButton()

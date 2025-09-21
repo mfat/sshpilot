@@ -1,6 +1,10 @@
 # sshpilot.spec — build with: pyinstaller --clean sshpilot.spec
-import os, glob, platform
+import os, glob, platform, sysconfig
+from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules
+
+# Resolve the current Python site-packages directory dynamically
+site_packages_dir = Path(sysconfig.get_path("platlib"))
 
 app_name = "SSHPilot"
 entry_py = "run.py"
@@ -108,9 +112,9 @@ if os.path.exists(gdkpixbuf_loaders):
     print(f"Added GDK-Pixbuf loaders: {gdkpixbuf_loaders}")
 
 # Add keyring package files explicitly
-keyring_package = f"{homebrew}/lib/python3.13/site-packages/keyring"
-if os.path.exists(keyring_package):
-    datas.append((keyring_package, "keyring"))
+keyring_package = site_packages_dir / "keyring"
+if keyring_package.exists():
+    datas.append((str(keyring_package), "keyring"))
     print(f"Added keyring package: {keyring_package}")
 
 
@@ -120,9 +124,12 @@ if os.path.exists(sshpass):
     binaries.append((sshpass, "Resources/bin"))
 
 # Cairo Python bindings (required for Cairo Context)
-cairo_gi_binding = f"{homebrew}/lib/python3.13/site-packages/gi/_gi_cairo.cpython-313-darwin.so"
-if os.path.exists(cairo_gi_binding):
-    binaries.append((cairo_gi_binding, "gi"))
+gi_site_packages = site_packages_dir / "gi"
+if gi_site_packages.exists():
+    cairo_gi_binding = next((p for p in gi_site_packages.glob("_gi_cairo.*")), None)
+    if cairo_gi_binding and cairo_gi_binding.exists():
+        binaries.append((str(cairo_gi_binding), "gi"))
+
 
 hiddenimports = collect_submodules("gi")
 hiddenimports += ["gi._gi_cairo", "gi.repository.cairo", "cairo"]
