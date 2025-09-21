@@ -76,14 +76,14 @@ def test_parse_host_with_quotes():
     assert parsed["aliases"] == []
 
 
-def test_parse_host_without_hostname_defaults_to_alias():
+def test_parse_host_without_hostname_stores_empty_hostname():
     cm = make_cm()
     config = {
         "host": "localhost",
         "user": "mahdi",
     }
     parsed = ConnectionManager.parse_host_config(cm, config)
-    assert parsed["hostname"] == "localhost"
+    assert parsed["hostname"] == ""
     assert parsed["host"] == "localhost"
 
 

@@ -78,8 +78,9 @@ class Connection:
         self.nickname = data.get('nickname', data.get('hostname', data.get('host', 'Unknown')))
         if 'aliases' in data:
             self.aliases = data.get('aliases', [])
-        self.hostname = data.get('hostname', data.get('host', ''))
-        self.host = self.hostname  # Backward compatibility for legacy references
+        resolved_hostname = data.get('hostname') or data.get('host', '')
+        self.hostname = resolved_hostname
+        self.host = resolved_hostname  # Backward compatibility for legacy references
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         # previously: self.keyfile = data.get('keyfile', '')
@@ -622,8 +623,9 @@ class Connection:
         self.nickname = data.get('nickname', data.get('hostname', data.get('host', 'Unknown')))
         if 'aliases' in data:
             self.aliases = data.get('aliases', getattr(self, 'aliases', []))
-        self.hostname = data.get('hostname', data.get('host', ''))
-        self.host = self.hostname
+        resolved_hostname = data.get('hostname') or data.get('host', '')
+        self.hostname = resolved_hostname
+        self.host = resolved_hostname
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
@@ -937,8 +939,6 @@ class ConnectionManager(GObject.Object):
 
             hostname_value = config.get('hostname')
             parsed_host = _unwrap(hostname_value) if hostname_value else ''
-            if not parsed_host:
-                parsed_host = host
 
             # Extract relevant configuration
             parsed = {
@@ -1332,7 +1332,7 @@ class ConnectionManager(GObject.Object):
                 return f'"{token}"'
             return token
 
-        host = data.get('hostname', data.get('host', ''))
+        host = data.get('hostname') or data.get('host', '')
         nickname = data.get('nickname') or host
         primary_token = _quote_token(nickname)
         lines = [f"Host {primary_token}"]
