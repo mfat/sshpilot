@@ -18,11 +18,6 @@
       <img src="screenshots/start-page.png" width="560" alt="Start Page"><br><strong>Start Page</strong>
     </td>
     <td align="center" valign="top">
-      <img src="screenshots/main-window-light.png" width="560" alt="Main Window Light"><br><strong>Main Window Light</strong>
-    </td>
-  </tr>
-  <tr>
-    <td align="center" valign="top">
       <img src="screenshots/main-window-with-tabs.png" width="560" alt="Main Window with Tabs"><br><strong>Main Window with Tabs</strong>
     </td>
     <td align="center" valign="top">
@@ -30,22 +25,14 @@
     </td>
   </tr>
   <tr>
-    <td align="center" valign="top">
-      <img src="screenshots/terminal-settings.png" width="560" alt="Terminal Settings"><br><strong>Terminal Settings</strong>
-    </td>
-    <td align="center" valign="top">
-      <img src="screenshots/commands.png" width="560" alt="Commands"><br><strong>Commands</strong>
-    </td>
-  </tr>
-  <tr>
+    <td></td> <!-- empty cell left -->
     <td align="center" valign="top">
       <img src="screenshots/ssh-copy-id.png" width="560" alt="SSH Copy ID"><br><strong>SSH Copy ID</strong>
     </td>
-    <td align="center" valign="top">
-      <!-- Empty cell to balance layout -->
-    </td>
+    <td></td> <!-- empty cell right -->
   </tr>
 </table>
+
 
 
 
