@@ -10,45 +10,44 @@
 
 **sshPilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal. 
 
-## Screenshots
-
-<!-- Hero -->
-<p align="center">
-  <img src="screenshots/main-window.png" width="900" alt="SSH Pilot — main window">
-</p>
-
-<p align="center">
-  <em>Tabbed terminal, connection list, and quick actions.</em>
-</p>
-
----
-
-## Feature Highlights
+## 📸 Screenshots
 
 <table>
   <tr>
     <td align="center" valign="top">
-      <img src="screenshots/tab-overview.png" width="560" alt="Tabs overview">
-      <br><strong>Tab Overview</strong><br>
+      <img src="screenshots/start-page.png" width="560" alt="Start Page"><br><strong>Start Page</strong>
     </td>
     <td align="center" valign="top">
-      <img src="screenshots/main-window-with-tabs.png" width="560" alt="Built-in terminal">
-      <br><strong>Built-in Terminal</strong><br>
-
+      <img src="screenshots/main-window-light.png" width="560" alt="Main Window Light"><br><strong>Main Window Light</strong>
     </td>
   </tr>
   <tr>
     <td align="center" valign="top">
-      <img src="screenshots/ssh-copy-id.png" width="560" alt="Key copy dialog">
-      <br><strong>Key Generation & Copy</strong><br>
-
+      <img src="screenshots/main-window-with-tabs.png" width="560" alt="Main Window with Tabs"><br><strong>Main Window with Tabs</strong>
     </td>
     <td align="center" valign="top">
-      <img src="screenshots/terminal-settings.png" width="560" alt="Port forwarding UI">
-      <br><strong>Terminal customization</strong><br>
+      <img src="screenshots/tab-overview.png" width="560" alt="Tab Overview"><br><strong>Tab Overview</strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top">
+      <img src="screenshots/terminal-settings.png" width="560" alt="Terminal Settings"><br><strong>Terminal Settings</strong>
+    </td>
+    <td align="center" valign="top">
+      <img src="screenshots/commands.png" width="560" alt="Commands"><br><strong>Commands</strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top">
+      <img src="screenshots/ssh-copy-id.png" width="560" alt="SSH Copy ID"><br><strong>SSH Copy ID</strong>
+    </td>
+    <td align="center" valign="top">
+      <!-- Empty cell to balance layout -->
     </td>
   </tr>
 </table>
+
+
 
 
 
