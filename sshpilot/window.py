@@ -9,6 +9,7 @@ import logging
 import math
 import re
 import shlex
+import sys
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
@@ -63,6 +64,32 @@ from .ssh_utils import ensure_writable_ssh_home
 from .scp_utils import assemble_scp_transfer_args
 
 logger = logging.getLogger(__name__)
+
+
+def maybe_set_native_controls(header_bar: Gtk.HeaderBar, value: bool = False) -> None:
+    """
+    Safely set native controls on header bar, with fallback for older GTK versions.
+    Only affects macOS and requires GTK 4.18+.
+    """
+    # Only exists in GTK 4.18+
+    is_418_plus = (
+        Gtk.get_major_version() > 4 or
+        (Gtk.get_major_version() == 4 and Gtk.get_minor_version() >= 18)
+    )
+
+    if sys.platform == "darwin" and is_418_plus:
+        try:
+            header_bar.set_use_native_controls(value)
+            return
+        except AttributeError:
+            pass  # extra safety in case of odd bindings
+
+    # Fallback for GTK < 4.18 (or non-macOS): show GTK-drawn buttons
+    header_bar.set_show_start_title_buttons(True)
+    header_bar.set_show_end_title_buttons(True)
+    # Or explicitly add WindowControls if you prefer:
+    # header_bar.pack_start(Gtk.WindowControls(side=Gtk.PackType.START))
+    # header_bar.pack_end(Gtk.WindowControls(side=Gtk.PackType.END))
 
 
 def _get_connection_host(connection) -> str:
@@ -679,8 +706,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.header_bar = Gtk.HeaderBar()
         self.header_bar.set_title_widget(Gtk.Label(label="sshPilot"))
         
-        # Disable native window controls (stoplight buttons on macOS)
-        self.header_bar.set_use_native_controls(False)
+        # Safely configure native window controls (macOS only, GTK 4.18+)
+        maybe_set_native_controls(self.header_bar, False)
         
         
         # Add sidebar toggle button to the left side of header bar
