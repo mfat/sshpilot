@@ -7,12 +7,12 @@
   <name>sshPilot</name>
   <summary>SSH connection manager with integrated terminal</summary>
   <description>
-    <p>sshPilot is a user-friendly SSH connection manager for managing remote servers. It features multi-tab terminals, key management, port forwarding, and file uploads.</p>
+    <p>sshPilot is a user-friendly SSH connection manager for managing remote servers. It features multi-tab terminals, key transfer, port forwarding, and file management.</p>
     <ul>
       <li>Manage multiple machines from a unified, clean interface</li>
       <li>Integrated terminal with theming</li>
       <li>Local, remote and dynamic port forwarding</li>
-      <li>File uploads</li>
+      <li>File management through SFTP protocol</li>
       <li>SSH key generation and copying to server</li>
     </ul>
   </description>
@@ -57,7 +57,7 @@
     </screenshot>
     <screenshot type="default">
       <image>https://raw.githubusercontent.com/mfat/sshpilot/38e1a8a/screenshots/start-page.png</image>
-      <caption>Tab Overview</caption>
+      <caption>Start Page</caption>
     </screenshot>
     <screenshot type="default">
       <image>https://raw.githubusercontent.com/mfat/sshpilot/38e1a8a/screenshots/ssh-copy-id.png</image>
