@@ -675,6 +675,8 @@ class AsyncSFTPManager(GObject.GObject):
         look_for_keys = True
         key_filename: Optional[str] = None
         passphrase: Optional[str] = None
+        auth_method = 0
+        key_mode = 0
 
         logger.debug("File manager: connection object is %s", "None" if connection is None else "present")
         if connection is not None:
@@ -749,6 +751,14 @@ class AsyncSFTPManager(GObject.GObject):
                 if auth_method == 1:
                     allow_agent = False
                     look_for_keys = False
+
+        if connection is not None:
+            if auth_method == 1:
+                allow_agent = False
+                look_for_keys = False
+            if getattr(connection, "pubkey_auth_no", False):
+                allow_agent = False
+                look_for_keys = False
 
         connect_kwargs: Dict[str, Any] = {
             "hostname": self._host,
@@ -1714,6 +1724,24 @@ class FilePane(Gtk.Box):
             "Upload",
             lambda _button: self._on_upload_clicked(_button),
         )
+        copy_button = _create_action_button(
+            "copy",
+            "edit-copy-symbolic",
+            "Copy",
+            lambda _button: self._emit_entry_operation("copy"),
+        )
+        cut_button = _create_action_button(
+            "cut",
+            "edit-cut-symbolic",
+            "Cut",
+            lambda _button: self._emit_entry_operation("cut"),
+        )
+        paste_button = _create_action_button(
+            "paste",
+            "edit-paste-symbolic",
+            "Paste",
+            lambda _button: self._emit_paste_operation(),
+        )
         rename_button = _create_action_button(
             "rename",
             "document-edit-symbolic",
@@ -1733,9 +1761,14 @@ class FilePane(Gtk.Box):
         action_bar.pack_start(download_button)
         action_bar.pack_end(delete_button)
         action_bar.pack_end(rename_button)
+        action_bar.pack_end(cut_button)
+        action_bar.pack_end(copy_button)
+        action_bar.pack_end(paste_button)
 
         self._action_bar = action_bar
         self.append(action_bar)
+
+        self._can_paste: bool = False
 
         # Connect to view-changed signal from toolbar
         self.toolbar.connect("view-changed", self._on_view_toggle)
@@ -2072,6 +2105,13 @@ class FilePane(Gtk.Box):
         add_trigger_string("<primary>l", self._shortcut_focus_path_entry)
         add_trigger_string("<primary>r", self._shortcut_refresh)
         add_shortcut(Gtk.KeyvalTrigger.new(Gdk.KEY_F5, Gdk.ModifierType(0)), self._shortcut_refresh)
+        add_trigger_string("<primary>c", lambda: self._shortcut_operation("copy"))
+        add_trigger_string("<primary>x", lambda: self._shortcut_operation("cut"))
+        add_trigger_string("<primary>v", lambda: self._shortcut_operation("paste"))
+        add_trigger_string(
+            "<shift><primary>v",
+            lambda: self._shortcut_operation("paste", force_move=True),
+        )
 
         delete_triggers = [
             Gtk.KeyvalTrigger.new(Gdk.KEY_Delete, Gdk.ModifierType(0)),
@@ -2310,6 +2350,9 @@ class FilePane(Gtk.Box):
 
         _add_action("download", self._on_menu_download)
         _add_action("upload", self._on_menu_upload)
+        _add_action("copy", lambda: self._emit_entry_operation("copy"))
+        _add_action("cut", lambda: self._emit_entry_operation("cut"))
+        _add_action("paste", self._emit_paste_operation)
         _add_action("rename", lambda: self._emit_entry_operation("rename"))
         _add_action("delete", lambda: self._emit_entry_operation("delete"))
         _add_action("new_folder", lambda: self.emit("request-operation", "mkdir", None))
@@ -2345,6 +2388,15 @@ class FilePane(Gtk.Box):
             menu_model.append("Download", "pane.download")
         elif not self._is_remote and has_selection:
             menu_model.append("Upload…", "pane.upload")
+
+        if has_selection:
+            clipboard_section = Gio.Menu()
+            clipboard_section.append("Copy", "pane.copy")
+            clipboard_section.append("Cut", "pane.cut")
+            menu_model.append_section(None, clipboard_section)
+
+        if getattr(self, "_can_paste", False):
+            menu_model.append("Paste", "pane.paste")
 
         # Add management section only if items are selected
         if has_selection:
@@ -2611,8 +2663,13 @@ class FilePane(Gtk.Box):
 
 
         # For context menu, actions are always enabled since menu items are shown/hidden dynamically
+        can_paste = bool(getattr(self, "_can_paste", False))
+
         _set_enabled("download", self._is_remote and has_selection)
         _set_enabled("upload", (not self._is_remote) and has_selection)
+        _set_enabled("copy", has_selection)
+        _set_enabled("cut", has_selection)
+        _set_enabled("paste", can_paste)
         _set_enabled("rename", single_selection)
         _set_enabled("delete", has_selection)
         _set_enabled("properties", single_selection)
@@ -2621,6 +2678,9 @@ class FilePane(Gtk.Box):
         # Action bar buttons still use the old logic
         _set_button("download", self._is_remote and has_selection)
         _set_button("upload", (not self._is_remote) and has_selection)
+        _set_button("copy", has_selection)
+        _set_button("cut", has_selection)
+        _set_button("paste", can_paste)
         _set_button("rename", single_selection)
         _set_button("delete", has_selection)
 
@@ -2634,6 +2694,28 @@ class FilePane(Gtk.Box):
             return
         payload = {"entries": entries, "directory": self._current_path}
         self.emit("request-operation", action, payload)
+
+    def _emit_paste_operation(self, *, force_move: bool = False) -> None:
+        payload = {"directory": self._current_path}
+        if force_move:
+            payload["force_move"] = True
+        self.emit("request-operation", "paste", payload)
+
+    def _shortcut_operation(self, action: str, *, force_move: bool = False) -> bool:
+        if action in {"copy", "cut", "rename", "delete"}:
+            self._emit_entry_operation(action)
+            return True
+        if action == "paste":
+            self._emit_paste_operation(force_move=force_move)
+            return True
+        return False
+
+    def set_can_paste(self, can_paste: bool) -> None:
+        current = bool(getattr(self, "_can_paste", False))
+        if current == can_paste:
+            return
+        self._can_paste = can_paste
+        self._update_menu_state()
 
     def _on_menu_download(self) -> None:
         if not self._is_remote:
@@ -3326,6 +3408,11 @@ class FileManagerWindow(Adw.Window):
 
         self._active_drag_source: Optional[FilePane] = None
 
+        self._clipboard_entries: List[FileEntry] = []
+        self._clipboard_directory: Optional[str] = None
+        self._clipboard_source_pane: Optional[FilePane] = None
+        self._clipboard_operation: Optional[str] = None
+
 
         # Prime the left (local) pane immediately with local home directory
         try:
@@ -3339,6 +3426,7 @@ class FileManagerWindow(Adw.Window):
         for pane in (self._left_pane, self._right_pane):
             pane.connect("path-changed", self._on_path_changed, pane)
             pane.connect("request-operation", self._on_request_operation, pane)
+            pane.set_can_paste(False)
 
         # Initialize SFTP manager and connect signals
         initial_password = None
@@ -3609,7 +3697,7 @@ class FileManagerWindow(Adw.Window):
 
     def _check_file_conflicts(self, files_to_transfer: List[Tuple[str, str]], operation_type: str, callback: Callable[[List[Tuple[str, str]]], None]) -> None:
         """Check for file conflicts and show resolution dialog if needed.
-        
+
         Args:
             files_to_transfer: List of (source, destination) tuples
             operation_type: "upload" or "download"
@@ -3688,6 +3776,72 @@ class FileManagerWindow(Adw.Window):
         dialog.present()
 
     def _on_request_operation(self, pane: FilePane, action: str, payload, user_data=None) -> None:
+        if action in {"copy", "cut"} and isinstance(payload, dict):
+            entries = list(payload.get("entries") or [])
+            if not entries:
+                pane.show_toast("Nothing selected")
+                return
+
+            directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
+            if pane is self._left_pane:
+                directory = self._normalize_local_path(directory)
+            else:
+                directory = directory or "/"
+
+            self._clipboard_entries = [dataclasses.replace(entry) for entry in entries]
+            self._clipboard_directory = directory
+            self._clipboard_source_pane = pane
+            self._clipboard_operation = action
+            self._update_paste_targets()
+
+            if len(entries) == 1:
+                message = f"{'Cut' if action == 'cut' else 'Copied'} {entries[0].name}"
+            else:
+                message = f"{'Cut' if action == 'cut' else 'Copied'} {len(entries)} items"
+            pane.show_toast(message)
+            return
+
+        if action == "paste":
+            if not self._clipboard_entries or self._clipboard_source_pane is None:
+                pane.show_toast("Clipboard is empty")
+                return
+
+            destination = ""
+            force_move = False
+            if isinstance(payload, dict):
+                destination = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
+                force_move = bool(payload.get("force_move"))
+            else:
+                destination = pane.toolbar.path_entry.get_text() or "/"
+
+            if pane is self._left_pane:
+                destination = self._normalize_local_path(destination)
+            else:
+                destination = destination or "/"
+
+            move_requested = force_move or self._clipboard_operation == "cut"
+            source_pane = self._clipboard_source_pane
+            source_dir = self._clipboard_directory or "/"
+            entries = list(self._clipboard_entries)
+
+            if source_pane is self._left_pane and pane is self._left_pane:
+                self._perform_local_clipboard_operation(entries, source_dir, destination, move_requested)
+            elif source_pane is self._right_pane and pane is self._right_pane:
+                self._perform_remote_clipboard_operation(entries, source_dir, destination, move_requested)
+            elif source_pane is self._left_pane and pane is self._right_pane:
+                self._perform_local_to_remote_clipboard_operation(entries, source_dir, destination, move_requested)
+            elif source_pane is self._right_pane and pane is self._left_pane:
+                self._perform_remote_to_local_clipboard_operation(entries, source_dir, destination, move_requested)
+            else:
+                pane.show_toast("Paste target is unavailable")
+                return
+
+            if move_requested:
+                self._clear_clipboard()
+            else:
+                self._update_paste_targets()
+            return
+
         if action == "mkdir":
             dialog = Adw.AlertDialog.new("New Folder", "Enter a name for the new folder")
             entry = Gtk.Entry()
@@ -3869,6 +4023,13 @@ class FileManagerWindow(Adw.Window):
             remote_root = target_pane.toolbar.path_entry.get_text() or "/"
             raw_items: object | None = None
 
+            move_sources: List[pathlib.Path] = []
+            move_source_dir: Optional[str] = None
+            if isinstance(user_data, dict):
+                move_sources = list(user_data.get("move_sources") or [])
+                move_source_dir = user_data.get("move_source_dir")
+            move_sources_set = {path.resolve() for path in move_sources}
+
             if isinstance(payload, dict):
                 destination = payload.get("destination")
                 if isinstance(destination, pathlib.Path):
@@ -3930,7 +4091,7 @@ class FileManagerWindow(Adw.Window):
             def _proceed_with_upload(resolved_files: List[Tuple[str, str]]) -> None:
                 for local_path_str, destination in resolved_files:
                     path_obj = pathlib.Path(local_path_str)
-                    
+
                     try:
                         if path_obj.is_dir():
                             future = self._manager.upload_directory(path_obj, destination)
@@ -3944,18 +4105,28 @@ class FileManagerWindow(Adw.Window):
                             refresh_remote=target_pane,
                             highlight_name=path_obj.name,
                         )
+                        if move_sources_set and path_obj.resolve() in move_sources_set:
+                            cleanup_dir = move_source_dir or str(path_obj.parent)
+                            self._schedule_local_move_cleanup(future, path_obj, cleanup_dir)
                     except Exception as e:
                         pane.show_toast(f"Error uploading {path_obj.name}: {str(e)}")
-            
+
             self._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
         elif action == "download" and isinstance(payload, dict):
             print(f"=== DOWNLOAD OPERATION CALLED ===")
             print(f"Payload: {payload}")
-            
+
             if pane is self._left_pane and payload.get("entries"):
                 remote_pane = getattr(self, "_right_pane", None)
                 if isinstance(remote_pane, FilePane):
                     pane = remote_pane
+
+            move_remote_sources: List[str] = []
+            move_remote_pane: Optional[FilePane] = None
+            if isinstance(user_data, dict):
+                move_remote_sources = list(user_data.get("move_remote_sources") or [])
+                move_remote_pane = user_data.get("move_remote_pane")
+            move_remote_set = set(move_remote_sources)
 
             entries = payload.get("entries") or []
             directory = payload.get("directory")
@@ -3991,7 +4162,7 @@ class FileManagerWindow(Adw.Window):
                 for source, target_path_str in resolved_files:
                     target_path = pathlib.Path(target_path_str)
                     entry_name = os.path.basename(target_path_str)
-                    
+
                     # Find the original entry to check if it's a directory
                     entry_is_dir = False
                     for entry in entries:
@@ -4010,9 +4181,15 @@ class FileManagerWindow(Adw.Window):
                             refresh_local_path=str(destination_base),
                             highlight_name=entry_name,
                         )
+                        if move_remote_set and source in move_remote_set:
+                            self._schedule_remote_move_cleanup(
+                                future,
+                                source,
+                                move_remote_pane or pane,
+                            )
                     except Exception as e:
                         pane.show_toast(f"Error downloading {entry_name}: {str(e)}")
-            
+
             self._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
 
     def _on_window_resize(self, window, pspec) -> None:
@@ -4073,7 +4250,257 @@ class FileManagerWindow(Adw.Window):
             self._pending_highlights[self._left_pane] = None
         return False
 
-    
+    def _update_paste_targets(self) -> None:
+        can_paste = bool(self._clipboard_entries)
+        for pane in (self._left_pane, self._right_pane):
+            if isinstance(pane, FilePane):
+                pane.set_can_paste(can_paste)
+
+    def _clear_clipboard(self) -> None:
+        self._clipboard_entries = []
+        self._clipboard_directory = None
+        self._clipboard_source_pane = None
+        self._clipboard_operation = None
+        self._update_paste_targets()
+
+    def _resolve_local_entry_path(self, directory: str, entry: FileEntry) -> pathlib.Path:
+        base = pathlib.Path(self._normalize_local_path(directory))
+        return base / entry.name
+
+    def _resolve_remote_entry_path(self, directory: str, entry: FileEntry) -> str:
+        base = directory or "/"
+        return posixpath.join(base, entry.name)
+
+    def _perform_local_clipboard_operation(
+        self,
+        entries: List[FileEntry],
+        source_dir: str,
+        destination_dir: str,
+        move: bool,
+    ) -> None:
+        source_dir_norm = self._normalize_local_path(source_dir)
+        destination_dir_norm = self._normalize_local_path(destination_dir)
+        source_base = pathlib.Path(source_dir_norm)
+        destination_base = pathlib.Path(destination_dir_norm)
+        destination_base.mkdir(parents=True, exist_ok=True)
+
+        completed = 0
+        errors: List[str] = []
+
+        for entry in entries:
+            source_path = source_base / entry.name
+            destination_path = destination_base / entry.name
+            try:
+                if move:
+                    shutil.move(str(source_path), str(destination_path))
+                else:
+                    if entry.is_dir:
+                        if destination_path.exists():
+                            raise FileExistsError(f"{entry.name} already exists")
+                        shutil.copytree(source_path, destination_path)
+                    else:
+                        if destination_path.exists():
+                            raise FileExistsError(f"{entry.name} already exists")
+                        shutil.copy2(source_path, destination_path)
+                completed += 1
+            except FileExistsError as exc:
+                errors.append(str(exc))
+            except Exception as exc:
+                errors.append(f"{entry.name}: {exc}")
+
+        if completed:
+            if entries:
+                self._pending_highlights[self._left_pane] = entries[0].name
+            GLib.idle_add(self._refresh_local_listing, destination_dir_norm)
+            if move and destination_dir_norm != source_dir_norm:
+                GLib.idle_add(self._refresh_local_listing, source_dir_norm)
+            message = (
+                "Moved 1 item"
+                if move and completed == 1
+                else f"Moved {completed} items"
+                if move
+                else "Copied 1 item"
+                if completed == 1
+                else f"Copied {completed} items"
+            )
+            self._left_pane.show_toast(message)
+
+        if errors:
+            self._left_pane.show_toast(errors[0])
+
+    def _perform_remote_clipboard_operation(
+        self,
+        entries: List[FileEntry],
+        source_dir: str,
+        destination_dir: str,
+        move: bool,
+    ) -> None:
+        if not entries:
+            return
+        manager = getattr(self, "_manager", None)
+        if manager is None:
+            self._right_pane.show_toast("Remote connection unavailable")
+            return
+
+        for entry in entries:
+            source_path = self._resolve_remote_entry_path(source_dir, entry)
+            destination_path = self._resolve_remote_entry_path(destination_dir, entry)
+
+            def _impl(src=source_path, dest=destination_path, is_dir=entry.is_dir):
+                sftp = getattr(manager, "_sftp", None)
+                if sftp is None:
+                    raise RuntimeError("SFTP session is not connected")
+                self._ensure_remote_directory(sftp, posixpath.dirname(dest))
+                if is_dir:
+                    self._copy_remote_directory(sftp, src, dest)
+                else:
+                    self._copy_remote_file(sftp, src, dest)
+
+            future = manager._submit(_impl)
+            self._attach_refresh(
+                future,
+                refresh_remote=self._right_pane,
+                highlight_name=entry.name,
+            )
+            if move:
+                self._schedule_remote_move_cleanup(future, source_path, self._right_pane)
+
+        self._right_pane.show_toast(
+            "Moving items…" if move else "Copying items…"
+        )
+
+    def _perform_local_to_remote_clipboard_operation(
+        self,
+        entries: List[FileEntry],
+        source_dir: str,
+        destination_dir: str,
+        move: bool,
+    ) -> None:
+        source_dir_norm = self._normalize_local_path(source_dir)
+        paths: List[pathlib.Path] = []
+        for entry in entries:
+            path = pathlib.Path(source_dir_norm) / entry.name
+            if path.exists():
+                paths.append(path)
+        if not paths:
+            self._left_pane.show_toast("Files are no longer available")
+            return
+
+        payload = {"paths": paths, "destination": destination_dir}
+        user_data = None
+        if move:
+            user_data = {
+                "move_sources": paths,
+                "move_source_dir": source_dir_norm,
+            }
+        self._on_request_operation(self._left_pane, "upload", payload, user_data=user_data)
+
+    def _perform_remote_to_local_clipboard_operation(
+        self,
+        entries: List[FileEntry],
+        source_dir: str,
+        destination_dir: str,
+        move: bool,
+    ) -> None:
+        if not entries:
+            return
+        destination_path = pathlib.Path(destination_dir)
+        payload = {
+            "entries": entries,
+            "directory": source_dir or "/",
+            "destination": destination_path,
+        }
+        user_data = None
+        if move:
+            remote_sources = [
+                self._resolve_remote_entry_path(source_dir or "/", entry)
+                for entry in entries
+            ]
+            user_data = {
+                "move_remote_sources": remote_sources,
+                "move_remote_pane": self._right_pane,
+            }
+        self._on_request_operation(self._right_pane, "download", payload, user_data=user_data)
+
+    def _schedule_local_move_cleanup(
+        self,
+        future: Future,
+        source_path: pathlib.Path,
+        source_dir: str,
+    ) -> None:
+        def _cleanup(completed: Future, path: pathlib.Path = source_path, base_dir: str = source_dir) -> None:
+            try:
+                completed.result()
+            except Exception:
+                return
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+            except FileNotFoundError:
+                pass
+            except Exception as exc:
+                GLib.idle_add(self._left_pane.show_toast, f"Failed to remove {path.name}: {exc}")
+            GLib.idle_add(self._refresh_local_listing, base_dir)
+
+        future.add_done_callback(_cleanup)
+
+    def _schedule_remote_move_cleanup(
+        self,
+        future: Future,
+        source_path: str,
+        pane: FilePane,
+    ) -> None:
+        def _cleanup(completed: Future, path: str = source_path, target_pane: FilePane = pane) -> None:
+            try:
+                completed.result()
+            except Exception:
+                return
+            cleanup_future = self._manager.remove(path)
+            self._attach_refresh(cleanup_future, refresh_remote=target_pane)
+
+        future.add_done_callback(_cleanup)
+
+    @staticmethod
+    def _ensure_remote_directory(sftp: paramiko.SFTPClient, path: str) -> None:
+        if not path:
+            return
+        components = []
+        while path and path not in {"/", ""}:
+            components.append(path)
+            path = posixpath.dirname(path)
+        for component in reversed(components):
+            try:
+                sftp.mkdir(component)
+            except IOError:
+                continue
+
+    def _copy_remote_file(
+        self, sftp: paramiko.SFTPClient, source_path: str, destination_path: str
+    ) -> None:
+        with sftp.open(source_path, "rb") as src_file, sftp.open(destination_path, "wb") as dst_file:
+            while True:
+                chunk = src_file.read(32768)
+                if not chunk:
+                    break
+                dst_file.write(chunk)
+
+    def _copy_remote_directory(
+        self, sftp: paramiko.SFTPClient, source_path: str, destination_path: str
+    ) -> None:
+        try:
+            sftp.mkdir(destination_path)
+        except IOError:
+            pass
+        for entry in sftp.listdir_attr(source_path):
+            child_source = posixpath.join(source_path, entry.filename)
+            child_destination = posixpath.join(destination_path, entry.filename)
+            if stat_isdir(entry):
+                self._copy_remote_directory(sftp, child_source, child_destination)
+            else:
+                self._copy_remote_file(sftp, child_source, child_destination)
+
     def _show_progress_dialog(self, operation_type: str, filename: str, future: Future) -> None:
         """Show and manage the progress dialog for a file operation."""
         try:
