@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import types
 
@@ -46,7 +47,7 @@ _ORIGINAL_GI_MODULES = {
 _ensure_gi_stub()
 
 from sshpilot.connection_dialog import SSHConnectionValidator
-from sshpilot.connection_manager import ConnectionManager
+from sshpilot.connection_manager import Connection, ConnectionManager
 
 for name, module in _ORIGINAL_GI_MODULES.items():
     if module is None:
@@ -73,6 +74,38 @@ def test_parse_host_with_quotes():
     assert parsed["nickname"] == "nick name"
     assert parsed["hostname"] == "example.com"
     assert parsed["aliases"] == []
+
+
+def test_parse_host_without_hostname_defaults_to_alias():
+    cm = make_cm()
+    config = {
+        "host": "localhost",
+        "user": "mahdi",
+    }
+    parsed = ConnectionManager.parse_host_config(cm, config)
+    assert parsed["hostname"] == "localhost"
+    assert parsed["host"] == "localhost"
+
+
+def test_connect_without_hostname_uses_alias(monkeypatch):
+    cm = make_cm()
+    config = {
+        "host": "localhost",
+        "user": "mahdi",
+    }
+    parsed = ConnectionManager.parse_host_config(cm, config)
+    monkeypatch.setattr("sshpilot.connection_manager.get_effective_ssh_config", lambda alias: {})
+    connection = Connection(parsed)
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        connected = loop.run_until_complete(connection.connect())
+    finally:
+        loop.close()
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    assert connected
+    assert connection.ssh_cmd[-1] == "mahdi@localhost"
 
 
 def test_format_host_requotes():

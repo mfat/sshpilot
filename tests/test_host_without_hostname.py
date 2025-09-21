@@ -37,7 +37,7 @@ from sshpilot.connection_manager import ConnectionManager
 
 
 def test_host_token_used_when_hostname_missing(tmp_path):
-    """Entries without HostName should use Host token for nickname and leave hostname empty."""
+    """Entries without HostName should fall back to the Host token for the hostname."""
     asyncio.set_event_loop(asyncio.new_event_loop())
 
     manager = ConnectionManager.__new__(ConnectionManager)
@@ -52,7 +52,7 @@ def test_host_token_used_when_hostname_missing(tmp_path):
     assert len(manager.connections) == 1
     conn = manager.connections[0]
     assert conn.nickname == 'example.com'
-    assert conn.hostname == ''
+    assert conn.hostname == 'example.com'
 
 
 def test_multiple_labels_without_hostname_have_no_aliases(tmp_path):
@@ -73,7 +73,7 @@ def test_multiple_labels_without_hostname_have_no_aliases(tmp_path):
 
     assert sorted(c.nickname for c in manager.connections) == ['alias1', 'alias2', 'primary']
     for c in manager.connections:
-        assert c.hostname == ''
+        assert c.hostname == c.nickname
         assert not hasattr(c, 'aliases')
 
     primary = next(c for c in manager.connections if c.nickname == 'primary')
