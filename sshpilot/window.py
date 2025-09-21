@@ -69,7 +69,7 @@ logger = logging.getLogger(__name__)
 def maybe_set_native_controls(header_bar: Gtk.HeaderBar, value: bool = False) -> None:
     """
     Safely set native controls on header bar, with fallback for older GTK versions.
-    Only affects macOS and requires GTK 4.18+.
+    Only affects macOS and requires GTK 4.18+. GTK will handle title buttons by default.
     """
     # Only exists in GTK 4.18+
     is_418_plus = (
@@ -80,22 +80,8 @@ def maybe_set_native_controls(header_bar: Gtk.HeaderBar, value: bool = False) ->
     if sys.platform == "darwin" and is_418_plus:
         try:
             header_bar.set_use_native_controls(value)
-            return
         except AttributeError:
             pass  # extra safety in case of odd bindings
-
-    # Fallback for GTK < 4.18 (or non-macOS): show GTK-drawn buttons
-    try:
-        # GTK 4.0+ method
-        header_bar.set_show_title_buttons(True)
-    except AttributeError:
-        # Fallback: explicitly add WindowControls if available
-        try:
-            header_bar.pack_start(Gtk.WindowControls(side=Gtk.PackType.START))
-            header_bar.pack_end(Gtk.WindowControls(side=Gtk.PackType.END))
-        except (AttributeError, TypeError):
-            # Ultimate fallback - just continue without title buttons
-            pass
 
 
 def _get_connection_host(connection) -> str:
