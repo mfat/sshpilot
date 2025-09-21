@@ -1907,6 +1907,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Help submenu with platform-aware keyboard shortcuts overlay
         help_menu = Gio.Menu()
         help_menu.append('Keyboard Shortcuts', 'app.shortcuts')
+        help_menu.append('Shortcut Editor', 'win.edit-shortcuts')
         help_menu.append('Documentation', 'app.help')
         menu.append_submenu('Help', help_menu)
 
@@ -2830,17 +2831,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         win = Gtk.ShortcutsWindow(transient_for=self, modal=True)
         win.set_title(_('Keyboard Shortcuts'))
 
-        # Build header bar with shortcut editor button
-        header_bar = Adw.HeaderBar()
-        header_bar.set_show_start_title_buttons(False)
-
-        edit_button = Gtk.Button.new_with_mnemonic(_("Edit _Shortcuts…"))
-        edit_button.add_css_class('flat')
-        edit_button.set_tooltip_text(_("Open the shortcut editor"))
-        edit_button.connect('clicked', lambda _btn: self.show_shortcut_editor())
-        header_bar.pack_end(edit_button)
-
-        win.set_titlebar(header_bar)
+        # Don't set custom titlebar for ShortcutsWindow to avoid GTK stack issues
+        # The edit shortcuts functionality can be accessed via the main menu instead
 
         section = Gtk.ShortcutsSection()
         section.set_property('title', _('Keyboard Shortcuts'))
