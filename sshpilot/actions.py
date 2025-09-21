@@ -275,6 +275,14 @@ class WindowActions:
         except Exception as e:
             logger.error(f"Failed to open known hosts editor: {e}")
 
+    def on_edit_shortcuts_action(self, action, param=None):
+        """Open the shortcut editor window."""
+        try:
+            if hasattr(self, 'show_shortcut_editor'):
+                self.show_shortcut_editor()
+        except Exception as e:
+            logger.error(f"Failed to open shortcut editor: {e}")
+
     def on_create_group_action(self, action, param=None):
         """Handle create group action"""
         try:
@@ -729,6 +737,12 @@ def register_window_actions(window):
         window.edit_known_hosts_action = Gio.SimpleAction.new('edit-known-hosts', None)
         window.edit_known_hosts_action.connect('activate', window.on_edit_known_hosts_action)
         window.add_action(window.edit_known_hosts_action)
+
+    # Action for editing shortcuts
+    if hasattr(window, 'on_edit_shortcuts_action'):
+        window.edit_shortcuts_action = Gio.SimpleAction.new('edit-shortcuts', None)
+        window.edit_shortcuts_action.connect('activate', window.on_edit_shortcuts_action)
+        window.add_action(window.edit_shortcuts_action)
 
     # Group management actions
     window.create_group_action = Gio.SimpleAction.new('create-group', None)

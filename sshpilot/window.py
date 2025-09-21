@@ -1907,6 +1907,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Help submenu with platform-aware keyboard shortcuts overlay
         help_menu = Gio.Menu()
         help_menu.append('Keyboard Shortcuts', 'app.shortcuts')
+        help_menu.append('Shortcut Editor', 'win.edit-shortcuts')
         help_menu.append('Documentation', 'app.help')
         menu.append_submenu('Help', help_menu)
 
