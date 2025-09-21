@@ -182,7 +182,6 @@ jobs:
         with:
           files: |
             dist/${{ steps.artifact-info.outputs.dmg }}
-            dist/${{ steps.artifact-info.outputs.dmg }}.sha256
           generate_release_notes: false
           body: ""
         env:
