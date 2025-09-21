@@ -64,11 +64,32 @@ datas += [
     (os.path.join(hb_share, "glib-2.0", "schemas"), "Resources/share/glib-2.0/schemas"),
     (os.path.join(hb_share, "icons", "Adwaita"),    "Resources/share/icons/Adwaita"),
     (os.path.join(hb_share, "gtk-4.0"),               "Resources/share/gtk-4.0"),
-    (os.path.join(hb_share, "libadwaita-1"),          "Resources/share/libadwaita-1"),
     ("sshpilot", "sshpilot"),
     ("sshpilot/resources/sshpilot.gresource", "Resources/sshpilot"),
     ("sshpilot/io.github.mfat.sshpilot.svg", "share/icons"),
 ]
+
+# Find libadwaita share data in Cellar if not in standard share location
+libadwaita_share_standard = os.path.join(hb_share, "libadwaita-1")
+libadwaita_share_cellar = None
+
+if os.path.exists(libadwaita_share_standard):
+    datas.append((libadwaita_share_standard, "Resources/share/libadwaita-1"))
+    print(f"Found libadwaita share data at: {libadwaita_share_standard}")
+else:
+    # Look for libadwaita in Cellar
+    cellar_libadwaita = f"{homebrew}/Cellar/libadwaita"
+    if os.path.exists(cellar_libadwaita):
+        for version_dir in os.listdir(cellar_libadwaita):
+            version_path = os.path.join(cellar_libadwaita, version_dir, "share", "libadwaita-1")
+            if os.path.exists(version_path):
+                libadwaita_share_cellar = version_path
+                datas.append((libadwaita_share_cellar, "Resources/share/libadwaita-1"))
+                print(f"Found libadwaita share data in Cellar at: {libadwaita_share_cellar}")
+                break
+    
+    if not libadwaita_share_cellar:
+        print(f"WARNING: Could not find libadwaita share data at {libadwaita_share_standard} or in Cellar")
 
 # Add keyring package files explicitly
 keyring_package = f"{homebrew}/lib/python3.13/site-packages/keyring"

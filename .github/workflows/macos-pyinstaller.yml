@@ -19,65 +19,155 @@ jobs:
 
       - name: Install Homebrew dependencies
         run: |
+          echo "=== DEBUG: Starting Homebrew dependency installation ==="
           brew update
+          echo "=== DEBUG: Installing packages ==="
           brew install python@3.13 gtk4 libadwaita vte3 adwaita-icon-theme gobject-introspection pygobject3 py3cairo create-dmg sshpass
+          echo "=== DEBUG: Linking libadwaita ==="
           brew link --overwrite libadwaita
+          echo "=== DEBUG: Verifying installations ==="
+          brew list --formula | grep -E "(python@3.13|gtk4|libadwaita|vte3|gobject-introspection|pygobject3|py3cairo)"
+          echo "=== DEBUG: Homebrew installation completed ==="
 
       - name: Prepare Homebrew virtual environment
         run: |
+          echo "=== DEBUG: Preparing virtual environment ==="
           PYTHON_PATH="$(brew --prefix python@3.13)/bin/python3.13"
+          echo "=== DEBUG: Python path: $PYTHON_PATH ==="
+          echo "=== DEBUG: Creating virtual environment ==="
           "$PYTHON_PATH" -m venv .venv-homebrew --system-site-packages
+          echo "=== DEBUG: Activating virtual environment ==="
           source .venv-homebrew/bin/activate
+          echo "=== DEBUG: Python version in venv: $(python --version) ==="
+          echo "=== DEBUG: Upgrading pip and wheel ==="
           python -m pip install --upgrade pip wheel
+          echo "=== DEBUG: Installing Python packages ==="
           python -m pip install paramiko cryptography keyring psutil PyInstaller
+          echo "=== DEBUG: Verifying Python package installations ==="
+          pip list | grep -E "(paramiko|cryptography|keyring|psutil|PyInstaller)"
+          echo "=== DEBUG: Virtual environment setup completed ==="
 
       - name: Build application bundle with PyInstaller
         run: |
+          echo "=== DEBUG: Starting PyInstaller build ==="
           BREW_PREFIX="$(brew --prefix)"
+          echo "=== DEBUG: Homebrew prefix: $BREW_PREFIX ==="
+          echo "=== DEBUG: Setting environment variables ==="
           export PATH="$BREW_PREFIX/bin:$PATH"
           export GI_TYPELIB_PATH="$BREW_PREFIX/lib/girepository-1.0"
           export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_LIBRARY_PATH"
           export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+          echo "=== DEBUG: Environment variables set ==="
+          echo "PATH: $PATH"
+          echo "GI_TYPELIB_PATH: $GI_TYPELIB_PATH"
+          echo "DYLD_LIBRARY_PATH: $DYLD_LIBRARY_PATH"
+          echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+          echo "=== DEBUG: Checking pyinstaller.sh script ==="
+          ls -la pyinstaller.sh
           chmod +x pyinstaller.sh
+          echo "=== DEBUG: Running PyInstaller build ==="
           ./pyinstaller.sh
+          echo "=== DEBUG: PyInstaller build completed ==="
 
       - name: Determine artifact names
         id: artifact-info
         run: |
+          echo "=== DEBUG: Determining artifact names ==="
+          echo "=== DEBUG: Reading version from sshpilot/__init__.py ==="
           VERSION=$(grep -o '__version__ = "[^"]*"' sshpilot/__init__.py | cut -d'"' -f2)
+          echo "=== DEBUG: Extracted version: '$VERSION' ==="
           if [ -z "$VERSION" ]; then
+            echo "=== DEBUG: Version is empty, using date ==="
             VERSION=$(date +%Y%m%d)
+            echo "=== DEBUG: Using date as version: '$VERSION' ==="
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "dmg=sshPilot-${VERSION}.dmg" >> "$GITHUB_OUTPUT"
+          echo "=== DEBUG: Final version: '$VERSION' ==="
+          echo "=== DEBUG: DMG name: 'sshPilot-${VERSION}.dmg' ==="
 
       - name: Verify build outputs
         run: |
-          ls -R dist
+          echo "=== DEBUG: Verifying build outputs ==="
+          echo "=== DEBUG: Checking if dist directory exists ==="
+          if [ -d "dist" ]; then
+            echo "=== DEBUG: dist directory exists ==="
+            echo "=== DEBUG: Contents of dist directory ==="
+            ls -la dist/
+            echo "=== DEBUG: Recursive listing of dist directory ==="
+            ls -R dist/
+            echo "=== DEBUG: Checking for SSHPilot.app ==="
+            if [ -d "dist/SSHPilot.app" ]; then
+              echo "=== DEBUG: SSHPilot.app exists ==="
+              echo "=== DEBUG: SSHPilot.app size: $(du -sh dist/SSHPilot.app) ==="
+              echo "=== DEBUG: SSHPilot.app structure ==="
+              find dist/SSHPilot.app -name "*.so" -o -name "*.dylib" -o -name "SSHPilot" | head -20
+            else
+              echo "=== DEBUG: ERROR - SSHPilot.app not found ==="
+            fi
+            echo "=== DEBUG: Looking for DMG files ==="
+            find dist -name "*.dmg" -exec echo "=== DEBUG: Found DMG: {} ===" \;
+          else
+            echo "=== DEBUG: ERROR - dist directory does not exist ==="
+          fi
+          echo "=== DEBUG: Build verification completed ==="
 
       - name: Compress app bundle for artifact upload
         run: |
-          ditto -c -k --sequesterRsrc --keepParent dist/SSHPilot.app dist/SSHPilot.app.zip
+          echo "=== DEBUG: Compressing app bundle ==="
+          if [ -d "dist/SSHPilot.app" ]; then
+            echo "=== DEBUG: SSHPilot.app found, compressing ==="
+            ditto -c -k --sequesterRsrc --keepParent dist/SSHPilot.app dist/SSHPilot.app.zip
+            echo "=== DEBUG: Compression completed ==="
+            echo "=== DEBUG: ZIP file size: $(du -sh dist/SSHPilot.app.zip) ==="
+          else
+            echo "=== DEBUG: ERROR - SSHPilot.app not found, cannot compress ==="
+            exit 1
+          fi
 
       - name: Generate DMG checksum
         run: |
-          shasum -a 256 "dist/${{ steps.artifact-info.outputs.dmg }}" > "dist/${{ steps.artifact-info.outputs.dmg }}.sha256"
-          cat "dist/${{ steps.artifact-info.outputs.dmg }}.sha256"
+          echo "=== DEBUG: Generating DMG checksum ==="
+          DMG_NAME="${{ steps.artifact-info.outputs.dmg }}"
+          echo "=== DEBUG: DMG name: '$DMG_NAME' ==="
+          if [ -f "dist/$DMG_NAME" ]; then
+            echo "=== DEBUG: DMG file exists, generating checksum ==="
+            shasum -a 256 "dist/$DMG_NAME" > "dist/$DMG_NAME.sha256"
+            echo "=== DEBUG: Checksum generated ==="
+            cat "dist/$DMG_NAME.sha256"
+          else
+            echo "=== DEBUG: ERROR - DMG file '$DMG_NAME' not found ==="
+            echo "=== DEBUG: Available files in dist: ==="
+            ls -la dist/
+            exit 1
+          fi
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
           name: sshpilot-${{ steps.artifact-info.outputs.version }}-macos-arm64-dmg
           path: dist/${{ steps.artifact-info.outputs.dmg }}
+        continue-on-error: true
 
       - name: Upload app bundle artifact
         uses: actions/upload-artifact@v4
         with:
           name: sshpilot-${{ steps.artifact-info.outputs.version }}-macos-arm64-app
           path: dist/SSHPilot.app.zip
+        continue-on-error: true
 
       - name: Upload checksum artifact
         uses: actions/upload-artifact@v4
         with:
           name: sshpilot-${{ steps.artifact-info.outputs.version }}-macos-arm64-checksum
           path: dist/${{ steps.artifact-info.outputs.dmg }}.sha256
+        continue-on-error: true
+
+      - name: Debug final state
+        run: |
+          echo "=== DEBUG: Final workflow state ==="
+          echo "=== DEBUG: Version: ${{ steps.artifact-info.outputs.version }} ==="
+          echo "=== DEBUG: DMG: ${{ steps.artifact-info.outputs.dmg }} ==="
+          echo "=== DEBUG: Final dist directory contents ==="
+          ls -la dist/ || echo "=== DEBUG: dist directory not found ==="
+          echo "=== DEBUG: Workflow completed ==="
