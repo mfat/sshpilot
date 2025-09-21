@@ -1198,7 +1198,27 @@ class AsyncSFTPManager(GObject.GObject):
         )
 
     def download(self, source: str, destination: pathlib.Path) -> Future:
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            # Ensure parent directory exists, with special handling for portal paths
+            parent_dir = destination.parent
+            logger.debug(f"Download: ensuring parent directory exists: {parent_dir}")
+            
+            if not parent_dir.exists():
+                logger.debug(f"Download: creating parent directory: {parent_dir}")
+                parent_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                logger.debug(f"Download: parent directory already exists: {parent_dir}")
+                
+            # Verify we can write to the destination
+            if not os.access(str(parent_dir), os.W_OK):
+                logger.warning(f"Download: no write access to destination directory: {parent_dir}")
+            else:
+                logger.debug(f"Download: write access confirmed for: {parent_dir}")
+                
+        except Exception as e:
+            logger.error(f"Download: failed to prepare destination directory {destination.parent}: {e}")
+            # Continue anyway - maybe the directory already exists or will be created by the SFTP operation
+        
         operation_id = f"download_{id(self)}_{time.time()}"
 
         def _impl() -> None:
@@ -1220,9 +1240,16 @@ class AsyncSFTPManager(GObject.GObject):
                     self.emit("progress", 0.0, f"Downloaded {transferred_size}")
             
             try:
+                logger.debug(f"Download: starting SFTP get from {source} to {destination}")
                 self._sftp.get(source, str(destination), callback=progress_callback)
                 # Only emit completion if not cancelled
                 if operation_id not in self._cancelled_operations:
+                    # Verify the file was actually created
+                    if destination.exists():
+                        file_size = destination.stat().st_size
+                        logger.info(f"Download: successfully saved {source} to {destination} ({file_size} bytes)")
+                    else:
+                        logger.error(f"Download: file not found after transfer: {destination}")
                     self.emit("progress", 1.0, "Download complete")
             except TransferCancelledException:
                 # Clean up partial download on cancellation
@@ -2065,21 +2092,30 @@ class FilePane(Gtk.Box):
         download_button.set_visible(self._is_remote)
         upload_button.set_visible(not self._is_remote)
 
-        # Add Request Access button for local pane in Flatpak only
+        # Add Request Access button for local pane in Flatpak only when no access is granted
         request_access_button = None
         if not self._is_remote and is_flatpak():
-            request_access_button = _create_action_button(
-                "request_access",
-                "folder-open-symbolic",
-                "Request Access",
-                lambda _button: self._on_request_access_clicked(),
-            )
-            # Use ButtonContent for this special button to make it more prominent
-            content = Adw.ButtonContent()
-            content.set_icon_name("folder-open-symbolic")
-            content.set_label("Request Access")
-            request_access_button.set_child(content)
-            request_access_button.add_css_class("suggested-action")
+            # Check if we already have persisted folder access
+            has_persisted_access = _load_first_doc_path() is not None
+            if not has_persisted_access:
+                request_access_button = _create_action_button(
+                    "request_access",
+                    "folder-open-symbolic",
+                    "Request Access",
+                    lambda _button: self._on_request_access_clicked(),
+                )
+                # Use ButtonContent for this special button to make it more prominent
+                content = Adw.ButtonContent()
+                content.set_icon_name("folder-open-symbolic")
+                content.set_label("Request Access")
+                request_access_button.set_child(content)
+                request_access_button.add_css_class("suggested-action")
+                # Store reference to the button so we can hide it later
+                self._request_access_button = request_access_button
+            else:
+                self._request_access_button = None
+        else:
+            self._request_access_button = None
 
         action_bar.pack_start(upload_button)
         action_bar.pack_start(download_button)
@@ -2289,7 +2325,12 @@ class FilePane(Gtk.Box):
             return None
         else:
             # For local panes, create URI list as before
-            base_dir = window._normalize_local_path(self.toolbar.path_entry.get_text())
+            # Use the actual current path instead of the display path from path entry
+            # This handles Flatpak portal paths correctly
+            base_dir = getattr(self, '_current_path', None)
+            if not base_dir:
+                # Fallback to normalized path entry text for non-portal paths
+                base_dir = window._normalize_local_path(self.toolbar.path_entry.get_text())
             uris: List[str] = []
             files: List[Gio.File] = []
             for entry in entries:
@@ -2869,7 +2910,12 @@ class FilePane(Gtk.Box):
                             # Build full path and convert to URI
                             window = self.get_root()
                             if isinstance(window, FileManagerWindow):
-                                base_dir = window._normalize_local_path(self.toolbar.path_entry.get_text())
+                                # Use the actual current path instead of the display path from path entry
+                                # This handles Flatpak portal paths correctly
+                                base_dir = getattr(self, '_current_path', None)
+                                if not base_dir:
+                                    # Fallback to normalized path entry text for non-portal paths
+                                    base_dir = window._normalize_local_path(self.toolbar.path_entry.get_text())
                                 full_path = os.path.join(base_dir, item.name)
                                 if os.path.exists(full_path):
                                     gfile = Gio.File.new_for_path(full_path)
@@ -3117,8 +3163,15 @@ class FilePane(Gtk.Box):
                         print(f"Selected entries from origin: {[e.name for e in selected_entries]}")
                         
                         # Get current directory on local pane (destination)
-                        local_dir = self.toolbar.path_entry.get_text() or os.path.expanduser("~")
-                        destination = pathlib.Path(window._normalize_local_path(local_dir))
+                        # Use the actual current path instead of the display path from path entry
+                        # This handles Flatpak portal paths correctly
+                        current_path = getattr(self, '_current_path', None)
+                        if current_path:
+                            destination = pathlib.Path(current_path)
+                        else:
+                            # Fallback to normalized path entry text for non-portal paths
+                            local_dir = self.toolbar.path_entry.get_text() or os.path.expanduser("~")
+                            destination = pathlib.Path(window._normalize_local_path(local_dir))
                         print(f"Local destination directory: {destination}")
                         
                         # Test if files would conflict
@@ -3278,6 +3331,12 @@ class FilePane(Gtk.Box):
         dialog.connect("response", on_response)
         dialog.present()
 
+    def _hide_request_access_button(self) -> None:
+        """Hide the Request Access button after access has been granted."""
+        if hasattr(self, '_request_access_button') and self._request_access_button:
+            self._request_access_button.set_visible(False)
+            logger.debug("Hid Request Access button after granting access")
+
     def _show_folder_picker(self) -> None:
         """Show a portal-aware folder picker for Flatpak with persistent access."""
         dlg = Gtk.FileChooserNative(
@@ -3307,6 +3366,9 @@ class FilePane(Gtk.Box):
                         self.toolbar.path_entry.set_text(path)
                         self.toolbar.path_entry.emit("activate")
                         self.show_toast(f"Access granted to: {_pretty_path_for_display(path)}")
+                        
+                        # Hide the Request Access button since access is now granted
+                        self._hide_request_access_button()
                     except Exception as e:
                         logger.warning(f"Failed to persist folder access: {e}")
                         # Still navigate to folder even if persistence fails
@@ -3315,6 +3377,8 @@ class FilePane(Gtk.Box):
                             self.toolbar.path_entry.set_text(path)
                             self.toolbar.path_entry.emit("activate")
                             self.show_toast(f"Access granted to: {_pretty_path_for_display(path)}")
+                            # Hide the Request Access button since access is now granted
+                            self._hide_request_access_button()
             dlg.destroy()
         
         dlg.connect("response", _resp)
@@ -4313,7 +4377,13 @@ class FileManagerWindow(Adw.Window):
 
             directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
             if pane is self._left_pane:
-                directory = self._normalize_local_path(directory)
+                # Use the actual current path instead of the display path from path entry
+                # This handles Flatpak portal paths correctly
+                current_path = getattr(pane, '_current_path', None)
+                if current_path:
+                    directory = current_path
+                else:
+                    directory = self._normalize_local_path(directory)
             else:
                 directory = directory or "/"
 
@@ -4340,13 +4410,16 @@ class FileManagerWindow(Adw.Window):
             if isinstance(payload, dict):
                 destination = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
                 force_move = bool(payload.get("force_move"))
+            
+            # For local pane destinations, use actual current path instead of display path
+            if pane is self._left_pane:
+                current_path = getattr(pane, '_current_path', None)
+                if current_path:
+                    destination = current_path
+                else:
+                    destination = self._normalize_local_path(destination or pane.toolbar.path_entry.get_text() or "/")
             else:
                 destination = pane.toolbar.path_entry.get_text() or "/"
-
-            if pane is self._left_pane:
-                destination = self._normalize_local_path(destination)
-            else:
-                destination = destination or "/"
 
             move_requested = force_move or self._clipboard_operation == "cut"
             source_pane = self._clipboard_source_pane
