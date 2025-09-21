@@ -75,11 +75,32 @@ class Connection:
         self.forwarders: List[asyncio.Task] = []
         self.listeners: List[asyncio.Server] = []
 
-        self.nickname = data.get('nickname', data.get('hostname', data.get('host', 'Unknown')))
+        hostname_value = data.get('hostname')
+        host_value = data.get('host', '')
+
+        nickname_value = data.get('nickname')
+        if nickname_value:
+            self.nickname = nickname_value
+        else:
+            fallback_nickname = hostname_value if hostname_value else host_value
+            self.nickname = fallback_nickname or 'Unknown'
+
         if 'aliases' in data:
             self.aliases = data.get('aliases', [])
-        self.hostname = data.get('hostname', data.get('host', ''))
-        self.host = self.hostname  # Backward compatibility for legacy references
+
+        resolved_host = hostname_value if hostname_value else host_value
+        self.host = resolved_host
+
+        if hostname_value is None:
+            self.hostname = resolved_host
+        elif hostname_value == '':
+            if data.get('source'):
+                self.hostname = resolved_host
+            else:
+                self.hostname = ''
+        else:
+            self.hostname = hostname_value
+
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         # previously: self.keyfile = data.get('keyfile', '')
@@ -196,18 +217,25 @@ class Connection:
             # Resolve effective SSH configuration for this nickname/host
             effective_cfg: Dict[str, Union[str, List[str]]] = {}
             target_alias = self.nickname or self.hostname
+            alias_fallback = self.host or self.nickname or self.hostname
             if target_alias:
                 effective_cfg = get_effective_ssh_config(target_alias)
 
             # Determine final parameters, falling back to resolved config when needed
-            resolved_host = str(effective_cfg.get('hostname', self.hostname))
+            resolved_host_cfg = effective_cfg.get('hostname')
+            if resolved_host_cfg:
+                resolved_host = str(resolved_host_cfg)
+            else:
+                resolved_host = self.hostname or self.host
+
             resolved_user = self.username or str(effective_cfg.get('user', ''))
             try:
                 resolved_port = int(effective_cfg.get('port', self.port))
             except Exception:
                 resolved_port = self.port
-            self.hostname = resolved_host
-            self.host = self.hostname
+            previous_host = self.host
+            self.hostname = resolved_host or self.hostname
+            self.host = resolved_host or previous_host
             self.port = resolved_port
             if resolved_user:
                 self.username = resolved_user
@@ -265,7 +293,8 @@ class Connection:
             if resolved_port != 22:
                 ssh_cmd.extend(['-p', str(resolved_port)])
 
-            ssh_cmd.append(f"{resolved_user}@{resolved_host}" if resolved_user else resolved_host)
+            host_for_cmd = resolved_host or alias_fallback or target_alias or ''
+            ssh_cmd.append(f"{resolved_user}@{host_for_cmd}" if resolved_user else host_for_cmd)
 
             # Store command for later use
             self.ssh_cmd = ssh_cmd
@@ -622,8 +651,10 @@ class Connection:
         self.nickname = data.get('nickname', data.get('hostname', data.get('host', 'Unknown')))
         if 'aliases' in data:
             self.aliases = data.get('aliases', getattr(self, 'aliases', []))
-        self.hostname = data.get('hostname', data.get('host', ''))
-        self.host = self.hostname
+        resolved_hostname = data.get('hostname') or data.get('host', '')
+        self.hostname = resolved_hostname
+        self.host = resolved_hostname
+
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
@@ -942,6 +973,7 @@ class ConnectionManager(GObject.Object):
             parsed = {
                 'nickname': host,
                 'hostname': parsed_host,
+                'host': host,
 
                 'port': int(_unwrap(config.get('port', 22))),
                 'username': _unwrap(config.get('user', getpass.getuser())),
@@ -1329,7 +1361,7 @@ class ConnectionManager(GObject.Object):
                 return f'"{token}"'
             return token
 
-        host = data.get('hostname', data.get('host', ''))
+        host = data.get('hostname') or data.get('host', '')
         nickname = data.get('nickname') or host
         primary_token = _quote_token(nickname)
         lines = [f"Host {primary_token}"]

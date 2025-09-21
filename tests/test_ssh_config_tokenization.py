@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import types
 
@@ -46,7 +47,7 @@ _ORIGINAL_GI_MODULES = {
 _ensure_gi_stub()
 
 from sshpilot.connection_dialog import SSHConnectionValidator
-from sshpilot.connection_manager import ConnectionManager
+from sshpilot.connection_manager import Connection, ConnectionManager
 
 for name, module in _ORIGINAL_GI_MODULES.items():
     if module is None:
@@ -73,6 +74,72 @@ def test_parse_host_with_quotes():
     assert parsed["nickname"] == "nick name"
     assert parsed["hostname"] == "example.com"
     assert parsed["aliases"] == []
+
+
+def test_parse_host_without_hostname_stores_empty_hostname():
+    cm = make_cm()
+    config = {
+        "host": "localhost",
+        "user": "mahdi",
+    }
+    parsed = ConnectionManager.parse_host_config(cm, config)
+    assert parsed["hostname"] == ""
+    assert parsed["host"] == "localhost"
+
+
+def test_connect_without_hostname_uses_alias(monkeypatch):
+    cm = make_cm()
+    config = {
+        "host": "localhost",
+        "user": "mahdi",
+    }
+    parsed = ConnectionManager.parse_host_config(cm, config)
+    monkeypatch.setattr("sshpilot.connection_manager.get_effective_ssh_config", lambda alias: {})
+    parsed["hostname"] = ""
+    connection = Connection(parsed)
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        connected = loop.run_until_complete(connection.connect())
+    finally:
+        loop.close()
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    assert connected
+    assert connection.ssh_cmd[-1].endswith("localhost")
+
+
+def test_connection_host_preserves_alias_when_hostname_blank():
+    data = {
+        "host": "alias",
+        "hostname": "",
+        "username": "user",
+    }
+    connection = Connection(data)
+    assert connection.host == "alias"
+    assert connection.hostname == ""
+
+
+def test_connect_with_blank_hostname_uses_alias(monkeypatch):
+    data = {
+        "host": "myalias",
+        "hostname": "",
+        "username": "mahdi",
+    }
+    monkeypatch.setattr("sshpilot.connection_manager.get_effective_ssh_config", lambda alias: {})
+    connection = Connection(data)
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        connected = loop.run_until_complete(connection.connect())
+    finally:
+        loop.close()
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    assert connected
+    assert connection.ssh_cmd[-1] == "mahdi@myalias"
+    assert connection.host == "myalias"
+    assert connection.hostname == "myalias"
 
 
 def test_format_host_requotes():

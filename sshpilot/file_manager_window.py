@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import dataclasses
 import errno
+import json
 import mimetypes
 import os
 import pathlib
@@ -36,11 +37,313 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 import paramiko
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
+from .platform_utils import is_flatpak
 
 import logging
 
 
 logger = logging.getLogger(__name__)
+
+
+def _get_docs_json_path():
+    """Get the path to the granted folders config file."""
+    from .platform_utils import get_config_dir
+    try:
+        base_dir = get_config_dir()
+    except TypeError:
+        # Some tests monkeypatch GLib with lightweight stubs that do not
+        # implement get_user_config_dir(). Fall back to a sensible default.
+        base_dir = os.path.join(os.path.expanduser("~"), ".config", "sshpilot")
+    return os.path.join(base_dir, "granted-folders.json")
+
+
+DOCS_JSON = _get_docs_json_path()
+
+
+def _ensure_cfg_dir():
+    """Ensure the config directory exists."""
+    cfg_dir = os.path.dirname(DOCS_JSON)
+    os.makedirs(cfg_dir, exist_ok=True)
+
+
+def _save_doc(folder_path: str, doc_id: str):
+    """Save document ID, display name, and actual path to JSON config."""
+    _ensure_cfg_dir()
+    data = {}
+    if os.path.exists(DOCS_JSON):
+        try:
+            with open(DOCS_JSON, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+    data[doc_id] = {
+        "display": Gio.File.new_for_path(folder_path).get_parse_name(),
+        "path": folder_path  # Store the actual path for non-Flatpak lookup
+    }
+    with open(DOCS_JSON, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
+def _grant_persistent_access(gfile):
+    """Grant persistent access to a file via the Document portal (Flatpak only)."""
+    if not is_flatpak():
+        # In non-Flatpak environments, generate a simple ID from the path
+        path = gfile.get_path()
+        import hashlib
+        doc_id = hashlib.md5(path.encode()).hexdigest()[:16]
+        logger.debug(f"Generated simple doc ID for non-Flatpak: {doc_id}")
+        return doc_id
+
+    path = gfile.get_path()
+    if not path:
+        logger.warning("Cannot grant persistent access without a path")
+        return None
+
+    try:
+        # Get the Document portal (only in Flatpak)
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        proxy = Gio.DBusProxy.new_sync(
+            bus,
+            Gio.DBusProxyFlags.NONE,
+            None,
+            "org.freedesktop.portal.Desktop",
+            "/org/freedesktop/portal/documents",
+            "org.freedesktop.portal.Documents",
+            None
+        )
+
+        fd_flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY") and os.path.isdir(path):
+            fd_flags |= os.O_DIRECTORY
+
+        fd = os.open(path, fd_flags)
+        try:
+            fd_list = Gio.UnixFDList.new()
+            fd_index = fd_list.append(fd)
+
+            is_directory = os.path.isdir(path)
+            flags = 1 | 2  # reuse_existing | persistent
+            if is_directory:
+                flags |= 8  # export-directory
+
+            app_id = os.environ.get("FLATPAK_ID", "")
+            basename = gfile.get_basename() or os.path.basename(path)
+
+            permissions: List[str] = ["read"]
+            if os.access(path, os.W_OK):
+                permissions.append("write")
+
+            # AddFull method signature according to the docs: (ah, u, s, as)
+            parameters = GLib.Variant(
+                "(ahusas)",
+                ([fd_index], flags, app_id, permissions)
+            )
+
+            result = proxy.call_with_unix_fd_list_sync(
+                "AddFull",
+                parameters,
+                Gio.DBusCallFlags.NONE,
+                -1,
+                fd_list,
+                None
+            )
+        finally:
+            os.close(fd)
+
+        if result:
+            doc_ids = result.get_child_value(0).unpack()
+            doc_id = doc_ids[0] if doc_ids else None
+            if doc_id:
+                logger.info(
+                    "Granted persistent access via Document portal, doc_id: %s", doc_id
+                )
+                return doc_id
+
+    except Exception as e:
+        logger.warning(f"Failed to grant persistent access via Document portal: {e}")
+
+    # Fallback to simple ID generation
+    path = gfile.get_path()
+    if path:
+        import hashlib
+        doc_id = hashlib.md5(path.encode()).hexdigest()[:16]
+        logger.debug(f"Using fallback doc ID: {doc_id}")
+        return doc_id
+    return None
+
+
+def _lookup_document_path(doc_id: str):
+    """Look up the current path for a document ID."""
+    # Always try config lookup first since Document portal seems unreliable
+    config_path = _lookup_path_from_config(doc_id)
+    if config_path and os.path.exists(config_path):
+        logger.debug(f"Found valid path from config for {doc_id}: {config_path}")
+        return config_path
+    
+    # Only try Document portal in Flatpak and if config lookup failed
+    if not is_flatpak():
+        return None
+    
+    try:
+        # Get the Document portal (only in Flatpak)
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        proxy = Gio.DBusProxy.new_sync(
+            bus,
+            Gio.DBusProxyFlags.NONE,
+            None,
+            "org.freedesktop.portal.Desktop",
+            "/org/freedesktop/portal/documents",
+            "org.freedesktop.portal.Documents",
+            None
+        )
+        
+        # Call Lookup to get the current path
+        # Lookup(IN s doc_id, OUT ay path, OUT a{s(say)} out_info)
+        result = proxy.call_sync(
+            "Lookup",
+            GLib.Variant("(s)", (doc_id,)),
+            Gio.DBusCallFlags.NONE,
+            -1,
+            None
+        )
+        
+        if result:
+            path_bytes = result.get_child_value(0).get_bytestring()
+            path = path_bytes.decode('utf-8')
+            logger.debug(f"Document portal lookup for {doc_id}: {path}")
+            return path
+        
+    except Exception as e:
+        logger.debug(f"Document portal lookup failed for {doc_id}: {e}")
+    
+    return None
+
+
+def _lookup_path_from_config(doc_id: str):
+    """Look up the original path from our config."""
+    try:
+        entry = _lookup_doc_entry(doc_id)
+        if entry:
+
+            # First try the 'path' field (new format)
+            if 'path' in entry:
+                path = entry['path']
+                if os.path.exists(path):
+                    return path
+            
+            # Fallback to 'display' field (old format)
+            display = entry.get('display', '')
+            if display:
+                # If it's a portal path, try it directly
+                if '/doc/' in display:
+                    if os.path.exists(display):
+                        return display
+                # If it starts with ~, expand it
+                elif display.startswith('~'):
+                    expanded = os.path.expanduser(display)
+                    if os.path.exists(expanded):
+                        return expanded
+                # Try as-is
+                elif os.path.exists(display):
+                    return display
+            
+            # Last resort: try to construct portal path from doc_id
+            if is_flatpak():
+                portal_path = f"/run/user/{os.getuid()}/doc/{doc_id}"
+                if os.path.isdir(portal_path):
+                    return portal_path
+
+    except Exception as e:
+        logger.debug(f"Failed to lookup path from config: {e}")
+    return None
+
+
+def _portal_doc_path(doc_id: str) -> str:
+    """Get the portal mount path for a document ID."""
+    return f"/run/user/{os.getuid()}/doc/{doc_id}"
+
+
+def _load_doc_config() -> Dict[str, Dict[str, str]]:
+    """Load the granted folders configuration file."""
+
+    if not os.path.exists(DOCS_JSON):
+        return {}
+
+    try:
+        with open(DOCS_JSON, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, dict):
+                # Ensure we only keep dictionary entries
+                return {
+                    key: value
+                    for key, value in data.items()
+                    if isinstance(value, dict)
+                }
+    except Exception as exc:  # pragma: no cover - config parsing errors are non-fatal
+        logger.debug(f"Failed to load granted folders config: {exc}")
+
+    return {}
+
+
+def _lookup_doc_entry(doc_id: str) -> Optional[Dict[str, str]]:
+    """Return the stored configuration entry for the given document ID."""
+
+    config = _load_doc_config()
+    entry = config.get(doc_id)
+    if isinstance(entry, dict):
+        return entry
+    return None
+
+
+def _load_first_doc_path():
+    """Load the first valid document portal path from saved config."""
+    logger.debug(f"Looking for config file: {DOCS_JSON}")
+
+    config = _load_doc_config()
+    if not config:
+        logger.debug("Config file does not exist or is empty")
+        return None
+
+    for doc_id, entry in config.items():
+        logger.debug(f"Looking up document ID: {doc_id}")
+        portal_path = _lookup_document_path(doc_id)
+        if portal_path and os.path.isdir(portal_path):
+            logger.debug(f"Found valid portal path: {portal_path}")
+            return portal_path, doc_id, entry
+
+        logger.debug(f"Document ID {doc_id} is no longer valid")
+
+    logger.debug("No valid portal paths found")
+    return None
+
+
+def _pretty_path_for_display(path: str) -> str:
+    """Convert a filesystem path to a human-friendly display string.
+
+    Uses GFile's parse_name for human-readable presentation (often shows "~" etc.).
+    For document portal paths, shows just the folder name instead of the full mount path.
+    """
+    try:
+        gfile = Gio.File.new_for_path(path)
+        parse_name = gfile.get_parse_name()
+        
+        # If it's a doc mount, show a human-friendly version
+        if "/doc/" in path and parse_name.startswith("/run/"):
+            # Extract the final directory name from the portal path
+            basename = gfile.get_basename()
+            if basename:
+                # For home directory, show it as ~/username
+                if basename == os.path.basename(os.path.expanduser("~")):
+                    return f"~/{basename}"
+                # For other directories, just show the basename
+                return basename
+            # Fall back to the full path if basename fails
+            return parse_name
+        return parse_name
+    except Exception:
+        # Fallback to original path if GFile operations fail
+        return path
+
 
 _DROP_ZONE_CSS_PROVIDER: Optional[Gtk.CssProvider] = None
 
@@ -895,7 +1198,27 @@ class AsyncSFTPManager(GObject.GObject):
         )
 
     def download(self, source: str, destination: pathlib.Path) -> Future:
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            # Ensure parent directory exists, with special handling for portal paths
+            parent_dir = destination.parent
+            logger.debug(f"Download: ensuring parent directory exists: {parent_dir}")
+            
+            if not parent_dir.exists():
+                logger.debug(f"Download: creating parent directory: {parent_dir}")
+                parent_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                logger.debug(f"Download: parent directory already exists: {parent_dir}")
+                
+            # Verify we can write to the destination
+            if not os.access(str(parent_dir), os.W_OK):
+                logger.warning(f"Download: no write access to destination directory: {parent_dir}")
+            else:
+                logger.debug(f"Download: write access confirmed for: {parent_dir}")
+                
+        except Exception as e:
+            logger.error(f"Download: failed to prepare destination directory {destination.parent}: {e}")
+            # Continue anyway - maybe the directory already exists or will be created by the SFTP operation
+        
         operation_id = f"download_{id(self)}_{time.time()}"
 
         def _impl() -> None:
@@ -917,9 +1240,16 @@ class AsyncSFTPManager(GObject.GObject):
                     self.emit("progress", 0.0, f"Downloaded {transferred_size}")
             
             try:
+                logger.debug(f"Download: starting SFTP get from {source} to {destination}")
                 self._sftp.get(source, str(destination), callback=progress_callback)
                 # Only emit completion if not cancelled
                 if operation_id not in self._cancelled_operations:
+                    # Verify the file was actually created
+                    if destination.exists():
+                        file_size = destination.stat().st_size
+                        logger.info(f"Download: successfully saved {source} to {destination} ({file_size} bytes)")
+                    else:
+                        logger.error(f"Download: file not found after transfer: {destination}")
                     self.emit("progress", 1.0, "Download complete")
             except TransferCancelledException:
                 # Clean up partial download on cancellation
@@ -1762,8 +2092,35 @@ class FilePane(Gtk.Box):
         download_button.set_visible(self._is_remote)
         upload_button.set_visible(not self._is_remote)
 
+        # Add Request Access button for local pane in Flatpak only when no access is granted
+        request_access_button = None
+        if not self._is_remote and is_flatpak():
+            # Check if we already have persisted folder access
+            has_persisted_access = _load_first_doc_path() is not None
+            if not has_persisted_access:
+                request_access_button = _create_action_button(
+                    "request_access",
+                    "folder-open-symbolic",
+                    "Request Access",
+                    lambda _button: self._on_request_access_clicked(),
+                )
+                # Use ButtonContent for this special button to make it more prominent
+                content = Adw.ButtonContent()
+                content.set_icon_name("folder-open-symbolic")
+                content.set_label("Request Access")
+                request_access_button.set_child(content)
+                request_access_button.add_css_class("suggested-action")
+                # Store reference to the button so we can hide it later
+                self._request_access_button = request_access_button
+            else:
+                self._request_access_button = None
+        else:
+            self._request_access_button = None
+
         action_bar.pack_start(upload_button)
         action_bar.pack_start(download_button)
+        if request_access_button:
+            action_bar.pack_start(request_access_button)
         action_bar.pack_end(delete_button)
         action_bar.pack_end(rename_button)
         action_bar.pack_end(cut_button)
@@ -1968,7 +2325,12 @@ class FilePane(Gtk.Box):
             return None
         else:
             # For local panes, create URI list as before
-            base_dir = window._normalize_local_path(self.toolbar.path_entry.get_text())
+            # Use the actual current path instead of the display path from path entry
+            # This handles Flatpak portal paths correctly
+            base_dir = getattr(self, '_current_path', None)
+            if not base_dir:
+                # Fallback to normalized path entry text for non-portal paths
+                base_dir = window._normalize_local_path(self.toolbar.path_entry.get_text())
             uris: List[str] = []
             files: List[Gio.File] = []
             for entry in entries:
@@ -2548,7 +2910,12 @@ class FilePane(Gtk.Box):
                             # Build full path and convert to URI
                             window = self.get_root()
                             if isinstance(window, FileManagerWindow):
-                                base_dir = window._normalize_local_path(self.toolbar.path_entry.get_text())
+                                # Use the actual current path instead of the display path from path entry
+                                # This handles Flatpak portal paths correctly
+                                base_dir = getattr(self, '_current_path', None)
+                                if not base_dir:
+                                    # Fallback to normalized path entry text for non-portal paths
+                                    base_dir = window._normalize_local_path(self.toolbar.path_entry.get_text())
                                 full_path = os.path.join(base_dir, item.name)
                                 if os.path.exists(full_path):
                                     gfile = Gio.File.new_for_path(full_path)
@@ -2796,8 +3163,15 @@ class FilePane(Gtk.Box):
                         print(f"Selected entries from origin: {[e.name for e in selected_entries]}")
                         
                         # Get current directory on local pane (destination)
-                        local_dir = self.toolbar.path_entry.get_text() or os.path.expanduser("~")
-                        destination = pathlib.Path(window._normalize_local_path(local_dir))
+                        # Use the actual current path instead of the display path from path entry
+                        # This handles Flatpak portal paths correctly
+                        current_path = getattr(self, '_current_path', None)
+                        if current_path:
+                            destination = pathlib.Path(current_path)
+                        else:
+                            # Fallback to normalized path entry text for non-portal paths
+                            local_dir = self.toolbar.path_entry.get_text() or os.path.expanduser("~")
+                            destination = pathlib.Path(window._normalize_local_path(local_dir))
                         print(f"Local destination directory: {destination}")
                         
                         # Test if files would conflict
@@ -2882,7 +3256,12 @@ class FilePane(Gtk.Box):
             self.show_toast("Select items in the local pane to upload")
             return
 
-        base_dir = window._normalize_local_path(local_pane.toolbar.path_entry.get_text())
+        # Use the actual current path instead of the display path from path entry
+        # This handles Flatpak portal paths correctly
+        base_dir = getattr(local_pane, '_current_path', None)
+        if not base_dir:
+            # Fallback to normalized path entry text for non-portal paths
+            base_dir = window._normalize_local_path(local_pane.toolbar.path_entry.get_text())
         source_paths = [pathlib.Path(os.path.join(base_dir, entry.name)) for entry in entries]
 
         destination = destination_pane.toolbar.path_entry.get_text() or "/"
@@ -2909,7 +3288,13 @@ class FilePane(Gtk.Box):
             self.show_toast("Local pane is unavailable")
             return
 
-        destination_root = window._normalize_local_path(local_pane.toolbar.path_entry.get_text())
+        # Use the actual current path instead of the display path from path entry
+        # This handles Flatpak portal paths correctly
+        destination_root = getattr(local_pane, '_current_path', None)
+        if not destination_root:
+            # Fallback to normalized path entry text for non-portal paths
+            destination_root = window._normalize_local_path(local_pane.toolbar.path_entry.get_text())
+        
         if not os.path.isdir(destination_root):
             self.show_toast("Local destination is not accessible")
             return
@@ -2923,6 +3308,105 @@ class FilePane(Gtk.Box):
             self.show_toast(f"Downloading {entries[0].name}…")
         else:
             self.show_toast(f"Downloading {len(entries)} items…")
+
+    def _on_request_access_clicked(self) -> None:
+        """Handle Request Access button click in Flatpak environment."""
+        # Create a confirmation dialog
+        window = self.get_root()
+        dialog = Adw.MessageDialog.new(
+            window,
+            "Request Folder Access",
+            "You are using the app in a sandbox. Please grant access to your home folder to use the File Manager."
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("ok", "OK")
+        dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("ok")
+        dialog.set_close_response("cancel")
+        
+        def on_response(dialog, response):
+            if response == "ok":
+                self._show_folder_picker()
+        
+        dialog.connect("response", on_response)
+        dialog.present()
+
+    def _hide_request_access_button(self) -> None:
+        """Hide the Request Access button after access has been granted."""
+        if hasattr(self, '_request_access_button') and self._request_access_button:
+            self._request_access_button.set_visible(False)
+            logger.debug("Hid Request Access button after granting access")
+
+    def _show_folder_picker(self) -> None:
+        """Show a portal-aware folder picker for Flatpak with persistent access."""
+        dlg = Gtk.FileChooserNative(
+            title="Select Folder to Grant Access",
+            action=Gtk.FileChooserAction.SELECT_FOLDER,
+            transient_for=self.get_root(),
+            modal=True,
+        )
+        
+        def _resp(_dlg, resp):
+            if resp == Gtk.ResponseType.ACCEPT:
+                gfile = dlg.get_file()
+                if gfile:
+                    try:
+                        path = gfile.get_path()
+                        logger.debug(f"FileChooserNative returned path: {path}")
+                        
+                        # Grant persistent access via Document portal
+                        doc_id = _grant_persistent_access(gfile)
+                        if doc_id:
+                            _save_doc(path, doc_id)
+                            logger.info(f"Persisted access to {path} (ID={doc_id})")
+                        else:
+                            logger.warning(f"Could not grant persistent access to: {path}")
+                        
+                        # Switch to it immediately
+                        self.toolbar.path_entry.set_text(path)
+                        self.toolbar.path_entry.emit("activate")
+                        self.show_toast(f"Access granted to: {_pretty_path_for_display(path)}")
+                        
+                        # Hide the Request Access button since access is now granted
+                        self._hide_request_access_button()
+                    except Exception as e:
+                        logger.warning(f"Failed to persist folder access: {e}")
+                        # Still navigate to folder even if persistence fails
+                        path = gfile.get_path()
+                        if path:
+                            self.toolbar.path_entry.set_text(path)
+                            self.toolbar.path_entry.emit("activate")
+                            self.show_toast(f"Access granted to: {_pretty_path_for_display(path)}")
+                            # Hide the Request Access button since access is now granted
+                            self._hide_request_access_button()
+            dlg.destroy()
+        
+        dlg.connect("response", _resp)
+        dlg.show()
+
+    def restore_persisted_folder(self) -> None:
+        """Restore access to a previously granted folder on app launch (Flatpak only)."""
+        if not is_flatpak():
+            return
+            
+        logger.debug("Attempting to restore persisted folder...")
+        portal_result = _load_first_doc_path()
+        if portal_result:
+            portal_path, doc_id, entry = portal_result
+            logger.debug(f"Found persisted path: {portal_path} (doc_id={doc_id})")
+            try:
+                # Directly trigger the path change instead of relying on path entry activation
+                self.emit("path-changed", portal_path)
+                logger.info(f"Restored access to folder: {portal_path}")
+            except Exception as e:
+                logger.warning(f"Failed to restore folder access: {e}")
+        else:
+            logger.debug("No persisted path found")
+
+    def _set_current_pathbar_text(self, path: str) -> None:
+        """Set the path bar text with human-friendly display formatting."""
+        display_path = _pretty_path_for_display(path)
+        self.toolbar.path_entry.set_text(display_path)
 
     @staticmethod
     def _dialog_dismissed(error: GLib.Error) -> bool:
@@ -3021,7 +3505,7 @@ class FilePane(Gtk.Box):
         logger.debug(f"FilePane.show_entries: {pane_type} pane updating with {len(entries_list)} entries for path {path}")
         
         self._current_path = path
-        self.toolbar.path_entry.set_text(path)
+        self._set_current_pathbar_text(path)
         self._cached_entries = entries_list
         self._apply_entry_filter(preserve_selection=False)
         
@@ -3468,7 +3952,7 @@ class FileManagerWindow(Adw.Window):
         self._clipboard_operation: Optional[str] = None
 
 
-        # Prime the left (local) pane immediately with local home directory
+        # Prime the left (local) pane with local home directory initially
         try:
             local_home = os.path.expanduser("~")
             self._load_local(local_home)
@@ -3481,6 +3965,10 @@ class FileManagerWindow(Adw.Window):
             pane.connect("path-changed", self._on_path_changed, pane)
             pane.connect("request-operation", self._on_request_operation, pane)
             pane.set_can_paste(False)
+
+        # In Flatpak, schedule restoration after initialization is complete
+        if is_flatpak():
+            GLib.idle_add(self._restore_flatpak_folder)
 
         # Initialize SFTP manager and connect signals
         initial_password = None
@@ -3785,6 +4273,21 @@ class FileManagerWindow(Adw.Window):
                 pane.push_history(path)
             self._manager.listdir(path)
 
+    def _restore_flatpak_folder(self) -> bool:
+        """Restore Flatpak folder access after window initialization is complete."""
+        try:
+            portal_result = _load_first_doc_path()
+            if portal_result:
+                portal_path, doc_id, entry = portal_result
+                logger.debug(f"Scheduled restoration of: {portal_path} (doc_id={doc_id})")
+                # Directly call _load_local instead of emitting signals
+                self._load_local(portal_path)
+                self._left_pane.push_history(portal_path)
+                logger.info(f"Successfully restored access to folder: {portal_path}")
+        except Exception as e:
+            logger.warning(f"Failed to restore Flatpak folder access: {e}")
+        return False  # Don't repeat this idle callback
+
     def _check_file_conflicts(self, files_to_transfer: List[Tuple[str, str]], operation_type: str, callback: Callable[[List[Tuple[str, str]]], None]) -> None:
         """Check for file conflicts and show resolution dialog if needed.
 
@@ -3874,7 +4377,13 @@ class FileManagerWindow(Adw.Window):
 
             directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
             if pane is self._left_pane:
-                directory = self._normalize_local_path(directory)
+                # Use the actual current path instead of the display path from path entry
+                # This handles Flatpak portal paths correctly
+                current_path = getattr(pane, '_current_path', None)
+                if current_path:
+                    directory = current_path
+                else:
+                    directory = self._normalize_local_path(directory)
             else:
                 directory = directory or "/"
 
@@ -3901,13 +4410,16 @@ class FileManagerWindow(Adw.Window):
             if isinstance(payload, dict):
                 destination = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
                 force_move = bool(payload.get("force_move"))
+            
+            # For local pane destinations, use actual current path instead of display path
+            if pane is self._left_pane:
+                current_path = getattr(pane, '_current_path', None)
+                if current_path:
+                    destination = current_path
+                else:
+                    destination = self._normalize_local_path(destination or pane.toolbar.path_entry.get_text() or "/")
             else:
                 destination = pane.toolbar.path_entry.get_text() or "/"
-
-            if pane is self._left_pane:
-                destination = self._normalize_local_path(destination)
-            else:
-                destination = destination or "/"
 
             move_requested = force_move or self._clipboard_operation == "cut"
             source_pane = self._clipboard_source_pane
@@ -4389,7 +4901,13 @@ class FileManagerWindow(Adw.Window):
 
     def _refresh_local_listing(self, path: str) -> bool:
         target = self._normalize_local_path(path)
-        current = self._normalize_local_path(self._left_pane.toolbar.path_entry.get_text())
+        # Use the actual current path instead of the display path from path entry
+        # This handles Flatpak portal paths correctly
+        current_path = getattr(self._left_pane, '_current_path', None)
+        if current_path:
+            current = current_path
+        else:
+            current = self._normalize_local_path(self._left_pane.toolbar.path_entry.get_text())
         if target == current:
             self._load_local(target)
         else:

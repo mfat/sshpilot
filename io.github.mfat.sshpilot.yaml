@@ -1,10 +1,11 @@
 app-id: io.github.mfat.sshpilot
 runtime: org.gnome.Platform
-runtime-version: '48'
+runtime-version: '49'
 sdk: org.gnome.Sdk
 command: sshpilot
 finish-args:
   - --share=network
+  - --share=ipc
   - --socket=fallback-x11
   - --socket=wayland
   - --socket=ssh-auth
@@ -22,8 +23,6 @@ cleanup:
 modules:
   - name: sshpass
     buildsystem: autotools
-    config-opts:
-      - --prefix=/app
     sources:
       - type: archive
         url: https://sourceforge.net/projects/sshpass/files/sshpass/1.09/sshpass-1.09.tar.gz
@@ -64,13 +63,5 @@ modules:
       - install -Dm644 io.github.mfat.sshpilot.desktop /app/share/applications/io.github.mfat.sshpilot.desktop
       - install -Dm644 io.github.mfat.sshpilot.metainfo.xml /app/share/metainfo/io.github.mfat.sshpilot.metainfo.xml
     sources:
-      # - type: git
-      #   url: "https://github.com/mfat/sshpilot.git"
-      #   tag: v3.8.4
-      #   commit: 8b102335d119ff51f09e3ea74ef8c8fd792a7f63
-      - type: file
-        path: sshpilot-launcher.sh
-      # - type: file
-      #   path: pyproject.toml
       - type: dir
         path: .
