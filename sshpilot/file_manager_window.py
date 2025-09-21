@@ -2055,6 +2055,14 @@ class FilePane(Gtk.Box):
     def _on_drop_accept(self, target: Gtk.DropTarget, drop: Gdk.Drop) -> bool:
         """Accept drops that contain files, URI lists, or plain text."""
         try:
+            # Check if this pane is currently the active drag source
+            window = self.get_root()
+            if isinstance(window, FileManagerWindow):
+                active_drag_source = window.get_active_drag_source()
+                if active_drag_source is self:
+                    print(f"Drop accept check on {'remote' if self._is_remote else 'local'} pane: REJECTING (self is drag source)")
+                    return False
+            
             formats = drop.get_formats()
             print(f"Drop accept check on {'remote' if self._is_remote else 'local'} pane")
             print(f"Available formats: {[formats.to_string()]}")
@@ -2074,6 +2082,14 @@ class FilePane(Gtk.Box):
             return False
 
     def _on_drop_enter(self, _target: Gtk.DropTarget, _x: float, _y: float):
+        # Check if this pane is currently the active drag source
+        window = self.get_root()
+        if isinstance(window, FileManagerWindow):
+            active_drag_source = window.get_active_drag_source()
+            if active_drag_source is self:
+                print(f"Drop enter on {'remote' if self._is_remote else 'local'} pane: IGNORING (self is drag source)")
+                return Gdk.DragAction.COPY
+        
         print(f"Drop enter on {'remote' if self._is_remote else 'local'} pane")
         self._set_drop_zone_pointer(True)
         return Gdk.DragAction.COPY
@@ -2082,6 +2098,14 @@ class FilePane(Gtk.Box):
         return Gdk.DragAction.COPY
 
     def _on_drop_leave(self, _target: Gtk.DropTarget) -> None:
+        # Check if this pane is currently the active drag source
+        window = self.get_root()
+        if isinstance(window, FileManagerWindow):
+            active_drag_source = window.get_active_drag_source()
+            if active_drag_source is self:
+                print(f"Drop leave on {'remote' if self._is_remote else 'local'} pane: IGNORING (self is drag source)")
+                return
+        
         print(f"Drop leave on {'remote' if self._is_remote else 'local'} pane")
         self._set_drop_zone_pointer(False)
         # Ensure drop zone is hidden when drag leaves
