@@ -82,8 +82,17 @@ if [ -d "dist/SSHPilot.app" ]; then
         VERSION=$(date +%Y%m%d)
     fi
     
+    # Detect architecture for DMG naming
+    ARCH=$(uname -m)
+    if [ "$ARCH" = "arm64" ]; then
+        ARCH_NAME="aarch64"
+    else
+        ARCH_NAME="x86_64"
+    fi
+    
     echo "DEBUG: Detected version: $VERSION"
-    DMG_NAME="sshPilot-${VERSION}.dmg"
+    echo "DEBUG: Detected architecture: $ARCH ($ARCH_NAME)"
+    DMG_NAME="sshPilot-macOS-${VERSION}-${ARCH_NAME}.dmg"
     DMG_PATH="dist/${DMG_NAME}"
     echo "DEBUG: DMG will be created as: $DMG_PATH"
     

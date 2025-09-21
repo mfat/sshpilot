@@ -86,9 +86,9 @@ jobs:
             echo "=== DEBUG: Using date as version: '$VERSION' ==="
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "dmg=sshPilot-${VERSION}.dmg" >> "$GITHUB_OUTPUT"
+          echo "dmg=sshPilot-macOS-${VERSION}-aarch64.dmg" >> "$GITHUB_OUTPUT"
           echo "=== DEBUG: Final version: '$VERSION' ==="
-          echo "=== DEBUG: DMG name: 'sshPilot-${VERSION}.dmg' ==="
+          echo "=== DEBUG: DMG name: 'sshPilot-macOS-${VERSION}-aarch64.dmg' ==="
 
       - name: Verify build outputs
         run: |
