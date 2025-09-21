@@ -5,15 +5,17 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <name>sshPilot</name>
-  <summary>SSH connection manager with integrated terminal</summary>
+  <summary>Manage your servers with ease</summary>
   <description>
-    <p>sshPilot is a user-friendly SSH connection manager for managing remote servers. It features multi-tab terminals, key management, port forwarding, and file uploads.</p>
+    <p>sshPilot is a user-friendly SSH connection manager and client. It features a built-in tabbed terminal, remote file management, key transfer, port forwarding and more.</p>
     <ul>
       <li>Manage multiple machines from a unified, clean interface</li>
-      <li>Integrated terminal with theming</li>
-      <li>Local, remote and dynamic port forwarding</li>
-      <li>File uploads</li>
-      <li>SSH key generation and copying to server</li>
+      <li>Transfer files to and from servers using the built-in file manager</li>
+      <li>Tuned for fast keyboard navigation with customizable shortcuts</li>
+      <li>Easily generate and transfer SSH keys to servers</li>
+      <li>Loads existing ~/.ssh/config and works with standard SSH keys and settings</li>
+      <li>Configure local, remote and dynamic port forwarding</li>
+      <li>Server grouping</li>
     </ul>
   </description>
 
