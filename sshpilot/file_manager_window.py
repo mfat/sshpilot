@@ -1625,6 +1625,7 @@ class FilePane(Gtk.Box):
 
         overlay = Adw.ToastOverlay()
         self._overlay = overlay
+        self._current_toast = None  # Keep reference to current toast for dismissal
 
         content_overlay = Gtk.Overlay()
         content_overlay.set_child(self._stack)
@@ -3135,11 +3136,30 @@ class FilePane(Gtk.Box):
             return self._history[-1]
         return None
 
-    def show_toast(self, text: str) -> None:
+    def show_toast(self, text: str, timeout: int = -1) -> None:
         """Show a toast message safely."""
         try:
+            # Dismiss any existing toast first
+            if self._current_toast:
+                self._current_toast.dismiss()
+                self._current_toast = None
+            
             toast = Adw.Toast.new(text)
+            if timeout >= 0:
+                toast.set_timeout(timeout)
             self._overlay.add_toast(toast)
+            self._current_toast = toast  # Keep reference for dismissal
+        except (AttributeError, RuntimeError, GLib.GError):
+            # Overlay might be destroyed or invalid, ignore
+            pass
+
+    def dismiss_toasts(self) -> None:
+        """Dismiss all toasts from the overlay."""
+        try:
+            # Dismiss the current toast if it exists
+            if self._current_toast:
+                self._current_toast.dismiss()
+                self._current_toast = None
         except (AttributeError, RuntimeError, GLib.GError):
             # Overlay might be destroyed or invalid, ignore
             pass
@@ -3493,9 +3513,9 @@ class FileManagerWindow(Adw.Window):
         except Exception as exc:
             print(f"Error showing progress: {exc}")
         
-        # Show loading toast in remote pane
+        # Show loading toast in remote pane (infinite timeout until manually dismissed)
         try:
-            self._right_pane.show_toast("Loading remote directory...")
+            self._right_pane.show_toast("Loading remote directory...", timeout=0)
         except (AttributeError, RuntimeError, GLib.GError):
             # Overlay might be destroyed or invalid, ignore
             pass
@@ -3672,6 +3692,21 @@ class FileManagerWindow(Adw.Window):
         target.show_entries(path, entries_list)
         self._apply_pending_highlight(target)
         target.push_history(path)
+        
+        # Dismiss any loading toast after directory load is fully complete
+        # The loading toast was shown on the right pane, so dismiss it specifically
+        try:
+            if target == self._right_pane:
+                target.dismiss_toasts()
+                logger.debug(f"_on_directory_loaded: dismissed loading toasts for right pane")
+            else:
+                # If target is not right pane, still dismiss any loading toasts on right pane
+                self._right_pane.dismiss_toasts()
+                logger.debug(f"_on_directory_loaded: dismissed loading toasts for right pane (fallback)")
+        except (AttributeError, RuntimeError, GLib.GError):
+            # Method might not exist or overlay might be destroyed, ignore
+            pass
+        
         logger.debug(f"_on_directory_loaded: completed directory load for {path}")
 
     # -- local filesystem helpers ---------------------------------------
