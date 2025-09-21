@@ -197,6 +197,7 @@ class Connection:
             # Resolve effective SSH configuration for this nickname/host
             effective_cfg: Dict[str, Union[str, List[str]]] = {}
             target_alias = self.nickname or self.hostname
+            alias_fallback = self.host or self.nickname or self.hostname
             if target_alias:
                 effective_cfg = get_effective_ssh_config(target_alias)
 
@@ -206,6 +207,7 @@ class Connection:
                 resolved_host = str(resolved_host_cfg)
             else:
                 resolved_host = self.hostname or self.host
+
             resolved_user = self.username or str(effective_cfg.get('user', ''))
             try:
                 resolved_port = int(effective_cfg.get('port', self.port))
@@ -271,7 +273,8 @@ class Connection:
             if resolved_port != 22:
                 ssh_cmd.extend(['-p', str(resolved_port)])
 
-            ssh_cmd.append(f"{resolved_user}@{resolved_host}" if resolved_user else resolved_host)
+            host_for_cmd = resolved_host or alias_fallback or target_alias or ''
+            ssh_cmd.append(f"{resolved_user}@{host_for_cmd}" if resolved_user else host_for_cmd)
 
             # Store command for later use
             self.ssh_cmd = ssh_cmd
