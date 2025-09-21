@@ -75,12 +75,31 @@ class Connection:
         self.forwarders: List[asyncio.Task] = []
         self.listeners: List[asyncio.Server] = []
 
-        self.nickname = data.get('nickname', data.get('hostname', data.get('host', 'Unknown')))
+        hostname_value = data.get('hostname')
+        host_value = data.get('host', '')
+
+        nickname_value = data.get('nickname')
+        if nickname_value:
+            self.nickname = nickname_value
+        else:
+            fallback_nickname = hostname_value if hostname_value else host_value
+            self.nickname = fallback_nickname or 'Unknown'
+
         if 'aliases' in data:
             self.aliases = data.get('aliases', [])
-        resolved_hostname = data.get('hostname') or data.get('host', '')
-        self.hostname = resolved_hostname
-        self.host = resolved_hostname  # Backward compatibility for legacy references
+
+        resolved_host = hostname_value if hostname_value else host_value
+        self.host = resolved_host
+
+        if hostname_value is None:
+            self.hostname = resolved_host
+        elif hostname_value == '':
+            if data.get('source'):
+                self.hostname = resolved_host
+            else:
+                self.hostname = ''
+        else:
+            self.hostname = hostname_value
 
         self.username = data.get('username', '')
         self.port = data.get('port', 22)

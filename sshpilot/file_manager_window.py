@@ -56,6 +56,7 @@ def _get_docs_json_path():
         base_dir = os.path.join(os.path.expanduser("~"), ".config", "sshpilot")
     return os.path.join(base_dir, "granted-folders.json")
 
+
 DOCS_JSON = _get_docs_json_path()
 
 
@@ -92,7 +93,12 @@ def _grant_persistent_access(gfile):
         doc_id = hashlib.md5(path.encode()).hexdigest()[:16]
         logger.debug(f"Generated simple doc ID for non-Flatpak: {doc_id}")
         return doc_id
-    
+
+    path = gfile.get_path()
+    if not path:
+        logger.warning("Cannot grant persistent access without a path")
+        return None
+
     try:
         # Get the Document portal (only in Flatpak)
         bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
@@ -105,39 +111,69 @@ def _grant_persistent_access(gfile):
             "org.freedesktop.portal.Documents",
             None
         )
-        
-        # Get the file descriptor
-        fd = os.open(gfile.get_path(), os.O_RDONLY)
-        fd_list = Gio.UnixFDList.new()
-        fd_list.append(fd)
-        
-        # Call AddFull to grant persistent access
-        # AddFull(IN h fd, IN b reuse_existing, IN b persistent, OUT s doc_id, OUT a{s(say)} out_info)
-        result = proxy.call_with_unix_fd_list_sync(
-            "AddFull",
-            GLib.Variant("(hbb)", (0, True, True)),  # fd_index=0, reuse_existing=True, persistent=True
-            Gio.DBusCallFlags.NONE,
-            -1,
-            fd_list,
-            None
-        )
-        
-        os.close(fd)
-        
+
+        fd_flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY") and os.path.isdir(path):
+            fd_flags |= os.O_DIRECTORY
+
+        fd = os.open(path, fd_flags)
+        try:
+            fd_list = Gio.UnixFDList.new()
+            fd_index = fd_list.append(fd)
+
+            is_directory = os.path.isdir(path)
+            flags = 1 | 2  # reuse_existing | persistent
+            if is_directory:
+                flags |= 8  # export-directory
+
+            app_id = os.environ.get("FLATPAK_ID", "")
+            basename = gfile.get_basename() or os.path.basename(path)
+
+            permissions: List[str] = ["read"]
+            if os.access(path, os.W_OK):
+                permissions.append("write")
+
+            options: Dict[str, GLib.Variant] = {}
+            if basename:
+                options["filename"] = GLib.Variant("s", basename)
+            options["persistent"] = GLib.Variant("b", True)
+            options["writable"] = GLib.Variant("b", "write" in permissions)
+
+            parameters = GLib.Variant(
+                "(ahusasa{sv})",
+                ([fd_index], flags, app_id, permissions, options)
+            )
+
+            result = proxy.call_with_unix_fd_list_sync(
+                "AddFull",
+                parameters,
+                Gio.DBusCallFlags.NONE,
+                -1,
+                fd_list,
+                None
+            )
+        finally:
+            os.close(fd)
+
         if result:
-            doc_id = result.get_child_value(0).get_string()
-            logger.info(f"Granted persistent access via Document portal, doc_id: {doc_id}")
-            return doc_id
-        
+            doc_ids = result.get_child_value(0).unpack()
+            doc_id = doc_ids[0] if doc_ids else None
+            if doc_id:
+                logger.info(
+                    "Granted persistent access via Document portal, doc_id: %s", doc_id
+                )
+                return doc_id
+
     except Exception as e:
         logger.warning(f"Failed to grant persistent access via Document portal: {e}")
-        # Fallback to simple ID generation
-        path = gfile.get_path()
+
+    # Fallback to simple ID generation
+    path = gfile.get_path()
+    if path:
         import hashlib
         doc_id = hashlib.md5(path.encode()).hexdigest()[:16]
         logger.debug(f"Using fallback doc ID: {doc_id}")
         return doc_id
-    
     return None
 
 
