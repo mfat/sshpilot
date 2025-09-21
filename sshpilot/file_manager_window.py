@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import dataclasses
 import errno
+import json
 import mimetypes
 import os
 import pathlib
@@ -36,11 +37,77 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 import paramiko
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
+from .platform_utils import is_flatpak
 
 import logging
 
 
 logger = logging.getLogger(__name__)
+
+
+DOCS_JSON = os.path.join(GLib.get_user_config_dir(), "sshpilot", "granted-folders.json")
+
+
+def _ensure_cfg_dir():
+    """Ensure the config directory exists."""
+    cfg_dir = os.path.dirname(DOCS_JSON)
+    os.makedirs(cfg_dir, exist_ok=True)
+
+
+def _save_doc(folder_path: str, doc_id: str):
+    """Save document ID and display name to JSON config."""
+    _ensure_cfg_dir()
+    data = {}
+    if os.path.exists(DOCS_JSON):
+        try:
+            with open(DOCS_JSON, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+    data[doc_id] = {"display": Gio.File.new_for_path(folder_path).get_parse_name()}
+    with open(DOCS_JSON, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
+def _portal_doc_path(doc_id: str) -> str:
+    """Get the portal mount path for a document ID."""
+    return f"/run/user/{os.getuid()}/doc/{doc_id}"
+
+
+def _load_first_doc_path():
+    """Load the first valid document portal path from saved config."""
+    if not os.path.exists(DOCS_JSON):
+        return None
+    try:
+        with open(DOCS_JSON, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        for doc_id in data.keys():
+            portal_path = _portal_doc_path(doc_id)
+            if os.path.isdir(portal_path):  # still valid
+                return portal_path
+    except Exception:
+        return None
+    return None
+
+
+def _pretty_path_for_display(path: str) -> str:
+    """Convert a filesystem path to a human-friendly display string.
+    
+    Uses GFile's parse_name for human-readable presentation (often shows "~" etc.).
+    For document portal paths, shows just the folder name instead of the full mount path.
+    """
+    try:
+        gfile = Gio.File.new_for_path(path)
+        parse_name = gfile.get_parse_name()
+        # If it's still a doc mount, just trim the doc prefix to the last component
+        if "/doc/" in path and parse_name.startswith("/run/"):
+            # Fall back to showing the folder name; it's better than the doc mount
+            return gfile.get_basename() or parse_name
+        return parse_name
+    except Exception:
+        # Fallback to original path if GFile operations fail
+        return path
+
 
 _DROP_ZONE_CSS_PROVIDER: Optional[Gtk.CssProvider] = None
 
@@ -1762,8 +1829,26 @@ class FilePane(Gtk.Box):
         download_button.set_visible(self._is_remote)
         upload_button.set_visible(not self._is_remote)
 
+        # Add Request Access button for local pane in Flatpak
+        request_access_button = None
+        if not self._is_remote and is_flatpak():
+            request_access_button = _create_action_button(
+                "request_access",
+                "folder-open-symbolic",
+                "Request Access",
+                lambda _button: self._on_request_access_clicked(),
+            )
+            # Use ButtonContent for this special button to make it more prominent
+            content = Adw.ButtonContent()
+            content.set_icon_name("folder-open-symbolic")
+            content.set_label("Request Access")
+            request_access_button.set_child(content)
+            request_access_button.add_css_class("suggested-action")
+
         action_bar.pack_start(upload_button)
         action_bar.pack_start(download_button)
+        if request_access_button:
+            action_bar.pack_start(request_access_button)
         action_bar.pack_end(delete_button)
         action_bar.pack_end(rename_button)
         action_bar.pack_end(cut_button)
@@ -2924,6 +3009,87 @@ class FilePane(Gtk.Box):
         else:
             self.show_toast(f"Downloading {len(entries)} items…")
 
+    def _on_request_access_clicked(self) -> None:
+        """Handle Request Access button click in Flatpak environment."""
+        # Create a confirmation dialog
+        window = self.get_root()
+        dialog = Adw.MessageDialog.new(
+            window,
+            "Request Folder Access",
+            "You are using the app in a sandbox. Please grant access to your home folder to use the File Manager."
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("ok", "OK")
+        dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("ok")
+        dialog.set_close_response("cancel")
+        
+        def on_response(dialog, response):
+            if response == "ok":
+                self._show_folder_picker()
+        
+        dialog.connect("response", on_response)
+        dialog.present()
+
+    def _show_folder_picker(self) -> None:
+        """Show a portal-aware folder picker for Flatpak with persistent access."""
+        dlg = Gtk.FileChooserNative(
+            title="Select Folder to Grant Access",
+            action=Gtk.FileChooserAction.SELECT_FOLDER,
+            transient_for=self.get_root(),
+            modal=True,
+        )
+        
+        def _resp(_dlg, resp):
+            if resp == Gtk.ResponseType.ACCEPT:
+                gfile = dlg.get_file()
+                if gfile:
+                    try:
+                        path = gfile.get_path()  # this is the /run/user/.../doc/... path
+                        # Ask for the portal's document-id attribute:
+                        info = gfile.query_info("document-id", Gio.FileQueryInfoFlags.NONE, None)
+                        doc_id = info.get_attribute_string("document-id") if info else None
+                        if doc_id:
+                            _save_doc(path, doc_id)
+                            logger.info(f"Persisted access to {path} (ID={doc_id})")
+                        
+                        # Switch to it immediately
+                        self.toolbar.path_entry.set_text(path)
+                        self.toolbar.path_entry.emit("activate")
+                        self.show_toast(f"Access granted to: {_pretty_path_for_display(path)}")
+                    except Exception as e:
+                        logger.warning(f"Failed to persist folder access: {e}")
+                        # Still navigate to folder even if persistence fails
+                        path = gfile.get_path()
+                        if path:
+                            self.toolbar.path_entry.set_text(path)
+                            self.toolbar.path_entry.emit("activate")
+                            self.show_toast(f"Access granted to: {_pretty_path_for_display(path)}")
+            dlg.destroy()
+        
+        dlg.connect("response", _resp)
+        dlg.show()
+
+    def restore_persisted_folder(self) -> None:
+        """Restore access to a previously granted folder on app launch."""
+        if not is_flatpak():
+            return
+            
+        portal_path = _load_first_doc_path()
+        if portal_path:
+            try:
+                # Set the actual portal path in the entry, then activate it
+                self.toolbar.path_entry.set_text(portal_path)
+                self.toolbar.path_entry.emit("activate")
+                logger.info(f"Restored access to folder: {portal_path}")
+            except Exception as e:
+                logger.warning(f"Failed to restore folder access: {e}")
+
+    def _set_current_pathbar_text(self, path: str) -> None:
+        """Set the path bar text with human-friendly display formatting."""
+        display_path = _pretty_path_for_display(path)
+        self.toolbar.path_entry.set_text(display_path)
+
     @staticmethod
     def _dialog_dismissed(error: GLib.Error) -> bool:
         dialog_error = getattr(Gtk, "DialogError", None)
@@ -3021,7 +3187,7 @@ class FilePane(Gtk.Box):
         logger.debug(f"FilePane.show_entries: {pane_type} pane updating with {len(entries_list)} entries for path {path}")
         
         self._current_path = path
-        self.toolbar.path_entry.set_text(path)
+        self._set_current_pathbar_text(path)
         self._cached_entries = entries_list
         self._apply_entry_filter(preserve_selection=False)
         
@@ -3475,6 +3641,13 @@ class FileManagerWindow(Adw.Window):
             self._left_pane.push_history(local_home)
         except Exception as exc:
             self._left_pane.show_toast(f"Failed to load local home: {exc}")
+
+        # In Flatpak, try to restore previously granted folder access
+        if is_flatpak():
+            try:
+                self._left_pane.restore_persisted_folder()
+            except Exception as exc:
+                logger.debug(f"Failed to restore Flatpak folder access: {exc}")
 
         # Connect pane signals
         for pane in (self._left_pane, self._right_pane):
