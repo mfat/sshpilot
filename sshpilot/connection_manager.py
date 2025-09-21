@@ -937,11 +937,14 @@ class ConnectionManager(GObject.Object):
 
             hostname_value = config.get('hostname')
             parsed_host = _unwrap(hostname_value) if hostname_value else ''
+            if not parsed_host:
+                parsed_host = host
 
             # Extract relevant configuration
             parsed = {
                 'nickname': host,
                 'hostname': parsed_host,
+                'host': host,
 
                 'port': int(_unwrap(config.get('port', 22))),
                 'username': _unwrap(config.get('user', getpass.getuser())),
