@@ -28,26 +28,24 @@
 <table>
   <tr>
     <td align="center" valign="top">
-      <img src="screenshots/tabs-overview.png" width="560" alt="Tabs overview">
+      <img src="screenshots/tab-overview.png" width="560" alt="Tabs overview">
       <br><strong>Tab Overview</strong><br>
-      Jump between multiple SSH sessions without losing context.
     </td>
     <td align="center" valign="top">
-      <img src="screenshots/openwrt-terminal.png" width="560" alt="Built-in terminal">
+      <img src="screenshots/main-window-with-tabs.png" width="560" alt="Built-in terminal">
       <br><strong>Built-in Terminal</strong><br>
-      Fast VTE terminal with keyboard-first workflow.
+
     </td>
   </tr>
   <tr>
     <td align="center" valign="top">
-      <img src="screenshots/key-copy-dialog.png" width="560" alt="Key copy dialog">
+      <img src="screenshots/ssh-copy-id.png" width="560" alt="Key copy dialog">
       <br><strong>Key Generation & Copy</strong><br>
-      Create keys and deploy them with one click.
+
     </td>
     <td align="center" valign="top">
-      <img src="screenshots/port-forwarding.png" width="560" alt="Port forwarding UI">
-      <br><strong>Port Forwarding</strong><br>
-      Manage local/remote/dynamic tunnels visually.
+      <img src="screenshots/terminal-settings.png" width="560" alt="Port forwarding UI">
+      <br><strong>Terminal customization</strong><br>
     </td>
   </tr>
 </table>
