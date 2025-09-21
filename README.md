@@ -65,8 +65,15 @@
 
 ## Download
 
-- ### DEB/RPM/Flatpak
+- ### DEB/RPM
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
+
+- ### Flatpak
+Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
+
+`
+flatpak install flathub io.github.mfat.sshpilot
+`
 
 - ### Arch linux
 Arch linux package via AUR: https://aur.archlinux.org/packages/sshpilot
