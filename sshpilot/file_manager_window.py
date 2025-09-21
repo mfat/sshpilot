@@ -48,7 +48,13 @@ logger = logging.getLogger(__name__)
 def _get_docs_json_path():
     """Get the path to the granted folders config file."""
     from .platform_utils import get_config_dir
-    return os.path.join(get_config_dir(), "granted-folders.json")
+    try:
+        base_dir = get_config_dir()
+    except TypeError:
+        # Some tests monkeypatch GLib with lightweight stubs that do not
+        # implement get_user_config_dir(). Fall back to a sensible default.
+        base_dir = os.path.join(os.path.expanduser("~"), ".config", "sshpilot")
+    return os.path.join(base_dir, "granted-folders.json")
 
 DOCS_JSON = _get_docs_json_path()
 
@@ -185,13 +191,9 @@ def _lookup_document_path(doc_id: str):
 def _lookup_path_from_config(doc_id: str):
     """Look up the original path from our config."""
     try:
-        if not os.path.exists(DOCS_JSON):
-            return None
-        with open(DOCS_JSON, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if doc_id in data:
-            entry = data[doc_id]
-            
+        entry = _lookup_doc_entry(doc_id)
+        if entry:
+
             # First try the 'path' field (new format)
             if 'path' in entry:
                 path = entry['path']
@@ -219,7 +221,7 @@ def _lookup_path_from_config(doc_id: str):
                 portal_path = f"/run/user/{os.getuid()}/doc/{doc_id}"
                 if os.path.isdir(portal_path):
                     return portal_path
-                    
+
     except Exception as e:
         logger.debug(f"Failed to lookup path from config: {e}")
     return None
@@ -230,41 +232,84 @@ def _portal_doc_path(doc_id: str) -> str:
     return f"/run/user/{os.getuid()}/doc/{doc_id}"
 
 
-def _load_first_doc_path():
-    """Load the first valid document portal path from saved config."""
-    logger.debug(f"Looking for config file: {DOCS_JSON}")
+def _load_doc_config() -> Dict[str, Dict[str, str]]:
+    """Load the granted folders configuration file."""
+
     if not os.path.exists(DOCS_JSON):
-        logger.debug("Config file does not exist")
-        return None
+        return {}
+
     try:
         with open(DOCS_JSON, "r", encoding="utf-8") as f:
             data = json.load(f)
-        logger.debug(f"Loaded config data: {data}")
-        for doc_id in data.keys():
-            logger.debug(f"Looking up document ID: {doc_id}")
-            # Use the Document portal to lookup the current path
-            portal_path = _lookup_document_path(doc_id)
-            if portal_path and os.path.isdir(portal_path):
-                logger.debug(f"Found valid portal path: {portal_path}")
-                return portal_path
-            else:
-                logger.debug(f"Document ID {doc_id} is no longer valid")
-    except Exception as e:
-        logger.debug(f"Error loading config: {e}")
+            if isinstance(data, dict):
+                # Ensure we only keep dictionary entries
+                return {
+                    key: value
+                    for key, value in data.items()
+                    if isinstance(value, dict)
+                }
+    except Exception as exc:  # pragma: no cover - config parsing errors are non-fatal
+        logger.debug(f"Failed to load granted folders config: {exc}")
+
+    return {}
+
+
+def _lookup_doc_entry(doc_id: str) -> Optional[Dict[str, str]]:
+    """Return the stored configuration entry for the given document ID."""
+
+    config = _load_doc_config()
+    entry = config.get(doc_id)
+    if isinstance(entry, dict):
+        return entry
+    return None
+
+
+def _load_first_doc_path():
+    """Load the first valid document portal path from saved config."""
+    logger.debug(f"Looking for config file: {DOCS_JSON}")
+
+    config = _load_doc_config()
+    if not config:
+        logger.debug("Config file does not exist or is empty")
         return None
+
+    for doc_id, entry in config.items():
+        logger.debug(f"Looking up document ID: {doc_id}")
+        portal_path = _lookup_document_path(doc_id)
+        if portal_path and os.path.isdir(portal_path):
+            logger.debug(f"Found valid portal path: {portal_path}")
+            return portal_path, doc_id, entry
+
+        logger.debug(f"Document ID {doc_id} is no longer valid")
+
     logger.debug("No valid portal paths found")
     return None
 
 
 def _pretty_path_for_display(path: str) -> str:
     """Convert a filesystem path to a human-friendly display string.
-    
+
     Uses GFile's parse_name for human-readable presentation (often shows "~" etc.).
     For document portal paths, shows just the folder name instead of the full mount path.
     """
     try:
         gfile = Gio.File.new_for_path(path)
         parse_name = gfile.get_parse_name()
+        # If this is a document portal mount, prefer the stored host path when available
+        if "/doc/" in path:
+            try:
+                doc_segment = path.split("/doc/", 1)[1]
+                doc_id = doc_segment.split("/", 1)[0]
+            except IndexError:
+                doc_id = ""
+
+            if doc_id:
+                entry = _lookup_doc_entry(doc_id)
+                if entry:
+                    host_path = entry.get("path") or entry.get("display")
+                    if host_path:
+                        return host_path
+
         # If it's still a doc mount, just trim the doc prefix to the last component
         if "/doc/" in path and parse_name.startswith("/run/"):
             # Fall back to showing the folder name; it's better than the doc mount
@@ -3256,13 +3301,18 @@ class FilePane(Gtk.Box):
             return
             
         logger.debug("Attempting to restore persisted folder...")
-        portal_path = _load_first_doc_path()
-        if portal_path:
-            logger.debug(f"Found persisted path: {portal_path}")
+        portal_result = _load_first_doc_path()
+        if portal_result:
+            portal_path, doc_id, entry = portal_result
+            logger.debug(f"Found persisted path: {portal_path} (doc_id={doc_id})")
+            display_path = entry.get("path") or entry.get("display") or portal_path
             try:
                 # Set the actual path in the entry, then activate it
                 self.toolbar.path_entry.set_text(portal_path)
                 self.toolbar.path_entry.emit("activate")
+                if display_path != portal_path:
+                    # Update the visible text to the human-readable path without re-triggering navigation
+                    self.toolbar.path_entry.set_text(display_path)
                 logger.info(f"Restored access to folder: {portal_path}")
             except Exception as e:
                 logger.warning(f"Failed to restore folder access: {e}")
