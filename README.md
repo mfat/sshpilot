@@ -10,13 +10,48 @@
 
 **sshPilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal. 
 
-<img width="800" height="744" alt="Screenshot From 2025-09-17 03-18-51" src="https://github.com/user-attachments/assets/c37cfc2a-c699-4911-b343-844d31ede169" />
+## Screenshots
 
-<img width="800" height="744" alt="Screenshot From 2025-09-17 03-23-19" src="https://github.com/user-attachments/assets/244f0fe8-dc41-456e-a97c-3a9f611b68bc" />
+<!-- Hero -->
+<p align="center">
+  <img src="screenshots/main-window.png" width="900" alt="SSH Pilot — main window">
+</p>
 
-<img width="800" height="744" alt="Screenshot From 2025-09-17 03-18-56" src="https://github.com/user-attachments/assets/94fe192a-2b96-45ca-ab11-5cd38cba5387" />
+<p align="center">
+  <em>Tabbed terminal, connection list, and quick actions.</em>
+</p>
 
-<img alt="Screenshot From 2025-09-17 03-19-30" src="https://github.com/user-attachments/assets/0b8bc6cc-a231-4d13-bf59-b39954585fad" />
+---
+
+## Feature Highlights
+
+<table>
+  <tr>
+    <td align="center" valign="top">
+      <img src="screenshots/tabs-overview.png" width="560" alt="Tabs overview">
+      <br><strong>Tab Overview</strong><br>
+      Jump between multiple SSH sessions without losing context.
+    </td>
+    <td align="center" valign="top">
+      <img src="screenshots/openwrt-terminal.png" width="560" alt="Built-in terminal">
+      <br><strong>Built-in Terminal</strong><br>
+      Fast VTE terminal with keyboard-first workflow.
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top">
+      <img src="screenshots/key-copy-dialog.png" width="560" alt="Key copy dialog">
+      <br><strong>Key Generation & Copy</strong><br>
+      Create keys and deploy them with one click.
+    </td>
+    <td align="center" valign="top">
+      <img src="screenshots/port-forwarding.png" width="560" alt="Port forwarding UI">
+      <br><strong>Port Forwarding</strong><br>
+      Manage local/remote/dynamic tunnels visually.
+    </td>
+  </tr>
+</table>
+
 
 
 ## Features
