@@ -789,6 +789,7 @@ class AsyncSFTPManager(GObject.GObject):
     # -- public operations ----------------------------------------------
 
     def listdir(self, path: str) -> None:
+        logger.debug(f"AsyncSFTPManager.listdir called for path: {path}")
         def _impl() -> Tuple[str, List[FileEntry]]:
             entries: List[FileEntry] = []
             assert self._sftp is not None
@@ -861,14 +862,15 @@ class AsyncSFTPManager(GObject.GObject):
 
         self._submit(
             _impl,
-            on_success=lambda result: self.emit("directory-loaded", *result),
-            on_error=lambda exc: self.emit("operation-error", str(exc)),
+            on_success=lambda result: (logger.debug(f"listdir success for {result[0]}, emitting directory-loaded with {len(result[1])} entries"), self.emit("directory-loaded", *result))[1],
+            on_error=lambda exc: (logger.debug(f"listdir error: {exc}"), self.emit("operation-error", str(exc)))[1],
         )
 
     def mkdir(self, path: str) -> Future:
+        logger.debug(f"Creating directory: {path}")
         return self._submit(
             lambda: self._sftp.mkdir(path),
-            on_success=lambda *_: self.listdir(os.path.dirname(path) or "/"),
+            # Don't call listdir from callback - let the UI handle refresh
         )
 
     def remove(self, path: str) -> Future:
@@ -883,12 +885,13 @@ class AsyncSFTPManager(GObject.GObject):
                 self._sftp.rmdir(path)
 
         parent = os.path.dirname(path) or "/"
-        return self._submit(_impl, on_success=lambda *_: self.listdir(parent))
+        return self._submit(_impl)  # Don't call listdir from callback - let the UI handle refresh
 
     def rename(self, source: str, target: str) -> Future:
+        logger.debug(f"Renaming {source} to {target}")
         return self._submit(
             lambda: self._sftp.rename(source, target),
-            on_success=lambda *_: self.listdir(os.path.dirname(target) or "/"),
+            # Don't call listdir from callback - let the UI handle refresh
         )
 
     def download(self, source: str, destination: pathlib.Path) -> Future:
@@ -2988,10 +2991,16 @@ class FilePane(Gtk.Box):
     # -- public API -----------------------------------------------------
 
     def show_entries(self, path: str, entries: Iterable[FileEntry]) -> None:
+        entries_list = list(entries)
+        pane_type = "remote" if self._is_remote else "local"
+        logger.debug(f"FilePane.show_entries: {pane_type} pane updating with {len(entries_list)} entries for path {path}")
+        
         self._current_path = path
         self.toolbar.path_entry.set_text(path)
-        self._cached_entries = list(entries)
+        self._cached_entries = entries_list
         self._apply_entry_filter(preserve_selection=False)
+        
+        logger.debug(f"FilePane.show_entries: {pane_type} pane update completed")
 
     def highlight_entry(self, name: str) -> None:
         if not name:
@@ -3607,10 +3616,15 @@ class FileManagerWindow(Adw.Window):
     def _on_directory_loaded(
         self, _manager, path: str, entries: Iterable[FileEntry]
     ) -> None:
+        entries_list = list(entries)  # Convert to list for logging and reuse
+        logger.debug(f"_on_directory_loaded: path={path}, entries_count={len(entries_list)}")
+        
         # Prefer the pane explicitly waiting for this exact path; otherwise
         # assign to the next pane that still has a pending request. This makes
         # initial dual loads robust even if the backend normalizes paths.
         target = next((pane for pane, pending in self._pending_paths.items() if pending == path), None)
+        logger.debug(f"_on_directory_loaded: target pane found by exact path match: {target is not None}")
+        
         if target is None:
             # Prefer whichever pane still has an outstanding remote refresh. If
             # no pane recorded the request (e.g. backend normalised the path
@@ -3624,12 +3638,17 @@ class FileManagerWindow(Adw.Window):
                 target = self._right_pane
             if target is None:
                 target = self._left_pane
+            logger.debug(f"_on_directory_loaded: fallback target pane: {target == self._right_pane and 'remote' or 'local'}")
+        
         # Clear the pending flag for the resolved pane
+        logger.debug(f"_on_directory_loaded: clearing pending path for target pane")
         self._pending_paths[target] = None
 
-        target.show_entries(path, entries)
+        logger.debug(f"_on_directory_loaded: calling show_entries on target pane")
+        target.show_entries(path, entries_list)
         self._apply_pending_highlight(target)
         target.push_history(path)
+        logger.debug(f"_on_directory_loaded: completed directory load for {path}")
 
     # -- local filesystem helpers ---------------------------------------
 
@@ -3886,11 +3905,18 @@ class FileManagerWindow(Adw.Window):
                                 self._load_local(os.path.dirname(new_path) or "/")
                         else:
                             future = self._manager.mkdir(new_path)
-                            self._attach_refresh(
-                                future,
-                                refresh_remote=pane,
-                                highlight_name=name,
-                            )
+                            
+                            # Simple direct refresh after operation completes
+                            def _on_mkdir_done(completed_future):
+                                try:
+                                    completed_future.result()  # Check for errors
+                                    logger.debug(f"mkdir completed successfully, refreshing pane")
+                                    # Direct refresh of the current directory
+                                    GLib.idle_add(lambda: self._force_refresh_pane(pane, highlight_name=name))
+                                except Exception as e:
+                                    logger.error(f"mkdir failed: {e}")
+                            
+                            future.add_done_callback(_on_mkdir_done)
                 dialog.close()
 
             dialog.connect("response", _on_response)
@@ -3945,11 +3971,18 @@ class FileManagerWindow(Adw.Window):
                         self._load_local(base_dir)
                 else:
                     future = self._manager.rename(source, target)
-                    self._attach_refresh(
-                        future,
-                        refresh_remote=pane,
-                        highlight_name=new_name,
-                    )
+                    
+                    # Simple direct refresh after operation completes
+                    def _on_rename_done(completed_future):
+                        try:
+                            completed_future.result()  # Check for errors
+                            logger.debug(f"rename completed successfully, refreshing pane")
+                            # Direct refresh of the current directory
+                            GLib.idle_add(lambda: self._force_refresh_pane(pane, highlight_name=new_name))
+                        except Exception as e:
+                            logger.error(f"rename failed: {e}")
+                    
+                    future.add_done_callback(_on_rename_done)
                     pane.show_toast(f"Renaming to {new_name}…")
                 dialog.close()
 
@@ -4221,21 +4254,30 @@ class FileManagerWindow(Adw.Window):
         highlight_name: Optional[str] = None,
     ) -> None:
         if future is None:
+            logger.debug("_attach_refresh: future is None, skipping")
             return
+
+        logger.debug(f"_attach_refresh: attaching refresh callback, refresh_remote={refresh_remote is not None}, highlight_name={highlight_name}")
 
         def _on_done(completed: Future) -> None:
             try:
                 completed.result()
-            except Exception:
+                logger.debug("_attach_refresh: operation completed successfully")
+            except Exception as e:
+                logger.debug(f"_attach_refresh: operation failed with {e}")
                 return
             if highlight_name:
                 if refresh_remote is not None:
                     self._pending_highlights[refresh_remote] = highlight_name
+                    logger.debug(f"_attach_refresh: set pending highlight {highlight_name} for remote pane")
                 elif refresh_local_path is not None:
                     self._pending_highlights[self._left_pane] = highlight_name
+                    logger.debug(f"_attach_refresh: set pending highlight {highlight_name} for local pane")
             if refresh_remote is not None:
+                logger.debug("_attach_refresh: scheduling remote refresh")
                 GLib.idle_add(self._refresh_remote_listing, refresh_remote)
             if refresh_local_path:
+                logger.debug(f"_attach_refresh: scheduling local refresh for {refresh_local_path}")
                 GLib.idle_add(self._refresh_local_listing, refresh_local_path)
 
         future.add_done_callback(_on_done)
@@ -4247,10 +4289,43 @@ class FileManagerWindow(Adw.Window):
         self._pending_highlights[pane] = None
         pane.highlight_entry(name)
 
-    def _refresh_remote_listing(self, pane: FilePane) -> bool:
+    def _force_refresh_pane(self, pane: FilePane, highlight_name: Optional[str] = None) -> None:
+        """Force refresh a pane by directly calling listdir and updating UI"""
         path = pane.toolbar.path_entry.get_text() or "/"
-        self._pending_paths[pane] = path
-        self._manager.listdir(path)
+        logger.debug(f"_force_refresh_pane: refreshing {('remote' if pane._is_remote else 'local')} pane for path: {path}")
+        
+        if highlight_name:
+            self._pending_highlights[pane] = highlight_name
+            logger.debug(f"_force_refresh_pane: set pending highlight {highlight_name}")
+        
+        if pane._is_remote:
+            # For remote pane, use SFTP
+            self._pending_paths[pane] = path
+            
+            def _refresh_impl():
+                try:
+                    logger.debug(f"_force_refresh_pane: calling manager.listdir for {path}")
+                    self._manager.listdir(path)
+                except Exception as e:
+                    logger.error(f"_force_refresh_pane: listdir failed: {e}")
+                    pane.show_toast(f"Refresh failed: {e}")
+            
+            # Submit directly to executor to avoid callback issues
+            if hasattr(self._manager, '_executor'):
+                self._manager._executor.submit(_refresh_impl)
+            else:
+                _refresh_impl()
+        else:
+            # For local pane, refresh directly
+            try:
+                self._load_local(path)
+            except Exception as e:
+                logger.error(f"_force_refresh_pane: local refresh failed: {e}")
+                pane.show_toast(f"Refresh failed: {e}")
+
+    def _refresh_remote_listing(self, pane: FilePane) -> bool:
+        """Legacy method - use _force_refresh_pane instead"""
+        self._force_refresh_pane(pane)
         return False
 
     def _refresh_local_listing(self, path: str) -> bool:
