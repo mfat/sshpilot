@@ -683,6 +683,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.header_bar.set_show_start_title_buttons(True)
         self.header_bar.set_show_end_title_buttons(True)
         
+        # Hide the title in headerbar to avoid NavigationPage title conflicts
+        self.header_bar.set_show_title(False)
+        
         # Add sidebar toggle button to the left side of header bar
         self.sidebar_toggle_button = Gtk.ToggleButton()
         self.sidebar_toggle_button.set_can_focus(False)  # Remove focus from sidebar toggle
