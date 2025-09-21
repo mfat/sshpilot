@@ -107,7 +107,7 @@ def _grant_persistent_access(gfile):
             Gio.DBusProxyFlags.NONE,
             None,
             "org.freedesktop.portal.Desktop",
-            "/org/freedesktop/portal/desktop",
+            "/org/freedesktop/portal/documents",
             "org.freedesktop.portal.Documents",
             None
         )
@@ -133,15 +133,10 @@ def _grant_persistent_access(gfile):
             if os.access(path, os.W_OK):
                 permissions.append("write")
 
-            options: Dict[str, GLib.Variant] = {}
-            if basename:
-                options["filename"] = GLib.Variant("s", basename)
-            options["persistent"] = GLib.Variant("b", True)
-            options["writable"] = GLib.Variant("b", "write" in permissions)
-
+            # AddFull method signature according to the docs: (ah, u, s, as)
             parameters = GLib.Variant(
-                "(ahusasa{sv})",
-                ([fd_index], flags, app_id, permissions, options)
+                "(ahusas)",
+                ([fd_index], flags, app_id, permissions)
             )
 
             result = proxy.call_with_unix_fd_list_sync(
@@ -197,7 +192,7 @@ def _lookup_document_path(doc_id: str):
             Gio.DBusProxyFlags.NONE,
             None,
             "org.freedesktop.portal.Desktop",
-            "/org/freedesktop/portal/desktop",
+            "/org/freedesktop/portal/documents",
             "org.freedesktop.portal.Documents",
             None
         )
@@ -331,25 +326,19 @@ def _pretty_path_for_display(path: str) -> str:
     try:
         gfile = Gio.File.new_for_path(path)
         parse_name = gfile.get_parse_name()
-        # If this is a document portal mount, prefer the stored host path when available
-        if "/doc/" in path:
-            try:
-                doc_segment = path.split("/doc/", 1)[1]
-                doc_id = doc_segment.split("/", 1)[0]
-            except IndexError:
-                doc_id = ""
-
-            if doc_id:
-                entry = _lookup_doc_entry(doc_id)
-                if entry:
-                    host_path = entry.get("path") or entry.get("display")
-                    if host_path:
-                        return host_path
-
-        # If it's still a doc mount, just trim the doc prefix to the last component
+        
+        # If it's a doc mount, show a human-friendly version
         if "/doc/" in path and parse_name.startswith("/run/"):
-            # Fall back to showing the folder name; it's better than the doc mount
-            return gfile.get_basename() or parse_name
+            # Extract the final directory name from the portal path
+            basename = gfile.get_basename()
+            if basename:
+                # For home directory, show it as ~/username
+                if basename == os.path.basename(os.path.expanduser("~")):
+                    return f"~/{basename}"
+                # For other directories, just show the basename
+                return basename
+            # Fall back to the full path if basename fails
+            return parse_name
         return parse_name
     except Exception:
         # Fallback to original path if GFile operations fail
@@ -3341,14 +3330,9 @@ class FilePane(Gtk.Box):
         if portal_result:
             portal_path, doc_id, entry = portal_result
             logger.debug(f"Found persisted path: {portal_path} (doc_id={doc_id})")
-            display_path = entry.get("path") or entry.get("display") or portal_path
             try:
-                # Set the actual path in the entry, then activate it
-                self.toolbar.path_entry.set_text(portal_path)
-                self.toolbar.path_entry.emit("activate")
-                if display_path != portal_path:
-                    # Update the visible text to the human-readable path without re-triggering navigation
-                    self.toolbar.path_entry.set_text(display_path)
+                # Directly trigger the path change instead of relying on path entry activation
+                self.emit("path-changed", portal_path)
                 logger.info(f"Restored access to folder: {portal_path}")
             except Exception as e:
                 logger.warning(f"Failed to restore folder access: {e}")
@@ -3904,7 +3888,7 @@ class FileManagerWindow(Adw.Window):
         self._clipboard_operation: Optional[str] = None
 
 
-        # Prime the left (local) pane immediately with local home directory
+        # Prime the left (local) pane with local home directory initially
         try:
             local_home = os.path.expanduser("~")
             self._load_local(local_home)
@@ -3912,18 +3896,15 @@ class FileManagerWindow(Adw.Window):
         except Exception as exc:
             self._left_pane.show_toast(f"Failed to load local home: {exc}")
 
-        # In Flatpak, try to restore previously granted folder access
-        if is_flatpak():
-            try:
-                self._left_pane.restore_persisted_folder()
-            except Exception as exc:
-                logger.debug(f"Failed to restore Flatpak folder access: {exc}")
-
         # Connect pane signals
         for pane in (self._left_pane, self._right_pane):
             pane.connect("path-changed", self._on_path_changed, pane)
             pane.connect("request-operation", self._on_request_operation, pane)
             pane.set_can_paste(False)
+
+        # In Flatpak, schedule restoration after initialization is complete
+        if is_flatpak():
+            GLib.idle_add(self._restore_flatpak_folder)
 
         # Initialize SFTP manager and connect signals
         initial_password = None
@@ -4227,6 +4208,21 @@ class FileManagerWindow(Adw.Window):
             else:
                 pane.push_history(path)
             self._manager.listdir(path)
+
+    def _restore_flatpak_folder(self) -> bool:
+        """Restore Flatpak folder access after window initialization is complete."""
+        try:
+            portal_result = _load_first_doc_path()
+            if portal_result:
+                portal_path, doc_id, entry = portal_result
+                logger.debug(f"Scheduled restoration of: {portal_path} (doc_id={doc_id})")
+                # Directly call _load_local instead of emitting signals
+                self._load_local(portal_path)
+                self._left_pane.push_history(portal_path)
+                logger.info(f"Successfully restored access to folder: {portal_path}")
+        except Exception as e:
+            logger.warning(f"Failed to restore Flatpak folder access: {e}")
+        return False  # Don't repeat this idle callback
 
     def _check_file_conflicts(self, files_to_transfer: List[Tuple[str, str]], operation_type: str, callback: Callable[[List[Tuple[str, str]]], None]) -> None:
         """Check for file conflicts and show resolution dialog if needed.
