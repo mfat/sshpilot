@@ -79,7 +79,8 @@ class Connection:
         if 'aliases' in data:
             self.aliases = data.get('aliases', [])
         self.hostname = data.get('hostname', data.get('host', ''))
-        self.host = self.hostname  # Backward compatibility for legacy references
+        host_value = data.get('host')
+        self.host = host_value if host_value else self.hostname
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         # previously: self.keyfile = data.get('keyfile', '')
@@ -201,16 +202,20 @@ class Connection:
                 effective_cfg = get_effective_ssh_config(target_alias)
 
             # Determine final parameters, falling back to resolved config when needed
-            resolved_host = str(effective_cfg.get('hostname', '') or '').strip()
-            if not resolved_host:
-                resolved_host = self.hostname or alias_fallback
+            resolved_host_cfg = effective_cfg.get('hostname')
+            if resolved_host_cfg:
+                resolved_host = str(resolved_host_cfg)
+            else:
+                resolved_host = self.hostname or self.host
+
             resolved_user = self.username or str(effective_cfg.get('user', ''))
             try:
                 resolved_port = int(effective_cfg.get('port', self.port))
             except Exception:
                 resolved_port = self.port
-            self.hostname = resolved_host
-            self.host = self.hostname
+            previous_host = self.host
+            self.hostname = resolved_host or self.hostname
+            self.host = resolved_host or previous_host
             self.port = resolved_port
             if resolved_user:
                 self.username = resolved_user
@@ -627,7 +632,8 @@ class Connection:
         if 'aliases' in data:
             self.aliases = data.get('aliases', getattr(self, 'aliases', []))
         self.hostname = data.get('hostname', data.get('host', ''))
-        self.host = self.hostname
+        host_value = data.get('host')
+        self.host = host_value if host_value else self.hostname
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
         self.keyfile = data.get('keyfile') or data.get('private_key', '') or ''
