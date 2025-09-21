@@ -16,6 +16,7 @@
       <li>Loads existing ~/.ssh/config and works with standard SSH keys and settings</li>
       <li>Configure local, remote and dynamic port forwarding</li>
       <li>Server grouping</li>
+
     </ul>
   </description>
 
@@ -59,7 +60,7 @@
     </screenshot>
     <screenshot type="default">
       <image>https://raw.githubusercontent.com/mfat/sshpilot/38e1a8a/screenshots/start-page.png</image>
-      <caption>Tab Overview</caption>
+      <caption>Start Page</caption>
     </screenshot>
     <screenshot type="default">
       <image>https://raw.githubusercontent.com/mfat/sshpilot/38e1a8a/screenshots/ssh-copy-id.png</image>
