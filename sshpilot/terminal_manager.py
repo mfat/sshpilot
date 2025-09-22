@@ -83,6 +83,17 @@ class TerminalManager:
         def _set_terminal_colors():
 
             try:
+                if not getattr(connection, 'ssh_cmd', None):
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            fut = asyncio.run_coroutine_threadsafe(connection.connect(), loop)
+                            fut.result()
+                        else:
+                            loop.run_until_complete(connection.connect())
+                    except Exception as prep_err:
+                        logger.error(f"Failed to prepare SSH command: {prep_err}")
+
                 terminal.apply_theme()
                 terminal.vte.queue_draw()
                 if not terminal._connect_ssh():
