@@ -80,7 +80,10 @@ class Connection:
             self.aliases = data.get('aliases', [])
         resolved_hostname = data.get('hostname') or data.get('host', '')
         self.hostname = resolved_hostname
-        self.host = resolved_hostname  # Backward compatibility for legacy references
+        host_alias = data.get('host')
+        if not host_alias:
+            host_alias = self.nickname
+        self.host = host_alias
 
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
@@ -634,7 +637,10 @@ class Connection:
             self.aliases = data.get('aliases', getattr(self, 'aliases', []))
         resolved_hostname = data.get('hostname') or data.get('host', '')
         self.hostname = resolved_hostname
-        self.host = resolved_hostname
+        host_alias = data.get('host')
+        if not host_alias:
+            host_alias = getattr(self, 'host', self.nickname)
+        self.host = host_alias
 
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
@@ -1780,7 +1786,11 @@ class ConnectionManager(GObject.Object):
                 len(new_data.get('forwarding_rules', []) or [])
             )
             # Capture previous identifiers for credential cleanup
-            prev_host = getattr(connection, 'hostname', '')
+            prev_host = (
+                getattr(connection, 'hostname', '')
+                or getattr(connection, 'host', '')
+                or getattr(connection, 'nickname', '')
+            )
             prev_user = getattr(connection, 'username', '')
             original_nickname = getattr(connection, 'nickname', '')
 
@@ -1803,10 +1813,12 @@ class ConnectionManager(GObject.Object):
                 curr_host = (
                     new_data.get('hostname')
                     or new_data.get('host')
-                    or getattr(connection, 'hostname', prev_host)
+                    or getattr(connection, 'hostname', '')
+                    or getattr(connection, 'host', '')
+                    or getattr(connection, 'nickname', '')
                 )
                 curr_user = new_data.get('username') or getattr(connection, 'username', prev_user)
-                if pwd:
+                if pwd and curr_host:
                     self.store_password(curr_host, curr_user, pwd)
                 else:
                     # Remove any stored passwords for both previous and current identifiers
@@ -1842,7 +1854,13 @@ class ConnectionManager(GObject.Object):
             
             # Remove password from secure storage
             try:
-                self.delete_password(connection.hostname, connection.username)
+                lookup_host = (
+                    getattr(connection, 'hostname', '')
+                    or getattr(connection, 'host', '')
+                    or getattr(connection, 'nickname', '')
+                )
+                if lookup_host:
+                    self.delete_password(lookup_host, connection.username)
             except Exception as e:
                 logger.warning(f"Failed to remove password from storage: {e}")
             
