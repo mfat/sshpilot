@@ -694,14 +694,16 @@ class Connection:
         if 'aliases' in data:
             self.aliases = data.get('aliases', getattr(self, 'aliases', []))
 
-        resolved_host = hostname_value if hostname_value else host_value
+        if hostname_value in (None, ''):
+            resolved_host = host_value or getattr(self, 'host', '')
+        else:
+            resolved_host = hostname_value
         self.host = resolved_host
 
         if hostname_value is None:
             self.hostname = resolved_host
         elif hostname_value == '':
-            source_value = data.get('source', getattr(self, 'source', ''))
-            self.hostname = resolved_host if source_value else ''
+            self.hostname = ''
         else:
             self.hostname = hostname_value
 
