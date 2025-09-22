@@ -9,6 +9,7 @@ import logging
 import math
 import re
 import shlex
+import sys
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
@@ -63,6 +64,24 @@ from .ssh_utils import ensure_writable_ssh_home
 from .scp_utils import assemble_scp_transfer_args
 
 logger = logging.getLogger(__name__)
+
+
+def maybe_set_native_controls(header_bar: Gtk.HeaderBar, value: bool = False) -> None:
+    """
+    Safely set native controls on header bar, with fallback for older GTK versions.
+    Only affects macOS and requires GTK 4.18+. GTK will handle title buttons by default.
+    """
+    # Only exists in GTK 4.18+
+    is_418_plus = (
+        Gtk.get_major_version() > 4 or
+        (Gtk.get_major_version() == 4 and Gtk.get_minor_version() >= 18)
+    )
+
+    if sys.platform == "darwin" and is_418_plus:
+        try:
+            header_bar.set_use_native_controls(value)
+        except AttributeError:
+            pass  # extra safety in case of odd bindings
 
 
 def _get_connection_host(connection) -> str:
@@ -679,8 +698,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.header_bar = Gtk.HeaderBar()
         self.header_bar.set_title_widget(Gtk.Label(label="sshPilot"))
         
-        # Disable native window controls (stoplight buttons on macOS)
-        self.header_bar.set_use_native_controls(False)
+        # Safely configure native window controls (macOS only, GTK 4.18+)
+        maybe_set_native_controls(self.header_bar, False)
         
         
         # Add sidebar toggle button to the left side of header bar
@@ -1907,6 +1926,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Help submenu with platform-aware keyboard shortcuts overlay
         help_menu = Gio.Menu()
         help_menu.append('Keyboard Shortcuts', 'app.shortcuts')
+        help_menu.append('Shortcut Editor', 'win.edit-shortcuts')
         help_menu.append('Documentation', 'app.help')
         menu.append_submenu('Help', help_menu)
 
@@ -2830,17 +2850,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         win = Gtk.ShortcutsWindow(transient_for=self, modal=True)
         win.set_title(_('Keyboard Shortcuts'))
 
-        # Build header bar with shortcut editor button
-        header_bar = Adw.HeaderBar()
-        header_bar.set_show_start_title_buttons(False)
-
-        edit_button = Gtk.Button.new_with_mnemonic(_("Edit _Shortcuts…"))
-        edit_button.add_css_class('flat')
-        edit_button.set_tooltip_text(_("Open the shortcut editor"))
-        edit_button.connect('clicked', lambda _btn: self.show_shortcut_editor())
-        header_bar.pack_end(edit_button)
-
-        win.set_titlebar(header_bar)
+        # Don't set custom titlebar for ShortcutsWindow to avoid GTK stack issues
+        # The edit shortcuts functionality can be accessed via the main menu instead
 
         section = Gtk.ShortcutsSection()
         section.set_property('title', _('Keyboard Shortcuts'))
