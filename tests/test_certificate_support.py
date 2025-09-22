@@ -84,7 +84,7 @@ def test_certificate_support(tmp_path):
         'keyfile': key_path,
         'certificate': cert_path,
         'auth_method': 0,
-        'key_select_mode': 1,
+        'key_select_mode': 2,
     }
 
     conn = Connection(data)

@@ -207,7 +207,7 @@ class WelcomePage(Gtk.Overlay):
             i = 0
             while i < len(args):
                 arg = args[i]
-                
+
                 # Handle options with values
                 if arg == '-p' and i + 1 < len(args):
                     try:
@@ -218,25 +218,54 @@ class WelcomePage(Gtk.Overlay):
                         pass
                 elif arg == '-i' and i + 1 < len(args):
                     connection_data["keyfile"] = args[i + 1]
-                    connection_data["key_select_mode"] = 1  # Use specific key
+                    connection_data["key_select_mode"] = 2  # Use specific key without forcing IdentitiesOnly by default
                     i += 2
                     continue
                 elif arg == '-o' and i + 1 < len(args):
                     # Handle SSH options like -o "UserKnownHostsFile=/dev/null"
                     option = args[i + 1]
-                    if '=' in option:
-                        key, value = option.split('=', 1)
-                        if key == 'User':
+                    parsed = option.split('=', 1)
+                    if len(parsed) == 2:
+                        key, value = parsed
+                        key_lower = key.lower()
+                        value = value.strip()
+                        if key_lower == 'user':
                             connection_data["username"] = value
-                        elif key == 'Port':
+                        elif key_lower == 'port':
                             try:
                                 connection_data["port"] = int(value)
                             except ValueError:
                                 pass
-                        elif key == 'IdentityFile':
+                        elif key_lower == 'identityfile':
                             connection_data["keyfile"] = value
-                            connection_data["key_select_mode"] = 1
+                            connection_data["key_select_mode"] = 2
+                        elif key_lower == 'identitiesonly':
+                            if value.lower() in ('yes', 'true', '1', 'on'):
+                                connection_data["key_select_mode"] = 1
+                            elif value.lower() in ('no', 'false', '0', 'off') and connection_data.get("keyfile"):
+                                connection_data["key_select_mode"] = 2
                     i += 2
+                    continue
+                elif arg.startswith('-o') and '=' in arg[2:]:
+                    key, value = arg[2:].split('=', 1)
+                    key_lower = key.lower()
+                    value = value.strip()
+                    if key_lower == 'identityfile':
+                        connection_data["keyfile"] = value
+                        connection_data["key_select_mode"] = 2
+                    elif key_lower == 'identitiesonly':
+                        if value.lower() in ('yes', 'true', '1', 'on'):
+                            connection_data["key_select_mode"] = 1
+                        elif value.lower() in ('no', 'false', '0', 'off') and connection_data.get("keyfile"):
+                            connection_data["key_select_mode"] = 2
+                    elif key_lower == 'user':
+                        connection_data["username"] = value
+                    elif key_lower == 'port':
+                        try:
+                            connection_data["port"] = int(value)
+                        except ValueError:
+                            pass
+                    i += 1
                     continue
                 elif arg == '-X':
                     connection_data["x11_forwarding"] = True
@@ -271,7 +300,7 @@ class WelcomePage(Gtk.Overlay):
                 elif arg.startswith('-i'):
                     # Handle -i/path/to/key format (no space)
                     connection_data["keyfile"] = arg[2:]
-                    connection_data["key_select_mode"] = 1
+                    connection_data["key_select_mode"] = 2
                     i += 1
                     continue
                 elif not arg.startswith('-'):
@@ -293,7 +322,10 @@ class WelcomePage(Gtk.Overlay):
             # Validate that we have at least a host
             if not connection_data["host"]:
                 return None
-            
+
+            if connection_data.get("keyfile") and connection_data.get("key_select_mode", 0) == 0:
+                connection_data["key_select_mode"] = 2
+
             return connection_data
             
         except Exception as e:
@@ -428,7 +460,7 @@ class QuickConnectDialog(Adw.MessageDialog):
             i = 0
             while i < len(args):
                 arg = args[i]
-                
+
                 # Handle options with values
                 if arg == '-p' and i + 1 < len(args):
                     try:
@@ -439,25 +471,54 @@ class QuickConnectDialog(Adw.MessageDialog):
                         pass
                 elif arg == '-i' and i + 1 < len(args):
                     connection_data["keyfile"] = args[i + 1]
-                    connection_data["key_select_mode"] = 1  # Use specific key
+                    connection_data["key_select_mode"] = 2  # Use specific key without forcing IdentitiesOnly by default
                     i += 2
                     continue
                 elif arg == '-o' and i + 1 < len(args):
                     # Handle SSH options like -o "UserKnownHostsFile=/dev/null"
                     option = args[i + 1]
-                    if '=' in option:
-                        key, value = option.split('=', 1)
-                        if key == 'User':
+                    parsed = option.split('=', 1)
+                    if len(parsed) == 2:
+                        key, value = parsed
+                        key_lower = key.lower()
+                        value = value.strip()
+                        if key_lower == 'user':
                             connection_data["username"] = value
-                        elif key == 'Port':
+                        elif key_lower == 'port':
                             try:
                                 connection_data["port"] = int(value)
                             except ValueError:
                                 pass
-                        elif key == 'IdentityFile':
+                        elif key_lower == 'identityfile':
                             connection_data["keyfile"] = value
-                            connection_data["key_select_mode"] = 1
+                            connection_data["key_select_mode"] = 2
+                        elif key_lower == 'identitiesonly':
+                            if value.lower() in ('yes', 'true', '1', 'on'):
+                                connection_data["key_select_mode"] = 1
+                            elif value.lower() in ('no', 'false', '0', 'off') and connection_data.get("keyfile"):
+                                connection_data["key_select_mode"] = 2
                     i += 2
+                    continue
+                elif arg.startswith('-o') and '=' in arg[2:]:
+                    key, value = arg[2:].split('=', 1)
+                    key_lower = key.lower()
+                    value = value.strip()
+                    if key_lower == 'identityfile':
+                        connection_data["keyfile"] = value
+                        connection_data["key_select_mode"] = 2
+                    elif key_lower == 'identitiesonly':
+                        if value.lower() in ('yes', 'true', '1', 'on'):
+                            connection_data["key_select_mode"] = 1
+                        elif value.lower() in ('no', 'false', '0', 'off') and connection_data.get("keyfile"):
+                            connection_data["key_select_mode"] = 2
+                    elif key_lower == 'user':
+                        connection_data["username"] = value
+                    elif key_lower == 'port':
+                        try:
+                            connection_data["port"] = int(value)
+                        except ValueError:
+                            pass
+                    i += 1
                     continue
                 elif arg == '-X':
                     connection_data["x11_forwarding"] = True
@@ -492,7 +553,7 @@ class QuickConnectDialog(Adw.MessageDialog):
                 elif arg.startswith('-i'):
                     # Handle -i/path/to/key format (no space)
                     connection_data["keyfile"] = arg[2:]
-                    connection_data["key_select_mode"] = 1
+                    connection_data["key_select_mode"] = 2
                     i += 1
                     continue
                 elif not arg.startswith('-'):
@@ -514,7 +575,10 @@ class QuickConnectDialog(Adw.MessageDialog):
             # Validate that we have at least a host
             if not connection_data["host"]:
                 return None
-            
+
+            if connection_data.get("keyfile") and connection_data.get("key_select_mode", 0) == 0:
+                connection_data["key_select_mode"] = 2
+
             return connection_data
             
         except Exception as e:

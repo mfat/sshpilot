@@ -127,7 +127,7 @@ class Connection:
         # X11 forwarding preference
         self.x11_forwarding = bool(data.get('x11_forwarding', False))
         
-        # Key selection mode: 0 try all, 1 specific key
+        # Key selection mode: 0 try all, 1 specific key (IdentitiesOnly), 2 specific key (no IdentitiesOnly)
         try:
             self.key_select_mode = int(data.get('key_select_mode', 0) or 0)
         except Exception:
@@ -276,7 +276,8 @@ class Connection:
             try:
                 if int(getattr(self, 'auth_method', 0) or 0) == 0:
                     identity_files: List[str] = []
-                    if int(getattr(self, 'key_select_mode', 0) or 0) == 1:
+                    key_mode = int(getattr(self, 'key_select_mode', 0) or 0)
+                    if key_mode in (1, 2):
                         if self.keyfile and os.path.exists(self.keyfile):
                             identity_files.append(self.keyfile)
                     else:
@@ -290,6 +291,8 @@ class Connection:
                             identity_files.append(self.keyfile)
                     for key_path in identity_files:
                         ssh_cmd.extend(['-i', key_path])
+                        if key_mode == 1:
+                            ssh_cmd.extend(['-o', 'IdentitiesOnly=yes'])
                         if self.key_passphrase:
                             logger.warning("Passphrase-protected keys may require additional setup")
                     cert_files: List[str] = []
@@ -1192,24 +1195,23 @@ class ConnectionManager(GObject.Object):
                 pass
 
             # Key selection mode defaults: prefer "specific key" when IdentityFile is explicit
+            keyfile_value = parsed.get('keyfile', '')
+            keyfile_path = keyfile_value.strip() if isinstance(keyfile_value, str) else ''
+            has_specific_key = bool(keyfile_path and not keyfile_path.lower().startswith('select key file'))
             try:
                 ident_only_raw = config.get('identitiesonly')
                 ident_only = ''
                 if isinstance(ident_only_raw, str):
                     ident_only = ident_only_raw.strip().lower()
+
                 if ident_only in ('yes', 'true', '1', 'on'):
                     parsed['key_select_mode'] = 1
                 elif ident_only_raw is None or (isinstance(ident_only_raw, str) and not ident_only_raw.strip()):
-                    keyfile_value = parsed.get('keyfile', '')
-                    keyfile_path = keyfile_value.strip() if isinstance(keyfile_value, str) else ''
-                    if keyfile_path and not keyfile_path.lower().startswith('select key file'):
-                        parsed['key_select_mode'] = 1
-                    else:
-                        parsed['key_select_mode'] = 0
+                    parsed['key_select_mode'] = 2 if has_specific_key else 0
                 else:
                     parsed['key_select_mode'] = 0
             except Exception:
-                parsed['key_select_mode'] = 0
+                parsed['key_select_mode'] = 2 if has_specific_key else 0
 
             # Determine authentication method
             try:
@@ -1488,14 +1490,17 @@ class ConnectionManager(GObject.Object):
         # Add IdentityFile/IdentitiesOnly per selection when auth is key-based
         keyfile = data.get('keyfile') or data.get('private_key')
         auth_method = int(data.get('auth_method', 0) or 0)
-        key_select_mode = int(data.get('key_select_mode', 0) or 0)  # 0=try all, 1=specific
+        key_select_mode = int(data.get('key_select_mode', 0) or 0)
+        dedicated_key = key_select_mode in (1, 2)
         if auth_method == 0:
-            # Only write IdentityFile if key_select_mode == 1 (specific key)
-            if key_select_mode == 1 and keyfile and keyfile.strip() and not keyfile.strip().lower().startswith('select key file'):
+            # Only write IdentityFile when using a dedicated key mode
+            if dedicated_key and keyfile and keyfile.strip() and not keyfile.strip().lower().startswith('select key file'):
                 if ' ' in keyfile and not (keyfile.startswith('"') and keyfile.endswith('"')):
                     keyfile = f'"{keyfile}"'
                 lines.append(f"    IdentityFile {keyfile}")
-                lines.append("    IdentitiesOnly yes")
+
+                if key_select_mode == 1:
+                    lines.append("    IdentitiesOnly yes")
 
                 # Add certificate if specified (exclude placeholder text)
                 certificate = data.get('certificate')

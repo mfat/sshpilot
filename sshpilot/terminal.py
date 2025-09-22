@@ -657,8 +657,8 @@ class TerminalWidget(Gtk.Box):
                 except Exception:
                     pass
 
-                # Only add specific key if key_select_mode == 1 (specific key)
-                if key_select_mode == 1 and hasattr(self.connection, 'keyfile') and self.connection.keyfile and \
+                # Only add specific key when a dedicated key mode is selected
+                if key_select_mode in (1, 2) and hasattr(self.connection, 'keyfile') and self.connection.keyfile and \
                    os.path.isfile(self.connection.keyfile) and \
                    not self.connection.keyfile.startswith('Select key file'):
 
@@ -677,7 +677,8 @@ class TerminalWidget(Gtk.Box):
                     if self.connection.keyfile not in ssh_cmd:
                         ssh_cmd.extend(['-i', self.connection.keyfile])
                     logger.debug(f"Using SSH key: {self.connection.keyfile}")
-                    ensure_option('IdentitiesOnly=yes')
+                    if key_select_mode == 1:
+                        ensure_option('IdentitiesOnly=yes')
 
                     # Add certificate if specified
                     if hasattr(self.connection, 'certificate') and self.connection.certificate and \
