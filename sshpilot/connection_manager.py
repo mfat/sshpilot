@@ -142,22 +142,14 @@ class Connection:
     def __str__(self):
         return f"{self.nickname} ({self.username}@{self.hostname})"
 
-    def resolve_host_identifier(self) -> str:
-        """Return the best host identifier for commands and tracking."""
-        candidates: List[str] = [
-            getattr(self, 'hostname', None) or '',
-            getattr(self, 'host', None) or '',
-        ]
-        for candidate in candidates:
-            candidate = candidate.strip()
-            if candidate:
-                return candidate
+    def get_effective_host(self) -> str:
+        """Return the hostname used for operations, falling back to aliases."""
 
-        for alias in getattr(self, 'aliases', []) or []:
-            if alias:
-                return alias
-
-        return self.nickname or 'Unknown'
+        if self.hostname:
+            return self.hostname
+        if getattr(self, 'host', ''):
+            return self.host
+        return self.nickname
 
 
     @property
@@ -763,6 +755,7 @@ class ConnectionManager(GObject.Object):
         self.ssh_config = {}
         self.loop = asyncio.get_event_loop()
         self.active_connections: Dict[str, asyncio.Task] = {}
+        self._active_connection_keys: Dict[int, str] = {}
         self.ssh_config_path = ''
         self.known_hosts_path = ''
 
@@ -826,6 +819,31 @@ class ConnectionManager(GObject.Object):
         return False  # run once
 
     # No _ensure_collection needed with libsecret's high-level API
+
+    def _get_active_connection_key(self, connection: Connection, *, prefer_stored: bool = True) -> str:
+        """Return the key used to track a connection's keepalive task."""
+
+        conn_id = id(connection)
+        if prefer_stored:
+            stored = self._active_connection_keys.get(conn_id)
+            if stored:
+                return stored
+
+        try:
+            effective_host = connection.get_effective_host()
+        except AttributeError:
+            effective_host = getattr(connection, 'hostname', '') or getattr(connection, 'host', '') or ''
+
+        username = getattr(connection, 'username', '') or ''
+        key = effective_host or ''
+        if username:
+            key = f"{key}::{username}" if key else username
+        if not key:
+            key = connection.nickname or str(conn_id)
+
+        if prefer_stored:
+            self._active_connection_keys[conn_id] = key
+        return key
 
         
     def load_ssh_config(self):
@@ -2002,10 +2020,19 @@ class ConnectionManager(GObject.Object):
             if connection.forwarding_rules:
                 await connection.setup_forwarding()
             
+            # Determine the tracking key used for keepalive management
+            key = self._get_active_connection_key(connection, prefer_stored=False)
+            existing_key = self._active_connection_keys.get(id(connection))
+            if existing_key and existing_key != key:
+                old_task = self.active_connections.pop(existing_key, None)
+                if old_task:
+                    old_task.cancel()
+            self._active_connection_keys[id(connection)] = key
+
             # Store the connection task
-            connection_key = self._get_active_connection_key(connection)
-            if connection_key in self.active_connections:
-                self.active_connections[connection_key].cancel()
+            if key in self.active_connections:
+                self.active_connections[key].cancel()
+
             
             # Create a task to keep the connection alive
             async def keepalive():
@@ -2030,7 +2057,8 @@ class ConnectionManager(GObject.Object):
             
             # Start the keepalive task
             task = asyncio.create_task(keepalive())
-            self.active_connections[connection_key] = task
+            self.active_connections[key] = task
+
             
             # Update the connection state and emit status change
             connection.is_connected = True
@@ -2051,14 +2079,16 @@ class ConnectionManager(GObject.Object):
         """Disconnect from SSH host and clean up resources asynchronously"""
         try:
             # Cancel the keepalive task if it exists
-            connection_key = self._get_active_connection_key(connection)
-            if connection_key in self.active_connections:
-                self.active_connections[connection_key].cancel()
+            key = self._get_active_connection_key(connection)
+            if key in self.active_connections:
+                self.active_connections[key].cancel()
                 try:
-                    await self.active_connections[connection_key]
+                    await self.active_connections[key]
                 except asyncio.CancelledError:
                     pass
-                del self.active_connections[connection_key]
+                del self.active_connections[key]
+            self._active_connection_keys.pop(id(connection), None)
+
             
             # Disconnect the connection
             if hasattr(connection, 'connection') and connection.connection and connection.is_connected:
