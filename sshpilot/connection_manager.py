@@ -1210,6 +1210,8 @@ class ConnectionManager(GObject.Object):
 
                 if ident_only in ('yes', 'true', '1', 'on'):
                     parsed['key_select_mode'] = 1
+                elif ident_only in ('no', 'false', '0', 'off'):
+                    parsed['key_select_mode'] = 2 if has_specific_key else 0
                 elif ident_only_raw is None or (isinstance(ident_only_raw, str) and not ident_only_raw.strip()):
                     parsed['key_select_mode'] = 2 if has_specific_key else 0
                 else:
