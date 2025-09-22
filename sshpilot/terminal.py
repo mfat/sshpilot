@@ -483,7 +483,58 @@ class TerminalWidget(Gtk.Box):
     def _setup_ssh_terminal(self):
         """Set up terminal with direct SSH command (called from main thread)"""
         try:
-            ssh_cmd = ['ssh']
+            base_cmd = []
+            using_prepared_cmd = False
+
+            if hasattr(self.connection, 'ssh_cmd'):
+                prepared = getattr(self.connection, 'ssh_cmd', None)
+                if isinstance(prepared, (list, tuple)):
+                    base_cmd = list(prepared)
+                    using_prepared_cmd = len(base_cmd) > 0
+
+            if not base_cmd:
+                base_cmd = ['ssh']
+
+            ssh_cmd = list(base_cmd)
+
+            host_candidates = set()
+            try:
+                resolved_for_connection = _resolve_host_for_connection()
+                if resolved_for_connection:
+                    host_candidates.add(str(resolved_for_connection))
+            except Exception:
+                resolved_for_connection = ''
+
+            for attr in ('hostname', 'host', 'nickname'):
+                value = getattr(self.connection, attr, '')
+                if value:
+                    host_candidates.add(str(value))
+
+            username_for_host = getattr(self.connection, 'username', '') or ''
+            if username_for_host:
+                for value in list(host_candidates):
+                    if value:
+                        host_candidates.add(f"{username_for_host}@{value}")
+
+            host_arg = None
+            if using_prepared_cmd and ssh_cmd:
+                last_arg = ssh_cmd[-1]
+                if last_arg in host_candidates or (
+                    last_arg and not str(last_arg).startswith('-') and ' ' not in str(last_arg)
+                ):
+                    host_arg = ssh_cmd.pop()
+
+            needs_host_append = not using_prepared_cmd
+            if using_prepared_cmd and host_arg is None:
+                needs_host_append = False
+
+            def ensure_option(option: str):
+                if option not in ssh_cmd:
+                    ssh_cmd.extend(['-o', option])
+
+            def ensure_flag(flag: str):
+                if flag not in ssh_cmd:
+                    ssh_cmd.append(flag)
 
             def _resolve_host_for_connection() -> str:
                 if not hasattr(self, 'connection') or not self.connection:
@@ -540,24 +591,24 @@ class TerminalWidget(Gtk.Box):
             if apply_adv:
                 # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
                 if batch_mode and not using_password:
-                    ssh_cmd.extend(['-o', 'BatchMode=yes'])
+                    ensure_option('BatchMode=yes')
                 if connect_timeout is not None:
-                    ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
+                    ensure_option(f'ConnectTimeout={connect_timeout}')
                 if connection_attempts is not None:
-                    ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+                    ensure_option(f'ConnectionAttempts={connection_attempts}')
                 if keepalive_interval is not None:
-                    ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
+                    ensure_option(f'ServerAliveInterval={keepalive_interval}')
                 if keepalive_count is not None:
-                    ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
+                    ensure_option(f'ServerAliveCountMax={keepalive_count}')
                 if strict_host:
-                    ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
+                    ensure_option(f'StrictHostKeyChecking={strict_host}')
                 if compression:
-                    ssh_cmd.append('-C')
+                    ensure_flag('-C')
 
             # Default to accepting new host keys non-interactively on fresh installs
             try:
                 if (not strict_host) and auto_add_host_keys:
-                    ssh_cmd.extend(['-o', 'StrictHostKeyChecking=accept-new'])
+                    ensure_option('StrictHostKeyChecking=accept-new')
             except Exception:
                 pass
 
@@ -566,12 +617,12 @@ class TerminalWidget(Gtk.Box):
                 if getattr(self, 'connection_manager', None):
                     kh_path = getattr(self.connection_manager, 'known_hosts_path', '')
                     if kh_path and os.path.exists(kh_path):
-                        ssh_cmd.extend(['-o', f'UserKnownHostsFile={kh_path}'])
+                        ensure_option(f'UserKnownHostsFile={kh_path}')
             except Exception:
                 logger.debug('Failed to set UserKnownHostsFile option', exc_info=True)
 
             # Ensure SSH exits immediately on failure rather than waiting in background
-            ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
+            ensure_option('ExitOnForwardFailure=yes')
 
             # Only add verbose flag if explicitly enabled in config
             try:
@@ -579,17 +630,18 @@ class TerminalWidget(Gtk.Box):
                 verbosity = int(ssh_cfg.get('verbosity', 0))
                 debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
                 v = max(0, min(3, verbosity))
-                for _ in range(v):
+                existing_v = ssh_cmd.count('-v')
+                for _ in range(max(0, v - existing_v)):
                     ssh_cmd.append('-v')
                 # Map verbosity to LogLevel to ensure messages are not suppressed by defaults
                 if v == 1:
-                    ssh_cmd.extend(['-o', 'LogLevel=VERBOSE'])
+                    ensure_option('LogLevel=VERBOSE')
                 elif v == 2:
-                    ssh_cmd.extend(['-o', 'LogLevel=DEBUG2'])
+                    ensure_option('LogLevel=DEBUG2')
                 elif v >= 3:
-                    ssh_cmd.extend(['-o', 'LogLevel=DEBUG3'])
+                    ensure_option('LogLevel=DEBUG3')
                 elif debug_enabled:
-                    ssh_cmd.extend(['-o', 'LogLevel=DEBUG'])
+                    ensure_option('LogLevel=DEBUG')
                 if v > 0 or debug_enabled:
                     logger.debug("SSH verbosity configured: -v x %d, LogLevel set", v)
             except Exception as e:
@@ -622,33 +674,31 @@ class TerminalWidget(Gtk.Box):
                         except Exception as e:
                             logger.warning(f"Error preparing key for connection: {e}")
 
-                    ssh_cmd.extend(['-i', self.connection.keyfile])
+                    if self.connection.keyfile not in ssh_cmd:
+                        ssh_cmd.extend(['-i', self.connection.keyfile])
                     logger.debug(f"Using SSH key: {self.connection.keyfile}")
-                    ssh_cmd.extend(['-o', 'IdentitiesOnly=yes'])
+                    ensure_option('IdentitiesOnly=yes')
 
                     # Add certificate if specified
                     if hasattr(self.connection, 'certificate') and self.connection.certificate and \
                        os.path.isfile(self.connection.certificate):
-                        ssh_cmd.extend(['-o', f'CertificateFile={self.connection.certificate}'])
+                        ensure_option(f'CertificateFile={self.connection.certificate}')
                         logger.debug(f"Using SSH certificate: {self.connection.certificate}")
                 else:
                     logger.debug("Using default SSH key selection (key_select_mode=0 or no valid key specified)")
 
                 # If a password exists, allow all standard authentication methods
                 if has_saved_password:
-                    ssh_cmd.extend([
-                        '-o',
-                        'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
-                    ])
+                    ensure_option('PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password')
             else:
                 # Force password authentication when user chose password auth
-                ssh_cmd.extend(['-o', 'PreferredAuthentications=password'])
+                ensure_option('PreferredAuthentications=password')
                 if getattr(self.connection, 'pubkey_auth_no', False):
-                    ssh_cmd.extend(['-o', 'PubkeyAuthentication=no'])
+                    ensure_option('PubkeyAuthentication=no')
 
             # Add X11 forwarding if enabled
             if hasattr(self.connection, 'x11_forwarding') and self.connection.x11_forwarding:
-                ssh_cmd.append('-X')
+                ensure_flag('-X')
 
             # Prepare command-related options (must appear before host)
             remote_cmd = ''
@@ -674,9 +724,9 @@ class TerminalWidget(Gtk.Box):
 
             # If local command specified, allow and set it via options
             if local_cmd:
-                ssh_cmd.extend(['-o', 'PermitLocalCommand=yes'])
+                ensure_option('PermitLocalCommand=yes')
                 # Pass exactly as user provided, letting ssh parse quoting
-                ssh_cmd.extend(['-o', f'LocalCommand={local_cmd}'])
+                ensure_option(f'LocalCommand={local_cmd}')
 
             # Add port forwarding rules with conflict checking
             if hasattr(self.connection, 'forwarding_rules'):
@@ -761,15 +811,38 @@ class TerminalWidget(Gtk.Box):
                                 logger.debug(f"Added SSH option: {option}=yes")
                 
                 # Add NumberOfPasswordPrompts option before hostname and command
-                ssh_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
-                
+                ensure_option('NumberOfPasswordPrompts=1')
+
                 # Add port if not default (must be before host)
-                if hasattr(self.connection, 'port') and self.connection.port != 22:
+                if (
+                    hasattr(self.connection, 'port')
+                    and self.connection.port != 22
+                    and '-p' not in ssh_cmd
+                ):
                     ssh_cmd.extend(['-p', str(self.connection.port)])
 
-                # Add host and user
-                host_for_cmd = self.connection.resolve_host_identifier() if hasattr(self.connection, 'resolve_host_identifier') else getattr(self.connection, 'hostname', '')
-                ssh_cmd.append(f"{self.connection.username}@{host_for_cmd}" if hasattr(self.connection, 'username') and self.connection.username else host_for_cmd)
+                if host_arg is not None:
+                    ssh_cmd.append(host_arg)
+                elif needs_host_append:
+                    host_for_cmd = ''
+                    try:
+                        if hasattr(self.connection, 'resolve_host_identifier'):
+                            host_for_cmd = self.connection.resolve_host_identifier()
+                    except Exception:
+                        host_for_cmd = ''
+                    if not host_for_cmd:
+                        host_for_cmd = (
+                            getattr(self.connection, 'hostname', '')
+                            or getattr(self.connection, 'host', '')
+                            or resolved_for_connection
+                            or getattr(self.connection, 'nickname', '')
+                        )
+                    host_for_cmd = host_for_cmd or ''
+                    if host_for_cmd:
+                        user_for_cmd = getattr(self.connection, 'username', '') or ''
+                        host_entry = f"{user_for_cmd}@{host_for_cmd}" if user_for_cmd else host_for_cmd
+                        if host_entry and host_entry not in ssh_cmd:
+                            ssh_cmd.append(host_entry)
 
 
                 # Append remote command last so ssh treats it as the command to run, ensure shell remains active
@@ -777,7 +850,7 @@ class TerminalWidget(Gtk.Box):
                     final_remote_cmd = remote_cmd if 'exec $SHELL' in remote_cmd else f"{remote_cmd} ; exec $SHELL -l"
                     # Append as single argument; let shell on remote parse quotes. Keep as-is to allow user quoting.
                     ssh_cmd.append(final_remote_cmd)
-                
+
                 # Make sure ssh will prompt in our VTE if no saved password:
                 if (password_auth_selected or auth_method == 0) and not has_saved_password:
                     if '-t' not in ssh_cmd and '-tt' not in ssh_cmd:

@@ -258,6 +258,17 @@ class Connection:
             except Exception:
                 resolved_port = self.port
             self.port = resolved_port
+
+            try:
+                resolved_host = (
+                    self.hostname
+                    or alias_fallback
+                    or target_alias
+                    or self.get_effective_host()
+                )
+            except Exception:
+                resolved_host = self.hostname or alias_fallback or target_alias or ''
+
             if resolved_user:
                 self.username = resolved_user
 
