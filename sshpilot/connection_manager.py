@@ -149,6 +149,23 @@ class Connection:
     def __str__(self):
         return f"{self.nickname} ({self.username}@{self.hostname})"
 
+    def resolve_host_identifier(self) -> str:
+        """Return the best host identifier for commands and tracking."""
+        candidates: List[str] = [
+            getattr(self, 'hostname', None) or '',
+            getattr(self, 'host', None) or '',
+        ]
+        for candidate in candidates:
+            candidate = candidate.strip()
+            if candidate:
+                return candidate
+
+        for alias in getattr(self, 'aliases', []) or []:
+            if alias:
+                return alias
+
+        return self.nickname or 'Unknown'
+
     @property
     def source_file(self) -> str:
         """Return path to the config file where this host is defined."""
@@ -293,7 +310,7 @@ class Connection:
             if resolved_port != 22:
                 ssh_cmd.extend(['-p', str(resolved_port)])
 
-            host_for_cmd = resolved_host or alias_fallback or target_alias or ''
+            host_for_cmd = resolved_host or alias_fallback or target_alias or self.resolve_host_identifier()
             ssh_cmd.append(f"{resolved_user}@{host_for_cmd}" if resolved_user else host_for_cmd)
 
             # Store command for later use
@@ -648,12 +665,29 @@ class Connection:
     
     def _update_properties_from_data(self, data: Dict[str, Any]):
         """Update instance properties from data dictionary"""
-        self.nickname = data.get('nickname', data.get('hostname', data.get('host', 'Unknown')))
+        hostname_value = data.get('hostname')
+        host_value = data.get('host', '')
+
+        nickname_value = data.get('nickname')
+        if nickname_value:
+            self.nickname = nickname_value
+        else:
+            fallback_nickname = hostname_value if hostname_value else host_value
+            self.nickname = fallback_nickname or getattr(self, 'nickname', 'Unknown')
+
         if 'aliases' in data:
             self.aliases = data.get('aliases', getattr(self, 'aliases', []))
-        resolved_hostname = data.get('hostname') or data.get('host', '')
-        self.hostname = resolved_hostname
-        self.host = resolved_hostname
+
+        resolved_host = hostname_value if hostname_value else host_value
+        self.host = resolved_host
+
+        if hostname_value is None:
+            self.hostname = resolved_host
+        elif hostname_value == '':
+            source_value = data.get('source', getattr(self, 'source', ''))
+            self.hostname = resolved_host if source_value else ''
+        else:
+            self.hostname = hostname_value
 
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
@@ -723,6 +757,12 @@ class ConnectionManager(GObject.Object):
 
         # Defer slower operations to idle to avoid blocking startup
         GLib.idle_add(self._post_init_slow_path)
+
+    def _get_active_connection_key(self, connection: Connection) -> str:
+        identifier = connection.resolve_host_identifier()
+        if identifier:
+            return identifier
+        return f"connection-{id(connection)}"
 
     def set_isolated_mode(self, isolated: bool):
         """Switch between standard and isolated SSH configuration"""
@@ -1913,8 +1953,9 @@ class ConnectionManager(GObject.Object):
                 await connection.setup_forwarding()
             
             # Store the connection task
-            if connection.hostname in self.active_connections:
-                self.active_connections[connection.hostname].cancel()
+            connection_key = self._get_active_connection_key(connection)
+            if connection_key in self.active_connections:
+                self.active_connections[connection_key].cancel()
             
             # Create a task to keep the connection alive
             async def keepalive():
@@ -1939,7 +1980,7 @@ class ConnectionManager(GObject.Object):
             
             # Start the keepalive task
             task = asyncio.create_task(keepalive())
-            self.active_connections[connection.hostname] = task
+            self.active_connections[connection_key] = task
             
             # Update the connection state and emit status change
             connection.is_connected = True
@@ -1960,13 +2001,14 @@ class ConnectionManager(GObject.Object):
         """Disconnect from SSH host and clean up resources asynchronously"""
         try:
             # Cancel the keepalive task if it exists
-            if connection.hostname in self.active_connections:
-                self.active_connections[connection.hostname].cancel()
+            connection_key = self._get_active_connection_key(connection)
+            if connection_key in self.active_connections:
+                self.active_connections[connection_key].cancel()
                 try:
-                    await self.active_connections[connection.hostname]
+                    await self.active_connections[connection_key]
                 except asyncio.CancelledError:
                     pass
-                del self.active_connections[connection.hostname]
+                del self.active_connections[connection_key]
             
             # Disconnect the connection
             if hasattr(connection, 'connection') and connection.connection and connection.is_connected:
