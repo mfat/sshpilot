@@ -61,8 +61,14 @@ def _ensure_gi_stub():
     glib_module = _DummyModule("gi.repository.GLib")
     setattr(glib_module, "idle_add", lambda *args, **kwargs: None)
     setattr(glib_module, "markup_escape_text", lambda text: text)
+    setattr(glib_module, "get_user_config_dir", lambda: "/tmp")
+    setattr(glib_module, "get_user_data_dir", lambda: "/tmp")
+    setattr(glib_module, "get_home_dir", lambda: "/tmp")
     repository.GLib = glib_module
     sys.modules["gi.repository.GLib"] = glib_module
+    platform_utils = sys.modules.get("sshpilot.platform_utils")
+    if platform_utils is not None:
+        setattr(platform_utils, "GLib", glib_module)
 
     for name in ["Gtk", "Adw", "Gio", "Gdk", "Pango", "PangoFT2"]:
         module = _DummyModule(f"gi.repository.{name}")
