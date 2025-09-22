@@ -1191,11 +1191,21 @@ class ConnectionManager(GObject.Object):
             except Exception:
                 pass
 
-            # Key selection mode: if IdentitiesOnly is set truthy, select specific key
+            # Key selection mode defaults: prefer "specific key" when IdentityFile is explicit
             try:
-                ident_only = str(config.get('identitiesonly', '')).strip().lower()
+                ident_only_raw = config.get('identitiesonly')
+                ident_only = ''
+                if isinstance(ident_only_raw, str):
+                    ident_only = ident_only_raw.strip().lower()
                 if ident_only in ('yes', 'true', '1', 'on'):
                     parsed['key_select_mode'] = 1
+                elif ident_only_raw is None or (isinstance(ident_only_raw, str) and not ident_only_raw.strip()):
+                    keyfile_value = parsed.get('keyfile', '')
+                    keyfile_path = keyfile_value.strip() if isinstance(keyfile_value, str) else ''
+                    if keyfile_path and not keyfile_path.lower().startswith('select key file'):
+                        parsed['key_select_mode'] = 1
+                    else:
+                        parsed['key_select_mode'] = 0
                 else:
                     parsed['key_select_mode'] = 0
             except Exception:
