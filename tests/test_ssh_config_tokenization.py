@@ -99,7 +99,10 @@ def test_connect_without_hostname_uses_alias(monkeypatch):
         "user": "mahdi",
     }
     parsed = ConnectionManager.parse_host_config(cm, config)
-    monkeypatch.setattr("sshpilot.connection_manager.get_effective_ssh_config", lambda alias: {})
+    monkeypatch.setattr(
+        "sshpilot.connection_manager.get_effective_ssh_config",
+        lambda alias: {"hostname": ""},
+    )
     parsed["hostname"] = ""
     connection = Connection(parsed)
     loop = asyncio.new_event_loop()
@@ -112,6 +115,7 @@ def test_connect_without_hostname_uses_alias(monkeypatch):
 
     assert connected
     assert connection.ssh_cmd[-1].endswith("localhost")
+    assert connection.hostname == "localhost"
 
 
 def test_connection_host_preserves_alias_when_hostname_blank():

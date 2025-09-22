@@ -75,7 +75,16 @@ class Connection:
         self.forwarders: List[asyncio.Task] = []
         self.listeners: List[asyncio.Server] = []
 
-        self.nickname = data.get('nickname', data.get('hostname', data.get('host', 'Unknown')))
+        hostname_value = data.get('hostname')
+        host_value = data.get('host', '')
+
+        nickname_value = data.get('nickname')
+        if nickname_value:
+            self.nickname = nickname_value
+        else:
+            fallback_nickname = hostname_value if hostname_value else host_value
+            self.nickname = fallback_nickname or 'Unknown'
+
         if 'aliases' in data:
             self.aliases = data.get('aliases', [])
         resolved_hostname = data.get('hostname') or data.get('host', '')
@@ -84,6 +93,7 @@ class Connection:
         if not host_alias:
             host_alias = self.nickname
         self.host = host_alias
+
 
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
@@ -201,25 +211,38 @@ class Connection:
             # Resolve effective SSH configuration for this nickname/host
             effective_cfg: Dict[str, Union[str, List[str]]] = {}
             target_alias = self.nickname or self.hostname
-            alias_fallback = self.host or self.nickname or self.hostname
+            stored_alias = ""
+            if isinstance(self.data, dict):
+                stored_alias = str(self.data.get('host') or '')
+            alias_fallback = (
+                stored_alias
+                or self.nickname
+                or self.host
+                or self.hostname
+            )
             if target_alias:
                 effective_cfg = get_effective_ssh_config(target_alias)
 
             # Determine final parameters, falling back to resolved config when needed
             resolved_host_cfg = effective_cfg.get('hostname')
-            if resolved_host_cfg:
-                resolved_host = str(resolved_host_cfg)
-            else:
-                resolved_host = self.hostname or self.host
+            if isinstance(resolved_host_cfg, str):
+                resolved_host_cfg = resolved_host_cfg.strip()
+            resolved_host = (
+                (str(resolved_host_cfg) if resolved_host_cfg else '')
+                or alias_fallback
+                or self.hostname
+                or self.host
+                or ''
+            )
 
             resolved_user = self.username or str(effective_cfg.get('user', ''))
             try:
                 resolved_port = int(effective_cfg.get('port', self.port))
             except Exception:
                 resolved_port = self.port
-            previous_host = self.host
-            self.hostname = resolved_host or self.hostname
-            self.host = resolved_host or previous_host
+            if resolved_host:
+                self.hostname = resolved_host
+                self.host = resolved_host
             self.port = resolved_port
             if resolved_user:
                 self.username = resolved_user

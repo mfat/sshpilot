@@ -2,22 +2,47 @@
 <img width="154" height="154" alt="logo" src="https://github.com/user-attachments/assets/42b73dbf-778c-45ff-9361-22a52988f1b3" />
 </p>
 
+<p align="center">
+<a href='https://flathub.org/apps/io.github.mfat.sshpilot'>
+    <img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?locale=en'/>
+  </a>
+</p>
+
 **sshPilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal. 
 
-<img width="1167" height="744" alt="Screenshot From 2025-09-17 03-18-51" src="https://github.com/user-attachments/assets/c37cfc2a-c699-4911-b343-844d31ede169" />
+## 📸 Screenshots
 
-<img width="1167" height="744" alt="Screenshot From 2025-09-17 03-23-19" src="https://github.com/user-attachments/assets/244f0fe8-dc41-456e-a97c-3a9f611b68bc" />
+<table>
+  <tr>
+    <td align="center" valign="top">
+      <img src="screenshots/start-page.png" width="560" alt="Start Page"><br><strong>Start Page</strong>
+    </td>
+    <td align="center" valign="top">
+      <img src="screenshots/main-window-with-tabs.png" width="560" alt="Main Window with Tabs"><br><strong>Main Window with Tabs</strong>
+    </td>
+    <td align="center" valign="top">
+      <img src="screenshots/tab-overview.png" width="560" alt="Tab Overview"><br><strong>Tab Overview</strong>
+    </td>
+  </tr>
+  <tr>
+    <td></td> <!-- empty cell left -->
+    <td align="center" valign="top">
+      <img src="screenshots/ssh-copy-id.png" width="560" alt="SSH Copy ID"><br><strong>SSH Copy ID</strong>
+    </td>
+    <td></td> <!-- empty cell right -->
+  </tr>
+</table>
 
-<img width="1167" height="744" alt="Screenshot From 2025-09-17 03-18-56" src="https://github.com/user-attachments/assets/94fe192a-2b96-45ca-ab11-5cd38cba5387" />
 
-<img width="622" height="589" alt="Screenshot From 2025-09-17 03-19-30" src="https://github.com/user-attachments/assets/0b8bc6cc-a231-4d13-bf59-b39954585fad" />
+
+
 
 
 ## Features
 
 - Tabbed interface
 - Intuitive, minimal UI with keyboard navigation and shortcuts
-- File management in standard file managers using SFTP
+- File management using SFTP
 - Organize servers in groups
 - Option to use the built-in terminal or your favorite one
 - Broadcast commands to all open tabs
@@ -40,8 +65,15 @@
 
 ## Download
 
-- ### DEB/RPM/Flatpak
+- ### DEB/RPM
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
+
+- ### Flatpak
+Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
+
+`
+flatpak install flathub io.github.mfat.sshpilot
+`
 
 - ### Arch linux
 Arch linux package via AUR: https://aur.archlinux.org/packages/sshpilot
@@ -109,13 +141,6 @@ Enable verbose debugging with:
 python3 run.py --verbose
 ```
 
-
-
-## Keyboard/mouse navigation and shortcuts
-
-sshPilot is easy to navigate with keyboard. When the app starts up, just press enter to connect to the first host in the list. You can do the same thing by double-clicking the host.
-Press Ctrl (⌘ on macOS)+L to quickly switch between hosts, close tabs with Ctrl (⌘)+F4 and switch tabs with Alt+Right/Left arrow.
-If you have multiple connections to a single host, doble-clicking the host will cycle through all its open tabs.
 
 ## Special Thanks
 
