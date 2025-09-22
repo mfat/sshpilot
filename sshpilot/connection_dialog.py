@@ -2139,13 +2139,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.key_select_row.set_selected(0)
         self.key_select_row.connect("notify::selected", self.on_key_select_changed)
         auth_group.add(self.key_select_row)
-
-        self.key_only_row = Adw.SwitchRow()
-        self.key_only_row.set_title(_("Only use the specified key"))
-        self.key_only_row.set_subtitle(_("This will append \"IdentitiesOnly yes\" to the configuration."))
-        self.key_only_row.set_active(True)
-        self.key_only_row.set_visible(False)
-        auth_group.add(self.key_only_row)
         
         # Keyfile dropdown with detected keys and an inline Browse item
         self.keyfile_row = Adw.ActionRow(title=_("SSH Key"), subtitle=_("Select key file or leave empty for auto-detection"))
@@ -2193,6 +2186,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.keyfile_row.add_suffix(box)
         self.keyfile_row.set_activatable(False)
         auth_group.add(self.keyfile_row)
+
+        self.key_only_row = Adw.SwitchRow()
+        self.key_only_row.set_title(_("Only use the specified key"))
+        self.key_only_row.set_subtitle(_("This will append \"IdentitiesOnly yes\" to the configuration."))
+        self.key_only_row.set_active(True)
+        self.key_only_row.set_visible(False)
+        auth_group.add(self.key_only_row)
 
         # Certificate dropdown for key-based auth with specific key
         self.certificate_row = Adw.ActionRow(title=_("SSH Certificate"), subtitle=_("Select certificate file (optional)"))
