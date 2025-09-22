@@ -1200,9 +1200,13 @@ class ConnectionManager(GObject.Object):
             has_specific_key = bool(keyfile_path and not keyfile_path.lower().startswith('select key file'))
             try:
                 ident_only_raw = config.get('identitiesonly')
+                ident_only_normalized = ident_only_raw
+                if ident_only_raw and not isinstance(ident_only_raw, str):
+                    ident_only_normalized = str(ident_only_raw)
+
                 ident_only = ''
-                if isinstance(ident_only_raw, str):
-                    ident_only = ident_only_raw.strip().lower()
+                if isinstance(ident_only_normalized, str):
+                    ident_only = ident_only_normalized.strip().lower()
 
                 if ident_only in ('yes', 'true', '1', 'on'):
                     parsed['key_select_mode'] = 1
