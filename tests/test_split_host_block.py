@@ -98,6 +98,7 @@ def test_split_host_block_preserves_identitiesonly_directive(tmp_path):
 
 
 def test_split_host_block_respects_identitiesonly_no(tmp_path):
+
     cm = ConnectionManager.__new__(ConnectionManager)
 
     key_path = tmp_path / "id_test_key"
@@ -144,3 +145,4 @@ def test_split_host_block_respects_identitiesonly_no(tmp_path):
 
     assert f"IdentityFile {key_path}" in dedicated_block
     assert "IdentitiesOnly yes" not in dedicated_block
+
