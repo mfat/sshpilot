@@ -768,12 +768,9 @@ class TerminalWidget(Gtk.Box):
                     ssh_cmd.extend(['-p', str(self.connection.port)])
 
                 # Add host and user
-                host_for_cmd = _resolve_host_for_connection()
-                ssh_cmd.append(
-                    f"{self.connection.username}@{host_for_cmd}"
-                    if hasattr(self.connection, 'username') and self.connection.username
-                    else host_for_cmd
-                )
+                host_for_cmd = self.connection.resolve_host_identifier() if hasattr(self.connection, 'resolve_host_identifier') else getattr(self.connection, 'hostname', '')
+                ssh_cmd.append(f"{self.connection.username}@{host_for_cmd}" if hasattr(self.connection, 'username') and self.connection.username else host_for_cmd)
+
 
                 # Append remote command last so ssh treats it as the command to run, ensure shell remains active
                 if remote_cmd:

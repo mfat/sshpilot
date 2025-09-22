@@ -142,26 +142,23 @@ class Connection:
     def __str__(self):
         return f"{self.nickname} ({self.username}@{self.hostname})"
 
-    def get_effective_host(self) -> str:
-        """Return the best available host/alias for SSH commands."""
-        host = self.hostname or self.host or ''
-        if not host:
-            nickname = getattr(self, 'nickname', '')
-            if nickname and nickname != 'Unknown':
-                host = nickname
-        return host
+    def resolve_host_identifier(self) -> str:
+        """Return the best host identifier for commands and tracking."""
+        candidates: List[str] = [
+            getattr(self, 'hostname', None) or '',
+            getattr(self, 'host', None) or '',
+        ]
+        for candidate in candidates:
+            candidate = candidate.strip()
+            if candidate:
+                return candidate
 
-    def get_connection_key(self) -> str:
-        """Generate a stable identifier for tracking active connections."""
-        host = self.get_effective_host()
-        username = getattr(self, 'username', '')
-        if username and host:
-            return f"{username}@{host}"
-        if host:
-            return host
-        if username:
-            return username
-        return f"connection-{id(self)}"
+        for alias in getattr(self, 'aliases', []) or []:
+            if alias:
+                return alias
+
+        return self.nickname or 'Unknown'
+
 
     @property
     def source_file(self) -> str:
@@ -325,7 +322,8 @@ class Connection:
             if resolved_port != 22:
                 ssh_cmd.extend(['-p', str(resolved_port)])
 
-            host_for_cmd = alias_value or effective_hostname or target_alias or ''
+            host_for_cmd = resolved_host or alias_fallback or target_alias or self.resolve_host_identifier()
+
             ssh_cmd.append(f"{resolved_user}@{host_for_cmd}" if resolved_user else host_for_cmd)
 
             # Store command for later use
@@ -680,18 +678,30 @@ class Connection:
     
     def _update_properties_from_data(self, data: Dict[str, Any]):
         """Update instance properties from data dictionary"""
-        self.nickname = data.get('nickname', data.get('hostname', data.get('host', 'Unknown')))
+        hostname_value = data.get('hostname')
+        host_value = data.get('host', '')
+
+        nickname_value = data.get('nickname')
+        if nickname_value:
+            self.nickname = nickname_value
+        else:
+            fallback_nickname = hostname_value if hostname_value else host_value
+            self.nickname = fallback_nickname or getattr(self, 'nickname', 'Unknown')
+
         if 'aliases' in data:
             self.aliases = data.get('aliases', getattr(self, 'aliases', []))
 
-        if 'hostname' in data:
-            self.hostname = data.get('hostname') or ''
+        resolved_host = hostname_value if hostname_value else host_value
+        self.host = resolved_host
 
-        host_alias = data.get('host')
-        if host_alias is not None:
-            self.host = host_alias or ''
-        elif not getattr(self, 'host', ''):
-            self.host = self.nickname
+        if hostname_value is None:
+            self.hostname = resolved_host
+        elif hostname_value == '':
+            source_value = data.get('source', getattr(self, 'source', ''))
+            self.hostname = resolved_host if source_value else ''
+        else:
+            self.hostname = hostname_value
+
 
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
@@ -761,6 +771,12 @@ class ConnectionManager(GObject.Object):
 
         # Defer slower operations to idle to avoid blocking startup
         GLib.idle_add(self._post_init_slow_path)
+
+    def _get_active_connection_key(self, connection: Connection) -> str:
+        identifier = connection.resolve_host_identifier()
+        if identifier:
+            return identifier
+        return f"connection-{id(connection)}"
 
     def set_isolated_mode(self, isolated: bool):
         """Switch between standard and isolated SSH configuration"""
