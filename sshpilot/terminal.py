@@ -485,6 +485,17 @@ class TerminalWidget(Gtk.Box):
         try:
             ssh_cmd = ['ssh']
 
+            def _resolve_host_for_connection() -> str:
+                if not hasattr(self, 'connection') or not self.connection:
+                    return ''
+                try:
+                    host_value = self.connection.get_effective_host()
+                except AttributeError:
+                    host_value = getattr(self.connection, 'hostname', '') or getattr(self.connection, 'host', '')
+                if not host_value:
+                    host_value = getattr(self.connection, 'nickname', '')
+                return host_value or ''
+
             # Read SSH behavior from config with sane defaults
             try:
                 ssh_cfg = self.config.get_ssh_config() if hasattr(self.config, 'get_ssh_config') else {}
@@ -512,7 +523,11 @@ class TerminalWidget(Gtk.Box):
                 # Try to fetch stored password regardless of auth method
                 password_value = getattr(self.connection, 'password', None)
                 if (not password_value) and hasattr(self, 'connection_manager') and self.connection_manager:
-                    password_value = self.connection_manager.get_password(self.connection.hostname, self.connection.username)
+                    password_value = self.connection_manager.get_password(
+                        _resolve_host_for_connection(),
+                        self.connection.username,
+                    )
+
                 has_saved_password = bool(password_value)
             except Exception:
                 auth_method = 0
@@ -751,10 +766,11 @@ class TerminalWidget(Gtk.Box):
                 # Add port if not default (must be before host)
                 if hasattr(self.connection, 'port') and self.connection.port != 22:
                     ssh_cmd.extend(['-p', str(self.connection.port)])
-                
+
                 # Add host and user
                 host_for_cmd = self.connection.resolve_host_identifier() if hasattr(self.connection, 'resolve_host_identifier') else getattr(self.connection, 'hostname', '')
                 ssh_cmd.append(f"{self.connection.username}@{host_for_cmd}" if hasattr(self.connection, 'username') and self.connection.username else host_for_cmd)
+
 
                 # Append remote command last so ssh treats it as the command to run, ensure shell remains active
                 if remote_cmd:
