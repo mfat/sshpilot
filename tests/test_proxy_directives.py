@@ -1,7 +1,11 @@
 import asyncio
+import importlib
+import sys
 import types
 
 from sshpilot.connection_manager import Connection, ConnectionManager
+
+
 
 # Ensure an event loop for Connection objects
 asyncio.set_event_loop(asyncio.new_event_loop())
@@ -142,3 +146,155 @@ def test_terminal_widget_uses_prepared_proxy_command(monkeypatch):
     assert any(arg == "ProxyCommand=ssh -W %h:%p bastion" for arg in cmd)
     assert any(arg == "ProxyJump=b1,b2" for arg in cmd)
     assert cmd.count(conn.ssh_cmd[-1]) == 1
+
+
+def test_terminal_manager_prepares_connection_before_spawn(monkeypatch):
+    stub_terminal_module = types.ModuleType("sshpilot.terminal")
+    stub_terminal_module.TerminalWidget = object
+    monkeypatch.setitem(sys.modules, "sshpilot.terminal", stub_terminal_module)
+
+    stub_preferences = types.ModuleType("sshpilot.preferences")
+    stub_preferences.should_hide_external_terminal_options = lambda: False
+    monkeypatch.setitem(sys.modules, "sshpilot.preferences", stub_preferences)
+
+    gi_module = types.ModuleType("gi")
+    repository_module = types.ModuleType("gi.repository")
+    gio_module = types.ModuleType("gi.repository.Gio")
+    gio_module.ThemedIcon = types.SimpleNamespace(new=lambda *a, **k: None)
+
+    def immediate_idle_add(callback, *args, **kwargs):
+        callback(*args)
+        return 1
+
+    glib_module = types.ModuleType("gi.repository.GLib")
+    glib_module.idle_add = immediate_idle_add
+
+    class DummyMessageDialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def add_response(self, *args, **kwargs):
+            pass
+
+        def set_default_response(self, *args, **kwargs):
+            pass
+
+        def present(self):
+            pass
+
+    adw_module = types.ModuleType("gi.repository.Adw")
+    adw_module.MessageDialog = DummyMessageDialog
+
+    gdk_module = types.ModuleType("gi.repository.Gdk")
+
+    repository_module.Gio = gio_module
+    repository_module.GLib = glib_module
+    repository_module.Adw = adw_module
+    repository_module.Gdk = gdk_module
+    gi_module.repository = repository_module
+
+    monkeypatch.setitem(sys.modules, "gi", gi_module)
+    monkeypatch.setitem(sys.modules, "gi.repository", repository_module)
+    monkeypatch.setitem(sys.modules, "gi.repository.Gio", gio_module)
+    monkeypatch.setitem(sys.modules, "gi.repository.GLib", glib_module)
+    monkeypatch.setitem(sys.modules, "gi.repository.Adw", adw_module)
+    monkeypatch.setitem(sys.modules, "gi.repository.Gdk", gdk_module)
+
+    sys.modules.pop("sshpilot.terminal_manager", None)
+    terminal_manager_mod = importlib.import_module("sshpilot.terminal_manager")
+
+    conn = Connection(
+        {
+            "host": "example.com",
+            "username": "bob",
+            "proxy_command": "ssh -W %h:%p bastion",
+            "proxy_jump": ["b1", "b2"],
+        }
+    )
+
+    recorded_cmd = {}
+
+    class DummyTerminalWidget:
+        def __init__(self, connection, config, connection_manager):
+            self.connection = connection
+            self.config = config
+            self.connection_manager = connection_manager
+            self.vte = types.SimpleNamespace(queue_draw=lambda: None)
+
+        def connect(self, *args, **kwargs):
+            return 0
+
+        def apply_theme(self):
+            pass
+
+        def _connect_ssh(self):
+            recorded_cmd["value"] = list(self.connection.ssh_cmd)
+            return True
+
+        def disconnect(self):
+            pass
+
+    class DummyPage:
+        def __init__(self, child):
+            self._child = child
+
+        def set_title(self, title):
+            self.title = title
+
+        def set_icon(self, icon):
+            self.icon = icon
+
+        def get_child(self):
+            return self._child
+
+    class DummyTabView:
+        def __init__(self):
+            self.pages = []
+
+        def append(self, terminal):
+            page = DummyPage(terminal)
+            self.pages.append(page)
+            return page
+
+        def get_page(self, terminal):
+            for page in self.pages:
+                if page.get_child() is terminal:
+                    return page
+            return None
+
+        def set_selected_page(self, page):
+            self.selected = page
+
+        def close_page(self, page):
+            if page in self.pages:
+                self.pages.remove(page)
+
+    class DummyConfig:
+        def get_setting(self, key, default=None):
+            return False
+
+    class DummyWindow:
+        def __init__(self):
+            self.config = DummyConfig()
+            self.connection_manager = types.SimpleNamespace()
+            self.tab_view = DummyTabView()
+            self.connection_to_terminals = {}
+            self.terminal_to_connection = {}
+            self.active_terminals = {}
+
+        def show_tab_view(self):
+            self.shown = True
+
+    monkeypatch.setattr(terminal_manager_mod, "TerminalWidget", DummyTerminalWidget)
+
+    window = DummyWindow()
+    manager = terminal_manager_mod.TerminalManager(window)
+
+    manager.connect_to_host(conn)
+
+    assert "value" in recorded_cmd
+    cmd = recorded_cmd["value"]
+    assert any(part == "ProxyCommand=ssh -W %h:%p bastion" for part in cmd)
+    assert any(part == "ProxyJump=b1,b2" for part in cmd)
+    # Ensure target host argument preserved
+    assert cmd[-1].endswith("@example.com")
