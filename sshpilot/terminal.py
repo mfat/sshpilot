@@ -512,7 +512,13 @@ class TerminalWidget(Gtk.Box):
                 # Try to fetch stored password regardless of auth method
                 password_value = getattr(self.connection, 'password', None)
                 if (not password_value) and hasattr(self, 'connection_manager') and self.connection_manager:
-                    password_value = self.connection_manager.get_password(self.connection.hostname, self.connection.username)
+                    lookup_host = (
+                        getattr(self.connection, 'hostname', '')
+                        or getattr(self.connection, 'host', '')
+                        or getattr(self.connection, 'nickname', '')
+                    )
+                    if lookup_host:
+                        password_value = self.connection_manager.get_password(lookup_host, self.connection.username)
                 has_saved_password = bool(password_value)
             except Exception:
                 auth_method = 0
