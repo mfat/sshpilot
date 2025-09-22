@@ -527,6 +527,7 @@ class TerminalWidget(Gtk.Box):
                         _resolve_host_for_connection(),
                         self.connection.username,
                     )
+
                 has_saved_password = bool(password_value)
             except Exception:
                 auth_method = 0

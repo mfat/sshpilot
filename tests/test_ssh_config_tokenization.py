@@ -35,8 +35,13 @@ def _ensure_gi_stub():
         submodule = _DummyGIModule(f"gi.repository.{name}")
         setattr(repository, name, submodule)
         sys.modules[f"gi.repository.{name}"] = submodule
+    glib_module = sys.modules["gi.repository.GLib"]
+    glib_module.get_user_config_dir = lambda: "/tmp"
+    glib_module.get_user_data_dir = lambda: "/tmp"
+    glib_module.get_home_dir = lambda: "/tmp"
+    glib_module.idle_add = lambda *a, **k: None
+    repository.GLib = glib_module
     repository.GObject.SignalFlags = types.SimpleNamespace(RUN_FIRST=None)
-    repository.GLib.idle_add = lambda *a, **k: None
 
 
 _ORIGINAL_GI_MODULES = {
@@ -76,7 +81,7 @@ def test_parse_host_with_quotes():
     assert parsed["aliases"] == []
 
 
-def test_parse_host_without_hostname_stores_empty_hostname():
+def test_parse_host_without_hostname_defaults_to_alias():
     cm = make_cm()
     config = {
         "host": "localhost",
@@ -85,6 +90,7 @@ def test_parse_host_without_hostname_stores_empty_hostname():
     parsed = ConnectionManager.parse_host_config(cm, config)
     assert parsed["hostname"] == ""
     assert parsed["host"] == "localhost"
+    assert parsed["nickname"] == "localhost"
 
 
 def test_connect_without_hostname_uses_alias(monkeypatch):
@@ -94,7 +100,10 @@ def test_connect_without_hostname_uses_alias(monkeypatch):
         "user": "mahdi",
     }
     parsed = ConnectionManager.parse_host_config(cm, config)
-    monkeypatch.setattr("sshpilot.connection_manager.get_effective_ssh_config", lambda alias: {})
+    monkeypatch.setattr(
+        "sshpilot.connection_manager.get_effective_ssh_config",
+        lambda alias: {"hostname": ""},
+    )
     parsed["hostname"] = ""
     connection = Connection(parsed)
     loop = asyncio.new_event_loop()
@@ -107,6 +116,8 @@ def test_connect_without_hostname_uses_alias(monkeypatch):
 
     assert connected
     assert connection.ssh_cmd[-1].endswith("localhost")
+    assert connection.hostname == ""
+    assert connection.host == "localhost"
 
 
 def test_connection_host_preserves_alias_when_hostname_blank():
@@ -116,8 +127,23 @@ def test_connection_host_preserves_alias_when_hostname_blank():
         "username": "user",
     }
     connection = Connection(data)
+    assert connection.data["host"] == "alias"
     assert connection.host == "alias"
     assert connection.hostname == ""
+
+
+def test_connection_update_preserves_alias_when_hostname_blank():
+    data = {
+        "host": "alias",
+        "hostname": "",
+        "username": "user",
+    }
+    connection = Connection(data)
+    # Update with new username but keep hostname blank
+    connection.update_data({"username": "newuser", "hostname": ""})
+    assert connection.host == "alias"
+    assert connection.hostname == ""
+
 
 
 def test_connect_with_blank_hostname_uses_alias(monkeypatch):
@@ -139,7 +165,59 @@ def test_connect_with_blank_hostname_uses_alias(monkeypatch):
     assert connected
     assert connection.ssh_cmd[-1] == "mahdi@myalias"
     assert connection.host == "myalias"
-    assert connection.hostname == "myalias"
+    assert connection.hostname == ""
+
+
+def test_update_connection_password_storage_uses_alias(monkeypatch):
+    cm = make_cm()
+    cm.config = types.SimpleNamespace()
+    cm.ssh_config_path = ""
+    cm.connections = []
+    cm.rules = []
+    cm.loop = asyncio.new_event_loop()
+    cm.active_connections = {}
+    cm.ssh_config = {}
+    cm.known_hosts_path = ""
+    cm.emit = lambda *args, **kwargs: None
+
+    stored = {}
+
+    def fake_store(host, user, password):
+        stored["host"] = host
+        stored["user"] = user
+        stored["password"] = password
+
+    def fake_delete(host, user):
+        stored.setdefault("deleted", []).append((host, user))
+
+    def fake_update_ssh_config(connection, new_data, original_nickname):
+        return None
+
+    cm.store_password = fake_store
+    cm.delete_password = fake_delete
+    cm.update_ssh_config_file = fake_update_ssh_config
+
+    connection = Connection({
+        "host": "alias",
+        "hostname": "",
+        "username": "user",
+        "password": "",
+    })
+
+    new_data = {
+        "password": "secret",
+        "hostname": "",
+    }
+
+    try:
+        result = cm.update_connection(connection, dict(new_data))
+    finally:
+        cm.loop.close()
+
+    assert result
+    assert stored["host"] == "alias"
+    assert stored["user"] == "user"
+    assert stored["password"] == "secret"
 
 
 def test_format_host_requotes():
