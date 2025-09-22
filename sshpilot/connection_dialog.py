@@ -1250,18 +1250,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self.pubkey_auth_row.set_active(False)
             
             # Get keyfile path from either keyfile or private_key attribute
+            has_specific_key = False
             keyfile = getattr(self.connection, 'keyfile', None) or getattr(self.connection, 'private_key', None)
             if keyfile:
                 # Normalize the keyfile path and ensure it's a string
                 keyfile_path = str(keyfile).strip()
-                
+
                 # Update the connection's keyfile attribute if it comes from private_key
                 if not getattr(self.connection, 'keyfile', None) and hasattr(self.connection, 'private_key'):
                     self.connection.keyfile = keyfile_path
-                
+
                 # Only update the UI if we have a valid path
                 if keyfile_path and keyfile_path.lower() not in ['select key file or leave empty for auto-detection', '']:
                     logger.debug(f"Setting keyfile path in UI: {keyfile_path}")
+                    has_specific_key = True
                     self.keyfile_row.set_subtitle(keyfile_path)
                     # Sync the dropdown to match the loaded keyfile
                     self._sync_key_dropdown_with_current_keyfile()
@@ -1285,8 +1287,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 # Fallback: fetch from keyring so the dialog shows stored password (masked)
                 try:
                     mgr = getattr(self.parent_window, 'connection_manager', None)
-                    if mgr and hasattr(self.connection, 'hostname') and hasattr(self.connection, 'username'):
-                        pw = mgr.get_password(self.connection.hostname, self.connection.username)
+                    if mgr and hasattr(self.connection, 'username'):
+                        lookup_host = (
+                            getattr(self.connection, 'hostname', '')
+                            or getattr(self.connection, 'host', '')
+                            or getattr(self.connection, 'nickname', '')
+                        )
+                        if lookup_host:
+                            pw = mgr.get_password(lookup_host, self.connection.username)
+                        else:
+                            pw = None
                         if pw:
                             self.password_row.set_text(pw)
                 except Exception:
@@ -1331,6 +1341,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                                 mode = int(self.connection.data.get('key_select_mode', 0)) if hasattr(self.connection, 'data') else 0
                             except Exception:
                                 mode = 0
+                    if has_specific_key and mode != 1:
+                        mode = 1
+                        try:
+                            self.connection.key_select_mode = 1
+                        except Exception:
+                            pass
+                        try:
+                            if hasattr(self.connection, 'data'):
+                                self.connection.data['key_select_mode'] = 1
+                        except Exception:
+                            pass
                     self.key_select_row.set_selected(0 if mode != 1 else 1)
                     self.on_key_select_changed(self.key_select_row, None)
             except Exception:

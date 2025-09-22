@@ -1,4 +1,5 @@
 import os
+import asyncio
 import logging
 
 from gi.repository import Gio, GLib, Adw, Gdk
@@ -66,6 +67,7 @@ class TerminalManager:
         def _cleanup_failed_terminal():
             connection.is_connected = False
             window.tab_view.close_page(page)
+
             try:
                 if connection in window.active_terminals and window.active_terminals[connection] is terminal:
                     del window.active_terminals[connection]
@@ -79,8 +81,8 @@ class TerminalManager:
                 pass
 
         def _set_terminal_colors():
+
             try:
-                # Apply the configured theme instead of hardcoded colors
                 terminal.apply_theme()
                 terminal.vte.queue_draw()
                 if not terminal._connect_ssh():
@@ -93,6 +95,7 @@ class TerminalManager:
                     _cleanup_failed_terminal()
 
         GLib.idle_add(_set_terminal_colors)
+
 
     def _on_disconnect_confirmed(self, dialog, response_id, connection):
         dialog.destroy()
