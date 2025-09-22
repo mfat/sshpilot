@@ -87,12 +87,11 @@ class Connection:
 
         if 'aliases' in data:
             self.aliases = data.get('aliases', [])
-        resolved_hostname = data.get('hostname') or data.get('host', '')
-        self.hostname = resolved_hostname
+        self.hostname = hostname_value or ''
         host_alias = data.get('host')
-        if not host_alias:
+        if host_alias is None:
             host_alias = self.nickname
-        self.host = host_alias
+        self.host = host_alias or ''
 
 
         self.username = data.get('username', '')
@@ -224,25 +223,30 @@ class Connection:
                 effective_cfg = get_effective_ssh_config(target_alias)
 
             # Determine final parameters, falling back to resolved config when needed
+            existing_hostname = self.hostname or ''
+
             resolved_host_cfg = effective_cfg.get('hostname')
             if isinstance(resolved_host_cfg, str):
                 resolved_host_cfg = resolved_host_cfg.strip()
-            resolved_host = (
-                (str(resolved_host_cfg) if resolved_host_cfg else '')
-                or alias_fallback
-                or self.hostname
-                or self.host
-                or ''
-            )
+            effective_hostname = str(resolved_host_cfg) if resolved_host_cfg else ''
+            if effective_hostname:
+                alias_candidates = {
+                    alias_fallback or '',
+                    self.host or '',
+                    target_alias or '',
+                }
+                if existing_hostname or effective_hostname not in alias_candidates:
+                    self.hostname = effective_hostname
+
+            alias_value = alias_fallback or self.host or ''
+            if alias_value:
+                self.host = alias_value
 
             resolved_user = self.username or str(effective_cfg.get('user', ''))
             try:
                 resolved_port = int(effective_cfg.get('port', self.port))
             except Exception:
                 resolved_port = self.port
-            if resolved_host:
-                self.hostname = resolved_host
-                self.host = resolved_host
             self.port = resolved_port
             if resolved_user:
                 self.username = resolved_user
@@ -300,7 +304,7 @@ class Connection:
             if resolved_port != 22:
                 ssh_cmd.extend(['-p', str(resolved_port)])
 
-            host_for_cmd = resolved_host or alias_fallback or target_alias or ''
+            host_for_cmd = alias_value or effective_hostname or target_alias or ''
             ssh_cmd.append(f"{resolved_user}@{host_for_cmd}" if resolved_user else host_for_cmd)
 
             # Store command for later use
@@ -658,12 +662,15 @@ class Connection:
         self.nickname = data.get('nickname', data.get('hostname', data.get('host', 'Unknown')))
         if 'aliases' in data:
             self.aliases = data.get('aliases', getattr(self, 'aliases', []))
-        resolved_hostname = data.get('hostname') or data.get('host', '')
-        self.hostname = resolved_hostname
+
+        if 'hostname' in data:
+            self.hostname = data.get('hostname') or ''
+
         host_alias = data.get('host')
-        if not host_alias:
-            host_alias = getattr(self, 'host', self.nickname)
-        self.host = host_alias
+        if host_alias is not None:
+            self.host = host_alias or ''
+        elif not getattr(self, 'host', ''):
+            self.host = self.nickname
 
         self.username = data.get('username', '')
         self.port = data.get('port', 22)

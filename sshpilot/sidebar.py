@@ -13,6 +13,11 @@ from gi.repository import Gtk, Gdk, GObject, GLib, Adw, Graphene
 from gettext import gettext as _
 
 from .connection_manager import Connection
+from .connection_display import (
+    get_connection_alias as _get_connection_alias,
+    get_connection_host as _get_connection_host,
+    format_connection_host_display as _format_connection_host_display,
+)
 from .groups import GroupManager
 
 logger = logging.getLogger(__name__)
@@ -451,8 +456,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         if hide:
             self.host_label.set_text("••••••••••")
         else:
-            host_value = getattr(self.connection, 'hostname', getattr(self.connection, 'host', getattr(self.connection, 'nickname', '')))
-            self.host_label.set_text(f"{self.connection.username}@{host_value}")
+            display = _format_connection_host_display(self.connection)
+            self.host_label.set_text(display or '')
 
     def apply_hide_hosts(self, hide: bool):
         self._apply_host_label_text()
@@ -476,7 +481,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
             if has_active_terminal:
                 self.status_icon.set_from_icon_name("network-idle-symbolic")
-                host_value = getattr(self.connection, 'hostname', getattr(self.connection, 'host', getattr(self.connection, 'nickname', '')))
+                host_value = _get_connection_host(self.connection) or _get_connection_alias(self.connection)
                 self.status_icon.set_tooltip_text(
                     f"Connected to {host_value}"
                 )
@@ -495,9 +500,8 @@ class ConnectionRow(Gtk.ListBoxRow):
             self.nickname_label.set_markup(f"<b>{self.connection.nickname}</b>")
 
         if hasattr(self.connection, "username") and hasattr(self, "host_label"):
-            host_value = getattr(self.connection, 'hostname', getattr(self.connection, 'host', getattr(self.connection, 'nickname', '')))
-            port_text = f":{self.connection.port}" if getattr(self.connection, "port", 22) != 22 else ""
-            self.host_label.set_text(f"{self.connection.username}@{host_value}{port_text}")
+            display = _format_connection_host_display(self.connection, include_port=True)
+            self.host_label.set_text(display or '')
         self._update_forwarding_indicators()
         self.update_status()
 
