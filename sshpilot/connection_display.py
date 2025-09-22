@@ -26,8 +26,17 @@ def format_connection_host_display(connection: Any, include_port: bool = False) 
     """Create a user-facing string describing host/alias details for a connection."""
     username = str(getattr(connection, "username", "") or "")
     hostname = str(getattr(connection, "hostname", "") or "")
-    alias = get_connection_alias(connection)
-    base_target = hostname or alias
+    nickname = str(getattr(connection, "nickname", "") or "")
+    alias = str(getattr(connection, "host", "") or "")
+
+    used_nickname = False
+    if hostname:
+        base_target = hostname
+    elif nickname:
+        base_target = nickname
+        used_nickname = True
+    else:
+        base_target = alias or ""
 
     display = ""
     if username and base_target:
@@ -46,7 +55,7 @@ def format_connection_host_display(connection: Any, include_port: bool = False) 
             return f"{display} ({alias})"
         return display
 
-    if alias:
+    if alias and not used_nickname:
         suffix_display = display or alias
         if include_port and port and port != 22 and not display:
             suffix_display = f"{alias}:{port}"
