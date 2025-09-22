@@ -64,11 +64,10 @@ class TerminalManager:
             window.show_tab_view()
             window.tab_view.set_selected_page(page)
 
-        def _cleanup_failed_terminal(message: str = None):
-            try:
-                window.tab_view.close_page(page)
-            except Exception:
-                pass
+        def _cleanup_failed_terminal():
+            connection.is_connected = False
+            window.tab_view.close_page(page)
+
             try:
                 if connection in window.active_terminals and window.active_terminals[connection] is terminal:
                     del window.active_terminals[connection]
@@ -81,80 +80,22 @@ class TerminalManager:
             except Exception:
                 pass
 
-            if message:
-                try:
-                    dialog = Adw.MessageDialog(
-                        transient_for=window,
-                        modal=True,
-                        heading=_("Connection failed"),
-                        body=str(message),
-                    )
-                    dialog.add_response('ok', _("OK"))
-                    dialog.set_default_response('ok')
-                    dialog.present()
-                except Exception:
-                    logger.error(f"Unable to display connection error dialog: {message}")
+        def _set_terminal_colors():
 
-            return False
-
-        def _start_terminal_connection():
             try:
                 terminal.apply_theme()
-            except Exception as e:
-                logger.error(f"Error applying terminal theme: {e}")
-            try:
                 terminal.vte.queue_draw()
-            except Exception:
-                pass
+                if not terminal._connect_ssh():
+                    logger.error('Failed to establish SSH connection')
+                    _cleanup_failed_terminal()
+            except Exception as e:
+                logger.error(f"Error setting terminal colors: {e}")
+                if not terminal._connect_ssh():
+                    logger.error('Failed to establish SSH connection')
+                    _cleanup_failed_terminal()
 
-            if not terminal._connect_ssh():
-                logger.error('Failed to establish SSH connection')
-                return _cleanup_failed_terminal()
+        GLib.idle_add(_set_terminal_colors)
 
-            return False
-
-        async def _prepare_connection():
-            return await connection.connect()
-
-        def _on_preparation_complete(fut):
-            try:
-                success = fut.result()
-            except Exception as exc:
-                logger.error(f"Failed to prepare connection for {connection.nickname}: {exc}")
-                return _cleanup_failed_terminal(str(exc))
-
-            if not success:
-                logger.error(f"Preparation for connection {connection.nickname} failed")
-                return _cleanup_failed_terminal(_("Could not prepare SSH connection."))
-
-            GLib.idle_add(_start_terminal_connection)
-            return False
-
-        loop = getattr(connection, 'loop', None)
-        if loop is None:
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            connection.loop = loop
-
-        if loop.is_running():
-            future = asyncio.run_coroutine_threadsafe(_prepare_connection(), loop)
-            future.add_done_callback(lambda fut: GLib.idle_add(_on_preparation_complete, fut))
-        else:
-            try:
-                result = loop.run_until_complete(_prepare_connection())
-            except Exception as exc:
-                logger.error(f"Failed to prepare connection for {connection.nickname}: {exc}")
-                GLib.idle_add(_cleanup_failed_terminal, str(exc))
-            else:
-                try:
-                    completed_future = loop.create_future()
-                except Exception:
-                    completed_future = asyncio.Future()
-                completed_future.set_result(result)
-                GLib.idle_add(_on_preparation_complete, completed_future)
 
     def _on_disconnect_confirmed(self, dialog, response_id, connection):
         dialog.destroy()
