@@ -149,6 +149,27 @@ class Connection:
     def __str__(self):
         return f"{self.nickname} ({self.username}@{self.hostname})"
 
+    def get_effective_host(self) -> str:
+        """Return the best available host/alias for SSH commands."""
+        host = self.hostname or self.host or ''
+        if not host:
+            nickname = getattr(self, 'nickname', '')
+            if nickname and nickname != 'Unknown':
+                host = nickname
+        return host
+
+    def get_connection_key(self) -> str:
+        """Generate a stable identifier for tracking active connections."""
+        host = self.get_effective_host()
+        username = getattr(self, 'username', '')
+        if username and host:
+            return f"{username}@{host}"
+        if host:
+            return host
+        if username:
+            return username
+        return f"connection-{id(self)}"
+
     @property
     def source_file(self) -> str:
         """Return path to the config file where this host is defined."""
@@ -1861,7 +1882,12 @@ class ConnectionManager(GObject.Object):
             
             # Remove password from secure storage
             try:
-                self.delete_password(connection.hostname, connection.username)
+                host_identifier = (
+                    connection.get_effective_host()
+                    if hasattr(connection, 'get_effective_host')
+                    else connection.hostname
+                )
+                self.delete_password(host_identifier, connection.username)
             except Exception as e:
                 logger.warning(f"Failed to remove password from storage: {e}")
             
@@ -1895,10 +1921,29 @@ class ConnectionManager(GObject.Object):
 
             logger.info(f"Connection removed: {connection}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to remove connection: {e}")
             return False
+
+    def _get_active_connection_key(self, connection: Connection) -> str:
+        """Return the dictionary key used to track active connection tasks."""
+        try:
+            key = connection.get_connection_key()
+        except AttributeError:
+            host = getattr(connection, 'hostname', '') or getattr(connection, 'host', '')
+            username = getattr(connection, 'username', '')
+            if username and host:
+                key = f"{username}@{host}"
+            elif host:
+                key = host
+            elif username:
+                key = username
+            else:
+                key = ''
+        if not key:
+            key = f"connection-{id(connection)}"
+        return key
 
     async def connect(self, connection: Connection):
         """Connect to an SSH host asynchronously"""
@@ -1913,8 +1958,9 @@ class ConnectionManager(GObject.Object):
                 await connection.setup_forwarding()
             
             # Store the connection task
-            if connection.hostname in self.active_connections:
-                self.active_connections[connection.hostname].cancel()
+            connection_key = self._get_active_connection_key(connection)
+            if connection_key in self.active_connections:
+                self.active_connections[connection_key].cancel()
             
             # Create a task to keep the connection alive
             async def keepalive():
@@ -1939,7 +1985,7 @@ class ConnectionManager(GObject.Object):
             
             # Start the keepalive task
             task = asyncio.create_task(keepalive())
-            self.active_connections[connection.hostname] = task
+            self.active_connections[connection_key] = task
             
             # Update the connection state and emit status change
             connection.is_connected = True
@@ -1960,13 +2006,14 @@ class ConnectionManager(GObject.Object):
         """Disconnect from SSH host and clean up resources asynchronously"""
         try:
             # Cancel the keepalive task if it exists
-            if connection.hostname in self.active_connections:
-                self.active_connections[connection.hostname].cancel()
+            connection_key = self._get_active_connection_key(connection)
+            if connection_key in self.active_connections:
+                self.active_connections[connection_key].cancel()
                 try:
-                    await self.active_connections[connection.hostname]
+                    await self.active_connections[connection_key]
                 except asyncio.CancelledError:
                     pass
-                del self.active_connections[connection.hostname]
+                del self.active_connections[connection_key]
             
             # Disconnect the connection
             if hasattr(connection, 'connection') and connection.connection and connection.is_connected:
