@@ -30,9 +30,15 @@ def open_remote_in_file_manager(
     """Open remote server in file manager using SFTP URI with asynchronous verification"""
 
     # Build sftp URI
-    p = path or "~"
     port_part = f":{port}" if port else ""
-    uri = f"sftp://{user}@{host}{port_part}{p}"
+    
+    if _should_use_in_app_file_manager():
+        # For in-app file manager, use the specified path
+        p = path or "~"
+        uri = f"sftp://{user}@{host}{port_part}{p}"
+    else:
+        # For external file managers, don't set any path - let them mount to root
+        uri = f"sftp://{user}@{host}{port_part}/"
 
     logger.info(f"Opening SFTP URI: {uri}")
 
@@ -46,7 +52,7 @@ def open_remote_in_file_manager(
                 host=host,
                 username=user,
                 port=port or 22,
-                path=p,
+                path=path or "~",
                 parent=parent_window,
                 transient_for_parent=False,
                 connection=connection,
