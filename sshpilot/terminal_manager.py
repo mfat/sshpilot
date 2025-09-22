@@ -63,6 +63,21 @@ class TerminalManager:
             window.show_tab_view()
             window.tab_view.set_selected_page(page)
 
+        def _cleanup_failed_terminal():
+            connection.is_connected = False
+            window.tab_view.close_page(page)
+            try:
+                if connection in window.active_terminals and window.active_terminals[connection] is terminal:
+                    del window.active_terminals[connection]
+                if terminal in window.terminal_to_connection:
+                    del window.terminal_to_connection[terminal]
+                if connection in window.connection_to_terminals and terminal in window.connection_to_terminals[connection]:
+                    window.connection_to_terminals[connection].remove(terminal)
+                    if not window.connection_to_terminals[connection]:
+                        del window.connection_to_terminals[connection]
+            except Exception:
+                pass
+
         def _set_terminal_colors():
             try:
                 # Apply the configured theme instead of hardcoded colors
@@ -70,34 +85,12 @@ class TerminalManager:
                 terminal.vte.queue_draw()
                 if not terminal._connect_ssh():
                     logger.error('Failed to establish SSH connection')
-                    window.tab_view.close_page(page)
-                    try:
-                        if connection in window.active_terminals and window.active_terminals[connection] is terminal:
-                            del window.active_terminals[connection]
-                        if terminal in window.terminal_to_connection:
-                            del window.terminal_to_connection[terminal]
-                        if connection in window.connection_to_terminals and terminal in window.connection_to_terminals[connection]:
-                            window.connection_to_terminals[connection].remove(terminal)
-                            if not window.connection_to_terminals[connection]:
-                                del window.connection_to_terminals[connection]
-                    except Exception:
-                        pass
+                    _cleanup_failed_terminal()
             except Exception as e:
                 logger.error(f"Error setting terminal colors: {e}")
                 if not terminal._connect_ssh():
                     logger.error('Failed to establish SSH connection')
-                    window.tab_view.close_page(page)
-                    try:
-                        if connection in window.active_terminals and window.active_terminals[connection] is terminal:
-                            del window.active_terminals[connection]
-                        if terminal in window.terminal_to_connection:
-                            del window.terminal_to_connection[terminal]
-                        if connection in window.connection_to_terminals and terminal in window.connection_to_terminals[connection]:
-                            window.connection_to_terminals[connection].remove(terminal)
-                            if not window.connection_to_terminals[connection]:
-                                del window.connection_to_terminals[connection]
-                    except Exception:
-                        pass
+                    _cleanup_failed_terminal()
 
         GLib.idle_add(_set_terminal_colors)
 
