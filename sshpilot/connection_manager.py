@@ -971,12 +971,17 @@ class ConnectionManager(GObject.Object):
 
             host = host_token
 
-            hostname_value = config.get('hostname')
-            parsed_host = _unwrap(hostname_value) if hostname_value else ''
+            # Determine whether the config explicitly defined a HostName value.
+            has_explicit_hostname = 'hostname' in config and str(config['hostname']).strip() != ''
+            hostname_value = config['hostname'] if has_explicit_hostname else None
+            parsed_host = _unwrap(hostname_value) if has_explicit_hostname else ''
 
             # Extract relevant configuration
             parsed = {
                 'nickname': host,
+                # Keep HostName empty when it was omitted in the original
+                # configuration but record the label separately via ``host`` so
+                # consumers can fall back to the alias when needed.
                 'hostname': parsed_host,
                 'host': host,
 
@@ -988,7 +993,7 @@ class ConnectionManager(GObject.Object):
                 'certificate': os.path.expanduser(_unwrap(config.get('certificatefile'))) if config.get('certificatefile') else '',
                 'forwarding_rules': []
             }
-            if 'hostname' in config:
+            if has_explicit_hostname:
                 parsed['aliases'] = []
             if source:
                 parsed['source'] = source

@@ -76,7 +76,7 @@ def test_parse_host_with_quotes():
     assert parsed["aliases"] == []
 
 
-def test_parse_host_without_hostname_stores_empty_hostname():
+def test_parse_host_without_hostname_defaults_to_alias():
     cm = make_cm()
     config = {
         "host": "localhost",
@@ -85,6 +85,7 @@ def test_parse_host_without_hostname_stores_empty_hostname():
     parsed = ConnectionManager.parse_host_config(cm, config)
     assert parsed["hostname"] == ""
     assert parsed["host"] == "localhost"
+    assert parsed["nickname"] == "localhost"
 
 
 def test_connect_without_hostname_uses_alias(monkeypatch):
@@ -120,8 +121,9 @@ def test_connection_host_preserves_alias_when_hostname_blank():
         "username": "user",
     }
     connection = Connection(data)
+    assert connection.data["host"] == "alias"
     assert connection.host == "alias"
-    assert connection.hostname == ""
+    assert connection.hostname == "alias"
 
 
 def test_connect_with_blank_hostname_uses_alias(monkeypatch):
