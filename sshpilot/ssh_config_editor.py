@@ -60,6 +60,7 @@ class SSHConfigEditorWindow(Adw.Window):
         self.textview.set_buffer(buffer)
         self._highlight_handler_id = buffer.connect("changed", self._on_buffer_changed)
 
+
         try:
             with open(self._config_path, 'r') as f:
                 buffer.set_text(f.read())
