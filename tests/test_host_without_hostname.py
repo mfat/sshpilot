@@ -54,7 +54,8 @@ def test_host_token_used_when_hostname_missing(tmp_path):
     assert conn.nickname == 'example.com'
     assert conn.data['hostname'] == ''
     assert conn.data['host'] == 'example.com'
-    assert conn.hostname == 'example.com'
+    assert conn.hostname == ''
+    assert conn.host == 'example.com'
 
 
 def test_multiple_labels_without_hostname_have_no_aliases(tmp_path):
@@ -76,7 +77,8 @@ def test_multiple_labels_without_hostname_have_no_aliases(tmp_path):
     assert sorted(c.nickname for c in manager.connections) == ['alias1', 'alias2', 'primary']
     for c in manager.connections:
         assert c.data['hostname'] == ''
-        assert c.hostname == c.nickname
+        assert c.hostname == ''
+        assert c.host == c.nickname
         assert not hasattr(c, 'aliases')
 
     primary = next(c for c in manager.connections if c.nickname == 'primary')
@@ -110,4 +112,30 @@ def test_alias_labels_with_hostname(tmp_path):
         assert c.hostname == '192.168.1.50'
         assert c.username == 'testuser'
         assert c.aliases == []
+
+
+def test_connect_command_preserves_empty_hostname(tmp_path):
+    """Connecting should use the alias for SSH while keeping hostname empty."""
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+    manager = ConnectionManager.__new__(ConnectionManager)
+    manager.connections = []
+
+    cfg = """Host example.com\n    User testuser\n"""
+    config_path = tmp_path / 'config'
+    config_path.write_text(cfg)
+    manager.ssh_config_path = str(config_path)
+
+    manager.load_ssh_config()
+
+    assert len(manager.connections) == 1
+    conn = manager.connections[0]
+    assert conn.hostname == ''
+    assert conn.host == 'example.com'
+
+    asyncio.get_event_loop().run_until_complete(conn.connect())
+
+    # Hostname remains empty but ssh command targets the alias
+    assert conn.hostname == ''
+    assert any(part.endswith('example.com') for part in conn.ssh_cmd)
 

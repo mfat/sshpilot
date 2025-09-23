@@ -116,7 +116,8 @@ def test_connect_without_hostname_uses_alias(monkeypatch):
 
     assert connected
     assert connection.ssh_cmd[-1].endswith("localhost")
-    assert connection.hostname == "localhost"
+    assert connection.hostname == ""
+    assert connection.host == "localhost"
 
 
 def test_connection_host_preserves_alias_when_hostname_blank():
@@ -128,7 +129,7 @@ def test_connection_host_preserves_alias_when_hostname_blank():
     connection = Connection(data)
     assert connection.data["host"] == "alias"
     assert connection.host == "alias"
-    assert connection.hostname == "alias"
+    assert connection.hostname == ""
 
 
 def test_connection_update_preserves_alias_when_hostname_blank():
@@ -141,7 +142,7 @@ def test_connection_update_preserves_alias_when_hostname_blank():
     # Update with new username but keep hostname blank
     connection.update_data({"username": "newuser", "hostname": ""})
     assert connection.host == "alias"
-    assert connection.hostname == "alias"
+    assert connection.hostname == ""
 
 
 
@@ -164,7 +165,7 @@ def test_connect_with_blank_hostname_uses_alias(monkeypatch):
     assert connected
     assert connection.ssh_cmd[-1] == "mahdi@myalias"
     assert connection.host == "myalias"
-    assert connection.hostname == "myalias"
+    assert connection.hostname == ""
 
 
 def test_update_connection_password_storage_uses_alias(monkeypatch):

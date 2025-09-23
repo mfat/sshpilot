@@ -957,7 +957,9 @@ class ConnectionDialog(Adw.Window):
             self.key_passphrase_row.set_visible(is_key_based)
         if hasattr(self, 'key_select_row'):
             self.key_select_row.set_visible(is_key_based)
-            
+        if hasattr(self, 'key_only_row'):
+            self.key_only_row.set_visible(is_key_based and self.key_select_row.get_selected() == 1)
+
         # Password field is always available since key-based auth can also require a password
         if hasattr(self, 'password_row'):
             self.password_row.set_visible(True)
@@ -989,57 +991,12 @@ class ConnectionDialog(Adw.Window):
                 self.certificate_row.set_sensitive(use_specific)
             if hasattr(self, 'cert_dropdown'):
                 self.cert_dropdown.set_sensitive(use_specific)
+            if hasattr(self, 'key_only_row'):
+                self.key_only_row.set_visible(use_specific)
+                self.key_only_row.set_sensitive(use_specific)
         except Exception:
             pass
         
-    
-
-    
-            # Read and parse the SSH config file
-            current_host = None
-            current_block = []
-            in_target_host = False
-            
-            with open(ssh_config_path, 'r') as f:
-                for line in f:
-                    stripped_line = line.strip()
-                    
-                    # Skip empty lines and comments
-                    if not stripped_line or stripped_line.startswith('#'):
-                        if in_target_host:
-                            current_block.append(line.rstrip())
-                        continue
-                    
-                    # Check if this is a Host directive
-                    if stripped_line.lower().startswith('host '):
-                        # If we were in a target host block, we've reached the end
-                        if in_target_host:
-                            break
-                        
-                        # Extract host name(s)
-                        host_part = stripped_line[5:].strip()
-                        host_names = [h.strip() for h in host_part.split()]
-                        
-                        # Check if our target host is in this Host directive
-                        if host_nickname in host_names:
-                            current_host = host_nickname
-                            in_target_host = True
-                            current_block.append(line.rstrip())
-                        else:
-                            current_host = None
-                    elif in_target_host:
-                        # We're in the target host block, add this line
-                        current_block.append(line.rstrip())
-            
-            if current_block:
-                return '\n'.join(current_block)
-            else:
-                logger.warning(f"No SSH config block found for host: {host_nickname}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Failed to load SSH config from file: {e}")
-            return None
     
     def validate_ssh_config_syntax(self, config_text):
         """Basic SSH config syntax validation"""
@@ -1086,6 +1043,7 @@ class ConnectionDialog(Adw.Window):
             port = getattr(self, 'port_row', None)
             auth_method = getattr(self, 'auth_method_row', None)
             key_select_mode = getattr(self, 'key_select_row', None)
+            key_only_row = getattr(self, 'key_only_row', None)
             
             # Get values from UI or use defaults
             nickname_val = nickname.get_text().strip() if nickname else "my-server"
@@ -1095,7 +1053,14 @@ class ConnectionDialog(Adw.Window):
             
             # Get authentication settings
             auth_method_val = auth_method.get_selected() if auth_method else 0
-            key_select_mode_val = key_select_mode.get_selected() if key_select_mode else 0
+            selection_val = key_select_mode.get_selected() if key_select_mode else 0
+            key_select_mode_val = 0
+            if selection_val == 1:
+                try:
+                    only_active = key_only_row.get_active() if key_only_row else True
+                except Exception:
+                    only_active = True
+                key_select_mode_val = 1 if only_active else 2
             
             # Get keyfile and certificate if available
             keyfile_val = ""
@@ -1148,9 +1113,10 @@ class ConnectionDialog(Adw.Window):
             password_val = self.password_row.get_text().strip() if hasattr(self, 'password_row') else ''
 
             if auth_method_val == 0:  # Key-based auth (password optional)
-                if key_select_mode_val == 1 and keyfile_val:  # Specific key
+                if key_select_mode_val in (1, 2) and keyfile_val:  # Specific key
                     config_lines.append(f"    IdentityFile {keyfile_val}")
-                    config_lines.append("    IdentitiesOnly yes")
+                    if key_select_mode_val == 1:
+                        config_lines.append("    IdentitiesOnly yes")
 
                     # Add certificate if specified (validate to skip placeholder text)
                     if certificate_val and certificate_val.lower() not in ['select certificate file (optional)', '']:
@@ -1250,18 +1216,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self.pubkey_auth_row.set_active(False)
             
             # Get keyfile path from either keyfile or private_key attribute
+            has_specific_key = False
             keyfile = getattr(self.connection, 'keyfile', None) or getattr(self.connection, 'private_key', None)
             if keyfile:
                 # Normalize the keyfile path and ensure it's a string
                 keyfile_path = str(keyfile).strip()
-                
+
                 # Update the connection's keyfile attribute if it comes from private_key
                 if not getattr(self.connection, 'keyfile', None) and hasattr(self.connection, 'private_key'):
                     self.connection.keyfile = keyfile_path
-                
+
                 # Only update the UI if we have a valid path
                 if keyfile_path and keyfile_path.lower() not in ['select key file or leave empty for auto-detection', '']:
                     logger.debug(f"Setting keyfile path in UI: {keyfile_path}")
+                    has_specific_key = True
                     self.keyfile_row.set_subtitle(keyfile_path)
                     # Sync the dropdown to match the loaded keyfile
                     self._sync_key_dropdown_with_current_keyfile()
@@ -1339,7 +1307,24 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                                 mode = int(self.connection.data.get('key_select_mode', 0)) if hasattr(self.connection, 'data') else 0
                             except Exception:
                                 mode = 0
-                    self.key_select_row.set_selected(0 if mode != 1 else 1)
+                    if has_specific_key and mode not in (1, 2):
+                        mode = 2
+                        try:
+                            self.connection.key_select_mode = 2
+                        except Exception:
+                            pass
+                        try:
+                            if hasattr(self.connection, 'data'):
+                                self.connection.data['key_select_mode'] = 2
+                        except Exception:
+                            pass
+                    selection = 1 if mode in (1, 2) else 0
+                    self.key_select_row.set_selected(selection)
+                    if hasattr(self, 'key_only_row'):
+                        try:
+                            self.key_only_row.set_active(mode == 1)
+                        except Exception:
+                            pass
                     self.on_key_select_changed(self.key_select_row, None)
             except Exception:
                 pass
@@ -2153,6 +2138,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.keyfile_row.add_suffix(box)
         self.keyfile_row.set_activatable(False)
         auth_group.add(self.keyfile_row)
+
+        self.key_only_row = Adw.SwitchRow()
+        self.key_only_row.set_title(_("Only use the specified key"))
+        self.key_only_row.set_subtitle(_("This will append \"IdentitiesOnly yes\" to the configuration."))
+        self.key_only_row.set_active(True)
+        self.key_only_row.set_visible(False)
+        auth_group.add(self.key_only_row)
 
         # Certificate dropdown for key-based auth with specific key
         self.certificate_row = Adw.ActionRow(title=_("SSH Certificate"), subtitle=_("Select certificate file (optional)"))
@@ -3337,6 +3329,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 logger.error(f"Error getting extra SSH config from advanced tab: {e}")
                 extra_ssh_config = ''
 
+        key_select_mode_val = 0
+        try:
+            if hasattr(self, 'key_select_row'):
+                key_selection = self.key_select_row.get_selected()
+                if key_selection == 1:
+                    use_only = getattr(self, 'key_only_row', None)
+                    only_active = use_only.get_active() if use_only else True
+                    key_select_mode_val = 1 if only_active else 2
+        except Exception:
+            key_select_mode_val = 0
+
         # Gather connection data
         connection_data = {
             'nickname': self.nickname_row.get_text().strip(),
@@ -3346,7 +3349,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'auth_method': self.auth_method_row.get_selected(),
             'keyfile': keyfile_value,
             'certificate': certificate_value,
-            'key_select_mode': (self.key_select_row.get_selected() if hasattr(self, 'key_select_row') else 0),
+            'key_select_mode': key_select_mode_val,
             'key_passphrase': self.key_passphrase_row.get_text(),
             'password': self.password_row.get_text(),
             'x11_forwarding': self.x11_row.get_active(),
