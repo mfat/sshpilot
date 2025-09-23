@@ -15,6 +15,9 @@ keyring>=24.3
 # System utilities
 psutil>=5.9.0
 
+# Development dependencies (optional)
+# watchdog>=3.0.0  # Uncomment for hot reloading support
+
 
 
 

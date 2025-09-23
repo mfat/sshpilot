@@ -16,3 +16,4 @@ release.sh
 /tests/__pycache__
 .venv
 venv
+.env
