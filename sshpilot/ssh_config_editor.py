@@ -43,6 +43,7 @@ class SSHConfigEditorWindow(Adw.Window):
         # Text view for editing
         self.textview = Gtk.TextView()
         self.textview.set_monospace(True)
+        self.textview.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
 
         tag_table = Gtk.TextTagTable()
         self._directive_tag = Gtk.TextTag.new("directive")
