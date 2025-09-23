@@ -4497,29 +4497,31 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             keyfile_ok = False
         # Handle authentication with saved credentials
-        if key_mode == 1 and keyfile_ok:
-            argv += ['-i', keyfile, '-o', 'IdentitiesOnly=yes']
-            
-            # Try to get saved passphrase for the key
-            try:
-                if hasattr(self, 'connection_manager') and self.connection_manager:
-                    saved_passphrase = self.connection_manager.get_key_passphrase(keyfile)
-                    if saved_passphrase:
-                        # Use the secure askpass script for passphrase authentication
-                        # This avoids storing passphrases in plain text temporary files
-                        from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
-                        askpass_env = get_ssh_env_with_forced_askpass()
-                        # Store for later use in the main execution
-                        if not hasattr(self, '_scp_askpass_env'):
-                            self._scp_askpass_env = {}
-                        self._scp_askpass_env.update(askpass_env)
-                        logger.debug(f"SCP: Stored askpass environment for key passphrase: {list(askpass_env.keys())}")
-                        
-                        # Add SSH options to force public key authentication and prevent password fallback
-                        argv += get_scp_ssh_options()
-            except Exception as e:
-                logger.debug(f"Failed to get saved passphrase for SCP: {e}")
-                
+        if key_mode in (1, 2) and keyfile_ok:
+            argv += ['-i', keyfile]
+            if key_mode == 1:
+                argv += ['-o', 'IdentitiesOnly=yes']
+
+                # Try to get saved passphrase for the key
+                try:
+                    if hasattr(self, 'connection_manager') and self.connection_manager:
+                        saved_passphrase = self.connection_manager.get_key_passphrase(keyfile)
+                        if saved_passphrase:
+                            # Use the secure askpass script for passphrase authentication
+                            # This avoids storing passphrases in plain text temporary files
+                            from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
+                            askpass_env = get_ssh_env_with_forced_askpass()
+                            # Store for later use in the main execution
+                            if not hasattr(self, '_scp_askpass_env'):
+                                self._scp_askpass_env = {}
+                            self._scp_askpass_env.update(askpass_env)
+                            logger.debug(f"SCP: Stored askpass environment for key passphrase: {list(askpass_env.keys())}")
+
+                            # Add SSH options to force public key authentication and prevent password fallback
+                            argv += get_scp_ssh_options()
+                except Exception as e:
+                    logger.debug(f"Failed to get saved passphrase for SCP: {e}")
+
         elif prefer_password or combined_auth:
             if prefer_password:
                 argv += ['-o', 'PreferredAuthentications=password']
