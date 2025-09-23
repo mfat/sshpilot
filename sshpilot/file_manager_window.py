@@ -1006,7 +1006,7 @@ class AsyncSFTPManager(GObject.GObject):
         else:
             logger.debug("File manager: No connection object provided")
 
-        if connection is not None and key_mode == 1 and keyfile and os.path.isfile(keyfile):
+        if connection is not None and key_mode in (1, 2) and keyfile and os.path.isfile(keyfile):
                 key_filename = keyfile
                 look_for_keys = False
                 logger.debug("File manager: Using specific key file: %s", keyfile)

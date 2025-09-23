@@ -189,8 +189,14 @@ def setup_gi(monkeypatch):
     glib.timeout_add = timeout_add
     glib.source_remove = lambda *_args, **_kwargs: None
     glib.Error = Exception
+    glib.get_user_config_dir = lambda: "/tmp"
+    glib.get_user_data_dir = lambda: "/tmp"
+    glib.get_home_dir = lambda: "/tmp"
     repository.GLib = glib
     monkeypatch.setitem(sys.modules, "gi.repository.GLib", glib)
+    platform_utils = sys.modules.get("sshpilot.platform_utils")
+    if platform_utils is not None:
+        setattr(platform_utils, "GLib", glib)
 
     gio = types.ModuleType("Gio")
 

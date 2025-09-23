@@ -87,19 +87,12 @@ class Connection:
 
         if 'aliases' in data:
             self.aliases = data.get('aliases', [])
+        self.hostname = hostname_value or ''
+        host_alias = data.get('host')
+        if host_alias is None:
+            host_alias = self.nickname
+        self.host = host_alias or ''
 
-        resolved_host = hostname_value if hostname_value else host_value
-        self.host = resolved_host
-
-        if hostname_value is None:
-            self.hostname = resolved_host
-        elif hostname_value == '':
-            if data.get('source'):
-                self.hostname = resolved_host
-            else:
-                self.hostname = ''
-        else:
-            self.hostname = hostname_value
 
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
@@ -134,7 +127,7 @@ class Connection:
         # X11 forwarding preference
         self.x11_forwarding = bool(data.get('x11_forwarding', False))
         
-        # Key selection mode: 0 try all, 1 specific key
+        # Key selection mode: 0 try all, 1 specific key (IdentitiesOnly), 2 specific key (no IdentitiesOnly)
         try:
             self.key_select_mode = int(data.get('key_select_mode', 0) or 0)
         except Exception:
@@ -148,6 +141,16 @@ class Connection:
 
     def __str__(self):
         return f"{self.nickname} ({self.username}@{self.hostname})"
+
+    def get_effective_host(self) -> str:
+        """Return the hostname used for operations, falling back to aliases."""
+
+        if self.hostname:
+            return self.hostname
+        if getattr(self, 'host', ''):
+            return self.host
+        return self.nickname
+
 
     @property
     def source_file(self) -> str:
@@ -217,26 +220,55 @@ class Connection:
             # Resolve effective SSH configuration for this nickname/host
             effective_cfg: Dict[str, Union[str, List[str]]] = {}
             target_alias = self.nickname or self.hostname
-            alias_fallback = self.host or self.nickname or self.hostname
+            stored_alias = ""
+            if isinstance(self.data, dict):
+                stored_alias = str(self.data.get('host') or '')
+            alias_fallback = (
+                stored_alias
+                or self.nickname
+                or self.host
+                or self.hostname
+            )
             if target_alias:
                 effective_cfg = get_effective_ssh_config(target_alias)
 
             # Determine final parameters, falling back to resolved config when needed
+            existing_hostname = self.hostname or ''
+
             resolved_host_cfg = effective_cfg.get('hostname')
-            if resolved_host_cfg:
-                resolved_host = str(resolved_host_cfg)
-            else:
-                resolved_host = self.hostname or self.host
+            if isinstance(resolved_host_cfg, str):
+                resolved_host_cfg = resolved_host_cfg.strip()
+            effective_hostname = str(resolved_host_cfg) if resolved_host_cfg else ''
+            if effective_hostname:
+                alias_candidates = {
+                    alias_fallback or '',
+                    self.host or '',
+                    target_alias or '',
+                }
+                if existing_hostname or effective_hostname not in alias_candidates:
+                    self.hostname = effective_hostname
+
+            alias_value = alias_fallback or self.host or ''
+            if alias_value:
+                self.host = alias_value
 
             resolved_user = self.username or str(effective_cfg.get('user', ''))
             try:
                 resolved_port = int(effective_cfg.get('port', self.port))
             except Exception:
                 resolved_port = self.port
-            previous_host = self.host
-            self.hostname = resolved_host or self.hostname
-            self.host = resolved_host or previous_host
             self.port = resolved_port
+
+            try:
+                resolved_host = (
+                    self.hostname
+                    or alias_fallback
+                    or target_alias
+                    or self.get_effective_host()
+                )
+            except Exception:
+                resolved_host = self.hostname or alias_fallback or target_alias or ''
+
             if resolved_user:
                 self.username = resolved_user
 
@@ -244,7 +276,8 @@ class Connection:
             try:
                 if int(getattr(self, 'auth_method', 0) or 0) == 0:
                     identity_files: List[str] = []
-                    if int(getattr(self, 'key_select_mode', 0) or 0) == 1:
+                    key_mode = int(getattr(self, 'key_select_mode', 0) or 0)
+                    if key_mode in (1, 2):
                         if self.keyfile and os.path.exists(self.keyfile):
                             identity_files.append(self.keyfile)
                     else:
@@ -258,6 +291,8 @@ class Connection:
                             identity_files.append(self.keyfile)
                     for key_path in identity_files:
                         ssh_cmd.extend(['-i', key_path])
+                        if key_mode == 1:
+                            ssh_cmd.extend(['-o', 'IdentitiesOnly=yes'])
                         if self.key_passphrase:
                             logger.warning("Passphrase-protected keys may require additional setup")
                     cert_files: List[str] = []
@@ -293,7 +328,8 @@ class Connection:
             if resolved_port != 22:
                 ssh_cmd.extend(['-p', str(resolved_port)])
 
-            host_for_cmd = resolved_host or alias_fallback or target_alias or ''
+            host_for_cmd = resolved_host or alias_fallback or target_alias or self.resolve_host_identifier()
+
             ssh_cmd.append(f"{resolved_user}@{host_for_cmd}" if resolved_user else host_for_cmd)
 
             # Store command for later use
@@ -648,12 +684,32 @@ class Connection:
     
     def _update_properties_from_data(self, data: Dict[str, Any]):
         """Update instance properties from data dictionary"""
-        self.nickname = data.get('nickname', data.get('hostname', data.get('host', 'Unknown')))
+        hostname_value = data.get('hostname')
+        host_value = data.get('host', '')
+
+        nickname_value = data.get('nickname')
+        if nickname_value:
+            self.nickname = nickname_value
+        else:
+            fallback_nickname = hostname_value if hostname_value else host_value
+            self.nickname = fallback_nickname or getattr(self, 'nickname', 'Unknown')
+
         if 'aliases' in data:
             self.aliases = data.get('aliases', getattr(self, 'aliases', []))
-        resolved_hostname = data.get('hostname') or data.get('host', '')
-        self.hostname = resolved_hostname
-        self.host = resolved_hostname
+
+        if hostname_value in (None, ''):
+            resolved_host = host_value or getattr(self, 'host', '')
+        else:
+            resolved_host = hostname_value
+        self.host = resolved_host
+
+        if hostname_value is None:
+            self.hostname = resolved_host
+        elif hostname_value == '':
+            self.hostname = ''
+        else:
+            self.hostname = hostname_value
+
 
         self.username = data.get('username', '')
         self.port = data.get('port', 22)
@@ -715,6 +771,7 @@ class ConnectionManager(GObject.Object):
         self.ssh_config = {}
         self.loop = asyncio.get_event_loop()
         self.active_connections: Dict[str, asyncio.Task] = {}
+        self._active_connection_keys: Dict[int, str] = {}
         self.ssh_config_path = ''
         self.known_hosts_path = ''
 
@@ -723,6 +780,12 @@ class ConnectionManager(GObject.Object):
 
         # Defer slower operations to idle to avoid blocking startup
         GLib.idle_add(self._post_init_slow_path)
+
+    def _get_active_connection_key(self, connection: Connection) -> str:
+        identifier = connection.resolve_host_identifier()
+        if identifier:
+            return identifier
+        return f"connection-{id(connection)}"
 
     def set_isolated_mode(self, isolated: bool):
         """Switch between standard and isolated SSH configuration"""
@@ -772,6 +835,31 @@ class ConnectionManager(GObject.Object):
         return False  # run once
 
     # No _ensure_collection needed with libsecret's high-level API
+
+    def _get_active_connection_key(self, connection: Connection, *, prefer_stored: bool = True) -> str:
+        """Return the key used to track a connection's keepalive task."""
+
+        conn_id = id(connection)
+        if prefer_stored:
+            stored = self._active_connection_keys.get(conn_id)
+            if stored:
+                return stored
+
+        try:
+            effective_host = connection.get_effective_host()
+        except AttributeError:
+            effective_host = getattr(connection, 'hostname', '') or getattr(connection, 'host', '') or ''
+
+        username = getattr(connection, 'username', '') or ''
+        key = effective_host or ''
+        if username:
+            key = f"{key}::{username}" if key else username
+        if not key:
+            key = connection.nickname or str(conn_id)
+
+        if prefer_stored:
+            self._active_connection_keys[conn_id] = key
+        return key
 
         
     def load_ssh_config(self):
@@ -966,12 +1054,17 @@ class ConnectionManager(GObject.Object):
 
             host = host_token
 
-            hostname_value = config.get('hostname')
-            parsed_host = _unwrap(hostname_value) if hostname_value else ''
+            # Determine whether the config explicitly defined a HostName value.
+            has_explicit_hostname = 'hostname' in config and str(config['hostname']).strip() != ''
+            hostname_value = config['hostname'] if has_explicit_hostname else None
+            parsed_host = _unwrap(hostname_value) if has_explicit_hostname else ''
 
             # Extract relevant configuration
             parsed = {
                 'nickname': host,
+                # Keep HostName empty when it was omitted in the original
+                # configuration but record the label separately via ``host`` so
+                # consumers can fall back to the alias when needed.
                 'hostname': parsed_host,
                 'host': host,
 
@@ -983,7 +1076,7 @@ class ConnectionManager(GObject.Object):
                 'certificate': os.path.expanduser(_unwrap(config.get('certificatefile'))) if config.get('certificatefile') else '',
                 'forwarding_rules': []
             }
-            if 'hostname' in config:
+            if has_explicit_hostname:
                 parsed['aliases'] = []
             if source:
                 parsed['source'] = source
@@ -1101,15 +1194,30 @@ class ConnectionManager(GObject.Object):
             except Exception:
                 pass
 
-            # Key selection mode: if IdentitiesOnly is set truthy, select specific key
+            # Key selection mode defaults: prefer "specific key" when IdentityFile is explicit
+            keyfile_value = parsed.get('keyfile', '')
+            keyfile_path = keyfile_value.strip() if isinstance(keyfile_value, str) else ''
+            has_specific_key = bool(keyfile_path and not keyfile_path.lower().startswith('select key file'))
             try:
-                ident_only = str(config.get('identitiesonly', '')).strip().lower()
+                ident_only_raw = config.get('identitiesonly')
+                ident_only_normalized = ident_only_raw
+                if ident_only_raw and not isinstance(ident_only_raw, str):
+                    ident_only_normalized = str(ident_only_raw)
+
+                ident_only = ''
+                if isinstance(ident_only_normalized, str):
+                    ident_only = ident_only_normalized.strip().lower()
+
                 if ident_only in ('yes', 'true', '1', 'on'):
                     parsed['key_select_mode'] = 1
+                elif ident_only in ('no', 'false', '0', 'off'):
+                    parsed['key_select_mode'] = 2 if has_specific_key else 0
+                elif ident_only_raw is None or (isinstance(ident_only_raw, str) and not ident_only_raw.strip()):
+                    parsed['key_select_mode'] = 2 if has_specific_key else 0
                 else:
                     parsed['key_select_mode'] = 0
             except Exception:
-                parsed['key_select_mode'] = 0
+                parsed['key_select_mode'] = 2 if has_specific_key else 0
 
             # Determine authentication method
             try:
@@ -1388,14 +1496,17 @@ class ConnectionManager(GObject.Object):
         # Add IdentityFile/IdentitiesOnly per selection when auth is key-based
         keyfile = data.get('keyfile') or data.get('private_key')
         auth_method = int(data.get('auth_method', 0) or 0)
-        key_select_mode = int(data.get('key_select_mode', 0) or 0)  # 0=try all, 1=specific
+        key_select_mode = int(data.get('key_select_mode', 0) or 0)
+        dedicated_key = key_select_mode in (1, 2)
         if auth_method == 0:
-            # Only write IdentityFile if key_select_mode == 1 (specific key)
-            if key_select_mode == 1 and keyfile and keyfile.strip() and not keyfile.strip().lower().startswith('select key file'):
+            # Only write IdentityFile when using a dedicated key mode
+            if dedicated_key and keyfile and keyfile.strip() and not keyfile.strip().lower().startswith('select key file'):
                 if ' ' in keyfile and not (keyfile.startswith('"') and keyfile.endswith('"')):
                     keyfile = f'"{keyfile}"'
                 lines.append(f"    IdentityFile {keyfile}")
-                lines.append("    IdentitiesOnly yes")
+
+                if key_select_mode == 1:
+                    lines.append("    IdentitiesOnly yes")
 
                 # Add certificate if specified (exclude placeholder text)
                 certificate = data.get('certificate')
@@ -1799,7 +1910,11 @@ class ConnectionManager(GObject.Object):
                 len(new_data.get('forwarding_rules', []) or [])
             )
             # Capture previous identifiers for credential cleanup
-            prev_host = getattr(connection, 'hostname', '')
+            prev_host = (
+                getattr(connection, 'hostname', '')
+                or getattr(connection, 'host', '')
+                or getattr(connection, 'nickname', '')
+            )
             prev_user = getattr(connection, 'username', '')
             original_nickname = getattr(connection, 'nickname', '')
 
@@ -1822,10 +1937,12 @@ class ConnectionManager(GObject.Object):
                 curr_host = (
                     new_data.get('hostname')
                     or new_data.get('host')
-                    or getattr(connection, 'hostname', prev_host)
+                    or getattr(connection, 'hostname', '')
+                    or getattr(connection, 'host', '')
+                    or getattr(connection, 'nickname', '')
                 )
                 curr_user = new_data.get('username') or getattr(connection, 'username', prev_user)
-                if pwd:
+                if pwd and curr_host:
                     self.store_password(curr_host, curr_user, pwd)
                 else:
                     # Remove any stored passwords for both previous and current identifiers
@@ -1861,7 +1978,13 @@ class ConnectionManager(GObject.Object):
             
             # Remove password from secure storage
             try:
-                self.delete_password(connection.hostname, connection.username)
+                host_identifier = (
+                    connection.get_effective_host()
+                    if hasattr(connection, 'get_effective_host')
+                    else connection.hostname
+                )
+                self.delete_password(host_identifier, connection.username)
+
             except Exception as e:
                 logger.warning(f"Failed to remove password from storage: {e}")
             
@@ -1895,10 +2018,29 @@ class ConnectionManager(GObject.Object):
 
             logger.info(f"Connection removed: {connection}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to remove connection: {e}")
             return False
+
+    def _get_active_connection_key(self, connection: Connection) -> str:
+        """Return the dictionary key used to track active connection tasks."""
+        try:
+            key = connection.get_connection_key()
+        except AttributeError:
+            host = getattr(connection, 'hostname', '') or getattr(connection, 'host', '')
+            username = getattr(connection, 'username', '')
+            if username and host:
+                key = f"{username}@{host}"
+            elif host:
+                key = host
+            elif username:
+                key = username
+            else:
+                key = ''
+        if not key:
+            key = f"connection-{id(connection)}"
+        return key
 
     async def connect(self, connection: Connection):
         """Connect to an SSH host asynchronously"""
@@ -1912,9 +2054,19 @@ class ConnectionManager(GObject.Object):
             if connection.forwarding_rules:
                 await connection.setup_forwarding()
             
+            # Determine the tracking key used for keepalive management
+            key = self._get_active_connection_key(connection, prefer_stored=False)
+            existing_key = self._active_connection_keys.get(id(connection))
+            if existing_key and existing_key != key:
+                old_task = self.active_connections.pop(existing_key, None)
+                if old_task:
+                    old_task.cancel()
+            self._active_connection_keys[id(connection)] = key
+
             # Store the connection task
-            if connection.hostname in self.active_connections:
-                self.active_connections[connection.hostname].cancel()
+            if key in self.active_connections:
+                self.active_connections[key].cancel()
+
             
             # Create a task to keep the connection alive
             async def keepalive():
@@ -1939,7 +2091,8 @@ class ConnectionManager(GObject.Object):
             
             # Start the keepalive task
             task = asyncio.create_task(keepalive())
-            self.active_connections[connection.hostname] = task
+            self.active_connections[key] = task
+
             
             # Update the connection state and emit status change
             connection.is_connected = True
@@ -1960,13 +2113,16 @@ class ConnectionManager(GObject.Object):
         """Disconnect from SSH host and clean up resources asynchronously"""
         try:
             # Cancel the keepalive task if it exists
-            if connection.hostname in self.active_connections:
-                self.active_connections[connection.hostname].cancel()
+            key = self._get_active_connection_key(connection)
+            if key in self.active_connections:
+                self.active_connections[key].cancel()
                 try:
-                    await self.active_connections[connection.hostname]
+                    await self.active_connections[key]
                 except asyncio.CancelledError:
                     pass
-                del self.active_connections[connection.hostname]
+                del self.active_connections[key]
+            self._active_connection_keys.pop(id(connection), None)
+
             
             # Disconnect the connection
             if hasattr(connection, 'connection') and connection.connection and connection.is_connected:
