@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Dict
 
 import gi
@@ -533,6 +534,136 @@ def setup_connection_list_dnd(window):
     if not hasattr(window, "_connection_autoscroll_interval_ms"):
         window._connection_autoscroll_interval_ms = 16
 
+    _ensure_connection_autoscroll_defaults(window)
+
+
+def _ensure_connection_autoscroll_defaults(window):
+    if hasattr(window, "_connection_autoscroll_initialized"):
+        return
+
+    window._connection_autoscroll_margin_fraction = 0.2
+    window._connection_autoscroll_min_margin_px = 32
+    window._connection_autoscroll_max_speed = 720.0  # pixels per second
+    window._connection_autoscroll_velocity = 0.0
+    window._connection_autoscroll_tick_id = None
+    window._connection_autoscroll_initialized = True
+
+
+def _set_connection_autoscroll_velocity(window, velocity):
+    _ensure_connection_autoscroll_defaults(window)
+
+    if abs(velocity) < 1.0:
+        velocity = 0.0
+
+    window._connection_autoscroll_velocity = velocity
+
+    if velocity == 0.0:
+        if window._connection_autoscroll_tick_id is not None:
+            try:
+                GLib.source_remove(window._connection_autoscroll_tick_id)
+            except Exception:
+                pass
+            window._connection_autoscroll_tick_id = None
+        return
+
+    if window._connection_autoscroll_tick_id is None:
+        window._connection_autoscroll_tick_id = GLib.timeout_add(
+            16, _connection_autoscroll_tick, window
+        )
+
+
+def _connection_autoscroll_tick(window):
+    try:
+        velocity = getattr(window, "_connection_autoscroll_velocity", 0.0)
+        if velocity == 0.0:
+            window._connection_autoscroll_tick_id = None
+            return False
+
+        scrolled = getattr(window, "connection_scrolled", None)
+        if not scrolled:
+            window._connection_autoscroll_tick_id = None
+            return False
+
+        vadj = scrolled.get_vadjustment()
+        if not vadj:
+            window._connection_autoscroll_tick_id = None
+            return False
+
+        interval_seconds = 0.016
+        delta = velocity * interval_seconds
+
+        lower = vadj.get_lower()
+        upper = vadj.get_upper() - vadj.get_page_size()
+        if upper < lower:
+            upper = lower
+
+        new_value = vadj.get_value() + delta
+        new_value = max(lower, min(upper, new_value))
+
+        if math.isclose(new_value, vadj.get_value(), abs_tol=0.5):
+            # Stop when we can no longer scroll further in the current direction
+            if (velocity < 0 and vadj.get_value() <= lower) or (
+                velocity > 0 and vadj.get_value() >= upper
+            ):
+                _set_connection_autoscroll_velocity(window, 0.0)
+                return False
+            return True
+
+        vadj.set_value(new_value)
+        return True
+    except Exception as exc:
+        logger.error(f"Error updating autoscroll: {exc}")
+        window._connection_autoscroll_tick_id = None
+        return False
+
+
+def _update_connection_autoscroll(window, pointer_y):
+    try:
+        scrolled = getattr(window, "connection_scrolled", None)
+        if not scrolled:
+            _set_connection_autoscroll_velocity(window, 0.0)
+            return
+
+        vadj = scrolled.get_vadjustment()
+        if not vadj:
+            _set_connection_autoscroll_velocity(window, 0.0)
+            return
+
+        allocation = scrolled.get_allocation()
+        viewport_height = allocation.height
+        if viewport_height <= 0:
+            _set_connection_autoscroll_velocity(window, 0.0)
+            return
+
+        scroll_offset = vadj.get_value()
+        viewport_pointer_y = pointer_y - scroll_offset
+
+        margin_fraction = getattr(window, "_connection_autoscroll_margin_fraction", 0.2)
+        min_margin_px = getattr(window, "_connection_autoscroll_min_margin_px", 32)
+        margin = max(min_margin_px, viewport_height * margin_fraction)
+
+        max_speed = getattr(window, "_connection_autoscroll_max_speed", 720.0)
+        velocity = 0.0
+
+        if viewport_pointer_y < margin:
+            ratio = max(0.0, (margin - viewport_pointer_y) / margin)
+            ratio = min(1.0, ratio)
+            velocity = -max_speed * ratio
+        elif viewport_pointer_y > viewport_height - margin:
+            distance = viewport_pointer_y - (viewport_height - margin)
+            ratio = max(0.0, distance / margin)
+            ratio = min(1.0, ratio)
+            velocity = max_speed * ratio
+
+        _set_connection_autoscroll_velocity(window, velocity)
+    except Exception as exc:
+        logger.error(f"Error computing autoscroll velocity: {exc}")
+        _set_connection_autoscroll_velocity(window, 0.0)
+
+
+def _stop_connection_autoscroll(window):
+    _set_connection_autoscroll_velocity(window, 0.0)
+
 
 def _on_connection_list_motion(window, target, x, y):
     try:
@@ -547,6 +678,8 @@ def _on_connection_list_motion(window, target, x, y):
             if current_time - window._last_motion_time < 16000:  # ~16ms = 60fps
                 return Gdk.DragAction.MOVE
         window._last_motion_time = current_time
+
+        _update_connection_autoscroll(window, y)
 
         _show_ungrouped_area(window)
         _update_connection_autoscroll(window, y)
