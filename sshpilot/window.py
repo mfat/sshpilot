@@ -1922,7 +1922,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Help submenu with platform-aware keyboard shortcuts overlay
         help_menu = Gio.Menu()
         help_menu.append('Keyboard Shortcuts', 'app.shortcuts')
-        help_menu.append('Shortcut Editor', 'win.edit-shortcuts')
         help_menu.append('Documentation', 'app.help')
         menu.append_submenu('Help', help_menu)
 
@@ -2793,16 +2792,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             editor.present()
         except Exception as e:
             logger.error(f"Failed to open known hosts editor: {e}")
-
-    def show_shortcut_editor(self):
-        """Launch the shortcut editor window"""
-        logger.info("Show shortcut editor window")
-        try:
-            from .shortcut_editor import ShortcutEditorWindow
-            editor = ShortcutEditorWindow(self)
-            editor.present()
-        except Exception as e:
-            logger.error(f"Failed to open shortcut editor: {e}")
 
     def show_preferences(self):
         """Show preferences dialog"""
