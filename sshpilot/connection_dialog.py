@@ -861,9 +861,21 @@ class ConnectionDialog(Adw.Window):
         
         for group in self.build_port_forwarding_groups():
             forwarding_page.append(group)
-        
+
         forwarding_label = Gtk.Label(label=_("Port Forwarding"))
         notebook.append_page(forwarding_page, forwarding_label)
+
+        # Commands page
+        commands_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        commands_page.set_margin_top(12)
+        commands_page.set_margin_bottom(12)
+        commands_page.set_margin_start(12)
+        commands_page.set_margin_end(12)
+
+        commands_page.append(self.build_commands_group())
+
+        commands_label = Gtk.Label(label=_("Commands"))
+        notebook.append_page(commands_page, commands_label)
 
         # Advanced page
         advanced_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -2502,8 +2514,32 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         )
         self.placeholder.add_css_class("dim-label")
         self.rules_list.append(self.placeholder)
-        
-        # Commands Group (LocalCommand / RemoteCommand)
+
+        # Initialize empty rules list if it doesn't exist
+        if not hasattr(self, 'forwarding_rules'):
+            self.forwarding_rules = []
+
+        # Load any existing rules if editing
+        if self.is_editing and self.connection and hasattr(self.connection, 'forwarding_rules'):
+            self.load_port_forwarding_rules()
+
+        # About Port Forwarding Group
+        about_group = Adw.PreferencesGroup(
+            title=_("About Port Forwarding"),
+            description=_(
+                "Port forwarding allows you to securely tunnel network connections.\n\n"
+                "• <b>Local Forwarding</b>: Forward a remote port to your local machine\n"
+                "• <b>Remote Forwarding</b>: Forward a local port to the remote machine\n"
+                "• <b>Dynamic Forwarding</b>: Create a SOCKS proxy on your local machine"
+            )
+        )
+
+        # Return groups for PreferencesPage: Port forwarding first, about, X11 last
+        return [rules_group, about_group, x11_group]
+
+    def build_commands_group(self):
+        """Build PreferencesGroup for configuring connection commands"""
+
         commands_group = Adw.PreferencesGroup(
             title=_("Connection Commands"),
             description=_(
@@ -2525,27 +2561,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         commands_group.add(self.local_command_row)
         commands_group.add(self.remote_command_row)
 
-        # About Port Forwarding Group
-        about_group = Adw.PreferencesGroup(
-            title=_("About Port Forwarding"),
-            description=_(
-                "Port forwarding allows you to securely tunnel network connections.\n\n"
-                "• <b>Local Forwarding</b>: Forward a remote port to your local machine\n"
-                "• <b>Remote Forwarding</b>: Forward a local port to the remote machine\n"
-                "• <b>Dynamic Forwarding</b>: Create a SOCKS proxy on your local machine"
-            )
-        )
-        
-        # Return groups for PreferencesPage: Port forwarding first, commands, about, X11 last
-        return [rules_group, commands_group, about_group, x11_group]
-        
-        # Initialize empty rules list if it doesn't exist
-        if not hasattr(self, 'forwarding_rules'):
-            self.forwarding_rules = []
-        
-        # Load any existing rules if editing
-        if self.is_editing and self.connection and hasattr(self.connection, 'forwarding_rules'):
-            self.load_port_forwarding_rules()
+        return commands_group
     
     def load_port_forwarding_rules(self):
         """Load port forwarding rules from the connection and update UI"""
