@@ -37,8 +37,11 @@ def open_remote_in_file_manager(
         p = path or "~"
         uri = f"sftp://{user}@{host}{port_part}{p}"
     else:
-        # For external file managers, don't set any path - let them mount to root
-        uri = f"sftp://{user}@{host}{port_part}/"
+        # For external file managers, default to root but honor explicit paths
+        requested_path = path or "/"
+        if requested_path not in ("/", "") and not requested_path.startswith(("/", "~")):
+            requested_path = f"/{requested_path.lstrip('/')}"
+        uri = f"sftp://{user}@{host}{port_part}{requested_path}"
 
     logger.info(f"Opening SFTP URI: {uri}")
 
