@@ -5,17 +5,30 @@ from __future__ import annotations
 from typing import Iterable, List, Tuple
 import re
 
-_REMOTE_SPEC_RE = re.compile(r"^[^@]+@[^:]+:.+$")
+_REMOTE_SPEC_RE = re.compile(r"^[^@]+@(?:\[[^\]]+\]|[^:]+):.+$")
+
+
+def _strip_brackets(value: str) -> str:
+    if value.startswith('[') and value.endswith(']'):
+        return value[1:-1]
+    return value
 
 
 def _extract_host(target: str) -> str:
     if '@' in target:
-        return target.split('@', 1)[1]
-    return target
+        host = target.split('@', 1)[1]
+    else:
+        host = target
+    return _strip_brackets(host)
 
 
 def _normalize_remote_sources(target: str, sources: Iterable[str]) -> List[str]:
     host = _extract_host(target)
+    host_variants = [host] if host else []
+    if host and ':' in host:
+        bracketed = f"[{host}]"
+        if bracketed not in host_variants:
+            host_variants.append(bracketed)
     normalized: List[str] = []
     for item in sources:
         path = (item or '').strip()
@@ -24,9 +37,15 @@ def _normalize_remote_sources(target: str, sources: Iterable[str]) -> List[str]:
         if path.startswith(f"{target}:"):
             normalized.append(path)
             continue
-        if host and path.startswith(f"{host}:"):
-            normalized.append(path)
-            continue
+        if host_variants:
+            matched_host_variant = False
+            for host_variant in host_variants:
+                if path.startswith(f"{host_variant}:"):
+                    normalized.append(path)
+                    matched_host_variant = True
+                    break
+            if matched_host_variant:
+                continue
         if _REMOTE_SPEC_RE.match(path):
             normalized.append(path)
             continue
