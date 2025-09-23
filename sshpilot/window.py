@@ -1974,7 +1974,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if search_text:
             matches = [c for c in connections if connection_matches(c, search_text)]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
-                self.add_connection_row(conn)
+                # Get group info for this connection
+                group_id = self.group_manager.get_connection_group(conn.nickname)
+                group_info = self.group_manager.groups.get(group_id) if group_id else None
+                self.add_connection_row(conn, group_info=group_info)
             self._ungrouped_area_row = None
             # Restore scroll position
             if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
@@ -2033,41 +2036,164 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list"""
         for group_info in hierarchy:
-            # Add group row
-            group_row = GroupRow(group_info, self.group_manager, connections_dict)
-            group_row.connect('group-toggled', self._on_group_toggled)
-            self.connection_list.append(group_row)
-            
-            # Add connections in this group if expanded
-            if group_info.get('expanded', True):
-                group_connections = []
-                for conn_nickname in group_info.get('connections', []):
-                    if conn_nickname in connections_dict:
-                        group_connections.append(connections_dict[conn_nickname])
-                
-                # Use the order from the group's connections list (preserves custom ordering)
-                for conn_nickname in group_info.get('connections', []):
-                    if conn_nickname in connections_dict:
-                        conn = connections_dict[conn_nickname]
-                        self.add_connection_row(conn, level + 1)
+            # Create group container
+            group_container = self._create_group_container(group_info, connections_dict, level)
+            if group_container:
+                self.connection_list.append(group_container)
             
             # Recursively add child groups
             if group_info.get('children'):
                 self._build_grouped_list(group_info['children'], connections_dict, level + 1)
+
+    def _create_group_container(self, group_info, connections_dict, level):
+        """Create a container widget for a group and its connections"""
+        try:
+            # Create main container
+            container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            container.set_margin_start(22)
+            container.set_margin_end(4)
+            container.set_margin_top(2)
+            container.set_margin_bottom(2)
+            
+            # Add group header
+            group_row = GroupRow(group_info, self.group_manager, connections_dict)
+            group_row.connect('group-toggled', self._on_group_toggled)
+            group_row.add_css_class("group-header")
+            container.append(group_row)
+            
+            # Add connections if group is expanded
+            if group_info.get('expanded', True):
+                connections_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+                connections_box.add_css_class("group-connections")
+                
+                # Add connections in order
+                for conn_nickname in group_info.get('connections', []):
+                    if conn_nickname in connections_dict:
+                        conn = connections_dict[conn_nickname]
+                        conn_row = ConnectionRow(conn, self.group_manager, group_info)
+                        conn_row.set_indentation(level + 1)
+                        connections_box.append(conn_row)
+                        self.connection_rows[conn] = conn_row
+                
+                container.append(connections_box)
+            
+            # Apply group color styling to the container
+            self._apply_group_container_color(container, group_info)
+            
+            return container
+            
+        except Exception as e:
+            logger.error(f"Failed to create group container: {e}")
+            return None
+
+    def _apply_group_container_color(self, container, group_info):
+        """Apply color styling to group container"""
+        color = self._get_effective_group_color(group_info)
+        if color:
+            try:
+                provider = Gtk.CssProvider()
+                css = f"""
+                .group-container-{group_info['id']} {{
+                    background-color: alpha({color}, 0.12);
+                    border: 1px solid {color};
+                    border-radius: 4px;
+                    margin: 2px 4px;
+                }}
+                .group-container-{group_info['id']} .group-header {{
+                    background-color: alpha({color}, 0.20);
+                    border-radius: 3px 3px 0 0;
+                    border-bottom: 1px solid {color};
+                }}
+                .group-container-{group_info['id']} .group-header:hover {{
+                    background-color: alpha({color}, 0.25);
+                }}
+                .group-container-{group_info['id']} .group-header:selected {{
+                    background-color: alpha({color}, 0.35);
+                }}
+                .group-container-{group_info['id']} .group-connections {{
+                    background-color: transparent;
+                }}
+                .group-container-{group_info['id']} .group-connections > * {{
+                    background-color: transparent;
+                    border: none;
+                }}
+                .group-container-{group_info['id']} .group-connections > *:hover {{
+                    background-color: alpha({color}, 0.10);
+                }}
+                .group-container-{group_info['id']} .group-connections > *:selected {{
+                    background-color: alpha({color}, 0.20);
+                }}
+                """
+                provider.load_from_data(css.encode("utf-8"))
+                
+                container.add_css_class(f"group-container-{group_info['id']}")
+                
+                style_context = container.get_style_context()
+                style_context.add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+                
+                Gtk.StyleContext.add_provider_for_display(
+                    Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                )
+            except (ValueError, IndexError) as e:
+                logger.error(f"Invalid color format for group {group_info.get('name', 'unknown')}: {color}, error: {e}")
+
+    def _get_effective_group_color(self, group_info):
+        """Get the effective color for a group (own color or inherited from parent)"""
+        # First check if this group has its own color
+        own_color = group_info.get("color")
+        if own_color:
+            return own_color
+        
+        # If no own color, check parent's color
+        parent_id = group_info.get("parent_id")
+        if parent_id and parent_id in self.group_manager.groups:
+            parent_group = self.group_manager.groups[parent_id]
+            parent_color = parent_group.get("color")
+            if parent_color:
+                # Return a lighter version of parent's color
+                return self._lighten_color(parent_color, factor=0.4)
+        
+        return None
+
+    def _lighten_color(self, hex_color, factor=0.3):
+        """Lighten a hex color by mixing it with white"""
+        try:
+            if hex_color.startswith("#"):
+                hex_color = hex_color[1:]
+            
+            r = int(hex_color[0:2], 16)
+            g = int(hex_color[2:4], 16)
+            b = int(hex_color[4:6], 16)
+            
+            # Mix with white (255, 255, 255) using the factor
+            r = int(r + (255 - r) * factor)
+            g = int(g + (255 - g) * factor)
+            b = int(b + (255 - b) * factor)
+            
+            return f"#{r:02x}{g:02x}{b:02x}"
+        except (ValueError, IndexError):
+            return hex_color
     
     def _on_group_toggled(self, group_row, group_id, expanded):
         """Handle group expand/collapse"""
+        # Update the group's expanded state
+        self.group_manager.set_group_expanded(group_id, expanded)
+        
+        # Rebuild the connection list to reflect the change
         self.rebuild_connection_list()
 
         # Reselect the toggled group so focus doesn't jump to another row
         for row in self.connection_list:
-            if hasattr(row, "group_id") and row.group_id == group_id:
-                self._select_only_row(row)
-                break
+            if hasattr(row, "get_first_child"):
+                # This is a container, check if it contains our group
+                group_header = row.get_first_child()
+                if group_header and hasattr(group_header, "group_id") and group_header.group_id == group_id:
+                    self._select_only_row(group_header)
+                    break
     
-    def add_connection_row(self, connection: Connection, indent_level: int = 0):
-        """Add a connection row to the list with optional indentation"""
-        row = ConnectionRow(connection)
+    def add_connection_row(self, connection: Connection, indent_level: int = 0, group_info: Dict = None):
+        """Add a connection row to the list with optional indentation and group info"""
+        row = ConnectionRow(connection, self.group_manager, group_info)
         
         # Apply indentation for grouped connections
         if indent_level > 0:
@@ -5409,7 +5535,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 destroy_with_parent=True
             )
             
-            dialog.set_default_size(400, 150)
+            dialog.set_default_size(400, 200)
             dialog.set_resizable(False)
             
             content_area = dialog.get_content_area()
@@ -5432,6 +5558,28 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             entry.set_hexpand(True)
             content_area.append(entry)
             
+            # Add color picker row
+            color_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            color_label = Gtk.Label(label=_("Color:"))
+            color_label.set_halign(Gtk.Align.START)
+            color_row.append(color_label)
+
+            # Color button
+            color_button = Gtk.ColorButton()
+            color_button.set_hexpand(True)
+            color_button.set_halign(Gtk.Align.END)
+            color_row.append(color_button)
+
+            # Remove color button
+            remove_color_button = Gtk.Button()
+            remove_color_button.set_icon_name("edit-clear-symbolic")
+            remove_color_button.set_tooltip_text(_("Remove color"))
+            remove_color_button.add_css_class("flat")
+            remove_color_button.set_sensitive(False)
+            color_row.append(remove_color_button)
+
+            content_area.append(color_row)
+            
             # Add buttons
             dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
             create_button = dialog.add_button(_('Create'), Gtk.ResponseType.OK)
@@ -5439,11 +5587,25 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             dialog.set_default_response(Gtk.ResponseType.OK)
             
+            def on_color_changed(button):
+                remove_color_button.set_sensitive(True)
+
+            def on_remove_color_clicked(button):
+                color_button.set_rgba(Gdk.RGBA(red=0, green=0, blue=0, alpha=0))  # Transparent
+                remove_color_button.set_sensitive(False)
+            
             def on_response(dialog, response):
                 if response == Gtk.ResponseType.OK:
                     group_name = entry.get_text().strip()
                     if group_name:
-                        self.group_manager.create_group(group_name)
+                        # Get color from color button
+                        color_rgba = color_button.get_rgba()
+                        if color_rgba.alpha > 0:  # If not transparent
+                            color = f"#{int(color_rgba.red * 255):02x}{int(color_rgba.green * 255):02x}{int(color_rgba.blue * 255):02x}"
+                        else:
+                            color = None
+                        
+                        self.group_manager.create_group(group_name, color=color)
                         self.rebuild_connection_list()
                     else:
                         # Show error for empty name
@@ -5456,6 +5618,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         error_dialog.add_response('ok', _('OK'))
                         error_dialog.present()
                 dialog.destroy()
+            
+            # Connect color picker events
+            color_button.connect('color-set', on_color_changed)
+            remove_color_button.connect('clicked', on_remove_color_clicked)
             
             dialog.connect('response', on_response)
             dialog.present()
@@ -5500,7 +5666,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 destroy_with_parent=True
             )
             
-            dialog.set_default_size(400, 150)
+            dialog.set_default_size(400, 200)
             dialog.set_resizable(False)
             
             content_area = dialog.get_content_area()
@@ -5523,6 +5689,44 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             entry.set_hexpand(True)
             content_area.append(entry)
             
+            # Add color picker row
+            color_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            color_label = Gtk.Label(label=_("Color:"))
+            color_label.set_halign(Gtk.Align.START)
+            color_row.append(color_label)
+
+            # Color button
+            color_button = Gtk.ColorButton()
+            color_button.set_hexpand(True)
+            color_button.set_halign(Gtk.Align.END)
+
+            # Set current color if exists
+            current_color = group_info.get("color")
+            if current_color:
+                try:
+                    # Parse hex color
+                    if current_color.startswith("#"):
+                        hex_color = current_color[1:]
+                        r = int(hex_color[0:2], 16) / 255.0
+                        g = int(hex_color[2:4], 16) / 255.0
+                        b = int(hex_color[4:6], 16) / 255.0
+                        color_rgba = Gdk.RGBA(red=r, green=g, blue=b, alpha=1.0)
+                        color_button.set_rgba(color_rgba)
+                except (ValueError, IndexError):
+                    pass  # Invalid color format, use default
+
+            color_row.append(color_button)
+
+            # Remove color button
+            remove_color_button = Gtk.Button()
+            remove_color_button.set_icon_name("edit-clear-symbolic")
+            remove_color_button.set_tooltip_text(_("Remove color"))
+            remove_color_button.add_css_class("flat")
+            remove_color_button.set_sensitive(bool(current_color))
+            color_row.append(remove_color_button)
+
+            content_area.append(color_row)
+            
             # Add buttons
             dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
             save_button = dialog.add_button(_('Save'), Gtk.ResponseType.OK)
@@ -5530,11 +5734,28 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             dialog.set_default_response(Gtk.ResponseType.OK)
             
+            def on_color_changed(button):
+                remove_color_button.set_sensitive(True)
+
+            def on_remove_color_clicked(button):
+                color_button.set_rgba(Gdk.RGBA(red=0, green=0, blue=0, alpha=0))  # Transparent
+                remove_color_button.set_sensitive(False)
+            
             def on_response(dialog, response):
                 if response == Gtk.ResponseType.OK:
                     new_name = entry.get_text().strip()
                     if new_name:
+                        # Update name
                         group_info['name'] = new_name
+                        
+                        # Update color
+                        color_rgba = color_button.get_rgba()
+                        if color_rgba.alpha > 0:  # If not transparent
+                            color = f"#{int(color_rgba.red * 255):02x}{int(color_rgba.green * 255):02x}{int(color_rgba.blue * 255):02x}"
+                        else:
+                            color = None
+                        group_info['color'] = color
+                        
                         self.group_manager._save_groups()
                         self.rebuild_connection_list()
                     else:
@@ -5548,6 +5769,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         error_dialog.add_response('ok', _('OK'))
                         error_dialog.present()
                 dialog.destroy()
+            
+            # Connect color picker events
+            color_button.connect('color-set', on_color_changed)
+            remove_color_button.connect('clicked', on_remove_color_clicked)
             
             dialog.connect('response', on_response)
             dialog.present()
@@ -5657,6 +5882,28 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             create_section_box.append(create_box)
 
+            # Add color picker row
+            color_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            color_label = Gtk.Label(label=_("Color:"))
+            color_label.set_halign(Gtk.Align.START)
+            color_row.append(color_label)
+
+            # Color button
+            self.create_group_color_button = Gtk.ColorButton()
+            self.create_group_color_button.set_hexpand(True)
+            self.create_group_color_button.set_halign(Gtk.Align.END)
+            color_row.append(self.create_group_color_button)
+
+            # Remove color button
+            remove_color_button = Gtk.Button()
+            remove_color_button.set_icon_name("edit-clear-symbolic")
+            remove_color_button.set_tooltip_text(_("Remove color"))
+            remove_color_button.add_css_class("flat")
+            remove_color_button.set_sensitive(False)
+            color_row.append(remove_color_button)
+
+            create_section_box.append(color_row)
+
             # Add the create section to content area
             content_area.append(create_section_box)
             
@@ -5711,12 +5958,26 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if text:
                     on_create_group_clicked()
 
+            def on_color_changed(button):
+                remove_color_button.set_sensitive(True)
+
+            def on_remove_color_clicked(button):
+                self.create_group_color_button.set_rgba(Gdk.RGBA(red=0, green=0, blue=0, alpha=0))  # Transparent
+                remove_color_button.set_sensitive(False)
+
             def on_create_group_clicked():
                 group_name = self.create_group_entry.get_text().strip()
                 if group_name:
                     try:
-                        # Create the new group
-                        new_group_id = self.group_manager.create_group(group_name)
+                        # Get color from color button
+                        color_rgba = self.create_group_color_button.get_rgba()
+                        if color_rgba.alpha > 0:  # If not transparent
+                            color = f"#{int(color_rgba.red * 255):02x}{int(color_rgba.green * 255):02x}{int(color_rgba.blue * 255):02x}"
+                        else:
+                            color = None
+
+                        # Create the new group with color
+                        new_group_id = self.group_manager.create_group(group_name, color=color)
                         # Move all selected connections to the new group
                         for nickname in connection_nicknames:
                             self.group_manager.move_connection(nickname, new_group_id)
@@ -5764,6 +6025,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.create_group_entry.connect('changed', on_entry_changed)
             self.create_group_entry.connect('activate', on_entry_activated)
             self.create_group_button.connect('clicked', lambda btn: on_create_group_clicked())
+            self.create_group_color_button.connect('color-set', on_color_changed)
+            remove_color_button.connect('clicked', on_remove_color_clicked)
 
             def on_response(dialog, response):
                 if response == Gtk.ResponseType.OK:
