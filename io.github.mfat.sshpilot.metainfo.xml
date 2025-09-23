@@ -4,7 +4,7 @@
   <id>io.github.mfat.sshpilot</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
-  <name>sshPilot</name>
+  <name>SSH Pilot</name>
   <summary>Manage your servers with ease</summary>
   <description>
     <p>sshPilot is a user-friendly SSH connection manager and client. It features a built-in tabbed terminal, remote file management, key transfer, port forwarding and more.</p>
