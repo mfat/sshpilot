@@ -677,7 +677,12 @@ class PreferencesWindow(Adw.PreferencesWindow):
             shortcuts_button_row.set_title("Shortcut Overview")
             shortcuts_button_row.set_subtitle("Open the shortcuts window for a full reference")
 
-            shortcuts_button = Gtk.Button(label="View Keyboard Shortcuts")
+            shortcuts_button = Gtk.Button(label="Open")
+            try:
+                shortcuts_button.add_css_class("flat")
+            except Exception:
+                pass
+            shortcuts_button.set_valign(Gtk.Align.CENTER)
             shortcuts_button.connect('clicked', self.on_view_shortcuts_clicked)
             shortcuts_button_row.add_suffix(shortcuts_button)
             shortcuts_button_row.set_activatable_widget(shortcuts_button)
@@ -685,15 +690,31 @@ class PreferencesWindow(Adw.PreferencesWindow):
             shortcuts_intro_group.add(shortcuts_button_row)
             shortcuts_page.add(shortcuts_intro_group)
 
-            self.shortcuts_editor_page = ShortcutsPreferencesPage(
-                parent_widget=self.parent_window,
-                app=self.parent_window.get_application() if self.parent_window else None,
-                config=self.config,
-                owner_window=self.parent_window,
-            )
+            try:
+                self.shortcuts_editor_page = ShortcutsPreferencesPage(
+                    parent_widget=self.parent_window,
+                    app=self.parent_window.get_application() if self.parent_window else None,
+                    config=self.config,
+                    owner_window=self.parent_window,
+                )
 
-            for group in self.shortcuts_editor_page.iter_groups():
-                shortcuts_page.add(group)
+                groups_added = 0
+                for group in self.shortcuts_editor_page.iter_groups():
+                    shortcuts_page.add(group)
+                    groups_added += 1
+                    logger.debug(f"Added shortcut group: {group.get_title()}")
+                
+                logger.info(f"Shortcut editor successfully added to preferences with {groups_added} groups")
+            except Exception as e:
+                logger.error(f"Failed to create shortcut editor: {e}", exc_info=True)
+                # Add a fallback message to the shortcuts page
+                fallback_group = Adw.PreferencesGroup()
+                fallback_group.set_title("Shortcut Editor")
+                fallback_row = Adw.ActionRow()
+                fallback_row.set_title("Shortcut Editor Unavailable")
+                fallback_row.set_subtitle("The shortcut editor could not be loaded. Please check the logs for details.")
+                fallback_group.add(fallback_row)
+                shortcuts_page.add(fallback_group)
 
             # Advanced SSH settings
             advanced_page = Adw.PreferencesPage()

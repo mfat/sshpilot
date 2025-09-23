@@ -152,9 +152,12 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
         if self._app is None and parent_widget is not None and hasattr(parent_widget, 'get_application'):
             try:
                 self._app = parent_widget.get_application()
-            except Exception:
+                logger.debug(f"Got application from parent widget: {self._app}")
+            except Exception as e:
+                logger.debug(f"Failed to get application from parent widget: {e}")
                 self._app = None
         self._config = config or getattr(self._app, 'config', None)
+        logger.debug(f"Shortcut editor initialized with app: {self._app}, config: {self._config}")
 
         self._rows: Dict[str, Dict[str, Gtk.Widget]] = {}
         self._pending_overrides: Dict[str, List[str]] = {}
@@ -179,6 +182,7 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
                 logger.error('Failed to load default shortcuts: %s', exc)
 
         self._action_names = self._collect_actions()
+        logger.debug(f"Shortcut editor collected {len(self._action_names)} actions: {self._action_names}")
         self._groups_list: List[Adw.PreferencesGroup] = []
 
         if hasattr(self, 'add_css_class'):
@@ -188,6 +192,7 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
                 pass
 
         self._build_groups()
+        logger.debug(f"Shortcut editor built {len(self._groups_list)} groups")
 
     def _collect_actions(self) -> List[str]:
         names: List[str] = []
@@ -195,8 +200,13 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
         if self._app is not None:
             try:
                 order = self._app.get_registered_action_order()
-            except Exception:
+                logger.debug(f"Got action order from app: {list(order)}")
+            except Exception as e:
+                logger.debug(f"Failed to get action order from app: {e}")
                 order = []
+
+        logger.debug(f"Default shortcuts: {self._default_shortcuts}")
+        logger.debug(f"Pending overrides: {self._pending_overrides}")
 
         for name in order:
             default = self._default_shortcuts.get(name)
@@ -204,6 +214,9 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             if default is None and override is None:
                 continue
             names.append(name)
+            logger.debug(f"Added action to names: {name} (default: {default}, override: {override})")
+        
+        logger.debug(f"Final action names: {names}")
         return names
 
     def _build_groups(self):
@@ -280,14 +293,19 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
 
             if name in general_actions:
                 general_group.add(row)
+                logger.debug(f"Added {name} to General group")
             elif name in connection_actions:
                 connection_group.add(row)
+                logger.debug(f"Added {name} to Connection Management group")
             elif name in terminal_actions:
                 terminal_group.add(row)
+                logger.debug(f"Added {name} to Terminal group")
             elif name in tab_actions:
                 tab_group.add(row)
+                logger.debug(f"Added {name} to Tab Management group")
             else:
                 general_group.add(row)
+                logger.debug(f"Added {name} to General group (fallback)")
 
         for group in (general_group, connection_group, terminal_group, tab_group):
             try:
@@ -295,7 +313,8 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             except Exception:
                 pass
             self._groups_list.append(group)
-            self._add_group_widget(group)
+            # Don't add to self - the groups will be added to the preferences page separately
+            logger.debug(f"Prepared group '{group.get_title()}' with {len(list(group))} children")
 
     def iter_groups(self) -> Iterable[Adw.PreferencesGroup]:
         """Yield the preference groups managed by this page."""
