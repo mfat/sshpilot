@@ -1963,14 +1963,47 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Get all connections
         connections = self.connection_manager.get_connections()
+        connections_dict = {conn.nickname: conn for conn in connections}
         search_text = ''
         if hasattr(self, 'search_entry') and self.search_entry:
             search_text = self.search_entry.get_text().strip().lower()
 
         if search_text:
-            matches = [c for c in connections if connection_matches(c, search_text)]
+            displayed_connections = set()
+
+            matched_groups: List[Dict[str, Any]] = []
+            try:
+                for group_info in self.group_manager.get_all_groups():
+                    group_name = group_info.get('name', '')
+                    if search_text in group_name.lower():
+                        group_id = group_info.get('id')
+                        if group_id and group_id in getattr(self.group_manager, 'groups', {}):
+                            matched_groups.append(
+                                copy.deepcopy(self.group_manager.groups[group_id])
+                            )
+            except Exception as error:
+                logger.error(f"Error gathering matching groups: {error}")
+                matched_groups = []
+
+            for group_info in matched_groups:
+                group_row = GroupRow(group_info, self.group_manager, connections_dict)
+                group_row.connect('group-toggled', self._on_group_toggled)
+                self.connection_list.append(group_row)
+
+                for conn_nickname in group_info.get('connections', []):
+                    if conn_nickname in connections_dict:
+                        conn = connections_dict[conn_nickname]
+                        self.add_connection_row(conn, indent_level=1)
+                        displayed_connections.add(conn_nickname)
+
+            matches = [
+                c for c in connections
+                if connection_matches(c, search_text)
+                and c.nickname not in displayed_connections
+            ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
+                displayed_connections.add(conn.nickname)
             self._ungrouped_area_row = None
             # Restore scroll position
             if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
@@ -1979,7 +2012,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     GLib.idle_add(lambda: vadj.set_value(scroll_position))
             return
 
-        connections_dict = {conn.nickname: conn for conn in connections}
 
         # Get group hierarchy
         hierarchy = self.group_manager.get_group_hierarchy()
