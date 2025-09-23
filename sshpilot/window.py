@@ -103,7 +103,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._internal_file_manager_windows: List[Any] = []
 
         # Initialize managers
-        self.config = Config()
+        app = self.get_application()
+        app_config = getattr(app, 'config', None) if app else None
+        if app_config is not None:
+            self.config = app_config
+        else:
+            self.config = Config()
+            if app is not None:
+                setattr(app, 'config', self.config)
         effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
         key_dir = Path(get_config_dir()) if effective_isolated else None
         self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
