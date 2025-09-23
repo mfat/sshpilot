@@ -75,6 +75,18 @@ class Connection:
         self.forwarders: List[asyncio.Task] = []
         self.listeners: List[asyncio.Server] = []
 
+        raw_quick = data.get('quick_connect_command', '') if isinstance(data, dict) else ''
+        if isinstance(raw_quick, str):
+            self.quick_connect_command = raw_quick.strip()
+        else:
+            self.quick_connect_command = ''
+
+        unparsed = data.get('unparsed_args', []) if isinstance(data, dict) else []
+        if isinstance(unparsed, (list, tuple)):
+            self.unparsed_args = list(unparsed)
+        else:
+            self.unparsed_args = []
+
         hostname_value = data.get('hostname')
         host_value = data.get('host', '')
 
@@ -160,6 +172,17 @@ class Connection:
     async def connect(self):
         """Prepare SSH command for later use (no preflight echo)."""
         try:
+            quick_cmd = getattr(self, 'quick_connect_command', '')
+            if isinstance(quick_cmd, str) and quick_cmd.strip():
+                try:
+                    ssh_cmd = shlex.split(quick_cmd)
+                except ValueError:
+                    ssh_cmd = quick_cmd.split()
+                logger.debug("Using quick connect command without modification")
+                self.ssh_cmd = ssh_cmd
+                self.is_connected = True
+                return True
+
             ssh_cmd = ['ssh']
 
             # Pull advanced SSH defaults from config when available
