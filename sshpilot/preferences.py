@@ -909,15 +909,27 @@ class PreferencesWindow(Adw.PreferencesWindow):
             # Disable/enable advanced controls based on toggle
             def _sync_advanced_sensitivity(row=None, *_):
                 enabled = bool(self.apply_advanced_row.get_active())
-                for w in [self.connect_timeout_row, self.connection_attempts_row,
-                          self.keepalive_interval_row, self.keepalive_count_row,
-                          self.strict_host_row, self.batch_mode_row,
-                          self.compression_row, self.verbosity_row,
-                          self.debug_enabled_row]:
+                for w in [
+                    self.connect_timeout_row,
+                    self.connection_attempts_row,
+                    self.keepalive_interval_row,
+                    self.keepalive_count_row,
+                    self.strict_host_row,
+                    self.batch_mode_row,
+                    self.compression_row,
+                    self.verbosity_row,
+                    self.debug_enabled_row,
+                ]:
                     try:
                         w.set_sensitive(enabled)
                     except Exception:
                         pass
+
+                # When the toggle is switched off by the user, immediately
+                # restore all advanced options to their defaults.
+                if row is not None and not enabled:
+                    self._apply_default_advanced_settings(update_toggle=False)
+
             _sync_advanced_sensitivity()
             self.apply_advanced_row.connect('notify::active', _sync_advanced_sensitivity)
 
@@ -1239,20 +1251,19 @@ class PreferencesWindow(Adw.PreferencesWindow):
         except Exception as e:
             logger.error(f"Failed to save advanced SSH settings: {e}")
 
-    def on_reset_advanced_ssh(self, *args):
-        """Reset only advanced SSH keys to defaults and update UI."""
+    def _apply_default_advanced_settings(self, update_toggle=True):
+        """Restore advanced SSH settings to defaults and update the UI."""
         try:
             defaults = self.config.get_default_config().get('ssh', {})
-            # Persist defaults and disable apply
+            # Persist defaults and ensure advanced options are disabled
             self.config.set_setting('ssh.apply_advanced', False)
-            self.config.set_setting('ssh.native_connect', defaults.get('native_connect', False))
-            for key in ['connection_timeout', 'connection_attempts', 'keepalive_interval', 'keepalive_count_max', 'compression', 'auto_add_host_keys', 'verbosity', 'debug_enabled']:
-                self.config.set_setting(f'ssh.{key}', defaults.get(key))
-            # Update UI
-            if hasattr(self, 'apply_advanced_row'):
+
+            if update_toggle and hasattr(self, 'apply_advanced_row'):
                 self.apply_advanced_row.set_active(False)
+
             if hasattr(self, 'native_connect_row'):
                 native_default = bool(defaults.get('native_connect', False))
+                self.config.set_setting('ssh.native_connect', native_default)
                 self.native_connect_row.set_active(native_default)
                 try:
                     app = self.parent_window.get_application() if self.parent_window else None
@@ -1264,32 +1275,51 @@ class PreferencesWindow(Adw.PreferencesWindow):
                         app.native_connect_override = None
                 if self.parent_window and hasattr(self.parent_window, 'connection_manager'):
                     self.parent_window.connection_manager.native_connect_enabled = native_default
+
             if hasattr(self, 'connect_timeout_row'):
+                self.config.set_setting('ssh.connection_timeout', defaults.get('connection_timeout'))
                 self.connect_timeout_row.set_value(int(defaults.get('connection_timeout', 30)))
             if hasattr(self, 'connection_attempts_row'):
+                self.config.set_setting('ssh.connection_attempts', defaults.get('connection_attempts'))
                 self.connection_attempts_row.set_value(int(defaults.get('connection_attempts', 1)))
             if hasattr(self, 'keepalive_interval_row'):
+                self.config.set_setting('ssh.keepalive_interval', defaults.get('keepalive_interval'))
                 self.keepalive_interval_row.set_value(int(defaults.get('keepalive_interval', 60)))
             if hasattr(self, 'keepalive_count_row'):
+                self.config.set_setting('ssh.keepalive_count_max', defaults.get('keepalive_count_max'))
                 self.keepalive_count_row.set_value(int(defaults.get('keepalive_count_max', 3)))
             if hasattr(self, 'strict_host_row'):
                 try:
                     self.strict_host_row.set_selected(["accept-new", "yes", "no", "ask"].index('accept-new'))
                 except ValueError:
                     self.strict_host_row.set_selected(0)
+                self.config.set_setting('ssh.strict_host_key_checking', 'accept-new')
+            self.config.set_setting('ssh.auto_add_host_keys', defaults.get('auto_add_host_keys'))
             if hasattr(self, 'batch_mode_row'):
-                self.batch_mode_row.set_active(False)
+                self.config.set_setting('ssh.batch_mode', bool(defaults.get('batch_mode', True)))
+                self.batch_mode_row.set_active(bool(defaults.get('batch_mode', True)))
             if hasattr(self, 'compression_row'):
+                self.config.set_setting('ssh.compression', bool(defaults.get('compression', True)))
                 self.compression_row.set_active(bool(defaults.get('compression', True)))
             if hasattr(self, 'verbosity_row'):
+                self.config.set_setting('ssh.verbosity', defaults.get('verbosity'))
                 self.verbosity_row.set_value(int(defaults.get('verbosity', 0)))
             if hasattr(self, 'debug_enabled_row'):
+                self.config.set_setting('ssh.debug_enabled', bool(defaults.get('debug_enabled', False)))
                 self.debug_enabled_row.set_active(bool(defaults.get('debug_enabled', False)))
+
             file_manager_defaults = self.config.get_default_config().get('file_manager', {})
             default_force_internal = bool(file_manager_defaults.get('force_internal', False))
             self.config.set_setting('file_manager.force_internal', default_force_internal)
             if getattr(self, 'force_internal_file_manager_row', None) is not None:
                 self.force_internal_file_manager_row.set_active(default_force_internal)
+        except Exception as e:
+            logger.error(f"Failed to apply default advanced SSH settings: {e}")
+
+    def on_reset_advanced_ssh(self, *args):
+        """Reset only advanced SSH keys to defaults and update UI."""
+        try:
+            self._apply_default_advanced_settings(update_toggle=True)
         except Exception as e:
             logger.error(f"Failed to reset advanced SSH settings: {e}")
 
