@@ -2572,22 +2572,11 @@ class FilePane(Gtk.Box):
         # forward requests to the window which understands the context.
         # Accept multiple formats including the custom remote entry payload.
         bytes_type = getattr(GLib, "Bytes", None)
-        bytes_gtype = None
-
-        if bytes_type is not None:
-            bytes_gtype = getattr(bytes_type, "__gtype__", None)
-            if bytes_gtype is None:
-                # Some PyGObject builds expose GLib.Bytes without a registered GType.
-                # Fall back to treating the payload as a simple string in this case
-                # to avoid passing an invalid type ID (0) to Gtk.DropTarget.
-                bytes_type = None
-
-        default_gtype = bytes_gtype if bytes_gtype is not None else GObject.TYPE_STRING
+        default_gtype = bytes_type if bytes_type is not None else GObject.TYPE_STRING
         drop_target = Gtk.DropTarget.new(default_gtype, Gdk.DragAction.COPY)
-
-        accepted_gtypes: List[GObject.GType] = [Gio.File.__gtype__, GObject.TYPE_STRING]
-        if bytes_gtype is not None:
-            accepted_gtypes.append(bytes_gtype)
+        accepted_gtypes = [Gio.File, GObject.TYPE_STRING]
+        if bytes_type is not None:
+            accepted_gtypes.append(bytes_type)
         drop_target.set_gtypes(accepted_gtypes)
         drop_target.connect("accept", self._on_drop_accept)
         drop_target.connect("enter", self._on_drop_enter)
