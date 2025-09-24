@@ -1897,7 +1897,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Create tab bar
         self.tab_bar = Adw.TabBar()
         self.tab_bar.set_view(self.tab_view)
-        self.tab_bar.set_autohide(True)
+        self.tab_bar.set_autohide(False)
         
         # Add local terminal button before the tabs
         self.local_terminal_button = Gtk.Button()
