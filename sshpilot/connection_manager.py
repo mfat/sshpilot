@@ -115,7 +115,9 @@ class Connection:
         self.key_passphrase = data.get('key_passphrase', '')
         # Source file of this configuration block
         self.source = data.get('source', '')
-        self.isolated_mode = bool(data.get('isolated_mode', False))
+        self.config_root = data.get('config_root', '')
+        self.isolated_config = bool(data.get('isolated_mode', False))
+
         # Provide friendly accessor for UI components that wish to display
         # the originating config file for this connection.
         
@@ -270,7 +272,14 @@ class Connection:
                     config_override = expanded_isolated
 
             if target_alias:
-                effective_cfg = get_effective_ssh_config(target_alias, config_override)
+                config_override = self.config_root if self.isolated_config else None
+                if config_override:
+                    effective_cfg = get_effective_ssh_config(
+                        target_alias, config_file=config_override
+                    )
+                else:
+                    effective_cfg = get_effective_ssh_config(target_alias)
+
 
             # Determine final parameters, falling back to resolved config when needed
             existing_hostname = self.hostname or ''
@@ -760,6 +769,10 @@ class Connection:
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
         self.source = data.get('source', getattr(self, 'source', ''))
+        self.config_root = data.get('config_root', getattr(self, 'config_root', ''))
+        self.isolated_config = bool(
+            data.get('isolated_mode', getattr(self, 'isolated_config', False))
+        )
         self.local_command = data.get('local_command', '')
         self.remote_command = data.get('remote_command', '')
         self.proxy_command = data.get('proxy_command', '')
@@ -942,7 +955,13 @@ class ConnectionManager(GObject.Object):
                                 existing.update_data(connection_data)
                                 self.connections.append(existing)
                             else:
-                                self.connections.append(Connection(connection_data))
+                                new_conn = Connection(connection_data)
+                                if getattr(self, 'isolated_mode', False):
+                                    new_conn.isolated_config = True
+                                    new_conn.config_root = self.ssh_config_path
+                                    new_conn.data['isolated_mode'] = True
+                                    new_conn.data['config_root'] = self.ssh_config_path
+                                self.connections.append(new_conn)
                 try:
                     with open(cfg_file, 'r') as f:
                         lines = f.readlines()
@@ -982,7 +1001,13 @@ class ConnectionManager(GObject.Object):
                                             existing.update_data(connection_data)
                                             self.connections.append(existing)
                                         else:
-                                            self.connections.append(Connection(connection_data))
+                                            new_conn = Connection(connection_data)
+                                            if getattr(self, 'isolated_mode', False):
+                                                new_conn.isolated_config = True
+                                                new_conn.config_root = self.ssh_config_path
+                                                new_conn.data['isolated_mode'] = True
+                                                new_conn.data['config_root'] = self.ssh_config_path
+                                            self.connections.append(new_conn)
                         current_hosts = []
                         current_config = {}
                         block_lines = [raw_line.rstrip('\n')]
@@ -1020,7 +1045,13 @@ class ConnectionManager(GObject.Object):
                                             existing.update_data(connection_data)
                                             self.connections.append(existing)
                                         else:
-                                            self.connections.append(Connection(connection_data))
+                                            new_conn = Connection(connection_data)
+                                            if getattr(self, 'isolated_mode', False):
+                                                new_conn.isolated_config = True
+                                                new_conn.config_root = self.ssh_config_path
+                                                new_conn.data['isolated_mode'] = True
+                                                new_conn.data['config_root'] = self.ssh_config_path
+                                            self.connections.append(new_conn)
                         current_hosts = tokens
                         current_config = {}
                         i += 1
@@ -1056,7 +1087,13 @@ class ConnectionManager(GObject.Object):
                                     existing.update_data(connection_data)
                                     self.connections.append(existing)
                                 else:
-                                    self.connections.append(Connection(connection_data))
+                                    new_conn = Connection(connection_data)
+                                    if getattr(self, 'isolated_mode', False):
+                                        new_conn.isolated_config = True
+                                        new_conn.config_root = self.ssh_config_path
+                                        new_conn.data['isolated_mode'] = True
+                                        new_conn.data['config_root'] = self.ssh_config_path
+                                    self.connections.append(new_conn)
             logger.info(f"Loaded {len(self.connections)} connections from SSH config")
         except Exception as e:
             logger.error(f"Failed to load SSH config: {e}", exc_info=True)
@@ -1120,7 +1157,12 @@ class ConnectionManager(GObject.Object):
                 parsed['aliases'] = []
             if source:
                 parsed['source'] = source
-            
+
+            if getattr(self, 'isolated_mode', False):
+                parsed['isolated_mode'] = True
+                if getattr(self, 'ssh_config_path', ''):
+                    parsed['config_root'] = self.ssh_config_path
+
 
             # Map ForwardX11 yes/no → x11_forwarding boolean
             try:
