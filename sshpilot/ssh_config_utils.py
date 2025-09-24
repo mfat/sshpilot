@@ -77,14 +77,14 @@ def get_effective_ssh_config(
     The output is parsed into a dictionary with lowercased keys. Options that
     appear multiple times (e.g. ``IdentityFile``) are stored as lists.
     """
-    cmd = ['ssh', '-G']
+    cmd = ['ssh']
     if config_file:
         expanded = os.path.abspath(os.path.expanduser(os.path.expandvars(config_file)))
         if os.path.isfile(expanded):
             cmd.extend(['-F', expanded])
         else:
             logger.warning("Requested SSH config override %s does not exist", expanded)
-    cmd.append(host)
+    cmd.extend(['-G', host])
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
