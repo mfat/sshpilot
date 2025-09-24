@@ -2301,6 +2301,7 @@ class FilePane(Gtk.Box):
         list_factory = Gtk.SignalListItemFactory()
         list_factory.connect("setup", self._on_list_setup)
         list_factory.connect("bind", self._on_list_bind)
+        list_factory.connect("unbind", self._on_list_unbind)
         list_view = Gtk.ListView(model=self._selection_model, factory=list_factory)
         list_view.add_css_class("rich-list")
         list_view.set_can_focus(True)  # Enable keyboard focus for typeahead
@@ -2316,6 +2317,7 @@ class FilePane(Gtk.Box):
         grid_factory = Gtk.SignalListItemFactory()
         grid_factory.connect("setup", self._on_grid_setup)
         grid_factory.connect("bind", self._on_grid_bind)
+        grid_factory.connect("unbind", self._on_grid_unbind)
         grid_view = Gtk.GridView(
             model=self._selection_model,
             factory=grid_factory,
@@ -2572,9 +2574,6 @@ class FilePane(Gtk.Box):
         self.add_controller(drop_target)
         self._drop_target = drop_target
 
-        # Set up drag sources for both local and remote panes
-        self._setup_drag_sources((list_view, grid_view))
-
         self._update_menu_state()
         # Set up sorting actions for the split button
         self._setup_sorting_actions()
@@ -2631,21 +2630,29 @@ class FilePane(Gtk.Box):
             except Exception:
                 pass
 
-    def _setup_drag_sources(self, views: Iterable[Gtk.Widget]) -> None:
-        for view in views:
-            drag_source = Gtk.DragSource()
-            drag_source.set_actions(Gdk.DragAction.COPY)
-            drag_source.connect("prepare", self._on_drag_prepare)
-            drag_source.connect("drag-begin", self._on_drag_source_begin)
-            drag_source.connect("drag-end", self._on_drag_source_end)
-            try:
-                drag_source.connect("drag-cancel", self._on_drag_source_cancel)
-            except (TypeError, AttributeError):
-                pass
-            view.add_controller(drag_source)
+    def _ensure_drag_source(self, widget: Optional[Gtk.Widget]) -> None:
+        if widget is None:
+            return
+
+        if getattr(widget, "_pane_drag_source", None) is not None:
+            return
+
+        drag_source = Gtk.DragSource()
+        drag_source.set_actions(Gdk.DragAction.COPY)
+        drag_source.connect("prepare", self._on_drag_prepare)
+        drag_source.connect("drag-begin", self._on_drag_source_begin)
+        drag_source.connect("drag-end", self._on_drag_source_end)
+        try:
+            drag_source.connect("drag-cancel", self._on_drag_source_cancel)
+        except (TypeError, AttributeError):
+            pass
+
+        widget.add_controller(drag_source)
+        widget._pane_drag_source = drag_source
 
     def _on_drag_source_begin(self, source: Gtk.DragSource, _drag: Gdk.Drag) -> None:
         print(f"Drag begin from {'remote' if self._is_remote else 'local'} pane")
+
 
         if self._drag_payload is None:
             try:
@@ -2919,6 +2926,9 @@ class FilePane(Gtk.Box):
         box.icon = icon
         box.name_label = name_label
         box.metadata_label = metadata_label
+        box._pane_entry = None
+        box._pane_index = None
+        self._ensure_drag_source(box)
         item.set_child(box)
 
     def _on_list_bind(self, factory: Gtk.SignalListItemFactory, item):
@@ -2940,6 +2950,8 @@ class FilePane(Gtk.Box):
             metadata_label.set_text("—")
             metadata_label.set_tooltip_text(None)
             icon.set_from_icon_name("folder-symbolic" if value.endswith('/') else "text-x-generic-symbolic")
+            box._pane_entry = None
+            box._pane_index = None
             return
 
         display_name = entry.name + ("/" if entry.is_dir else "")
@@ -2963,6 +2975,16 @@ class FilePane(Gtk.Box):
             icon.set_from_icon_name("folder-symbolic")
         else:
             icon.set_from_icon_name("text-x-generic-symbolic")
+
+        box._pane_entry = entry
+        box._pane_index = position
+
+    def _on_list_unbind(self, factory: Gtk.SignalListItemFactory, item):
+        box = item.get_child()
+        if box is None:
+            return
+        box._pane_entry = None
+        box._pane_index = None
 
     @staticmethod
     def _format_size(size_bytes: int) -> str:
@@ -3001,6 +3023,9 @@ class FilePane(Gtk.Box):
         content.append(label)
 
         button.set_child(content)
+        button._pane_entry = None
+        button._pane_index = None
+        self._ensure_drag_source(button)
         item.set_child(button)
 
     def _on_grid_bind(self, factory: Gtk.SignalListItemFactory, item):
@@ -3023,6 +3048,21 @@ class FilePane(Gtk.Box):
             image.set_from_icon_name("folder-symbolic")
         else:
             image.set_from_icon_name("text-x-generic-symbolic")
+
+        entry: Optional[FileEntry] = None
+        position = item.get_position()
+        if position is not None and 0 <= position < len(self._entries):
+            entry = self._entries[position]
+
+        button._pane_entry = entry
+        button._pane_index = position if entry is not None else None
+
+    def _on_grid_unbind(self, factory: Gtk.SignalListItemFactory, item):
+        button = item.get_child()
+        if button is None:
+            return
+        button._pane_entry = None
+        button._pane_index = None
 
     def _on_selection_changed(self, model, position, n_items):
         self._update_menu_state()
@@ -3181,8 +3221,25 @@ class FilePane(Gtk.Box):
         long_press.connect("pressed", _on_long_press)
         widget.add_controller(long_press)
 
-    def _build_drag_payload(self) -> Optional[object]:
-        entries = self.get_selected_entries()
+    def _select_index_for_drag(self, index: Optional[int]) -> None:
+        if index is None:
+            return
+
+        selector = getattr(self._selection_model, "select_item", None)
+        if callable(selector):
+            try:
+                selector(index, False)
+            except TypeError:
+                selector(index)
+            return
+
+        setter = getattr(self._selection_model, "set_selected", None)
+        if callable(setter):
+            setter(index, True)
+
+    def _build_drag_payload(self, entries: Optional[List[FileEntry]] = None) -> Optional[object]:
+        if entries is None:
+            entries = self.get_selected_entries()
         if not entries:
             return None
 
@@ -3205,8 +3262,26 @@ class FilePane(Gtk.Box):
 
     def _on_drag_prepare(self, drag_source: Gtk.DragSource, _x: float, _y: float):
         print(f"Drag prepare called on {'remote' if self._is_remote else 'local'} pane")
-        
-        payload = self._build_drag_payload()
+
+        widget = drag_source.get_widget() if hasattr(drag_source, "get_widget") else None
+        widget_entry = getattr(widget, "_pane_entry", None)
+        widget_index = getattr(widget, "_pane_index", None)
+
+        selected_entries = self.get_selected_entries()
+        if widget_entry is not None and widget_entry not in selected_entries:
+            unselect_all = getattr(self._selection_model, "unselect_all", None)
+            if callable(unselect_all):
+                try:
+                    unselect_all()
+                except Exception:
+                    pass
+            self._select_index_for_drag(widget_index)
+            selected_entries = self.get_selected_entries()
+            if not selected_entries and widget_entry is not None:
+                selected_entries = [widget_entry]
+
+        payload = self._build_drag_payload(selected_entries)
+
         print(f"Built drag payload: {payload}")
         if payload is None:
             print("No payload built, canceling drag")
