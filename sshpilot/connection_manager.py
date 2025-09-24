@@ -239,7 +239,7 @@ class Connection:
             connection_attempts = int(ssh_cfg.get('connection_attempts', 1)) if apply_adv else None
             strict_host = str(ssh_cfg.get('strict_host_key_checking', '')) if apply_adv else ''
             batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
-            compression = bool(ssh_cfg.get('compression', True)) if apply_adv else False
+            compression = bool(ssh_cfg.get('compression', False)) if apply_adv else False
             verbosity = int(ssh_cfg.get('verbosity', 0))
             debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
             auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
