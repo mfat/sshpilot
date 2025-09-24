@@ -10,7 +10,6 @@
 
 **sshPilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal. 
 
-## 📸 Screenshots
 
 <table>
   <tr>
