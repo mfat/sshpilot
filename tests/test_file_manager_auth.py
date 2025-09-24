@@ -46,6 +46,7 @@ class DummyClient:
         self.closed = False
         self.last_sftp = None
         self.transport = DummyTransport()
+
         DummyClient.instances.append(self)
 
     def set_missing_host_key_policy(self, policy):
@@ -72,6 +73,7 @@ class DummyClient:
 
     def get_transport(self):
         return self.transport
+
 
 
 class DummyProxyCommand:
@@ -143,6 +145,7 @@ def _load_file_manager_module(monkeypatch):
     module = importlib.import_module("sshpilot.file_manager_window")
     module._fake_ssh_config = ssh_config_stub
     return module
+
 
 
 def test_async_sftp_manager_uses_stored_password(monkeypatch):
@@ -277,6 +280,7 @@ def test_async_sftp_manager_builds_proxy_jump_chain(monkeypatch):
         }
     )
 
+
     connection = types.SimpleNamespace(
         hostname="example.com",
         host="example.com",
@@ -359,3 +363,4 @@ def test_async_sftp_manager_uses_effective_host_settings(monkeypatch):
     assert kwargs["hostname"] == "prod.internal"
     assert kwargs["username"] == "bob"
     assert kwargs["port"] == 2201
+

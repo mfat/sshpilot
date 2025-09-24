@@ -835,6 +835,7 @@ class AsyncSFTPManager(GObject.GObject):
         self._ssh_config = dict(ssh_config) if ssh_config else None
         self._proxy_sock: Optional[Any] = None
         self._jump_clients: List[paramiko.SSHClient] = []
+
     
     def _format_size(self, size_bytes):
         """Format file size for display"""
@@ -871,6 +872,7 @@ class AsyncSFTPManager(GObject.GObject):
                     except Exception as exc:  # pragma: no cover - defensive cleanup
                         logger.debug("Error closing jump client: %s", exc)
                 self._jump_clients.clear()
+
             if self._proxy_sock is not None:
                 try:
                     self._proxy_sock.close()
@@ -1315,6 +1317,7 @@ class AsyncSFTPManager(GObject.GObject):
             target_alias = self._host
 
         alias_for_config: Optional[str] = None
+
         if target_alias:
             try:
                 from .ssh_config_utils import get_effective_ssh_config
@@ -1323,6 +1326,7 @@ class AsyncSFTPManager(GObject.GObject):
                     target_alias, config_file=config_override
                 )
                 alias_for_config = target_alias
+
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug(
                     "Failed to resolve effective SSH config for %s: %s",
@@ -1357,6 +1361,7 @@ class AsyncSFTPManager(GObject.GObject):
         resolved_port = _coerce_port(effective_cfg.get("port", self._port), self._port)
         resolved_username = str(effective_cfg.get("user", self._username) or self._username)
 
+
         def _expand_proxy_tokens(raw_command: str) -> str:
             if not raw_command:
                 return raw_command
@@ -1364,6 +1369,7 @@ class AsyncSFTPManager(GObject.GObject):
             substitution_host = str(resolved_host)
             substitution_port = str(resolved_port)
             substitution_user = str(resolved_username) if resolved_username else ""
+
             substitution_alias = str(alias_for_substitution) if alias_for_substitution else substitution_host
 
             token_pattern = re.compile(r"%(?:%|h|p|r|n)")
@@ -1384,6 +1390,7 @@ class AsyncSFTPManager(GObject.GObject):
 
             return token_pattern.sub(_replace, raw_command)
 
+
         proxy_sock: Optional[Any] = None
         proxy_command = proxy_command.strip()
         if proxy_command:
@@ -1397,6 +1404,7 @@ class AsyncSFTPManager(GObject.GObject):
                     expanded_command,
                     proxy_command,
                 )
+
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("Failed to set up ProxyCommand '%s': %s", proxy_command, exc)
                 proxy_sock = None
@@ -1428,6 +1436,7 @@ class AsyncSFTPManager(GObject.GObject):
 
         if not proxy_jump:
             jump_clients = []
+
 
         connect_kwargs: Dict[str, Any] = {
             "hostname": resolved_host,
@@ -1465,6 +1474,7 @@ class AsyncSFTPManager(GObject.GObject):
                         jump_client.close()
                     except Exception:  # pragma: no cover - defensive cleanup
                         pass
+
             raise
 
         with self._lock:
@@ -1473,6 +1483,7 @@ class AsyncSFTPManager(GObject.GObject):
             self._password = password
             self._proxy_sock = proxy_sock
             self._jump_clients = jump_clients
+
 
     # -- public operations ----------------------------------------------
 
