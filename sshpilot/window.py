@@ -6398,10 +6398,39 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         ]
                     old_connection.proxy_jump = proxy_jump_value
                 except Exception:
+                    proxy_jump_value = []
                     old_connection.proxy_jump = []
 
-                old_connection.proxy_command = connection_data.get('proxy_command', '') or ''
-                old_connection.forward_agent = bool(connection_data.get('forward_agent', False))
+                proxy_command_value = connection_data.get('proxy_command', '') or ''
+                forward_agent_value = bool(connection_data.get('forward_agent', False))
+
+                old_connection.proxy_command = proxy_command_value
+                old_connection.forward_agent = forward_agent_value
+
+                # Keep the backing data dict synchronized so any downstream
+                # consumers that still read from connection.data see the new
+                # directives without waiting for another reload cycle.
+                try:
+                    if hasattr(old_connection, 'data') and isinstance(old_connection.data, dict):
+                        old_connection.data['proxy_jump'] = list(proxy_jump_value)
+                        old_connection.data['proxy_command'] = proxy_command_value
+                        old_connection.data['forward_agent'] = forward_agent_value
+                except Exception:
+                    pass
+
+                # Invalidate any prepared SSH command so future connection
+                # attempts rebuild the argument list using the refreshed proxy
+                # settings. Otherwise terminals reuse the cached command and
+                # continue using the previous ProxyJump chain until restart.
+                try:
+                    if hasattr(old_connection, 'ssh_cmd'):
+                        old_connection.ssh_cmd = []
+                except Exception:
+                    try:
+                        delattr(old_connection, 'ssh_cmd')
+                    except Exception:
+                        pass
+
                 # Update commands
                 try:
                     old_connection.local_command = connection_data.get('local_command', '')
