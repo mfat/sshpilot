@@ -206,6 +206,36 @@ class Connection:
                 return candidate
         return ''
 
+    def _resolve_config_override_path(self) -> Optional[str]:
+        """Return an absolute path to the SSH config override, if any."""
+
+        config_override: Optional[str] = None
+
+        source_path = str(getattr(self, 'source', '') or '')
+        if source_path:
+            expanded_source = os.path.abspath(
+                os.path.expanduser(os.path.expandvars(source_path))
+            )
+            if os.path.exists(expanded_source):
+                config_override = expanded_source
+
+        if not config_override and getattr(self, 'isolated_mode', False):
+            isolated_candidate = os.path.join(get_config_dir(), 'ssh_config')
+            expanded_isolated = os.path.abspath(
+                os.path.expanduser(os.path.expandvars(isolated_candidate))
+            )
+            if os.path.exists(expanded_isolated):
+                config_override = expanded_isolated
+
+        if self.isolated_config and self.config_root:
+            config_override = self.config_root
+
+        if config_override:
+            return os.path.abspath(
+                os.path.expanduser(os.path.expandvars(config_override))
+            )
+        return None
+
     @property
     def source_file(self) -> str:
         """Return path to the config file where this host is defined."""
@@ -294,25 +324,8 @@ class Connection:
                 or self.host
                 or self.hostname
             )
-            config_override: Optional[str] = None
-            source_path = str(getattr(self, 'source', '') or '')
-            if source_path:
-                expanded_source = os.path.abspath(
-                    os.path.expanduser(os.path.expandvars(source_path))
-                )
-                if os.path.exists(expanded_source):
-                    config_override = expanded_source
-            if not config_override and getattr(self, 'isolated_mode', False):
-                isolated_candidate = os.path.join(get_config_dir(), 'ssh_config')
-                expanded_isolated = os.path.abspath(
-                    os.path.expanduser(os.path.expandvars(isolated_candidate))
-                )
-                if os.path.exists(expanded_isolated):
-                    config_override = expanded_isolated
-
+            config_override = self._resolve_config_override_path()
             if target_alias:
-                if self.isolated_config and self.config_root:
-                    config_override = self.config_root
                 if config_override:
                     effective_cfg = get_effective_ssh_config(
                         target_alias, config_file=config_override
@@ -455,7 +468,15 @@ class Connection:
                 self.is_connected = False
                 return False
 
-            self.ssh_cmd = ['ssh', host_label]
+            ssh_cmd = ['ssh']
+
+            config_override = self._resolve_config_override_path()
+            if config_override:
+                ssh_cmd.extend(['-F', config_override])
+
+            ssh_cmd.append(host_label)
+
+            self.ssh_cmd = ssh_cmd
             self.is_connected = True
             return True
         except Exception as exc:
