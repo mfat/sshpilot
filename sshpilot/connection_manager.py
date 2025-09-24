@@ -75,6 +75,18 @@ class Connection:
         self.forwarders: List[asyncio.Task] = []
         self.listeners: List[asyncio.Server] = []
 
+        raw_quick = data.get('quick_connect_command', '') if isinstance(data, dict) else ''
+        if isinstance(raw_quick, str):
+            self.quick_connect_command = raw_quick.strip()
+        else:
+            self.quick_connect_command = ''
+
+        unparsed = data.get('unparsed_args', []) if isinstance(data, dict) else []
+        if isinstance(unparsed, (list, tuple)):
+            self.unparsed_args = list(unparsed)
+        else:
+            self.unparsed_args = []
+
         hostname_value = data.get('hostname')
         host_value = data.get('host', '')
 
@@ -103,6 +115,9 @@ class Connection:
         self.key_passphrase = data.get('key_passphrase', '')
         # Source file of this configuration block
         self.source = data.get('source', '')
+        self.config_root = data.get('config_root', '')
+        self.isolated_config = bool(data.get('isolated_mode', False))
+
         # Provide friendly accessor for UI components that wish to display
         # the originating config file for this connection.
         
@@ -160,6 +175,17 @@ class Connection:
     async def connect(self):
         """Prepare SSH command for later use (no preflight echo)."""
         try:
+            quick_cmd = getattr(self, 'quick_connect_command', '')
+            if isinstance(quick_cmd, str) and quick_cmd.strip():
+                try:
+                    ssh_cmd = shlex.split(quick_cmd)
+                except ValueError:
+                    ssh_cmd = quick_cmd.split()
+                logger.debug("Using quick connect command without modification")
+                self.ssh_cmd = ssh_cmd
+                self.is_connected = True
+                return True
+
             ssh_cmd = ['ssh']
 
             # Pull advanced SSH defaults from config when available
@@ -229,8 +255,32 @@ class Connection:
                 or self.host
                 or self.hostname
             )
+            config_override: Optional[str] = None
+            source_path = str(getattr(self, 'source', '') or '')
+            if source_path:
+                expanded_source = os.path.abspath(
+                    os.path.expanduser(os.path.expandvars(source_path))
+                )
+                if os.path.exists(expanded_source):
+                    config_override = expanded_source
+            if not config_override and getattr(self, 'isolated_mode', False):
+                isolated_candidate = os.path.join(get_config_dir(), 'ssh_config')
+                expanded_isolated = os.path.abspath(
+                    os.path.expanduser(os.path.expandvars(isolated_candidate))
+                )
+                if os.path.exists(expanded_isolated):
+                    config_override = expanded_isolated
+
             if target_alias:
-                effective_cfg = get_effective_ssh_config(target_alias)
+                if self.isolated_config and self.config_root:
+                    config_override = self.config_root
+                if config_override:
+                    effective_cfg = get_effective_ssh_config(
+                        target_alias, config_file=config_override
+                    )
+                else:
+                    effective_cfg = get_effective_ssh_config(target_alias)
+
 
             # Determine final parameters, falling back to resolved config when needed
             existing_hostname = self.hostname or ''
@@ -679,6 +729,18 @@ class Connection:
 
     def update_data(self, new_data: Dict[str, Any]):
         """Update connection data while preserving object identity"""
+        # When isolated mode is toggled off, the refreshed data no longer includes
+        # the isolated_mode/config_root keys. Reusing the previous values would keep
+        # the connection flagged as isolated and force an incorrect config override.
+        if 'isolated_mode' not in new_data:
+            if 'isolated_mode' in self.data:
+                self.data.pop('isolated_mode', None)
+            self.isolated_config = False
+
+            if 'config_root' not in new_data:
+                self.data.pop('config_root', None)
+                self.config_root = ''
+
         self.data.update(new_data)
         self._update_properties_from_data(self.data)
     
@@ -720,6 +782,8 @@ class Connection:
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
         self.source = data.get('source', getattr(self, 'source', ''))
+        self.config_root = data.get('config_root', '')
+        self.isolated_config = bool(data.get('isolated_mode', False))
         self.local_command = data.get('local_command', '')
         self.remote_command = data.get('remote_command', '')
         self.proxy_command = data.get('proxy_command', '')
@@ -902,7 +966,13 @@ class ConnectionManager(GObject.Object):
                                 existing.update_data(connection_data)
                                 self.connections.append(existing)
                             else:
-                                self.connections.append(Connection(connection_data))
+                                new_conn = Connection(connection_data)
+                                if getattr(self, 'isolated_mode', False):
+                                    new_conn.isolated_config = True
+                                    new_conn.config_root = self.ssh_config_path
+                                    new_conn.data['isolated_mode'] = True
+                                    new_conn.data['config_root'] = self.ssh_config_path
+                                self.connections.append(new_conn)
                 try:
                     with open(cfg_file, 'r') as f:
                         lines = f.readlines()
@@ -942,7 +1012,13 @@ class ConnectionManager(GObject.Object):
                                             existing.update_data(connection_data)
                                             self.connections.append(existing)
                                         else:
-                                            self.connections.append(Connection(connection_data))
+                                            new_conn = Connection(connection_data)
+                                            if getattr(self, 'isolated_mode', False):
+                                                new_conn.isolated_config = True
+                                                new_conn.config_root = self.ssh_config_path
+                                                new_conn.data['isolated_mode'] = True
+                                                new_conn.data['config_root'] = self.ssh_config_path
+                                            self.connections.append(new_conn)
                         current_hosts = []
                         current_config = {}
                         block_lines = [raw_line.rstrip('\n')]
@@ -980,7 +1056,13 @@ class ConnectionManager(GObject.Object):
                                             existing.update_data(connection_data)
                                             self.connections.append(existing)
                                         else:
-                                            self.connections.append(Connection(connection_data))
+                                            new_conn = Connection(connection_data)
+                                            if getattr(self, 'isolated_mode', False):
+                                                new_conn.isolated_config = True
+                                                new_conn.config_root = self.ssh_config_path
+                                                new_conn.data['isolated_mode'] = True
+                                                new_conn.data['config_root'] = self.ssh_config_path
+                                            self.connections.append(new_conn)
                         current_hosts = tokens
                         current_config = {}
                         i += 1
@@ -1016,7 +1098,13 @@ class ConnectionManager(GObject.Object):
                                     existing.update_data(connection_data)
                                     self.connections.append(existing)
                                 else:
-                                    self.connections.append(Connection(connection_data))
+                                    new_conn = Connection(connection_data)
+                                    if getattr(self, 'isolated_mode', False):
+                                        new_conn.isolated_config = True
+                                        new_conn.config_root = self.ssh_config_path
+                                        new_conn.data['isolated_mode'] = True
+                                        new_conn.data['config_root'] = self.ssh_config_path
+                                    self.connections.append(new_conn)
             logger.info(f"Loaded {len(self.connections)} connections from SSH config")
         except Exception as e:
             logger.error(f"Failed to load SSH config: {e}", exc_info=True)
@@ -1080,7 +1168,12 @@ class ConnectionManager(GObject.Object):
                 parsed['aliases'] = []
             if source:
                 parsed['source'] = source
-            
+
+            if getattr(self, 'isolated_mode', False):
+                parsed['isolated_mode'] = True
+                if getattr(self, 'ssh_config_path', ''):
+                    parsed['config_root'] = self.ssh_config_path
+
 
             # Map ForwardX11 yes/no → x11_forwarding boolean
             try:
@@ -2045,6 +2138,8 @@ class ConnectionManager(GObject.Object):
     async def connect(self, connection: Connection):
         """Connect to an SSH host asynchronously"""
         try:
+            if hasattr(self, 'isolated_mode'):
+                connection.isolated_mode = bool(getattr(self, 'isolated_mode', False))
             # Connect to the SSH server
             connected = await connection.connect()
             if not connected:

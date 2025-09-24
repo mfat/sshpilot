@@ -997,6 +997,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 new_data.pop('source', None)
 
             new_connection = Connection(new_data)
+            if self.connection_manager.isolated_mode:
+                new_connection.isolated_config = True
+                new_connection.config_root = self.connection_manager.ssh_config_path
+                new_connection.data['isolated_mode'] = True
+                if self.connection_manager.ssh_config_path:
+                    new_connection.data['config_root'] = self.connection_manager.ssh_config_path
             try:
                 new_connection.auth_method = int(new_data.get('auth_method', 0) or 0)
             except Exception:
@@ -4476,7 +4482,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     ):
         argv = ['scp', '-v']
         host_value = _get_connection_host(connection) or _get_connection_alias(connection)
-        target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
+        scp_host = host_value
+        if scp_host and ':' in scp_host and not (scp_host.startswith('[') and scp_host.endswith(']')):
+            scp_host = f"[{scp_host}]"
+        target = f"{connection.username}@{scp_host}" if getattr(connection, 'username', '') else scp_host
         transfer_sources, transfer_destination = assemble_scp_transfer_args(
             target,
             sources,
@@ -6410,6 +6419,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             else:
                 # Create new connection
                 connection = Connection(connection_data)
+                if self.connection_manager.isolated_mode:
+                    connection.isolated_config = True
+                    connection.config_root = self.connection_manager.ssh_config_path
+                    connection.data['isolated_mode'] = True
+                    if self.connection_manager.ssh_config_path:
+                        connection.data['config_root'] = self.connection_manager.ssh_config_path
                 # Ensure the in-memory object has the chosen auth_method immediately
                 try:
                     connection.auth_method = int(connection_data.get('auth_method', 0))
