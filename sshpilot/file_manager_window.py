@@ -1392,6 +1392,7 @@ class AsyncSFTPManager(GObject.GObject):
 
 
         proxy_sock: Optional[Any] = None
+        jump_clients: List[paramiko.SSHClient] = []
         proxy_command = proxy_command.strip()
         if proxy_command:
             try:
