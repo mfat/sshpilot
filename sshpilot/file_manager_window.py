@@ -2571,11 +2571,22 @@ class FilePane(Gtk.Box):
         # Drag and drop controllers – these provide the visual affordance and
         # forward requests to the window which understands the context.
         # Accept multiple formats including the custom remote entry payload.
-        drop_target = Gtk.DropTarget.new(GObject.TYPE_PYOBJECT, Gdk.DragAction.COPY)
-        accepted_gtypes = [Gio.File, GObject.TYPE_STRING]
         bytes_type = getattr(GLib, "Bytes", None)
+        bytes_gtype = None
         if bytes_type is not None:
-            accepted_gtypes.append(bytes_type)
+            bytes_gtype = getattr(bytes_type, "__gtype__", None)
+            if bytes_gtype is None:
+                # Some PyGObject builds expose GLib.Bytes without a registered GType.
+                # Fall back to treating the payload as a simple string in this case
+                # to avoid passing an invalid type ID (0) to Gtk.DropTarget.
+                bytes_type = None
+
+        default_gtype = bytes_gtype if bytes_gtype is not None else GObject.TYPE_STRING
+        drop_target = Gtk.DropTarget.new(default_gtype, Gdk.DragAction.COPY)
+
+        accepted_gtypes: List[GObject.GType] = [Gio.File.__gtype__, GObject.TYPE_STRING]
+        if bytes_gtype is not None:
+            accepted_gtypes.append(bytes_gtype)
         drop_target.set_gtypes(accepted_gtypes)
         drop_target.connect("accept", self._on_drop_accept)
         drop_target.connect("enter", self._on_drop_enter)
@@ -3346,11 +3357,15 @@ class FilePane(Gtk.Box):
                 return provider
             except Exception as e:
                 print(f"Error creating remote content provider: {e}")
-                # Final fallback to PyObject (but we'll know why)
-                print("Falling back to PyObject provider")
-                return Gdk.ContentProvider.new_for_value(
-                    GObject.Value(GObject.TYPE_PYOBJECT, payload)
-                )
+                # Final fallback to simple UTF-8 text payload so the transfer can
+                # still proceed even if the custom format fails.
+                try:
+                    fallback = json.dumps(payload)
+                except Exception:
+                    fallback = str(payload)
+                data = GLib.Bytes.new(fallback.encode("utf-8"))
+                print("Falling back to plain-text remote provider")
+                return Gdk.ContentProvider.new_for_bytes("text/plain", data)
         else:
             # For local files, try to create URI list
             try:
@@ -3386,11 +3401,15 @@ class FilePane(Gtk.Box):
                         
             except Exception as e:
                 print(f"Error creating local content provider: {e}")
-            
-            # Fallback to original PyObject method for local
-            return Gdk.ContentProvider.new_for_value(
-                GObject.Value(GObject.TYPE_PYOBJECT, payload)
-            )
+
+            # Fallback to newline separated plain text list of paths.
+            try:
+                text_payload = "\n".join(str(item) for item in payload)
+            except Exception:
+                text_payload = str(payload)
+            data = GLib.Bytes.new(text_payload.encode("utf-8"))
+            print("Falling back to plain-text local provider")
+            return Gdk.ContentProvider.new_for_bytes("text/plain", data)
 
     def _on_drag_begin(self, drag_source: Gtk.DragSource, _drag: Gdk.Drag) -> None:
         if self._drag_payload is None:
