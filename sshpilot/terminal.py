@@ -496,14 +496,36 @@ class TerminalWidget(Gtk.Box):
                 base_cmd = ['ssh']
 
             ssh_cmd = list(base_cmd)
+            native_mode_enabled = bool(getattr(self.connection_manager, 'native_connect_enabled', False))
+            try:
+                app = Adw.Application.get_default()
+                if not native_mode_enabled and app is not None and hasattr(app, 'native_connect_enabled'):
+                    native_mode_enabled = bool(app.native_connect_enabled)
+            except Exception:
+                pass
             quick_connect_mode = bool(getattr(self.connection, 'quick_connect_command', ''))
+            if native_mode_enabled:
+                quick_connect_mode = False
             password_auth_selected = False
             has_saved_password = False
             password_value = None
             auth_method = 0
             resolved_for_connection = ''
 
-            if not quick_connect_mode:
+            if native_mode_enabled and not ssh_cmd:
+                host_label = ''
+                try:
+                    if hasattr(self.connection, 'resolve_host_identifier'):
+                        host_label = self.connection.resolve_host_identifier()
+                except Exception:
+                    host_label = ''
+                host_label = host_label or getattr(self.connection, 'host', '') or getattr(self.connection, 'hostname', '') or getattr(self.connection, 'nickname', '')
+                if host_label:
+                    ssh_cmd = ['ssh', host_label]
+                else:
+                    ssh_cmd = ['ssh']
+
+            if not native_mode_enabled and not quick_connect_mode:
                 def _resolve_host_for_connection() -> str:
                     if not hasattr(self, 'connection') or not self.connection:
                         return ''
@@ -866,7 +888,7 @@ class TerminalWidget(Gtk.Box):
                 except Exception:
                     logger.debug("Prepared SSH command")
 
-            else:
+            elif quick_connect_mode:
                 try:
                     logger.debug(
                         "Using quick connect command for terminal: %s",
@@ -874,6 +896,14 @@ class TerminalWidget(Gtk.Box):
                     )
                 except Exception:
                     logger.debug("Using quick connect command for terminal")
+            elif native_mode_enabled:
+                try:
+                    logger.debug(
+                        "Using native SSH command for terminal: %s",
+                        ' '.join(str(part) for part in ssh_cmd),
+                    )
+                except Exception:
+                    logger.debug("Using native SSH command for terminal")
 
             # Start the SSH process using VTE's spawn_async with our PTY
             logger.debug(f"Flatpak debug: About to spawn SSH with command: {ssh_cmd}")

@@ -111,9 +111,26 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.config = Config()
             if app is not None:
                 setattr(app, 'config', self.config)
+        self._config_changed_handler = None
+        if hasattr(self.config, 'connect'):
+            try:
+                self._config_changed_handler = self.config.connect('setting-changed', self._on_config_setting_changed)
+            except Exception:
+                self._config_changed_handler = None
         effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
         key_dir = Path(get_config_dir()) if effective_isolated else None
         self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
+        # Ensure native connect preference is propagated to the connection manager
+        try:
+            native_cfg = bool(self.config.get_setting('ssh.native_connect', False))
+        except Exception:
+            native_cfg = False
+        app_native = None
+        if app is not None and hasattr(app, 'native_connect_enabled'):
+            app_native = bool(app.native_connect_enabled)
+        self.connection_manager.native_connect_enabled = app_native if app_native is not None else native_cfg
+        if app is not None and app_native is None:
+            app.native_connect_enabled = native_cfg
         self.key_manager = KeyManager(key_dir)
         self.group_manager = GroupManager(self.config)
         
@@ -156,8 +173,30 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connect('close-request', self.on_close_request)
         
         # Start with welcome view (tab view setup already shows welcome initially)
-        
+
         logger.info("Main window initialized")
+
+    def _on_config_setting_changed(self, _config, key, value):
+        """Synchronize runtime state when configuration values change."""
+        if key != 'ssh.native_connect':
+            return
+
+        bool_value = bool(value)
+        app = self.get_application()
+        override = None
+        if app is not None and hasattr(app, 'native_connect_override'):
+            override = app.native_connect_override
+
+        effective = bool_value if override is None else bool(override)
+
+        if app is not None and hasattr(app, 'native_connect_enabled'):
+            if override is None:
+                app.native_connect_enabled = bool_value
+            else:
+                app.native_connect_enabled = effective
+
+        if hasattr(self.connection_manager, 'native_connect_enabled'):
+            self.connection_manager.native_connect_enabled = effective
 
         # Install sidebar CSS
         try:
@@ -5984,9 +6023,30 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def _open_connection_in_external_terminal(self, connection):
         """Open the connection in the user's preferred external terminal"""
         try:
-            host_value = _get_connection_host(connection) or _get_connection_alias(connection)
-            port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
-            ssh_command = f"ssh{port_text} {connection.username}@{host_value}" if getattr(connection, 'username', '') else f"ssh{port_text} {host_value}"
+            cm = getattr(self, 'connection_manager', None)
+            use_native = bool(getattr(cm, 'native_connect_enabled', False))
+            app = self.get_application() if hasattr(self, 'get_application') else None
+            if not use_native and app is not None and hasattr(app, 'native_connect_enabled'):
+                use_native = bool(app.native_connect_enabled)
+
+            host_value = ''
+            if use_native and hasattr(connection, 'resolve_host_identifier'):
+                try:
+                    host_value = connection.resolve_host_identifier()
+                except Exception:
+                    host_value = ''
+            if not host_value:
+                host_value = _get_connection_host(connection) or _get_connection_alias(connection)
+
+            if use_native:
+                ssh_command = f"ssh {host_value}" if host_value else "ssh"
+            else:
+                port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
+                ssh_command = (
+                    f"ssh{port_text} {connection.username}@{host_value}"
+                    if getattr(connection, 'username', '')
+                    else f"ssh{port_text} {host_value}"
+                )
 
             terminal = self._get_user_preferred_terminal()
             if not terminal:
