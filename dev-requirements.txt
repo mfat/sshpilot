@@ -1,0 +1,2 @@
+# Development dependencies for sshPilot hot reloading
+watchdog>=3.0.0

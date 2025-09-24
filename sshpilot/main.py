@@ -181,6 +181,9 @@ class SshPilotApplication(Adw.Application):
         # Initialize window reference
         self.window = None
         
+        # Set up development mode features
+        self.setup_dev_mode()
+        
         logging.info("sshPilot application initialized")
     
     def on_activate(self, app):
@@ -563,12 +566,73 @@ class SshPilotApplication(Adw.Application):
                         provider, 
                         Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
                     )
-                    # Store provider reference for cleanup
+                    # Store provider reference for cleanup and hot reloading
                     display._color_override_provider = provider
                     logging.info("Applied color overrides on startup")
                 
         except Exception as e:
             logging.error(f"Failed to apply color overrides: {e}")
+
+    def reload_css_styles(self):
+        """Reload CSS styles for hot reloading during development"""
+        try:
+            import gi
+            gi.require_version('Gtk', '4.0')
+            from gi.repository import Gtk, Gdk
+            
+            # Remove existing color override provider
+            display = Gdk.Display.get_default()
+            if display and hasattr(display, '_color_override_provider'):
+                Gtk.StyleContext.remove_provider_for_display(
+                    display, 
+                    display._color_override_provider
+                )
+                display._color_override_provider = None
+            
+            # Reapply color overrides
+            if self.config:
+                self.apply_color_overrides(self.config)
+            
+            logging.info("CSS styles reloaded successfully")
+            
+        except Exception as e:
+            logging.error(f"Failed to reload CSS styles: {e}")
+
+    def setup_dev_mode(self):
+        """Set up development mode features if enabled"""
+        # Check if we're in development mode (environment variable or config)
+        dev_mode = os.environ.get('SSHPILOT_DEV_MODE', 'false').lower() == 'true'
+        
+        # Check for DEBUG=True in .env file
+        if not dev_mode:
+            try:
+                env_file_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+                if os.path.exists(env_file_path):
+                    with open(env_file_path, 'r') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line.startswith('DEBUG='):
+                                debug_value = line.split('=', 1)[1].strip().lower()
+                                if debug_value in ('true', '1', 'yes'):
+                                    dev_mode = True
+                                    logging.info("Development mode enabled via .env file (DEBUG=True)")
+                                    break
+            except Exception as e:
+                logging.debug(f"Could not read .env file: {e}")
+        
+        if not dev_mode:
+            try:
+                if self.config:
+                    dev_mode = bool(self.config.get_setting('dev.hot_reload_enabled', False))
+            except Exception:
+                pass
+        
+        if dev_mode:
+            logging.info("Development mode enabled - CSS hot reloading available")
+            # Store reference for potential CSS reloading
+            self._dev_mode = True
+        else:
+            self._dev_mode = False
 
 def main():
     """Main entry point"""
