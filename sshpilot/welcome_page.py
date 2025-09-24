@@ -15,6 +15,30 @@ from .connection_manager import Connection
 from .platform_utils import is_macos
 
 
+SSH_OPTIONS_EXPECTING_ARGUMENT = {
+    "-b",
+    "-B",
+    "-c",
+    "-D",
+    "-E",
+    "-e",
+    "-F",
+    "-I",
+    "-J",
+    "-L",
+    "-l",
+    "-m",
+    "-O",
+    "-o",
+    "-p",
+    "-Q",
+    "-R",
+    "-S",
+    "-W",
+    "-w",
+}
+
+
 class WelcomePage(Gtk.Overlay):
     """Welcome page shown when no tabs are open."""
 
@@ -316,8 +340,24 @@ class WelcomePage(Gtk.Overlay):
                         connection_data["nickname"] = arg
                     i += 1
                 else:
-                    # Unknown option, skip it
-                    i += 1
+                    # Unknown option. Determine whether it normally expects an argument.
+                    option_key = arg
+                    attached_value = ""
+                    if option_key.startswith('--'):
+                        option_key, _, attached_value = option_key.partition('=')
+                    elif option_key.startswith('-') and len(option_key) > 2:
+                        option_key, attached_value = option_key[:2], option_key[2:]
+
+                    if option_key in SSH_OPTIONS_EXPECTING_ARGUMENT:
+                        if attached_value:
+                            i += 1
+                        elif i + 1 < len(args) and not args[i + 1].startswith('-'):
+                            i += 2
+                        else:
+                            i += 1
+                    else:
+                        i += 1
+                    continue
             
             # Validate that we have at least a host
             if not connection_data["host"]:
@@ -569,8 +609,24 @@ class QuickConnectDialog(Adw.MessageDialog):
                         connection_data["nickname"] = arg
                     i += 1
                 else:
-                    # Unknown option, skip it
-                    i += 1
+                    # Unknown option. Determine whether it normally expects an argument.
+                    option_key = arg
+                    attached_value = ""
+                    if option_key.startswith('--'):
+                        option_key, _, attached_value = option_key.partition('=')
+                    elif option_key.startswith('-') and len(option_key) > 2:
+                        option_key, attached_value = option_key[:2], option_key[2:]
+
+                    if option_key in SSH_OPTIONS_EXPECTING_ARGUMENT:
+                        if attached_value:
+                            i += 1
+                        elif i + 1 < len(args) and not args[i + 1].startswith('-'):
+                            i += 2
+                        else:
+                            i += 1
+                    else:
+                        i += 1
+                    continue
 
             # Validate that we have at least a host
             if not connection_data["host"]:
