@@ -2653,6 +2653,7 @@ class FilePane(Gtk.Box):
     def _on_drag_source_begin(self, source: Gtk.DragSource, _drag: Gdk.Drag) -> None:
         print(f"Drag begin from {'remote' if self._is_remote else 'local'} pane")
 
+
         if self._drag_payload is None:
             try:
                 source.drag_cancel()
@@ -3280,6 +3281,7 @@ class FilePane(Gtk.Box):
                 selected_entries = [widget_entry]
 
         payload = self._build_drag_payload(selected_entries)
+
         print(f"Built drag payload: {payload}")
         if payload is None:
             print("No payload built, canceling drag")
