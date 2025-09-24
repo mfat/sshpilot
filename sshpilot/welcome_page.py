@@ -65,43 +65,50 @@ class WelcomePage(Gtk.Overlay):
         
         # Create welcome page cards with keyboard shortcuts in tooltips
         mac = is_macos()
-        primary = '⌘' if mac else 'Ctrl'
-        alt = '⌥' if mac else 'Alt'
-        shift = '⇧' if mac else 'Shift'
+        # Fetch current (possibly customized) shortcuts from the application
+        current_shortcuts = self._get_safe_current_shortcuts()
         
+        quick_connect_accel = self._get_action_accel_display(current_shortcuts, 'quick-connect')
+        quick_connect_tooltip = _('Connect to a server using SSH command') + (f"\n({quick_connect_accel})" if quick_connect_accel else '')
         quick_connect_card = self.create_card(
             _('Quick Connect'),
-            _('Connect to a server using SSH command\n({})').format(f'{primary}+{alt}+C'),
+            quick_connect_tooltip,
             'network-server-symbolic',
             self.on_quick_connect_clicked
         )
 
+        local_terminal_accel = self._get_action_accel_display(current_shortcuts, 'local-terminal')
+        local_terminal_tooltip = _('Open a local terminal session') + (f"\n({local_terminal_accel})" if local_terminal_accel else '')
         local_terminal_card = self.create_card(
             _('Local Terminal'),
-            _('Open a local terminal session\n({})').format(f'{primary}+{shift}+T'),
+            local_terminal_tooltip,
             'utilities-terminal-symbolic',
             lambda *_: window.terminal_manager.show_local_terminal()
         )
 
+        shortcuts_accel = self._get_action_accel_display(current_shortcuts, 'shortcuts')
+        shortcuts_tooltip = _('View and learn keyboard shortcuts') + (f"\n({shortcuts_accel})" if shortcuts_accel else '')
         shortcuts_card = self.create_card(
             _('Shortcuts'),
-            _('View and learn keyboard shortcuts\n({})').format(f'{primary}+{shift}+/'),
+            shortcuts_tooltip,
             'preferences-desktop-keyboard-symbolic',
             lambda *_: window.show_shortcuts_window()
         )
 
-        help_card = self.create_card(
-            _('Help'),
-            _('View online documentation\n(F1)'),
-            'help-browser-symbolic',
-            lambda *_: self.open_online_help()
+        preferences_accel = self._get_action_accel_display(current_shortcuts, 'preferences')
+        preferences_tooltip = _('Open application preferences') + (f"\n({preferences_accel})" if preferences_accel else '')
+        preferences_card = self.create_card(
+            _('Preferences'),
+            preferences_tooltip,
+            'preferences-system-symbolic',
+            lambda *_: window.show_preferences()
         )
 
         # Add cards to grid (2 columns, 2 rows)
         grid.attach(quick_connect_card, 0, 0, 1, 1)
         grid.attach(local_terminal_card, 1, 0, 1, 1)
         grid.attach(shortcuts_card, 0, 1, 1, 1)
-        grid.attach(help_card, 1, 1, 1, 1)
+        grid.attach(preferences_card, 1, 1, 1, 1)
 
 
     def create_card(self, title, tooltip_text, icon_name, callback):
@@ -128,7 +135,6 @@ class WelcomePage(Gtk.Overlay):
         content.append(title_label)
 
         card = Adw.Bin()
-        card.add_css_class("card")
         card.add_css_class("activatable")
         card.add_css_class("welcome-card")
         card.set_child(content)
@@ -155,6 +161,109 @@ class WelcomePage(Gtk.Overlay):
         card.add_controller(key)
 
         return card
+
+    def _get_safe_current_shortcuts(self):
+        """Safely get current shortcuts including user customizations from the app.
+        Returns a dict: { action_name: [accel, ...] }
+        """
+        shortcuts = {}
+        try:
+            app = self.window.get_application()
+            if not app:
+                return shortcuts
+
+            # Get default registered shortcuts if available
+            if hasattr(app, 'get_registered_shortcut_defaults'):
+                defaults = app.get_registered_shortcut_defaults()
+                if isinstance(defaults, dict):
+                    shortcuts.update(defaults)
+
+            # Apply user overrides from config if available
+            if hasattr(app, 'config') and app.config:
+                for action_name in list(shortcuts.keys()):
+                    try:
+                        override = app.config.get_shortcut_override(action_name)
+                        if override is not None:
+                            if override:
+                                shortcuts[action_name] = override
+                            else:
+                                shortcuts.pop(action_name, None)
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return shortcuts
+
+    def _format_accelerator_display(self, accel: str) -> str:
+        """Convert a GTK accelerator like '<primary><Shift>comma' to a
+        platform-friendly display like '⌘+⇧+,' or 'Ctrl+Shift+,'.
+        Robust against mixed case/order like '<shift><ctrl>u'.
+        """
+        if not accel:
+            return ''
+        import re
+        mac = is_macos()
+        primary = '⌘' if mac else 'Ctrl'
+        shift_lbl = '⇧' if mac else 'Shift'
+        alt_lbl = '⌥' if mac else 'Alt'
+
+        s = accel.strip()
+        # Extract all <token> in order
+        tokens = [m.group(1).lower() for m in re.finditer(r'<([^>]+)>', s)]
+        # Remove all <...> to get the key part
+        key = re.sub(r'<[^>]+>', '', s).strip()
+
+        # Map tokens to normalized set
+        mods = set()
+        for t in tokens:
+            if t in ('primary', 'meta', 'cmd', 'command'):  # treat as primary
+                mods.add('primary')
+            elif t in ('ctrl', 'control'):
+                mods.add('primary')  # normalize to primary for display
+            elif t == 'shift':
+                mods.add('shift')
+            elif t == 'alt':
+                mods.add('alt')
+
+        # Build parts in consistent order
+        parts = []
+        if 'primary' in mods:
+            parts.append(primary)
+        if 'shift' in mods:
+            parts.append(shift_lbl)
+        if 'alt' in mods:
+            parts.append(alt_lbl)
+
+        # Map common key names
+        key_map = {
+            'comma': ',',
+            'slash': '/',
+            'backslash': '\\',
+            'period': '.',
+            'space': 'Space',
+        }
+        key_disp = key_map.get(key.lower(), key)
+        if len(key_disp) == 1:
+            key_disp = key_disp.upper()
+        if key_disp:
+            parts.append(key_disp)
+
+        disp = '+'.join(parts)
+        # Fallback safety: strip any lingering angle brackets
+        disp = re.sub(r'<[^>]+>', '', disp)
+        return disp
+
+    def _get_action_accel_display(self, shortcuts: dict, action_name: str) -> str:
+        """Get the first accelerator for an action and format it for display."""
+        try:
+            accels = shortcuts.get(action_name)
+            if not accels:
+                return ''
+            # If it's a list, use the first; if it's a string, use directly
+            accel = accels[0] if isinstance(accels, (list, tuple)) else accels
+            return self._format_accelerator_display(accel)
+        except Exception:
+            return ''
 
 
     # Quick connect handlers
