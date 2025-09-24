@@ -2570,9 +2570,13 @@ class FilePane(Gtk.Box):
 
         # Drag and drop controllers – these provide the visual affordance and
         # forward requests to the window which understands the context.
-        # Accept multiple formats: Gio.File, text/uri-list, and text/plain
-        drop_target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.COPY)
-        drop_target.set_gtypes([Gio.File, GObject.TYPE_STRING])
+        # Accept multiple formats including the custom remote entry payload.
+        drop_target = Gtk.DropTarget.new(GObject.TYPE_PYOBJECT, Gdk.DragAction.COPY)
+        accepted_gtypes = [Gio.File, GObject.TYPE_STRING]
+        bytes_type = getattr(GLib, "Bytes", None)
+        if bytes_type is not None:
+            accepted_gtypes.append(bytes_type)
+        drop_target.set_gtypes(accepted_gtypes)
         drop_target.connect("accept", self._on_drop_accept)
         drop_target.connect("enter", self._on_drop_enter)
         drop_target.connect("motion", self._on_drop_motion)
@@ -2831,10 +2835,15 @@ class FilePane(Gtk.Box):
             has_uri_list = formats.contain_mime_type("text/uri-list")
             has_plain_text = formats.contain_mime_type("text/plain")
             has_string = formats.contain_gtype(GObject.TYPE_STRING)
-            
-            print(f"Format check: File={has_file}, URI-list={has_uri_list}, Plain-text={has_plain_text}, String={has_string}")
-            
-            result = has_file or has_uri_list or has_plain_text or has_string
+            has_remote_payload = formats.contain_mime_type("application/x-sshpilot-remote-entry")
+
+            print(
+                "Format check: "
+                f"File={has_file}, URI-list={has_uri_list}, Plain-text={has_plain_text}, "
+                f"String={has_string}, Remote={has_remote_payload}"
+            )
+
+            result = has_file or has_uri_list or has_plain_text or has_string or has_remote_payload
             print(f"Drop accept result: {result}")
             return result
         except Exception as e:
@@ -2865,12 +2874,74 @@ class FilePane(Gtk.Box):
             if active_drag_source is self:
                 print(f"Drop leave on {'remote' if self._is_remote else 'local'} pane: IGNORING (self is drag source)")
                 return
-        
+
         print(f"Drop leave on {'remote' if self._is_remote else 'local'} pane")
         self._set_drop_zone_pointer(False)
         # Ensure drop zone is hidden when drag leaves
         if not getattr(self, "_drop_zone_forced", False):
             self.hide_drop_zone()
+
+    def _extract_text_from_drop_value(self, value: object) -> Optional[str]:
+        """Attempt to normalise drop values to UTF-8 text."""
+        if isinstance(value, str):
+            return value
+
+        bytes_type = getattr(GLib, "Bytes", None)
+        if bytes_type is not None and isinstance(value, bytes_type):
+            try:
+                raw = value.get_data()
+            except Exception:
+                raw = None
+            if isinstance(raw, tuple) and raw:
+                raw = raw[0]
+            if isinstance(raw, memoryview):
+                raw = raw.tobytes()
+            if isinstance(raw, (bytes, bytearray)):
+                try:
+                    return bytes(raw).decode("utf-8")
+                except UnicodeDecodeError:
+                    return None
+            if isinstance(raw, str):
+                return raw
+
+        if isinstance(value, (bytes, bytearray)):
+            try:
+                return bytes(value).decode("utf-8")
+            except UnicodeDecodeError:
+                return None
+
+        return None
+
+    def _parse_remote_drop_value(self, value: object) -> Tuple[List[str], Optional[Dict[str, Any]]]:
+        """Extract a list of remote entry names and optional payload metadata."""
+        metadata: Optional[Dict[str, Any]] = None
+        file_names: List[str] = []
+
+        if isinstance(value, dict):
+            metadata = value
+
+        text_value = self._extract_text_from_drop_value(value)
+        if text_value:
+            try:
+                decoded = json.loads(text_value)
+            except json.JSONDecodeError:
+                decoded = None
+            if isinstance(decoded, dict):
+                metadata = decoded
+
+        if isinstance(metadata, dict) and metadata.get("type") == "remote":
+            entries = metadata.get("entries", [])
+            if isinstance(entries, list):
+                for entry in entries:
+                    if isinstance(entry, dict):
+                        name = entry.get("name")
+                        if name:
+                            file_names.append(name)
+
+        if not file_names and text_value:
+            file_names = [name.strip() for name in text_value.strip().split("\n") if name.strip()]
+
+        return file_names, metadata
 
     # -- callbacks ------------------------------------------------------
 
@@ -3533,61 +3604,72 @@ class FilePane(Gtk.Box):
                 print(f"=== PROCESSING REMOTE-TO-LOCAL DROP ===")
                 print(f"Value received: {repr(value)}")
                 print(f"Value type: {type(value)}")
-                
-                # For remote files, the value is a plain text list of filenames
-                if isinstance(value, str):
-                    file_names = [name.strip() for name in value.strip().split('\n') if name.strip()]
-                    print(f"Parsed file names: {file_names}")
-                    if file_names:
-                        # Get the selected entries from the origin pane
-                        selected_entries = origin.get_selected_entries()
-                        print(f"Selected entries from origin: {[e.name for e in selected_entries]}")
-                        
-                        # Get current directory on local pane (destination)
-                        # Use the actual current path instead of the display path from path entry
-                        # This handles Flatpak portal paths correctly
-                        current_path = getattr(self, '_current_path', None)
-                        if current_path:
-                            destination = pathlib.Path(current_path)
-                        else:
-                            # Fallback to normalized path entry text for non-portal paths
-                            local_dir = self.toolbar.path_entry.get_text() or os.path.expanduser("~")
-                            destination = pathlib.Path(window._normalize_local_path(local_dir))
-                        print(f"Local destination directory: {destination}")
-                        
-                        # Test if files would conflict
-                        for entry in selected_entries:
-                            target_path = destination / entry.name
-                            exists = target_path.exists()
-                            print(f"  {entry.name} -> {target_path} (exists: {exists})")
-                        
-                        # Create proper download payload
-                        payload = {
-                            "entries": selected_entries,
-                            "destination": destination,
-                            "directory": origin.toolbar.path_entry.get_text() or "/"
-                        }
-                        print(f"Download payload: entries={len(payload['entries'])}, destination={payload['destination']}")
-                        
-                        # Emit download operation with proper payload
-                        print("=== EMITTING DOWNLOAD REQUEST-OPERATION ===")
-                        print(f"Payload being emitted: {payload}")
-                        self.emit("request-operation", "download", payload)
-                        return True
+
+                file_names, metadata = self._parse_remote_drop_value(value)
+                print(f"Parsed file names: {file_names}")
+                if metadata:
+                    try:
+                        keys = list(metadata.keys())
+                    except AttributeError:
+                        keys = []
+                    print(f"Parsed remote metadata keys: {keys}")
+
+                if file_names:
+                    # Get the selected entries from the origin pane
+                    selected_entries = origin.get_selected_entries()
+                    print(f"Selected entries from origin: {[e.name for e in selected_entries]}")
+
+                    # Get current directory on local pane (destination)
+                    # Use the actual current path instead of the display path from path entry
+                    # This handles Flatpak portal paths correctly
+                    current_path = getattr(self, '_current_path', None)
+                    if current_path:
+                        destination = pathlib.Path(current_path)
+                    else:
+                        # Fallback to normalized path entry text for non-portal paths
+                        local_dir = self.toolbar.path_entry.get_text() or os.path.expanduser("~")
+                        destination = pathlib.Path(window._normalize_local_path(local_dir))
+                    print(f"Local destination directory: {destination}")
+
+                    # Test if files would conflict
+                    for entry in selected_entries:
+                        target_path = destination / entry.name
+                        exists = target_path.exists()
+                        print(f"  {entry.name} -> {target_path} (exists: {exists})")
+
+                    # Create proper download payload
+                    payload = {
+                        "entries": selected_entries,
+                        "destination": destination,
+                        "directory": origin.toolbar.path_entry.get_text() or "/"
+                    }
+                    print(f"Download payload: entries={len(payload['entries'])}, destination={payload['destination']}")
+
+                    # Emit download operation with proper payload
+                    print("=== EMITTING DOWNLOAD REQUEST-OPERATION ===")
+                    print(f"Payload being emitted: {payload}")
+                    self.emit("request-operation", "download", payload)
+                    return True
                 print("No valid file names found in remote drop")
                 return False
 
         # Handle regular file drops (local-to-remote or external files)
         print("Processing regular file drop")
         file_to_upload = None
+        text_value: Optional[str] = None
         if isinstance(value, Gio.File):
             file_to_upload = value
             print(f"Direct Gio.File: {file_to_upload.get_path()}")
-        elif isinstance(value, str):
+        else:
+            text_value = self._extract_text_from_drop_value(value)
+            if text_value is None:
+                text_value = value if isinstance(value, str) else None
+
+        if file_to_upload is None and text_value:
             # Handle URI list format
             try:
                 # Take the first URI from the list
-                uri = value.strip().split('\n')[0].strip()
+                uri = text_value.strip().split('\n')[0].strip()
                 print(f"Parsing URI: {uri}")
                 if uri.startswith('file://'):
                     file_to_upload = Gio.File.new_for_uri(uri)
@@ -3595,7 +3677,7 @@ class FilePane(Gtk.Box):
             except Exception as e:
                 print(f"Error parsing URI from drop: {e}")
                 return False
-        
+
         if file_to_upload is None:
             print("No file to upload found")
             return False
