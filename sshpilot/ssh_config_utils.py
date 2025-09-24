@@ -3,7 +3,7 @@ import glob
 import shlex
 import logging
 import subprocess
-from typing import Dict, List, Set, Union
+from typing import Dict, List, Optional, Set, Union
 
 
 logger = logging.getLogger(__name__)
@@ -68,15 +68,28 @@ def resolve_ssh_config_files(main_path: str, *, max_depth: int = 32) -> List[str
     return resolved
 
 
-def get_effective_ssh_config(host: str) -> Dict[str, Union[str, List[str]]]:
+def get_effective_ssh_config(
+    host: str, config_path: Optional[str] = None
+) -> Dict[str, Union[str, List[str]]]:
     """Return effective SSH options for *host* using ``ssh -G``.
 
     The output is parsed into a dictionary with lowercased keys. Options that
     appear multiple times (e.g. ``IdentityFile``) are stored as lists.
     """
+    ssh_cmd = ['ssh', '-G', host]
+    expanded_config: Optional[str] = None
+    if config_path:
+        expanded_config = os.path.abspath(
+            os.path.expanduser(os.path.expandvars(config_path))
+        )
+        if os.path.exists(expanded_config):
+            ssh_cmd = ['ssh', '-F', expanded_config, '-G', host]
+        else:
+            expanded_config = None
+
     try:
         result = subprocess.run(
-            ['ssh', '-G', host], capture_output=True, text=True, check=True
+            ssh_cmd, capture_output=True, text=True, check=True
         )
     except Exception:
         return {}

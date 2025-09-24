@@ -2,6 +2,7 @@ import os
 import sys
 import types
 import asyncio
+import subprocess
 
 # Stub external dependencies required by connection_manager
 
@@ -33,7 +34,7 @@ sys.modules['gi.repository.Secret'] = gi_repo.Secret
 # Ensure the project package is importable
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from sshpilot.connection_manager import ConnectionManager
+from sshpilot.connection_manager import Connection, ConnectionManager
 
 
 def test_host_token_used_when_hostname_missing(tmp_path):
@@ -138,4 +139,53 @@ def test_connect_command_preserves_empty_hostname(tmp_path):
     # Hostname remains empty but ssh command targets the alias
     assert conn.hostname == ''
     assert any(part.endswith('example.com') for part in conn.ssh_cmd)
+
+
+def test_isolated_config_used_for_effective_resolution(tmp_path, monkeypatch):
+    """Isolated configs should be passed to ssh -G via -F while preserving hostname."""
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+    config_dir = tmp_path / 'isolated'
+    config_dir.mkdir()
+    config_path = config_dir / 'ssh_config'
+    config_path.write_text(
+        "Host alias\n    HostName 10.0.0.5\n    User tester\n"
+    )
+
+    connection = Connection(
+        {
+            'nickname': 'alias',
+            'host': 'alias',
+            'hostname': '10.0.0.5',
+            'username': 'tester',
+            'source': str(config_path),
+        }
+    )
+    connection.isolated_mode = True
+
+    calls = []
+
+    class DummyResult:
+        def __init__(self, stdout: str):
+            self.stdout = stdout
+            self.stderr = ''
+
+    def fake_run(cmd, capture_output, text, check):
+        calls.append(cmd)
+        return DummyResult('hostname 10.0.0.5\nuser tester\n')
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    loop = asyncio.get_event_loop()
+    assert loop.run_until_complete(connection.connect())
+
+    expected_cmd = [
+        'ssh',
+        '-F',
+        os.path.abspath(str(config_path)),
+        '-G',
+        'alias',
+    ]
+    assert calls == [expected_cmd]
+    assert connection.hostname == '10.0.0.5'
 
