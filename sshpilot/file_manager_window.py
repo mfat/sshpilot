@@ -2294,28 +2294,23 @@ class FilePane(Gtk.Box):
         download_button.set_visible(self._is_remote)
         upload_button.set_visible(not self._is_remote)
 
-        # Add Request Access button for local pane in Flatpak only when no access is granted
+        # Add Request Access button for local pane in Flatpak (always show when in Flatpak)
         request_access_button = None
         if not self._is_remote and is_flatpak():
-            # Check if we already have persisted folder access
-            has_persisted_access = _load_first_doc_path() is not None
-            if not has_persisted_access:
-                request_access_button = _create_action_button(
-                    "request_access",
-                    "folder-open-symbolic",
-                    "Request Access",
-                    lambda _button: self._on_request_access_clicked(),
-                )
-                # Use ButtonContent for this special button to make it more prominent
-                content = Adw.ButtonContent()
-                content.set_icon_name("folder-open-symbolic")
-                content.set_label("Request Access")
-                request_access_button.set_child(content)
-                request_access_button.add_css_class("suggested-action")
-                # Store reference to the button so we can hide it later
-                self._request_access_button = request_access_button
-            else:
-                self._request_access_button = None
+            request_access_button = _create_action_button(
+                "request_access",
+                "folder-open-symbolic",
+                "Request Access",
+                lambda _button: self._on_request_access_clicked(),
+            )
+            # Use ButtonContent for this special button to make it more prominent
+            content = Adw.ButtonContent()
+            content.set_icon_name("folder-open-symbolic")
+            content.set_label("Request Access")
+            request_access_button.set_child(content)
+            request_access_button.add_css_class("suggested-action")
+            # Store reference to the button so we can hide it later
+            self._request_access_button = request_access_button
         else:
             self._request_access_button = None
 
@@ -3051,10 +3046,15 @@ class FilePane(Gtk.Box):
         dialog.present()
 
     def _hide_request_access_button(self) -> None:
-        """Hide the Request Access button after access has been granted."""
+        """Hide the Request Access button after access has been granted.
+        In Flatpak, always keep the button visible as requested."""
         if hasattr(self, '_request_access_button') and self._request_access_button:
-            self._request_access_button.set_visible(False)
-            logger.debug("Hid Request Access button after granting access")
+            # Don't hide the button in Flatpak - always keep it visible
+            if not is_flatpak():
+                self._request_access_button.set_visible(False)
+                logger.debug("Hid Request Access button after granting access")
+            else:
+                logger.debug("Keeping Request Access button visible in Flatpak")
 
     def _show_folder_picker(self) -> None:
         """Show a portal-aware folder picker for Flatpak with persistent access."""
