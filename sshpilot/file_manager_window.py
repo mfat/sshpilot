@@ -2573,6 +2573,7 @@ class FilePane(Gtk.Box):
         # Accept multiple formats including the custom remote entry payload.
         bytes_type = getattr(GLib, "Bytes", None)
         bytes_gtype = None
+
         if bytes_type is not None:
             bytes_gtype = getattr(bytes_type, "__gtype__", None)
             if bytes_gtype is None:
