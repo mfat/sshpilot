@@ -800,6 +800,9 @@ class PreferencesWindow(Adw.PreferencesWindow):
             advanced_group.add(self.apply_advanced_row)
 
 
+            native_connect_group = Adw.PreferencesGroup()
+            native_connect_group.set_title("Connection Method")
+
             self.native_connect_row = Adw.SwitchRow()
             self.native_connect_row.set_title("Use native SSH command")
             self.native_connect_row.set_subtitle("Execute the configured host using 'ssh Host'")
@@ -813,7 +816,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             except Exception:
                 native_active = bool(self.config.get_setting('ssh.native_connect', False))
             self.native_connect_row.set_active(native_active)
-            advanced_group.add(self.native_connect_row)
+            native_connect_group.add(self.native_connect_row)
 
 
             # Connect timeout
@@ -933,6 +936,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             _sync_advanced_sensitivity()
             self.apply_advanced_row.connect('notify::active', _sync_advanced_sensitivity)
 
+            advanced_page.add(native_connect_group)
             advanced_page.add(advanced_group)
 
             # Add pages to the preferences window
@@ -1261,20 +1265,6 @@ class PreferencesWindow(Adw.PreferencesWindow):
             if update_toggle and hasattr(self, 'apply_advanced_row'):
                 self.apply_advanced_row.set_active(False)
 
-            if hasattr(self, 'native_connect_row'):
-                native_default = bool(defaults.get('native_connect', False))
-                self.config.set_setting('ssh.native_connect', native_default)
-                self.native_connect_row.set_active(native_default)
-                try:
-                    app = self.parent_window.get_application() if self.parent_window else None
-                except Exception:
-                    app = None
-                if app is not None and hasattr(app, 'native_connect_enabled'):
-                    app.native_connect_enabled = native_default
-                    if hasattr(app, 'native_connect_override'):
-                        app.native_connect_override = None
-                if self.parent_window and hasattr(self.parent_window, 'connection_manager'):
-                    self.parent_window.connection_manager.native_connect_enabled = native_default
 
             if hasattr(self, 'connect_timeout_row'):
                 self.config.set_setting('ssh.connection_timeout', defaults.get('connection_timeout'))
