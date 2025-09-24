@@ -272,7 +272,8 @@ class Connection:
                     config_override = expanded_isolated
 
             if target_alias:
-                config_override = self.config_root if self.isolated_config else None
+                if self.isolated_config and self.config_root:
+                    config_override = self.config_root
                 if config_override:
                     effective_cfg = get_effective_ssh_config(
                         target_alias, config_file=config_override
@@ -728,6 +729,18 @@ class Connection:
 
     def update_data(self, new_data: Dict[str, Any]):
         """Update connection data while preserving object identity"""
+        # When isolated mode is toggled off, the refreshed data no longer includes
+        # the isolated_mode/config_root keys. Reusing the previous values would keep
+        # the connection flagged as isolated and force an incorrect config override.
+        if 'isolated_mode' not in new_data:
+            if 'isolated_mode' in self.data:
+                self.data.pop('isolated_mode', None)
+            self.isolated_config = False
+
+            if 'config_root' not in new_data:
+                self.data.pop('config_root', None)
+                self.config_root = ''
+
         self.data.update(new_data)
         self._update_properties_from_data(self.data)
     
@@ -769,10 +782,8 @@ class Connection:
         self.password = data.get('password', '')
         self.key_passphrase = data.get('key_passphrase', '')
         self.source = data.get('source', getattr(self, 'source', ''))
-        self.config_root = data.get('config_root', getattr(self, 'config_root', ''))
-        self.isolated_config = bool(
-            data.get('isolated_mode', getattr(self, 'isolated_config', False))
-        )
+        self.config_root = data.get('config_root', '')
+        self.isolated_config = bool(data.get('isolated_mode', False))
         self.local_command = data.get('local_command', '')
         self.remote_command = data.get('remote_command', '')
         self.proxy_command = data.get('proxy_command', '')
