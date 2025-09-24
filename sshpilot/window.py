@@ -6381,6 +6381,55 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     pass
                 old_connection.x11_forwarding = connection_data['x11_forwarding']
                 old_connection.forwarding_rules = list(connection_data.get('forwarding_rules', []))
+                # Ensure proxy settings are refreshed in-memory so new connections
+                # immediately pick up the updated directives without needing a
+                # full application restart. The connection manager updates the
+                # serialized data, but the active Connection instance used by
+                # terminals/file manager must also reflect the new values.
+                try:
+                    proxy_jump_value = connection_data.get('proxy_jump', [])
+                    if isinstance(proxy_jump_value, str):
+                        proxy_jump_value = [
+                            h.strip() for h in re.split(r'[\s,]+', proxy_jump_value) if h.strip()
+                        ]
+                    else:
+                        proxy_jump_value = [
+                            str(h).strip() for h in (proxy_jump_value or []) if str(h).strip()
+                        ]
+                    old_connection.proxy_jump = proxy_jump_value
+                except Exception:
+                    proxy_jump_value = []
+                    old_connection.proxy_jump = []
+
+                proxy_command_value = connection_data.get('proxy_command', '') or ''
+                forward_agent_value = bool(connection_data.get('forward_agent', False))
+
+                old_connection.proxy_command = proxy_command_value
+                old_connection.forward_agent = forward_agent_value
+
+                # Keep the backing data dict synchronized so any downstream
+                # consumers that still read from connection.data see the new
+                # directives without waiting for another reload cycle.
+                try:
+                    if hasattr(old_connection, 'data') and isinstance(old_connection.data, dict):
+                        old_connection.data['proxy_jump'] = list(proxy_jump_value)
+                        old_connection.data['proxy_command'] = proxy_command_value
+                        old_connection.data['forward_agent'] = forward_agent_value
+                except Exception:
+                    pass
+
+                # Invalidate any prepared SSH command so future connection
+                # attempts rebuild the argument list using the refreshed proxy
+                # settings. Otherwise terminals reuse the cached command and
+                # continue using the previous ProxyJump chain until restart.
+                try:
+                    if hasattr(old_connection, 'ssh_cmd'):
+                        old_connection.ssh_cmd = []
+                except Exception:
+                    try:
+                        delattr(old_connection, 'ssh_cmd')
+                    except Exception:
+                        pass
                 # Update commands
                 try:
                     old_connection.local_command = connection_data.get('local_command', '')
