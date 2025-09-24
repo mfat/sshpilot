@@ -804,8 +804,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
             native_connect_group.set_title("Connection Method")
 
             self.native_connect_row = Adw.SwitchRow()
-            self.native_connect_row.set_title("Use native SSH command")
-            self.native_connect_row.set_subtitle("Execute the configured host using 'ssh Host'")
+            self.native_connect_row.set_title("Use native SSH Connection mode")
+            self.native_connect_row.set_subtitle("Experimental alternative connection method")
             native_active = False
             try:
                 app = self.parent_window.get_application() if self.parent_window else None
