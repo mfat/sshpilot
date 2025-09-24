@@ -184,6 +184,7 @@ class Config(GObject.Object):
                 'auto_add_host_keys': True,
                 'verbosity': 0,
                 'debug_enabled': False,
+                'native_connect': False,
                 'use_isolated_config': is_flatpak(),
             },
             'file_manager': {
@@ -588,6 +589,7 @@ class Config(GObject.Object):
             'auto_add_host_keys': self.get_setting('ssh.auto_add_host_keys', True),
             'verbosity': self.get_setting('ssh.verbosity', 0),
             'debug_enabled': self.get_setting('ssh.debug_enabled', False),
+            'native_connect': self.get_setting('ssh.native_connect', False),
         }
 
     def get_security_config(self) -> Dict[str, Any]:

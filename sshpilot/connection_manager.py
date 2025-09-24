@@ -166,6 +166,45 @@ class Connection:
             return self.host
         return self.nickname
 
+    def resolve_host_identifier(self) -> str:
+        """Return the preferred host alias used for launching native SSH commands."""
+
+        candidates: List[str] = []
+        data = self.data if isinstance(self.data, dict) else {}
+
+        if isinstance(data, dict):
+            tokens = data.get('__host_tokens')
+            if isinstance(tokens, (list, tuple)):
+                for token in tokens:
+                    if not token:
+                        continue
+                    token = str(token).strip()
+                    if not token or token.startswith('!'):
+                        continue
+                    if any(ch in token for ch in ('*', '?')):
+                        continue
+                    candidates.append(token)
+            for key in ('host', 'nickname', 'hostname'):
+                value = data.get(key)
+                if isinstance(value, str) and value.strip():
+                    candidates.append(value.strip())
+
+        for attr in ('host', 'nickname', 'hostname'):
+            value = getattr(self, attr, '')
+            if isinstance(value, str) and value.strip():
+                candidates.append(value.strip())
+
+        try:
+            effective = self.get_effective_host()
+            if effective:
+                candidates.append(str(effective))
+        except Exception:
+            pass
+
+        for candidate in candidates:
+            if candidate:
+                return candidate
+        return ''
 
     @property
     def source_file(self) -> str:
@@ -391,7 +430,34 @@ class Connection:
             logger.error(f"Failed to connect to {self}: {e}")
             self.is_connected = False
             return False
-            
+
+    async def native_connect(self):
+        """Prepare a minimal SSH command deferring to the user's SSH configuration."""
+        try:
+            quick_cmd = getattr(self, 'quick_connect_command', '')
+            if isinstance(quick_cmd, str) and quick_cmd.strip():
+                try:
+                    ssh_cmd = shlex.split(quick_cmd)
+                except ValueError:
+                    ssh_cmd = quick_cmd.split()
+                self.ssh_cmd = ssh_cmd
+                self.is_connected = True
+                return True
+
+            host_label = self.resolve_host_identifier()
+            if not host_label:
+                logger.error(f"Unable to determine host identifier for {self}")
+                self.is_connected = False
+                return False
+
+            self.ssh_cmd = ['ssh', host_label]
+            self.is_connected = True
+            return True
+        except Exception as exc:
+            logger.error(f"Failed to prepare native SSH command for {self}: {exc}")
+            self.is_connected = False
+            return False
+
     async def disconnect(self):
         """Close the SSH connection and clean up"""
         if not self.is_connected:
@@ -838,6 +904,10 @@ class ConnectionManager(GObject.Object):
         self._active_connection_keys: Dict[int, str] = {}
         self.ssh_config_path = ''
         self.known_hosts_path = ''
+        try:
+            self.native_connect_enabled = bool(self.config.get_setting('ssh.native_connect', False))
+        except Exception:
+            self.native_connect_enabled = False
 
         # Initialize SSH config paths
         self.set_isolated_mode(isolated_mode)
@@ -2141,7 +2211,11 @@ class ConnectionManager(GObject.Object):
             if hasattr(self, 'isolated_mode'):
                 connection.isolated_mode = bool(getattr(self, 'isolated_mode', False))
             # Connect to the SSH server
-            connected = await connection.connect()
+            use_native = bool(getattr(self, 'native_connect_enabled', False))
+            if use_native and hasattr(connection, 'native_connect'):
+                connected = await connection.native_connect()
+            else:
+                connected = await connection.connect()
             if not connected:
                 raise Exception("Failed to establish SSH connection")
             
