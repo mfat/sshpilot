@@ -6430,6 +6430,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         delattr(old_connection, 'ssh_cmd')
                     except Exception:
                         pass
+
                 # Update commands
                 try:
                     old_connection.local_command = connection_data.get('local_command', '')
