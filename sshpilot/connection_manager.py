@@ -115,6 +115,7 @@ class Connection:
         self.key_passphrase = data.get('key_passphrase', '')
         # Source file of this configuration block
         self.source = data.get('source', '')
+        self.isolated_mode = bool(data.get('isolated_mode', False))
         # Provide friendly accessor for UI components that wish to display
         # the originating config file for this connection.
         
@@ -252,8 +253,24 @@ class Connection:
                 or self.host
                 or self.hostname
             )
+            config_override: Optional[str] = None
+            source_path = str(getattr(self, 'source', '') or '')
+            if source_path:
+                expanded_source = os.path.abspath(
+                    os.path.expanduser(os.path.expandvars(source_path))
+                )
+                if os.path.exists(expanded_source):
+                    config_override = expanded_source
+            if not config_override and getattr(self, 'isolated_mode', False):
+                isolated_candidate = os.path.join(get_config_dir(), 'ssh_config')
+                expanded_isolated = os.path.abspath(
+                    os.path.expanduser(os.path.expandvars(isolated_candidate))
+                )
+                if os.path.exists(expanded_isolated):
+                    config_override = expanded_isolated
+
             if target_alias:
-                effective_cfg = get_effective_ssh_config(target_alias)
+                effective_cfg = get_effective_ssh_config(target_alias, config_override)
 
             # Determine final parameters, falling back to resolved config when needed
             existing_hostname = self.hostname or ''
@@ -2068,6 +2085,8 @@ class ConnectionManager(GObject.Object):
     async def connect(self, connection: Connection):
         """Connect to an SSH host asynchronously"""
         try:
+            if hasattr(self, 'isolated_mode'):
+                connection.isolated_mode = bool(getattr(self, 'isolated_mode', False))
             # Connect to the SSH server
             connected = await connection.connect()
             if not connected:
