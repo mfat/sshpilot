@@ -1,6 +1,7 @@
 import importlib
 import sys
 import types
+from typing import Optional
 
 import pytest
 
@@ -10,6 +11,27 @@ from tests.test_sftp_utils_in_app_manager import setup_gi
 class DummyPolicy:
     def __init__(self, name: str) -> None:
         self.name = name
+
+
+class DummyChannel:
+    def __init__(self, kind: str, dest_addr: tuple, src_addr: tuple) -> None:
+        self.kind = kind
+        self.dest_addr = dest_addr
+        self.src_addr = src_addr
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class DummyTransport:
+    def __init__(self) -> None:
+        self.open_channel_calls = []
+
+    def open_channel(self, kind: str, dest_addr: tuple, src_addr: tuple) -> DummyChannel:
+        channel = DummyChannel(kind, dest_addr, src_addr)
+        self.open_channel_calls.append((kind, dest_addr, src_addr, channel))
+        return channel
 
 
 class DummyClient:
@@ -23,6 +45,8 @@ class DummyClient:
         self.loaded_system = False
         self.closed = False
         self.last_sftp = None
+        self.transport = DummyTransport()
+
         DummyClient.instances.append(self)
 
     def set_missing_host_key_policy(self, policy):
@@ -46,6 +70,10 @@ class DummyClient:
 
     def close(self):
         self.closed = True
+
+    def get_transport(self):
+        return self.transport
+
 
 
 class DummyProxyCommand:
@@ -102,8 +130,22 @@ def _load_file_manager_module(monkeypatch):
     monkeypatch.setitem(sys.modules, "paramiko", paramiko_stub)
     monkeypatch.setitem(sys.modules, "paramiko.proxy", proxy_module)
 
+    ssh_config_stub = types.SimpleNamespace(config_map={}, queries=[])
+
+    def fake_get_effective(host: str, config_file: Optional[str] = None):
+        ssh_config_stub.queries.append((host, config_file))
+        return ssh_config_stub.config_map.get(host, {})
+
+    ssh_config_stub.get_effective_ssh_config = fake_get_effective
+
+    sys.modules.pop("sshpilot.ssh_config_utils", None)
+    monkeypatch.setitem(sys.modules, "sshpilot.ssh_config_utils", ssh_config_stub)
+
     sys.modules.pop("sshpilot.file_manager_window", None)
-    return importlib.import_module("sshpilot.file_manager_window")
+    module = importlib.import_module("sshpilot.file_manager_window")
+    module._fake_ssh_config = ssh_config_stub
+    return module
+
 
 
 def test_async_sftp_manager_uses_stored_password(monkeypatch):
@@ -229,8 +271,15 @@ def test_async_sftp_manager_expands_proxy_tokens(monkeypatch):
     assert proxy_instance.command == "ssh -W example.com:2200 alice@prod-%bastion"
 
 
-def test_async_sftp_manager_builds_proxy_jump_command(monkeypatch):
+def test_async_sftp_manager_builds_proxy_jump_chain(monkeypatch):
     module = _load_file_manager_module(monkeypatch)
+
+    module._fake_ssh_config.config_map.update(
+        {
+            "Router": {"hostname": "router.internal", "user": "gateway", "port": "2201"},
+        }
+    )
+
 
     connection = types.SimpleNamespace(
         hostname="example.com",
@@ -252,11 +301,66 @@ def test_async_sftp_manager_builds_proxy_jump_command(monkeypatch):
 
     manager._connect_impl()
 
-    client = DummyClient.instances[-1]
-    kwargs = client.connect_calls[-1]
-    proxy_instance = kwargs["sock"]
-    assert proxy_instance.command == "ssh -W example.com:2222 -J Router example.com"
+    assert len(DummyClient.instances) == 2
+    target_client = DummyClient.instances[0]
+    jump_client = DummyClient.instances[1]
 
+    jump_kwargs = jump_client.connect_calls[-1]
+    assert jump_kwargs["hostname"] == "router.internal"
+    assert jump_kwargs["username"] == "gateway"
+    assert jump_kwargs["port"] == 2201
+
+    assert jump_client.transport.open_channel_calls
+    channel_call = jump_client.transport.open_channel_calls[-1]
+    assert channel_call[0] == "direct-tcpip"
+    assert channel_call[1] == ("example.com", 2222)
+
+    target_kwargs = target_client.connect_calls[-1]
+    assert "sock" in target_kwargs
+    proxy_channel = target_kwargs["sock"]
+    assert isinstance(proxy_channel, DummyChannel)
+    assert proxy_channel.dest_addr == ("example.com", 2222)
+
+    assert manager._jump_clients == [jump_client]
 
     manager.close()
-    assert proxy_instance.closed, "ProxyCommand should be closed when manager closes"
+    assert jump_client.closed
+    assert proxy_channel.closed
+
+
+def test_async_sftp_manager_uses_effective_host_settings(monkeypatch):
+    module = _load_file_manager_module(monkeypatch)
+
+    module._fake_ssh_config.config_map.update(
+        {
+            "prod": {"hostname": "prod.internal", "user": "bob", "port": "2201"},
+        }
+    )
+
+    connection = types.SimpleNamespace(
+        hostname="prod",
+        host="prod",
+        username="alice",
+        nickname="prod",
+        auth_method=0,
+        key_select_mode=0,
+    )
+
+    manager = module.AsyncSFTPManager(
+        "prod",
+        "alice",
+        port=22,
+        connection=connection,
+        connection_manager=None,
+        ssh_config={"auto_add_host_keys": True},
+    )
+
+    manager._connect_impl()
+
+    assert DummyClient.instances
+    target_client = DummyClient.instances[0]
+    kwargs = target_client.connect_calls[-1]
+    assert kwargs["hostname"] == "prod.internal"
+    assert kwargs["username"] == "bob"
+    assert kwargs["port"] == 2201
+

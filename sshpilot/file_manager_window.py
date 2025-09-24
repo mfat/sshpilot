@@ -834,6 +834,8 @@ class AsyncSFTPManager(GObject.GObject):
         self._connection_manager = connection_manager
         self._ssh_config = dict(ssh_config) if ssh_config else None
         self._proxy_sock: Optional[Any] = None
+        self._jump_clients: List[paramiko.SSHClient] = []
+
     
     def _format_size(self, size_bytes):
         """Format file size for display"""
@@ -863,6 +865,14 @@ class AsyncSFTPManager(GObject.GObject):
             if self._client is not None:
                 self._client.close()
                 self._client = None
+            if self._jump_clients:
+                for jump_client in self._jump_clients:
+                    try:
+                        jump_client.close()
+                    except Exception as exc:  # pragma: no cover - defensive cleanup
+                        logger.debug("Error closing jump client: %s", exc)
+                self._jump_clients.clear()
+
             if self._proxy_sock is not None:
                 try:
                     self._proxy_sock.close()
@@ -916,6 +926,191 @@ class AsyncSFTPManager(GObject.GObject):
             logger.debug("Failed to create host key policy for '%s': %s", normalized, exc)
 
         return paramiko.AutoAddPolicy() if auto_add else paramiko.RejectPolicy()
+
+    @staticmethod
+    def _parse_proxy_jump_entry(entry: str) -> Tuple[str, Optional[str], Optional[int]]:
+        """Parse a ``ProxyJump`` token into host, optional user, and port."""
+
+        token = entry.strip()
+        if not token:
+            return entry, None, None
+
+        username: Optional[str] = None
+        host_segment = token
+        if "@" in token:
+            username, host_segment = token.split("@", 1)
+
+        port: Optional[int] = None
+        hostname = host_segment
+
+        if host_segment.startswith("[") and "]" in host_segment:
+            bracket_end = host_segment.index("]")
+            hostname = host_segment[1:bracket_end]
+            remainder = host_segment[bracket_end + 1 :]
+            if remainder.startswith(":"):
+                try:
+                    port = int(remainder[1:])
+                except ValueError:
+                    port = None
+        elif ":" in host_segment:
+            host_part, port_str = host_segment.rsplit(":", 1)
+            hostname = host_part or host_segment
+            try:
+                port = int(port_str)
+            except ValueError:
+                port = None
+
+        return hostname or entry, username, port
+
+    def _create_proxy_jump_socket(
+        self,
+        jump_entries: List[str],
+        *,
+        config_override: Optional[str],
+        policy: paramiko.MissingHostKeyPolicy,
+        known_hosts_path: Optional[str],
+        allow_agent: bool,
+        look_for_keys: bool,
+        key_filename: Optional[str],
+        passphrase: Optional[str],
+        resolved_host: str,
+        resolved_port: int,
+        base_username: str,
+    ) -> Tuple[Any, List[paramiko.SSHClient]]:
+        """Create a socket by chaining SSH connections through jump hosts."""
+
+        from .ssh_config_utils import get_effective_ssh_config
+
+        def _coerce_port(value: Any, default: int) -> int:
+            try:
+                return int(str(value))
+            except (TypeError, ValueError):
+                return default
+
+        resolved_hops: List[Dict[str, Any]] = []
+        for raw_entry in jump_entries:
+            host_token, explicit_user, explicit_port = self._parse_proxy_jump_entry(raw_entry)
+            try:
+                hop_cfg = get_effective_ssh_config(host_token, config_file=config_override)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(
+                    "Failed to resolve effective SSH config for ProxyJump host %s: %s",
+                    host_token,
+                    exc,
+                )
+                hop_cfg = {}
+
+            hostname = str(hop_cfg.get("hostname", host_token) or host_token)
+            username = str(explicit_user or hop_cfg.get("user", base_username) or base_username)
+            port = explicit_port
+            if port is None:
+                port = _coerce_port(hop_cfg.get("port", 22), 22)
+            resolved_hops.append(
+                {
+                    "raw": raw_entry,
+                    "alias": host_token,
+                    "hostname": hostname,
+                    "username": username,
+                    "port": port,
+                    "config": hop_cfg,
+                }
+            )
+
+        jump_clients: List[paramiko.SSHClient] = []
+        upstream_sock: Optional[Any] = None
+
+        for index, hop in enumerate(resolved_hops):
+            jump_client = paramiko.SSHClient()
+            try:
+                jump_client.load_system_host_keys()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Unable to load system host keys for jump host: %s", exc)
+            jump_client.set_missing_host_key_policy(policy)
+
+            if known_hosts_path:
+                try:
+                    if os.path.exists(known_hosts_path):
+                        jump_client.load_host_keys(known_hosts_path)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug(
+                        "Failed to load known hosts for ProxyJump host %s: %s",
+                        hop["alias"],
+                        exc,
+                    )
+
+            hop_kwargs: Dict[str, Any] = {
+                "hostname": hop["hostname"],
+                "username": hop["username"],
+                "port": hop["port"],
+                "allow_agent": allow_agent,
+                "look_for_keys": look_for_keys,
+                "timeout": 15,
+            }
+
+            if upstream_sock is not None:
+                hop_kwargs["sock"] = upstream_sock
+
+            if key_filename:
+                hop_kwargs["key_filename"] = key_filename
+            if passphrase:
+                hop_kwargs["passphrase"] = passphrase
+
+            hop_password: Optional[str] = None
+            if self._connection_manager is not None and hasattr(
+                self._connection_manager, "get_password"
+            ):
+                try:
+                    hop_password = self._connection_manager.get_password(
+                        hop["alias"], hop["username"]
+                    )
+                    if not hop_password:
+                        hop_password = self._connection_manager.get_password(
+                            hop["hostname"], hop["username"]
+                        )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug(
+                        "Password lookup for ProxyJump host %s failed: %s",
+                        hop["alias"],
+                        exc,
+                    )
+
+            if hop_password:
+                hop_kwargs["password"] = hop_password
+
+            jump_client.connect(**hop_kwargs)
+            jump_clients.append(jump_client)
+
+            transport = jump_client.get_transport()
+            if transport is None:
+                raise RuntimeError(
+                    f"ProxyJump host {hop['alias']} did not provide a transport"
+                )
+
+            if index + 1 < len(resolved_hops):
+                next_hop = resolved_hops[index + 1]
+                dest = (next_hop["hostname"], next_hop["port"])
+            else:
+                dest = (resolved_host, resolved_port)
+
+            upstream_sock = transport.open_channel(
+                "direct-tcpip",
+                dest,
+                ("127.0.0.1", 0),
+            )
+
+            logger.debug(
+                "ProxyJump hop %s connected to %s:%s, chaining towards %s:%s",
+                hop["alias"],
+                hop["hostname"],
+                hop["port"],
+                dest[0],
+                dest[1],
+            )
+
+        if upstream_sock is None:
+            raise RuntimeError("ProxyJump chain failed to produce a socket")
+
+        return upstream_sock, jump_clients
 
     def _connect_impl(self) -> None:
         client = paramiko.SSHClient()
@@ -1156,13 +1351,25 @@ class AsyncSFTPManager(GObject.GObject):
 
         alias_for_substitution = alias_for_config or target_alias or self._host
 
+        def _coerce_port(value: Any, default: int) -> int:
+            try:
+                return int(str(value))
+            except (TypeError, ValueError):
+                return default
+
+        resolved_host = str(effective_cfg.get("hostname", self._host) or self._host)
+        resolved_port = _coerce_port(effective_cfg.get("port", self._port), self._port)
+        resolved_username = str(effective_cfg.get("user", self._username) or self._username)
+
+
         def _expand_proxy_tokens(raw_command: str) -> str:
             if not raw_command:
                 return raw_command
 
-            substitution_host = str(self._host)
-            substitution_port = str(self._port)
-            substitution_user = str(self._username) if self._username else ""
+            substitution_host = str(resolved_host)
+            substitution_port = str(resolved_port)
+            substitution_user = str(resolved_username) if resolved_username else ""
+
             substitution_alias = str(alias_for_substitution) if alias_for_substitution else substitution_host
 
             token_pattern = re.compile(r"%(?:%|h|p|r|n)")
@@ -1202,27 +1409,39 @@ class AsyncSFTPManager(GObject.GObject):
                 logger.warning("Failed to set up ProxyCommand '%s': %s", proxy_command, exc)
                 proxy_sock = None
         elif proxy_jump:
-            jump_spec = ",".join(proxy_jump)
-            jump_command = f"ssh -W %h:%p -J {jump_spec} %h"
             try:
-                from paramiko.proxy import ProxyCommand as ParamikoProxyCommand
-
-                expanded_jump = _expand_proxy_tokens(jump_command)
-                proxy_sock = ParamikoProxyCommand(expanded_jump)
-                logger.debug(
-                    "File manager: using ProxyJump via '%s' (expanded from '%s')",
-                    expanded_jump,
-                    jump_command,
+                proxy_sock, jump_clients = self._create_proxy_jump_socket(
+                    proxy_jump,
+                    config_override=config_override,
+                    policy=policy,
+                    known_hosts_path=known_hosts_path,
+                    allow_agent=allow_agent,
+                    look_for_keys=look_for_keys,
+                    key_filename=key_filename,
+                    passphrase=passphrase,
+                    resolved_host=resolved_host,
+                    resolved_port=resolved_port,
+                    base_username=resolved_username,
                 )
-
+                logger.debug(
+                    "File manager: using Paramiko ProxyJump chain via %s",
+                    ", ".join(proxy_jump),
+                )
             except Exception as exc:  # pragma: no cover - defensive
-                logger.warning("Failed to set up ProxyJump '%s': %s", jump_command, exc)
+                logger.warning("Failed to set up ProxyJump chain %s: %s", proxy_jump, exc)
                 proxy_sock = None
+                jump_clients = []
+        else:
+            jump_clients = []
+
+        if not proxy_jump:
+            jump_clients = []
+
 
         connect_kwargs: Dict[str, Any] = {
-            "hostname": self._host,
-            "username": self._username,
-            "port": self._port,
+            "hostname": resolved_host,
+            "username": resolved_username,
+            "port": resolved_port,
             "allow_agent": allow_agent,
             "look_for_keys": look_for_keys,
             "timeout": 15,
@@ -1249,6 +1468,13 @@ class AsyncSFTPManager(GObject.GObject):
                     proxy_sock.close()
                 except Exception:  # pragma: no cover - defensive cleanup
                     pass
+            if proxy_jump:
+                for jump_client in jump_clients:
+                    try:
+                        jump_client.close()
+                    except Exception:  # pragma: no cover - defensive cleanup
+                        pass
+
             raise
 
         with self._lock:
@@ -1256,6 +1482,8 @@ class AsyncSFTPManager(GObject.GObject):
             self._sftp = sftp
             self._password = password
             self._proxy_sock = proxy_sock
+            self._jump_clients = jump_clients
+
 
     # -- public operations ----------------------------------------------
 
