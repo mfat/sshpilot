@@ -51,8 +51,6 @@ def format_connection_host_display(connection: Any, include_port: bool = False) 
         display = f"{display}:{port}"
 
     if hostname:
-        if alias and alias != hostname:
-            return f"{display} ({alias})"
         return display
 
     if alias and not used_nickname:
