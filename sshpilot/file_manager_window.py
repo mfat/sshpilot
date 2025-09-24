@@ -357,15 +357,20 @@ class TransferCancelledException(Exception):
 # Utility data structures
 
 
-class SFTPProgressDialog(Adw.Window):
-    """GNOME HIG-compliant SFTP file transfer progress dialog"""
+class SFTPProgressDialog(Adw.MessageDialog):
+    """Modern GNOME HIG-compliant SFTP file transfer progress dialog"""
     
     def __init__(self, parent=None, operation_type="transfer"):
-        super().__init__()
+        # Set appropriate title based on operation
+        title = "Downloading Files" if operation_type == "download" else "Uploading Files"
         
-        # Window properties
-        self.set_title("File Transfer")
-        self.set_default_size(480, 320)
+        super().__init__(
+            title=title,
+            body="Preparing transfer...",
+            default_response="cancel"
+        )
+        
+        # Dialog properties
         self.set_modal(True)
         if parent:
             self.set_transient_for(parent)
@@ -384,62 +389,30 @@ class SFTPProgressDialog(Adw.Window):
         self._build_ui()
         
     def _build_ui(self):
-        """Build the HIG-compliant UI"""
+        """Build the modern GNOME HIG-compliant UI"""
         
-        # Main container
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.set_content(main_box)
+        # Add response buttons
+        self.add_response("cancel", "Cancel")
+        self.set_default_response("cancel")
+        self.set_close_response("cancel")
         
-        # Header bar
-        header = Adw.HeaderBar()
-        header.set_show_end_title_buttons(True)
-        main_box.append(header)
+        # Connect response signal
+        self.connect("response", self._on_response)
         
-        # Content area with proper spacing
-        content_box = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL,
-            spacing=24,
-            margin_top=24,
-            margin_bottom=24,
-            margin_start=24,
-            margin_end=24
-        )
-        main_box.append(content_box)
-        
-        # Status icon and title
-        status_box = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL,
-            spacing=12,
-            halign=Gtk.Align.CENTER
-        )
-        content_box.append(status_box)
-        
-        # Transfer icon
-        icon_name = "folder-download-symbolic" if self.operation_type == "download" else "folder-upload-symbolic"
-        self.status_icon = Gtk.Image.new_from_icon_name(icon_name)
-        self.status_icon.set_pixel_size(48)
-        self.status_icon.add_css_class("accent")
-        status_box.append(self.status_icon)
-        
-        # Main status label
-        self.status_label = Gtk.Label()
-        self.status_label.set_markup("<span size='large' weight='bold'>Preparing transfer…</span>")
-        self.status_label.set_justify(Gtk.Justification.CENTER)
-        status_box.append(self.status_label)
-        
-        # Current file label
-        self.file_label = Gtk.Label()
-        self.file_label.set_text("Scanning files...")
-        self.file_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.file_label.add_css_class("dim-label")
-        status_box.append(self.file_label)
-        
-        # Progress section
+        # Create progress content area
         progress_box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
-            spacing=12
+            spacing=12,
+            margin_top=12,
+            margin_bottom=12
         )
-        content_box.append(progress_box)
+        
+        # Current file label (primary info)
+        self.file_label = Gtk.Label()
+        self.file_label.set_text("Preparing transfer...")
+        self.file_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.file_label.set_justify(Gtk.Justification.CENTER)
+        progress_box.append(self.file_label)
         
         # Main progress bar
         self.progress_bar = Gtk.ProgressBar()
@@ -482,30 +455,8 @@ class SFTPProgressDialog(Adw.Window):
         self.counter_label.add_css_class("caption")
         details_box.append(self.counter_label)
         
-        # Button box
-        button_box = Gtk.Box(
-            orientation=Gtk.Orientation.HORIZONTAL,
-            spacing=12,
-            halign=Gtk.Align.END
-        )
-        content_box.append(button_box)
-        
-        # Cancel button
-        self.cancel_button = Gtk.Button()
-        self.cancel_button.set_label("Cancel")
-        self.cancel_button.connect("clicked", self._on_cancel_clicked)
-        button_box.append(self.cancel_button)
-        
-        # Done button (hidden initially)
-        self.done_button = Gtk.Button()
-        self.done_button.set_label("Done")
-        self.done_button.set_visible(False)
-        self.done_button.add_css_class("suggested-action")
-        self.done_button.connect("clicked", lambda w: self.close())
-        button_box.append(self.done_button)
-        
-        # Set initial focus to cancel button
-        self.cancel_button.grab_focus()
+        # Set the progress content as extra child
+        self.set_extra_child(progress_box)
     
     def set_operation_details(self, total_files, filename=None):
         """Set the operation details"""
@@ -517,6 +468,16 @@ class SFTPProgressDialog(Adw.Window):
             self.file_label.set_text(filename)
         
         self.counter_label.set_text(f"0 of {total_files} files")
+    
+    def _on_response(self, dialog, response):
+        """Handle dialog response"""
+        if response == "cancel":
+            self.is_cancelled = True
+            if self._current_future and hasattr(self._current_future, 'cancel'):
+                self._current_future.cancel()
+            self.close()
+        elif response == "done":
+            self.close()
     
     def update_progress(self, fraction, message=None, current_file=None):
         """Update progress bar and status"""
@@ -530,9 +491,9 @@ class SFTPProgressDialog(Adw.Window):
         self.progress_bar.set_fraction(fraction)
         self.progress_bar.set_text(f"{percentage}%")
         
-        # Update status message
+        # Update dialog body with status message
         if message:
-            self.status_label.set_markup(f"<span size='large' weight='bold'>{message}</span>")
+            self.set_body(message)
         
         # Update current file
         if current_file:
@@ -625,61 +586,26 @@ class SFTPProgressDialog(Adw.Window):
     def _show_completion_ui(self, success, error_message):
         """Update UI to show completion state"""
         if success:
-            self.status_icon.set_from_icon_name("emblem-ok-symbolic")
-            self.status_icon.remove_css_class("accent")
-            self.status_icon.add_css_class("success")
-            
-            self.status_label.set_markup("<span size='large' weight='bold'>Transfer complete</span>")
+            self.set_title("Transfer Complete")
+            self.set_body("Transfer completed successfully")
             self.file_label.set_text(f"Successfully transferred {self.files_completed} files")
-            
             self.progress_bar.set_fraction(1.0)
             self.progress_bar.set_text("100%")
         else:
-            self.status_icon.set_from_icon_name("dialog-error-symbolic")
-            self.status_icon.remove_css_class("accent")
-            self.status_icon.add_css_class("error")
-            
-            self.status_label.set_markup("<span size='large' weight='bold'>Transfer failed</span>")
+            self.set_title("Transfer Failed")
+            self.set_body("Transfer failed")
             if error_message:
                 self.file_label.set_text(f"Error: {error_message}")
             else:
                 self.file_label.set_text("An error occurred during transfer")
         
-        # Switch buttons
-        self.cancel_button.set_visible(False)
-        self.done_button.set_visible(True)
-        self.done_button.grab_focus()
+        # Switch to Done button
+        self.remove_response("cancel")
+        self.add_response("done", "Done")
+        self.set_default_response("done")
+        self.set_close_response("done")
         
         return False
-    
-    def _on_cancel_clicked(self, button):
-        """Handle cancel button click"""
-        self.is_cancelled = True
-        
-        # Cancel the future operation
-        if self._current_future and not self._current_future.done():
-            try:
-                self._current_future.cancel()
-                print("DEBUG: Future cancelled successfully")
-            except Exception as e:
-                print(f"DEBUG: Error cancelling future: {e}")
-        
-        # Update UI to show cancellation
-        self.status_label.set_markup("<span size='large' weight='bold'>Cancelled</span>")
-        self.file_label.set_text("Transfer was cancelled by user")
-        
-        # Change icon to indicate cancellation
-        self.status_icon.set_from_icon_name("process-stop-symbolic")
-        self.status_icon.remove_css_class("accent")
-        self.status_icon.add_css_class("warning")
-        
-        # Switch buttons immediately
-        button.set_visible(False)
-        self.done_button.set_label("Close")
-        self.done_button.set_visible(True)
-        self.done_button.grab_focus()
-        
-        print("DEBUG: Cancel operation completed")
 
 
 @dataclasses.dataclass
@@ -3498,23 +3424,29 @@ class FilePane(Gtk.Box):
                 
             manager = window._manager
             
-            if entry.is_dir:
-                # Upload directory
-                future = manager.upload_directory(source_path_obj, destination_path)
-            else:
-                # Upload file
-                future = manager.upload(source_path_obj, destination_path)
-                
-            # Handle the future result
-            def _on_upload_complete(fut: Future) -> None:
-                try:
-                    fut.result()  # This will raise an exception if the operation failed
-                    GLib.idle_add(lambda: self.show_toast(f"Uploaded {entry.name}"))
-                    GLib.idle_add(lambda: self._on_refresh_clicked(None))  # Refresh the pane to show the new file
-                except Exception as e:
-                    GLib.idle_add(lambda: self.show_toast(f"Upload failed: {str(e)}"))
+            # Check for file conflicts first
+            files_to_transfer = [(str(source_path_obj), destination_path)]
+            
+            def _proceed_with_upload(resolved_files: List[Tuple[str, str]]) -> None:
+                for local_path_str, dest_path in resolved_files:
+                    path_obj = pathlib.Path(local_path_str)
                     
-            future.add_done_callback(_on_upload_complete)
+                    if entry.is_dir:
+                        # Upload directory
+                        future = manager.upload_directory(path_obj, dest_path)
+                    else:
+                        # Upload file
+                        future = manager.upload(path_obj, dest_path)
+                    
+                    # Show progress dialog for upload
+                    window._show_progress_dialog("upload", entry.name, future)
+                    window._attach_refresh(
+                        future,
+                        refresh_remote=self,
+                        highlight_name=entry.name,
+                    )
+            
+            window._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
             
         except Exception as e:
             self.show_toast(f"Upload failed: {str(e)}")
@@ -3533,23 +3465,29 @@ class FilePane(Gtk.Box):
                 
             manager = window._manager
             
-            if entry.is_dir:
-                # Download directory
-                future = manager.download_directory(source_path, destination_path)
-            else:
-                # Download file
-                future = manager.download(source_path, destination_path)
-                
-            # Handle the future result
-            def _on_download_complete(fut: Future) -> None:
-                try:
-                    fut.result()  # This will raise an exception if the operation failed
-                    GLib.idle_add(lambda: self.show_toast(f"Downloaded {entry.name}"))
-                    GLib.idle_add(lambda: self._on_refresh_clicked(None))  # Refresh the pane to show the new file
-                except Exception as e:
-                    GLib.idle_add(lambda: self.show_toast(f"Download failed: {str(e)}"))
+            # Check for file conflicts first
+            files_to_transfer = [(source_path, str(destination_path))]
+            
+            def _proceed_with_download(resolved_files: List[Tuple[str, str]]) -> None:
+                for source, target_path_str in resolved_files:
+                    target_path = pathlib.Path(target_path_str)
                     
-            future.add_done_callback(_on_download_complete)
+                    if entry.is_dir:
+                        # Download directory
+                        future = manager.download_directory(source, target_path)
+                    else:
+                        # Download file
+                        future = manager.download(source, target_path)
+                    
+                    # Show progress dialog for download
+                    window._show_progress_dialog("download", entry.name, future)
+                    window._attach_refresh(
+                        future,
+                        refresh_local_path=str(self._current_path),
+                        highlight_name=entry.name,
+                    )
+            
+            window._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
             
         except Exception as e:
             self.show_toast(f"Download failed: {str(e)}")
