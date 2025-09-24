@@ -268,7 +268,7 @@ class Connection:
                     self.host or '',
                     target_alias or '',
                 }
-                if existing_hostname or effective_hostname not in alias_candidates:
+                if (not existing_hostname) or effective_hostname not in alias_candidates:
                     self.hostname = effective_hostname
 
             alias_value = alias_fallback or self.host or ''

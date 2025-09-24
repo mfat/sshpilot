@@ -114,8 +114,8 @@ def test_alias_labels_with_hostname(tmp_path):
         assert c.aliases == []
 
 
-def test_connect_command_preserves_empty_hostname(tmp_path):
-    """Connecting should use the alias for SSH while keeping hostname empty."""
+def test_connect_command_preserves_alias_for_empty_hostname(tmp_path):
+    """Connecting should use the alias for SSH and record it when hostname missing."""
     asyncio.set_event_loop(asyncio.new_event_loop())
 
     manager = ConnectionManager.__new__(ConnectionManager)
@@ -135,7 +135,7 @@ def test_connect_command_preserves_empty_hostname(tmp_path):
 
     asyncio.get_event_loop().run_until_complete(conn.connect())
 
-    # Hostname remains empty but ssh command targets the alias
-    assert conn.hostname == ''
+    # Hostname now mirrors the alias so that future operations reuse it
+    assert conn.hostname == 'example.com'
     assert any(part.endswith('example.com') for part in conn.ssh_cmd)
 

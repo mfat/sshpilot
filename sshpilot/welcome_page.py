@@ -362,13 +362,16 @@ class WelcomePage(Gtk.Overlay):
                         option_key, attached_value = option_key[:2], option_key[2:]
 
                     if option_key in SSH_OPTIONS_EXPECTING_ARGUMENT:
+                        connection_data["unparsed_args"].append(arg)
                         if attached_value:
                             i += 1
                         elif i + 1 < len(args) and not args[i + 1].startswith('-'):
+                            connection_data["unparsed_args"].append(args[i + 1])
                             i += 2
                         else:
                             i += 1
                     else:
+                        connection_data["unparsed_args"].append(arg)
                         i += 1
                     continue
             
@@ -647,13 +650,16 @@ class QuickConnectDialog(Adw.MessageDialog):
                         option_key, attached_value = option_key[:2], option_key[2:]
 
                     if option_key in SSH_OPTIONS_EXPECTING_ARGUMENT:
+                        connection_data["unparsed_args"].append(arg)
                         if attached_value:
                             i += 1
                         elif i + 1 < len(args) and not args[i + 1].startswith('-'):
+                            connection_data["unparsed_args"].append(args[i + 1])
                             i += 2
                         else:
                             i += 1
                     else:
+                        connection_data["unparsed_args"].append(arg)
                         i += 1
                     continue
 

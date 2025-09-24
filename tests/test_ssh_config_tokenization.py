@@ -168,6 +168,32 @@ def test_connect_with_blank_hostname_uses_alias(monkeypatch):
     assert connection.hostname == ""
 
 
+def test_connect_preserves_stored_hostname_when_resolved_matches_alias(monkeypatch):
+    data = {
+        "host": "alias",
+        "nickname": "alias",
+        "hostname": "real.example.com",
+        "username": "mahdi",
+    }
+    connection = Connection(data)
+    monkeypatch.setattr(
+        "sshpilot.connection_manager.get_effective_ssh_config",
+        lambda alias: {"hostname": "alias"},
+    )
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        connected = loop.run_until_complete(connection.connect())
+    finally:
+        loop.close()
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    assert connected
+    assert connection.hostname == "real.example.com"
+    assert connection.host == "alias"
+    assert connection.ssh_cmd[-1] == "mahdi@real.example.com"
+
+
 def test_update_connection_password_storage_uses_alias(monkeypatch):
     cm = make_cm()
     cm.config = types.SimpleNamespace()
