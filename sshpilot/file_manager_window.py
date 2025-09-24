@@ -1122,6 +1122,7 @@ class AsyncSFTPManager(GObject.GObject):
             target_alias = self._host
 
         alias_for_config: Optional[str] = None
+
         if target_alias:
             try:
                 from .ssh_config_utils import get_effective_ssh_config
@@ -1130,6 +1131,7 @@ class AsyncSFTPManager(GObject.GObject):
                     target_alias, config_file=config_override
                 )
                 alias_for_config = target_alias
+
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug(
                     "Failed to resolve effective SSH config for %s: %s",
@@ -1181,6 +1183,7 @@ class AsyncSFTPManager(GObject.GObject):
 
             return token_pattern.sub(_replace, raw_command)
 
+
         proxy_sock: Optional[Any] = None
         proxy_command = proxy_command.strip()
         if proxy_command:
@@ -1194,6 +1197,7 @@ class AsyncSFTPManager(GObject.GObject):
                     expanded_command,
                     proxy_command,
                 )
+
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("Failed to set up ProxyCommand '%s': %s", proxy_command, exc)
                 proxy_sock = None
@@ -1210,6 +1214,7 @@ class AsyncSFTPManager(GObject.GObject):
                     expanded_jump,
                     jump_command,
                 )
+
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("Failed to set up ProxyJump '%s': %s", jump_command, exc)
                 proxy_sock = None

@@ -257,5 +257,6 @@ def test_async_sftp_manager_builds_proxy_jump_command(monkeypatch):
     proxy_instance = kwargs["sock"]
     assert proxy_instance.command == "ssh -W example.com:2222 -J Router example.com"
 
+
     manager.close()
     assert proxy_instance.closed, "ProxyCommand should be closed when manager closes"
