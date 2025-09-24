@@ -6381,6 +6381,27 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     pass
                 old_connection.x11_forwarding = connection_data['x11_forwarding']
                 old_connection.forwarding_rules = list(connection_data.get('forwarding_rules', []))
+                # Ensure proxy settings are refreshed in-memory so new connections
+                # immediately pick up the updated directives without needing a
+                # full application restart. The connection manager updates the
+                # serialized data, but the active Connection instance used by
+                # terminals/file manager must also reflect the new values.
+                try:
+                    proxy_jump_value = connection_data.get('proxy_jump', [])
+                    if isinstance(proxy_jump_value, str):
+                        proxy_jump_value = [
+                            h.strip() for h in re.split(r'[\s,]+', proxy_jump_value) if h.strip()
+                        ]
+                    else:
+                        proxy_jump_value = [
+                            str(h).strip() for h in (proxy_jump_value or []) if str(h).strip()
+                        ]
+                    old_connection.proxy_jump = proxy_jump_value
+                except Exception:
+                    old_connection.proxy_jump = []
+
+                old_connection.proxy_command = connection_data.get('proxy_command', '') or ''
+                old_connection.forward_agent = bool(connection_data.get('forward_agent', False))
                 # Update commands
                 try:
                     old_connection.local_command = connection_data.get('local_command', '')
