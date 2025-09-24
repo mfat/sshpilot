@@ -3,6 +3,7 @@ Main Window for sshPilot
 Primary UI with connection list, tabs, and terminal management
 """
 
+import asyncio
 import copy
 import os
 import logging
@@ -6647,12 +6648,30 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if connection not in self.active_terminals:
             logger.warning(f"Connection {connection.nickname} not found in active terminals")
             return False  # Don't repeat the timeout
-            
+
         terminal = self.active_terminals[connection]
-        
+
         try:
             logger.debug(f"Attempting to reconnect terminal for {connection.nickname}")
-            
+
+            # Rebuild the SSH command using the latest configuration so that
+            # options resolved via ssh -G are honored for the reconnect.
+            try:
+                loop = asyncio.get_event_loop()
+                connect_coro = connection.connect()
+                if loop.is_running():
+                    future = asyncio.run_coroutine_threadsafe(connect_coro, loop)
+                    future.result()
+                else:
+                    loop.run_until_complete(connect_coro)
+            except Exception as prep_err:
+                logger.error(
+                    "Failed to prepare SSH command before reconnect: %s",
+                    prep_err,
+                )
+                GLib.idle_add(self._show_reconnect_error, connection, str(prep_err))
+                return False
+
             # Reconnect with new settings
             if not terminal._connect_ssh():
                 logger.error("Failed to reconnect with new settings")
