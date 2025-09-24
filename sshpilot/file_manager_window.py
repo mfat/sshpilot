@@ -3262,32 +3262,16 @@ class FilePane(Gtk.Box):
         
         # Create proper content provider instead of PyObject
         if self._is_remote:
-            # For remote files, create string content with file names
+            # For remote files, serialize payload to avoid macOS pasteboard crashes
             try:
-                if hasattr(payload, '__iter__') and not isinstance(payload, str):
-                    file_names = [getattr(item, 'name', str(item)) for item in payload]
-                else:
-                    file_names = [str(payload)]
-                
-                content = "\n".join(file_names)
-                print(f"Creating string content provider with: {content}")
-                
-                # Try multiple methods for string content provider
-                try:
-                    value = GObject.Value()
-                    value.init(GObject.TYPE_STRING)
-                    value.set_string(content)
-                    provider = Gdk.ContentProvider.new_for_value(value)
-                    print("Created GValue string provider")
-                    return provider
-                except Exception as e:
-                    print(f"GValue method failed: {e}")
-                    # Fallback to bytes
-                    data = GLib.Bytes.new(content.encode("utf-8"))
-                    provider = Gdk.ContentProvider.new_for_bytes("text/plain", data)
-                    print("Created text/plain bytes provider")
-                    return provider
-                    
+                serialized = json.dumps(payload)
+                data = GLib.Bytes.new(serialized.encode("utf-8"))
+                provider = Gdk.ContentProvider.new_for_bytes(
+                    "application/x-sshpilot-remote-entry",
+                    data,
+                )
+                print("Created remote bytes provider")
+                return provider
             except Exception as e:
                 print(f"Error creating remote content provider: {e}")
                 # Final fallback to PyObject (but we'll know why)
