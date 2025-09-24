@@ -379,7 +379,12 @@ class Connection:
                         if self.keyfile and os.path.exists(self.keyfile):
                             identity_files.append(self.keyfile)
                     for key_path in identity_files:
-                        ssh_cmd.extend(['-i', key_path])
+                        # Only add identity files that actually exist
+                        expanded_path = os.path.expanduser(key_path)
+                        if os.path.exists(expanded_path):
+                            ssh_cmd.extend(['-i', key_path])
+                        else:
+                            logger.debug(f"Skipping non-existent identity file: {key_path}")
                         if key_mode == 1:
                             ssh_cmd.extend(['-o', 'IdentitiesOnly=yes'])
                         if self.key_passphrase:
