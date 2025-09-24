@@ -70,6 +70,7 @@ def resolve_ssh_config_files(main_path: str, *, max_depth: int = 32) -> List[str
 
 def get_effective_ssh_config(
     host: str, config_file: Optional[str] = None
+
 ) -> Dict[str, Union[str, List[str]]]:
     """Return effective SSH options for *host* using ``ssh -G``.
 
@@ -87,6 +88,7 @@ def get_effective_ssh_config(
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
     except Exception:
         return {}
 

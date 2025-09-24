@@ -4482,7 +4482,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     ):
         argv = ['scp', '-v']
         host_value = _get_connection_host(connection) or _get_connection_alias(connection)
-        target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
+        scp_host = host_value
+        if scp_host and ':' in scp_host and not (scp_host.startswith('[') and scp_host.endswith(']')):
+            scp_host = f"[{scp_host}]"
+        target = f"{connection.username}@{scp_host}" if getattr(connection, 'username', '') else scp_host
         transfer_sources, transfer_destination = assemble_scp_transfer_args(
             target,
             sources,

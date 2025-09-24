@@ -15,6 +15,30 @@ from .connection_manager import Connection
 from .platform_utils import is_macos
 
 
+SSH_OPTIONS_EXPECTING_ARGUMENT = {
+    "-b",
+    "-B",
+    "-c",
+    "-D",
+    "-E",
+    "-e",
+    "-F",
+    "-I",
+    "-J",
+    "-L",
+    "-l",
+    "-m",
+    "-O",
+    "-o",
+    "-p",
+    "-Q",
+    "-R",
+    "-S",
+    "-W",
+    "-w",
+}
+
+
 class WelcomePage(Gtk.Overlay):
     """Welcome page shown when no tabs are open."""
 
@@ -162,32 +186,39 @@ class WelcomePage(Gtk.Overlay):
     def _parse_ssh_command(self, command_text):
         """Parse SSH command text and extract connection parameters"""
         try:
+            raw_command = command_text.strip()
+
             # Handle simple user@host format (backward compatibility)
-            if not command_text.startswith('ssh') and '@' in command_text and ' ' not in command_text:
-                username, host = command_text.split('@', 1)
+            if not raw_command.startswith('ssh') and '@' in raw_command and ' ' not in raw_command:
+                username, host = raw_command.split('@', 1)
                 return {
                     "nickname": host,
                     "host": host,
                     "username": username,
                     "port": 22,
                     "auth_method": 0,  # Default to key-based auth
-                    "key_select_mode": 0  # Try all keys
+                    "key_select_mode": 0,  # Try all keys
+                    "quick_connect_command": "",
+                    "unparsed_args": [],
                 }
-            
+
+            quick_connect_command = raw_command if raw_command.startswith('ssh') else ""
+            working_text = raw_command
+
             # Parse full SSH command
             # Remove 'ssh' prefix if present
-            if command_text.startswith('ssh '):
-                command_text = command_text[4:]
-            elif command_text.startswith('ssh'):
-                command_text = command_text[3:]
-            
+            if working_text.startswith('ssh '):
+                working_text = working_text[4:]
+            elif working_text.startswith('ssh'):
+                working_text = working_text[3:]
+
             # Use shlex to properly parse the command with quoted arguments
             try:
-                args = shlex.split(command_text)
+                args = shlex.split(working_text)
             except ValueError:
                 # If shlex fails, fall back to simple split
-                args = command_text.split()
-            
+                args = working_text.split()
+
             # Initialize connection data with defaults
             connection_data = {
                 "nickname": "",
@@ -201,9 +232,11 @@ class WelcomePage(Gtk.Overlay):
                 "x11_forwarding": False,
                 "local_port_forwards": [],
                 "remote_port_forwards": [],
-                "dynamic_forwards": []
+                "dynamic_forwards": [],
+                "quick_connect_command": quick_connect_command,
+                "unparsed_args": [],
             }
-            
+
             i = 0
             while i < len(args):
                 arg = args[i]
@@ -305,20 +338,41 @@ class WelcomePage(Gtk.Overlay):
                     continue
                 elif not arg.startswith('-'):
                     # This should be the host specification (user@host)
-                    if '@' in arg:
-                        username, host = arg.split('@', 1)
-                        connection_data["username"] = username
-                        connection_data["host"] = host
-                        connection_data["nickname"] = host
+                    if not connection_data["host"]:
+                        if '@' in arg:
+                            username, host = arg.split('@', 1)
+                            connection_data["username"] = username
+                            connection_data["host"] = host
+                            connection_data["nickname"] = host
+                        else:
+                            # Just hostname, no username
+                            connection_data["host"] = arg
+                            connection_data["nickname"] = arg
                     else:
-                        # Just hostname, no username
-                        connection_data["host"] = arg
-                        connection_data["nickname"] = arg
+                        connection_data["unparsed_args"].append(arg)
                     i += 1
                 else:
-                    # Unknown option, skip it
-                    i += 1
+
+                    # Unknown option. Determine whether it normally expects an argument.
+                    option_key = arg
+                    attached_value = ""
+                    if option_key.startswith('--'):
+                        option_key, _, attached_value = option_key.partition('=')
+                    elif option_key.startswith('-') and len(option_key) > 2:
+                        option_key, attached_value = option_key[:2], option_key[2:]
+
+                    if option_key in SSH_OPTIONS_EXPECTING_ARGUMENT:
+                        if attached_value:
+                            i += 1
+                        elif i + 1 < len(args) and not args[i + 1].startswith('-'):
+                            i += 2
+                        else:
+                            i += 1
+                    else:
+                        i += 1
+                    continue
             
+
             # Validate that we have at least a host
             if not connection_data["host"]:
                 return None
@@ -327,8 +381,8 @@ class WelcomePage(Gtk.Overlay):
                 connection_data["key_select_mode"] = 2
 
             return connection_data
-            
-        except Exception as e:
+
+        except Exception:
             # If parsing fails, try simple fallback
             if '@' in command_text:
                 try:
@@ -339,9 +393,11 @@ class WelcomePage(Gtk.Overlay):
                         "username": username,
                         "port": 22,
                         "auth_method": 0,
-                        "key_select_mode": 0
+                        "key_select_mode": 0,
+                        "quick_connect_command": "",
+                        "unparsed_args": [],
                     }
-                except:
+                except Exception:
                     pass
             return None
 
@@ -415,31 +471,38 @@ class QuickConnectDialog(Adw.MessageDialog):
     def _parse_ssh_command(self, command_text):
         """Parse SSH command text and extract connection parameters"""
         try:
+            raw_command = command_text.strip()
+
             # Handle simple user@host format (backward compatibility)
-            if not command_text.startswith('ssh') and '@' in command_text and ' ' not in command_text:
-                username, host = command_text.split('@', 1)
+            if not raw_command.startswith('ssh') and '@' in raw_command and ' ' not in raw_command:
+                username, host = raw_command.split('@', 1)
                 return {
                     "nickname": host,
                     "host": host,
                     "username": username,
                     "port": 22,
                     "auth_method": 0,  # Default to key-based auth
-                    "key_select_mode": 0  # Try all keys
+                    "key_select_mode": 0,  # Try all keys
+                    "quick_connect_command": "",
+                    "unparsed_args": [],
                 }
+
+            quick_connect_command = raw_command if raw_command.startswith('ssh') else ""
+            working_text = raw_command
 
             # Parse full SSH command
             # Remove 'ssh' prefix if present
-            if command_text.startswith('ssh '):
-                command_text = command_text[4:]
-            elif command_text.startswith('ssh'):
-                command_text = command_text[3:]
+            if working_text.startswith('ssh '):
+                working_text = working_text[4:]
+            elif working_text.startswith('ssh'):
+                working_text = working_text[3:]
 
             # Use shlex to properly parse the command with quoted arguments
             try:
-                args = shlex.split(command_text)
+                args = shlex.split(working_text)
             except ValueError:
                 # If shlex fails, fall back to simple split
-                args = command_text.split()
+                args = working_text.split()
 
             # Initialize connection data with defaults
             connection_data = {
@@ -454,7 +517,9 @@ class QuickConnectDialog(Adw.MessageDialog):
                 "x11_forwarding": False,
                 "local_port_forwards": [],
                 "remote_port_forwards": [],
-                "dynamic_forwards": []
+                "dynamic_forwards": [],
+                "quick_connect_command": quick_connect_command,
+                "unparsed_args": [],
             }
 
             i = 0
@@ -558,19 +623,40 @@ class QuickConnectDialog(Adw.MessageDialog):
                     continue
                 elif not arg.startswith('-'):
                     # This should be the host specification (user@host)
-                    if '@' in arg:
-                        username, host = arg.split('@', 1)
-                        connection_data["username"] = username
-                        connection_data["host"] = host
-                        connection_data["nickname"] = host
+                    if not connection_data["host"]:
+                        if '@' in arg:
+                            username, host = arg.split('@', 1)
+                            connection_data["username"] = username
+                            connection_data["host"] = host
+                            connection_data["nickname"] = host
+                        else:
+                            # Just hostname, no username
+                            connection_data["host"] = arg
+                            connection_data["nickname"] = arg
                     else:
-                        # Just hostname, no username
-                        connection_data["host"] = arg
-                        connection_data["nickname"] = arg
+                        connection_data["unparsed_args"].append(arg)
                     i += 1
                 else:
-                    # Unknown option, skip it
-                    i += 1
+
+                    # Unknown option. Determine whether it normally expects an argument.
+                    option_key = arg
+                    attached_value = ""
+                    if option_key.startswith('--'):
+                        option_key, _, attached_value = option_key.partition('=')
+                    elif option_key.startswith('-') and len(option_key) > 2:
+                        option_key, attached_value = option_key[:2], option_key[2:]
+
+                    if option_key in SSH_OPTIONS_EXPECTING_ARGUMENT:
+                        if attached_value:
+                            i += 1
+                        elif i + 1 < len(args) and not args[i + 1].startswith('-'):
+                            i += 2
+                        else:
+                            i += 1
+                    else:
+                        i += 1
+                    continue
+
 
             # Validate that we have at least a host
             if not connection_data["host"]:
@@ -580,8 +666,8 @@ class QuickConnectDialog(Adw.MessageDialog):
                 connection_data["key_select_mode"] = 2
 
             return connection_data
-            
-        except Exception as e:
+
+        except Exception:
             # If parsing fails, try simple fallback
             if '@' in command_text:
                 try:
@@ -592,8 +678,10 @@ class QuickConnectDialog(Adw.MessageDialog):
                         "username": username,
                         "port": 22,
                         "auth_method": 0,
-                        "key_select_mode": 0
+                        "key_select_mode": 0,
+                        "quick_connect_command": "",
+                        "unparsed_args": [],
                     }
-                except:
+                except Exception:
                     pass
             return None
