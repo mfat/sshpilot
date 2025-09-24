@@ -868,7 +868,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             # Compression
             self.compression_row = Adw.SwitchRow()
             self.compression_row.set_title("Enable Compression (-C)")
-            self.compression_row.set_active(bool(self.config.get_setting('ssh.compression', True)))
+            self.compression_row.set_active(bool(self.config.get_setting('ssh.compression', False)))
             advanced_group.add(self.compression_row)
 
             # SSH verbosity (-v levels)
@@ -1289,8 +1289,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 self.config.set_setting('ssh.batch_mode', bool(defaults.get('batch_mode', True)))
                 self.batch_mode_row.set_active(bool(defaults.get('batch_mode', True)))
             if hasattr(self, 'compression_row'):
-                self.config.set_setting('ssh.compression', bool(defaults.get('compression', True)))
-                self.compression_row.set_active(bool(defaults.get('compression', True)))
+                self.config.set_setting('ssh.compression', bool(defaults.get('compression', False)))
+                self.compression_row.set_active(bool(defaults.get('compression', False)))
             if hasattr(self, 'verbosity_row'):
                 self.config.set_setting('ssh.verbosity', defaults.get('verbosity'))
                 self.verbosity_row.set_value(int(defaults.get('verbosity', 0)))

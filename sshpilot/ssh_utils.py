@@ -50,7 +50,7 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
     strict_host = str(ssh_cfg.get('strict_host_key_checking', '')) if apply_adv else ''
     auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
     batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
-    compression = bool(ssh_cfg.get('compression', True)) if apply_adv else False
+    compression = bool(ssh_cfg.get('compression', False)) if apply_adv else False
 
     # Determine auth method from connection and whether a password is available
     password_auth_selected = False
