@@ -2280,6 +2280,15 @@ class FilePane(Gtk.Box):
         overlay.set_child(content_overlay)
         self.append(overlay)
 
+        # Add drop target for file operations - use string type for better compatibility
+        drop_target = Gtk.DropTarget.new(type=GObject.TYPE_STRING, actions=Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
+        drop_target.connect("drop", self._on_drop_string)
+        drop_target.connect("enter", self._on_drop_enter)
+        drop_target.connect("leave", self._on_drop_leave)
+        self.add_controller(drop_target)
+        
+        logger.debug(f"Added drop target to pane: {self._is_remote}")
+
         self._partner_pane: Optional["FilePane"] = None
 
         self._action_buttons: Dict[str, Gtk.Button] = {}
@@ -2544,6 +2553,15 @@ class FilePane(Gtk.Box):
         box.icon = icon
         box.name_label = name_label
         box.metadata_label = metadata_label
+        
+        # Add drag source for file operations
+        drag_source = Gtk.DragSource()
+        drag_source.set_actions(Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
+        drag_source.connect("prepare", self._on_drag_prepare)
+        drag_source.connect("drag-begin", self._on_drag_begin)
+        drag_source.connect("drag-end", self._on_drag_end)
+        box.add_controller(drag_source)
+        
         item.set_child(box)
 
     def _on_list_bind(self, factory: Gtk.SignalListItemFactory, item):
@@ -2557,6 +2575,9 @@ class FilePane(Gtk.Box):
         entry: Optional[FileEntry] = None
         if position is not None and 0 <= position < len(self._entries):
             entry = self._entries[position]
+            
+        # Store position in the box for drag operations
+        box.drag_position = position
 
         if entry is None:
             value = item.get_item().get_string()
@@ -2634,6 +2655,15 @@ class FilePane(Gtk.Box):
         content.append(label)
 
         button.set_child(content)
+        
+        # Add drag source for file operations
+        drag_source = Gtk.DragSource()
+        drag_source.set_actions(Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
+        drag_source.connect("prepare", self._on_drag_prepare)
+        drag_source.connect("drag-begin", self._on_drag_begin)
+        drag_source.connect("drag-end", self._on_drag_end)
+        button.add_controller(drag_source)
+        
         item.set_child(button)
 
     def _on_grid_bind(self, factory: Gtk.SignalListItemFactory, item):
@@ -2661,6 +2691,9 @@ class FilePane(Gtk.Box):
         position = item.get_position()
         if position is not None and 0 <= position < len(self._entries):
             entry = self._entries[position]
+            
+        # Store position in the button for drag operations
+        button.drag_position = position
 
 
     def _on_grid_unbind(self, factory: Gtk.SignalListItemFactory, item):
@@ -3351,6 +3384,189 @@ class FilePane(Gtk.Box):
             if entry.is_dir:
                 self.emit("path-changed", os.path.join(self._current_path, entry.name))
 
+    def _on_drag_prepare(self, drag_source: Gtk.DragSource, x: float, y: float) -> Gdk.ContentProvider:
+        """Prepare drag data when drag operation starts."""
+        # Get the widget that initiated the drag
+        widget = drag_source.get_widget()
+        
+        # Get the position that was stored during binding
+        position = getattr(widget, 'drag_position', None)
+        
+        logger.debug(f"Drag prepare: position={position}, entries_count={len(self._entries)}")
+        
+        # Create a string representation of the drag data
+        if position is not None and 0 <= position < len(self._entries):
+            entry = self._entries[position]
+            drag_data_string = f"sshpilot_drag:{id(self)}:{self._current_path}:{position}:{entry.name}"
+        else:
+            drag_data_string = "sshpilot_drag:invalid"
+        
+        return Gdk.ContentProvider.new_for_value(drag_data_string)
+
+    def _on_drag_begin(self, drag_source: Gtk.DragSource, drag: Gdk.Drag) -> None:
+        """Called when drag operation begins - set drag icon."""
+        logger.debug(f"Drag begin: pane={self._is_remote}")
+        # Create a simple icon for the drag operation
+        widget = drag_source.get_widget()
+        if widget:
+            # Create a paintable from the widget to use as drag icon
+            paintable = Gtk.WidgetPaintable.new(widget)
+            drag_source.set_icon(paintable, 0, 0)
+
+    def _on_drag_end(self, drag_source: Gtk.DragSource, drag: Gdk.Drag, delete_data: bool) -> None:
+        """Called when drag operation ends."""
+        # Clean up any drag-related state if needed
+        pass
+
+    def _on_drop_string(self, drop_target: Gtk.DropTarget, value: str, x: float, y: float) -> bool:
+        """Handle dropped files from string data."""
+        logger.debug(f"Drop received: value={value}")
+        
+        if not isinstance(value, str) or not value.startswith("sshpilot_drag:"):
+            logger.debug("Drop rejected: invalid drag data")
+            return False
+            
+        # Parse the drag data string
+        parts = value.split(":")
+        if len(parts) < 5:
+            logger.debug("Drop rejected: invalid drag data format")
+            return False
+            
+        source_pane_id = int(parts[1])
+        source_path = parts[2]
+        position = int(parts[3])
+        entry_name = parts[4]
+        
+        # Find the source pane by ID
+        source_pane = None
+        window = self.get_root()
+        if isinstance(window, FileManagerWindow):
+            if id(window._left_pane) == source_pane_id:
+                source_pane = window._left_pane
+            elif id(window._right_pane) == source_pane_id:
+                source_pane = window._right_pane
+        
+        if source_pane is None:
+            logger.debug("Drop rejected: source pane not found")
+            return False
+            
+        logger.debug(f"Drop data: source_pane={source_pane._is_remote}, target_pane={self._is_remote}, position={position}")
+        
+        # Don't allow dropping on the same pane
+        if source_pane == self:
+            logger.debug("Drop rejected: same pane")
+            return False
+            
+        # Get the entry from the source pane
+        if position < 0 or position >= len(source_pane._entries):
+            logger.debug(f"Drop rejected: invalid position {position}, entries count: {len(source_pane._entries)}")
+            return False
+            
+        entry = source_pane._entries[position]
+        source_file_path = os.path.join(source_path, entry.name)
+        
+        logger.debug(f"Drop operation: {entry.name} from {source_file_path}")
+        
+        # Determine operation type based on source and target panes
+        if self._is_remote and not source_pane._is_remote:
+            # Local to remote - upload
+            logger.debug("Starting upload operation")
+            self._handle_upload_from_drag(source_file_path, entry)
+        elif not self._is_remote and source_pane._is_remote:
+            # Remote to local - download
+            logger.debug("Starting download operation")
+            self._handle_download_from_drag(source_file_path, entry)
+        else:
+            # Same type of pane - not supported for now
+            logger.debug("Drop rejected: same pane type")
+            return False
+        
+        return True
+
+    def _handle_upload_from_drag(self, source_path: str, entry: FileEntry) -> None:
+        """Handle upload operation from drag and drop."""
+        try:
+            import pathlib
+            source_path_obj = pathlib.Path(source_path)
+            destination_path = posixpath.join(self._current_path, entry.name)
+            
+            # Get the file manager window to access the SFTP manager
+            window = self.get_root()
+            if not isinstance(window, FileManagerWindow):
+                self.show_toast("Upload failed: Invalid window context")
+                return
+                
+            manager = window._manager
+            
+            if entry.is_dir:
+                # Upload directory
+                future = manager.upload_directory(source_path_obj, destination_path)
+            else:
+                # Upload file
+                future = manager.upload(source_path_obj, destination_path)
+                
+            # Handle the future result
+            def _on_upload_complete(fut: Future) -> None:
+                try:
+                    fut.result()  # This will raise an exception if the operation failed
+                    GLib.idle_add(lambda: self.show_toast(f"Uploaded {entry.name}"))
+                    GLib.idle_add(lambda: self._on_refresh_clicked(None))  # Refresh the pane to show the new file
+                except Exception as e:
+                    GLib.idle_add(lambda: self.show_toast(f"Upload failed: {str(e)}"))
+                    
+            future.add_done_callback(_on_upload_complete)
+            
+        except Exception as e:
+            self.show_toast(f"Upload failed: {str(e)}")
+
+    def _handle_download_from_drag(self, source_path: str, entry: FileEntry) -> None:
+        """Handle download operation from drag and drop."""
+        try:
+            import pathlib
+            destination_path = pathlib.Path(self._current_path) / entry.name
+            
+            # Get the file manager window to access the SFTP manager
+            window = self.get_root()
+            if not isinstance(window, FileManagerWindow):
+                self.show_toast("Download failed: Invalid window context")
+                return
+                
+            manager = window._manager
+            
+            if entry.is_dir:
+                # Download directory
+                future = manager.download_directory(source_path, destination_path)
+            else:
+                # Download file
+                future = manager.download(source_path, destination_path)
+                
+            # Handle the future result
+            def _on_download_complete(fut: Future) -> None:
+                try:
+                    fut.result()  # This will raise an exception if the operation failed
+                    GLib.idle_add(lambda: self.show_toast(f"Downloaded {entry.name}"))
+                    GLib.idle_add(lambda: self._on_refresh_clicked(None))  # Refresh the pane to show the new file
+                except Exception as e:
+                    GLib.idle_add(lambda: self.show_toast(f"Download failed: {str(e)}"))
+                    
+            future.add_done_callback(_on_download_complete)
+            
+        except Exception as e:
+            self.show_toast(f"Download failed: {str(e)}")
+
+    def _on_drop_enter(self, drop_target: Gtk.DropTarget, x: float, y: float) -> Gdk.DragAction:
+        """Called when drag enters drop target."""
+        logger.debug(f"Drop enter: pane={self._is_remote}")
+        # Add visual feedback - could highlight the drop area
+        self.add_css_class("drop-target-active")
+        return Gdk.DragAction.COPY
+
+    def _on_drop_leave(self, drop_target: Gtk.DropTarget) -> None:
+        """Called when drag leaves drop target."""
+        logger.debug(f"Drop leave: pane={self._is_remote}")
+        # Remove visual feedback
+        self.remove_css_class("drop-target-active")
+
     def _on_up_clicked(self, _button) -> None:
         parent = os.path.dirname(self._current_path.rstrip('/')) or '/'
         # Avoid navigating past root repeatedly
@@ -3651,6 +3867,13 @@ class FileManagerWindow(Adw.Window):
             color: white;
             background-color: alpha(black, 0.6);
             border: 1px solid alpha(white, 0.1);
+        }
+        
+        /* Drop target styling */
+        .drop-target-active {
+            background-color: alpha(@accent_color, 0.1);
+            border: 2px dashed @accent_color;
+            border-radius: 8px;
         }
         """
         css_provider.load_from_data(toast_css.encode())
