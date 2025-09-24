@@ -29,6 +29,7 @@ import shutil
 import stat
 import threading
 import time
+import re
 from datetime import datetime
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
@@ -832,6 +833,8 @@ class AsyncSFTPManager(GObject.GObject):
         self._connection = connection
         self._connection_manager = connection_manager
         self._ssh_config = dict(ssh_config) if ssh_config else None
+        self._proxy_sock: Optional[Any] = None
+        self._jump_clients: List[paramiko.SSHClient] = []
     
     def _format_size(self, size_bytes):
         """Format file size for display"""
@@ -861,6 +864,20 @@ class AsyncSFTPManager(GObject.GObject):
             if self._client is not None:
                 self._client.close()
                 self._client = None
+            if self._jump_clients:
+                for jump_client in self._jump_clients:
+                    try:
+                        jump_client.close()
+                    except Exception as exc:  # pragma: no cover - defensive cleanup
+                        logger.debug("Error closing jump client: %s", exc)
+                self._jump_clients.clear()
+            if self._proxy_sock is not None:
+                try:
+                    self._proxy_sock.close()
+                except Exception as exc:  # pragma: no cover - defensive cleanup
+                    logger.debug("Error closing proxy socket: %s", exc)
+                finally:
+                    self._proxy_sock = None
         self._executor.shutdown(wait=False)
 
     # -- helpers --------------------------------------------------------
@@ -907,6 +924,191 @@ class AsyncSFTPManager(GObject.GObject):
             logger.debug("Failed to create host key policy for '%s': %s", normalized, exc)
 
         return paramiko.AutoAddPolicy() if auto_add else paramiko.RejectPolicy()
+
+    @staticmethod
+    def _parse_proxy_jump_entry(entry: str) -> Tuple[str, Optional[str], Optional[int]]:
+        """Parse a ``ProxyJump`` token into host, optional user, and port."""
+
+        token = entry.strip()
+        if not token:
+            return entry, None, None
+
+        username: Optional[str] = None
+        host_segment = token
+        if "@" in token:
+            username, host_segment = token.split("@", 1)
+
+        port: Optional[int] = None
+        hostname = host_segment
+
+        if host_segment.startswith("[") and "]" in host_segment:
+            bracket_end = host_segment.index("]")
+            hostname = host_segment[1:bracket_end]
+            remainder = host_segment[bracket_end + 1 :]
+            if remainder.startswith(":"):
+                try:
+                    port = int(remainder[1:])
+                except ValueError:
+                    port = None
+        elif ":" in host_segment:
+            host_part, port_str = host_segment.rsplit(":", 1)
+            hostname = host_part or host_segment
+            try:
+                port = int(port_str)
+            except ValueError:
+                port = None
+
+        return hostname or entry, username, port
+
+    def _create_proxy_jump_socket(
+        self,
+        jump_entries: List[str],
+        *,
+        config_override: Optional[str],
+        policy: paramiko.MissingHostKeyPolicy,
+        known_hosts_path: Optional[str],
+        allow_agent: bool,
+        look_for_keys: bool,
+        key_filename: Optional[str],
+        passphrase: Optional[str],
+        resolved_host: str,
+        resolved_port: int,
+        base_username: str,
+    ) -> Tuple[Any, List[paramiko.SSHClient]]:
+        """Create a socket by chaining SSH connections through jump hosts."""
+
+        from .ssh_config_utils import get_effective_ssh_config
+
+        def _coerce_port(value: Any, default: int) -> int:
+            try:
+                return int(str(value))
+            except (TypeError, ValueError):
+                return default
+
+        resolved_hops: List[Dict[str, Any]] = []
+        for raw_entry in jump_entries:
+            host_token, explicit_user, explicit_port = self._parse_proxy_jump_entry(raw_entry)
+            try:
+                hop_cfg = get_effective_ssh_config(host_token, config_file=config_override)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(
+                    "Failed to resolve effective SSH config for ProxyJump host %s: %s",
+                    host_token,
+                    exc,
+                )
+                hop_cfg = {}
+
+            hostname = str(hop_cfg.get("hostname", host_token) or host_token)
+            username = str(explicit_user or hop_cfg.get("user", base_username) or base_username)
+            port = explicit_port
+            if port is None:
+                port = _coerce_port(hop_cfg.get("port", 22), 22)
+            resolved_hops.append(
+                {
+                    "raw": raw_entry,
+                    "alias": host_token,
+                    "hostname": hostname,
+                    "username": username,
+                    "port": port,
+                    "config": hop_cfg,
+                }
+            )
+
+        jump_clients: List[paramiko.SSHClient] = []
+        upstream_sock: Optional[Any] = None
+
+        for index, hop in enumerate(resolved_hops):
+            jump_client = paramiko.SSHClient()
+            try:
+                jump_client.load_system_host_keys()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Unable to load system host keys for jump host: %s", exc)
+            jump_client.set_missing_host_key_policy(policy)
+
+            if known_hosts_path:
+                try:
+                    if os.path.exists(known_hosts_path):
+                        jump_client.load_host_keys(known_hosts_path)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug(
+                        "Failed to load known hosts for ProxyJump host %s: %s",
+                        hop["alias"],
+                        exc,
+                    )
+
+            hop_kwargs: Dict[str, Any] = {
+                "hostname": hop["hostname"],
+                "username": hop["username"],
+                "port": hop["port"],
+                "allow_agent": allow_agent,
+                "look_for_keys": look_for_keys,
+                "timeout": 15,
+            }
+
+            if upstream_sock is not None:
+                hop_kwargs["sock"] = upstream_sock
+
+            if key_filename:
+                hop_kwargs["key_filename"] = key_filename
+            if passphrase:
+                hop_kwargs["passphrase"] = passphrase
+
+            hop_password: Optional[str] = None
+            if self._connection_manager is not None and hasattr(
+                self._connection_manager, "get_password"
+            ):
+                try:
+                    hop_password = self._connection_manager.get_password(
+                        hop["alias"], hop["username"]
+                    )
+                    if not hop_password:
+                        hop_password = self._connection_manager.get_password(
+                            hop["hostname"], hop["username"]
+                        )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug(
+                        "Password lookup for ProxyJump host %s failed: %s",
+                        hop["alias"],
+                        exc,
+                    )
+
+            if hop_password:
+                hop_kwargs["password"] = hop_password
+
+            jump_client.connect(**hop_kwargs)
+            jump_clients.append(jump_client)
+
+            transport = jump_client.get_transport()
+            if transport is None:
+                raise RuntimeError(
+                    f"ProxyJump host {hop['alias']} did not provide a transport"
+                )
+
+            if index + 1 < len(resolved_hops):
+                next_hop = resolved_hops[index + 1]
+                dest = (next_hop["hostname"], next_hop["port"])
+            else:
+                dest = (resolved_host, resolved_port)
+
+            upstream_sock = transport.open_channel(
+                "direct-tcpip",
+                dest,
+                ("127.0.0.1", 0),
+            )
+
+            logger.debug(
+                "ProxyJump hop %s connected to %s:%s, chaining towards %s:%s",
+                hop["alias"],
+                hop["hostname"],
+                hop["port"],
+                dest[0],
+                dest[1],
+            )
+
+        if upstream_sock is None:
+            raise RuntimeError("ProxyJump chain failed to produce a socket")
+
+        return upstream_sock, jump_clients
 
     def _connect_impl(self) -> None:
         client = paramiko.SSHClient()
@@ -1064,10 +1266,173 @@ class AsyncSFTPManager(GObject.GObject):
                 allow_agent = False
                 look_for_keys = False
 
+        effective_cfg: Dict[str, Any] = {}
+        proxy_command: str = ""
+        proxy_jump: List[str] = []
+
+        target_alias: Optional[str] = None
+        config_override: Optional[str] = None
+
+        if connection is not None:
+            try:
+                proxy_command = str(getattr(connection, "proxy_command", "") or "")
+            except Exception:
+                proxy_command = ""
+            try:
+                raw_jump = getattr(connection, "proxy_jump", []) or []
+            except Exception:
+                raw_jump = []
+            if isinstance(raw_jump, str):
+                proxy_jump = [token.strip() for token in raw_jump.split(",") if token.strip()]
+            elif isinstance(raw_jump, (list, tuple, set)):
+                proxy_jump = [str(token).strip() for token in raw_jump if str(token).strip()]
+
+            source_path = str(getattr(connection, "source", "") or "")
+            if source_path:
+                expanded_source = os.path.abspath(
+                    os.path.expanduser(os.path.expandvars(source_path))
+                )
+                if os.path.exists(expanded_source):
+                    config_override = expanded_source
+
+            if not config_override and getattr(connection, "isolated_config", False):
+                root_candidate = str(getattr(connection, "config_root", "") or "")
+                if root_candidate:
+                    expanded_root = os.path.abspath(
+                        os.path.expanduser(os.path.expandvars(root_candidate))
+                    )
+                    if os.path.exists(expanded_root):
+                        config_override = expanded_root
+
+            target_alias = (
+                getattr(connection, "nickname", "")
+                or getattr(connection, "hostname", "")
+                or getattr(connection, "host", "")
+                or None
+            )
+
+        if not target_alias:
+            target_alias = self._host
+
+        alias_for_config: Optional[str] = None
+        if target_alias:
+            try:
+                from .ssh_config_utils import get_effective_ssh_config
+
+                effective_cfg = get_effective_ssh_config(
+                    target_alias, config_file=config_override
+                )
+                alias_for_config = target_alias
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(
+                    "Failed to resolve effective SSH config for %s: %s",
+                    target_alias,
+                    exc,
+                )
+                effective_cfg = {}
+
+        if not proxy_command:
+            proxy_command = str(effective_cfg.get("proxycommand", "") or "")
+
+        if not proxy_jump:
+            raw_cfg_jump = effective_cfg.get("proxyjump", [])
+            if isinstance(raw_cfg_jump, str):
+                proxy_jump = [token.strip() for token in re.split(r"[\s,]+", raw_cfg_jump) if token.strip()]
+            elif isinstance(raw_cfg_jump, (list, tuple, set)):
+                proxy_jump = [
+                    str(token).strip()
+                    for token in raw_cfg_jump
+                    if str(token).strip()
+                ]
+
+        alias_for_substitution = alias_for_config or target_alias or self._host
+
+        def _coerce_port(value: Any, default: int) -> int:
+            try:
+                return int(str(value))
+            except (TypeError, ValueError):
+                return default
+
+        resolved_host = str(effective_cfg.get("hostname", self._host) or self._host)
+        resolved_port = _coerce_port(effective_cfg.get("port", self._port), self._port)
+        resolved_username = str(effective_cfg.get("user", self._username) or self._username)
+
+        def _expand_proxy_tokens(raw_command: str) -> str:
+            if not raw_command:
+                return raw_command
+
+            substitution_host = str(resolved_host)
+            substitution_port = str(resolved_port)
+            substitution_user = str(resolved_username) if resolved_username else ""
+            substitution_alias = str(alias_for_substitution) if alias_for_substitution else substitution_host
+
+            token_pattern = re.compile(r"%(?:%|h|p|r|n)")
+
+            def _replace(match: re.Match[str]) -> str:
+                token = match.group(0)
+                if token == "%%":
+                    return "%"
+                if token == "%h":
+                    return substitution_host
+                if token == "%p":
+                    return substitution_port
+                if token == "%r":
+                    return substitution_user
+                if token == "%n":
+                    return substitution_alias
+                return token
+
+            return token_pattern.sub(_replace, raw_command)
+
+        proxy_sock: Optional[Any] = None
+        proxy_command = proxy_command.strip()
+        if proxy_command:
+            try:
+                from paramiko.proxy import ProxyCommand as ParamikoProxyCommand
+
+                expanded_command = _expand_proxy_tokens(proxy_command)
+                proxy_sock = ParamikoProxyCommand(expanded_command)
+                logger.debug(
+                    "File manager: using ProxyCommand '%s' (expanded from '%s')",
+                    expanded_command,
+                    proxy_command,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Failed to set up ProxyCommand '%s': %s", proxy_command, exc)
+                proxy_sock = None
+        elif proxy_jump:
+            try:
+                proxy_sock, jump_clients = self._create_proxy_jump_socket(
+                    proxy_jump,
+                    config_override=config_override,
+                    policy=policy,
+                    known_hosts_path=known_hosts_path,
+                    allow_agent=allow_agent,
+                    look_for_keys=look_for_keys,
+                    key_filename=key_filename,
+                    passphrase=passphrase,
+                    resolved_host=resolved_host,
+                    resolved_port=resolved_port,
+                    base_username=resolved_username,
+                )
+                logger.debug(
+                    "File manager: using Paramiko ProxyJump chain via %s",
+                    ", ".join(proxy_jump),
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Failed to set up ProxyJump chain %s: %s", proxy_jump, exc)
+                proxy_sock = None
+                jump_clients = []
+        else:
+            jump_clients = []
+
+        if not proxy_jump:
+            jump_clients = []
+
         connect_kwargs: Dict[str, Any] = {
-            "hostname": self._host,
-            "username": self._username,
-            "port": self._port,
+            "hostname": resolved_host,
+            "username": resolved_username,
+            "port": resolved_port,
             "allow_agent": allow_agent,
             "look_for_keys": look_for_keys,
             "timeout": 15,
@@ -1082,12 +1447,32 @@ class AsyncSFTPManager(GObject.GObject):
         if passphrase:
             connect_kwargs["passphrase"] = passphrase
 
-        client.connect(**connect_kwargs)
-        sftp = client.open_sftp()
+        if proxy_sock is not None:
+            connect_kwargs["sock"] = proxy_sock
+
+        try:
+            client.connect(**connect_kwargs)
+            sftp = client.open_sftp()
+        except Exception:
+            if proxy_sock is not None:
+                try:
+                    proxy_sock.close()
+                except Exception:  # pragma: no cover - defensive cleanup
+                    pass
+            if proxy_jump:
+                for jump_client in jump_clients:
+                    try:
+                        jump_client.close()
+                    except Exception:  # pragma: no cover - defensive cleanup
+                        pass
+            raise
+
         with self._lock:
             self._client = client
             self._sftp = sftp
             self._password = password
+            self._proxy_sock = proxy_sock
+            self._jump_clients = jump_clients
 
     # -- public operations ----------------------------------------------
 
