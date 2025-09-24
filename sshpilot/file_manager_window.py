@@ -29,6 +29,7 @@ import shutil
 import stat
 import threading
 import time
+import re
 from datetime import datetime
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
@@ -832,6 +833,7 @@ class AsyncSFTPManager(GObject.GObject):
         self._connection = connection
         self._connection_manager = connection_manager
         self._ssh_config = dict(ssh_config) if ssh_config else None
+        self._proxy_sock: Optional[Any] = None
     
     def _format_size(self, size_bytes):
         """Format file size for display"""
@@ -861,6 +863,13 @@ class AsyncSFTPManager(GObject.GObject):
             if self._client is not None:
                 self._client.close()
                 self._client = None
+            if self._proxy_sock is not None:
+                try:
+                    self._proxy_sock.close()
+                except Exception as exc:  # pragma: no cover - defensive cleanup
+                    logger.debug("Error closing proxy socket: %s", exc)
+                finally:
+                    self._proxy_sock = None
         self._executor.shutdown(wait=False)
 
     # -- helpers --------------------------------------------------------
@@ -1064,6 +1073,147 @@ class AsyncSFTPManager(GObject.GObject):
                 allow_agent = False
                 look_for_keys = False
 
+        effective_cfg: Dict[str, Any] = {}
+        proxy_command: str = ""
+        proxy_jump: List[str] = []
+
+        target_alias: Optional[str] = None
+        config_override: Optional[str] = None
+
+        if connection is not None:
+            try:
+                proxy_command = str(getattr(connection, "proxy_command", "") or "")
+            except Exception:
+                proxy_command = ""
+            try:
+                raw_jump = getattr(connection, "proxy_jump", []) or []
+            except Exception:
+                raw_jump = []
+            if isinstance(raw_jump, str):
+                proxy_jump = [token.strip() for token in raw_jump.split(",") if token.strip()]
+            elif isinstance(raw_jump, (list, tuple, set)):
+                proxy_jump = [str(token).strip() for token in raw_jump if str(token).strip()]
+
+            source_path = str(getattr(connection, "source", "") or "")
+            if source_path:
+                expanded_source = os.path.abspath(
+                    os.path.expanduser(os.path.expandvars(source_path))
+                )
+                if os.path.exists(expanded_source):
+                    config_override = expanded_source
+
+            if not config_override and getattr(connection, "isolated_config", False):
+                root_candidate = str(getattr(connection, "config_root", "") or "")
+                if root_candidate:
+                    expanded_root = os.path.abspath(
+                        os.path.expanduser(os.path.expandvars(root_candidate))
+                    )
+                    if os.path.exists(expanded_root):
+                        config_override = expanded_root
+
+            target_alias = (
+                getattr(connection, "nickname", "")
+                or getattr(connection, "hostname", "")
+                or getattr(connection, "host", "")
+                or None
+            )
+
+        if not target_alias:
+            target_alias = self._host
+
+        alias_for_config: Optional[str] = None
+        if target_alias:
+            try:
+                from .ssh_config_utils import get_effective_ssh_config
+
+                effective_cfg = get_effective_ssh_config(
+                    target_alias, config_file=config_override
+                )
+                alias_for_config = target_alias
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(
+                    "Failed to resolve effective SSH config for %s: %s",
+                    target_alias,
+                    exc,
+                )
+                effective_cfg = {}
+
+        if not proxy_command:
+            proxy_command = str(effective_cfg.get("proxycommand", "") or "")
+
+        if not proxy_jump:
+            raw_cfg_jump = effective_cfg.get("proxyjump", [])
+            if isinstance(raw_cfg_jump, str):
+                proxy_jump = [token.strip() for token in re.split(r"[\s,]+", raw_cfg_jump) if token.strip()]
+            elif isinstance(raw_cfg_jump, (list, tuple, set)):
+                proxy_jump = [
+                    str(token).strip()
+                    for token in raw_cfg_jump
+                    if str(token).strip()
+                ]
+
+        alias_for_substitution = alias_for_config or target_alias or self._host
+
+        def _expand_proxy_tokens(raw_command: str) -> str:
+            if not raw_command:
+                return raw_command
+
+            substitution_host = str(self._host)
+            substitution_port = str(self._port)
+            substitution_user = str(self._username) if self._username else ""
+            substitution_alias = str(alias_for_substitution) if alias_for_substitution else substitution_host
+
+            token_pattern = re.compile(r"%(?:%|h|p|r|n)")
+
+            def _replace(match: re.Match[str]) -> str:
+                token = match.group(0)
+                if token == "%%":
+                    return "%"
+                if token == "%h":
+                    return substitution_host
+                if token == "%p":
+                    return substitution_port
+                if token == "%r":
+                    return substitution_user
+                if token == "%n":
+                    return substitution_alias
+                return token
+
+            return token_pattern.sub(_replace, raw_command)
+
+        proxy_sock: Optional[Any] = None
+        proxy_command = proxy_command.strip()
+        if proxy_command:
+            try:
+                from paramiko.proxy import ProxyCommand as ParamikoProxyCommand
+
+                expanded_command = _expand_proxy_tokens(proxy_command)
+                proxy_sock = ParamikoProxyCommand(expanded_command)
+                logger.debug(
+                    "File manager: using ProxyCommand '%s' (expanded from '%s')",
+                    expanded_command,
+                    proxy_command,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Failed to set up ProxyCommand '%s': %s", proxy_command, exc)
+                proxy_sock = None
+        elif proxy_jump:
+            jump_spec = ",".join(proxy_jump)
+            jump_command = f"ssh -W %h:%p -J {jump_spec} %h"
+            try:
+                from paramiko.proxy import ProxyCommand as ParamikoProxyCommand
+
+                expanded_jump = _expand_proxy_tokens(jump_command)
+                proxy_sock = ParamikoProxyCommand(expanded_jump)
+                logger.debug(
+                    "File manager: using ProxyJump via '%s' (expanded from '%s')",
+                    expanded_jump,
+                    jump_command,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Failed to set up ProxyJump '%s': %s", jump_command, exc)
+                proxy_sock = None
+
         connect_kwargs: Dict[str, Any] = {
             "hostname": self._host,
             "username": self._username,
@@ -1082,12 +1232,25 @@ class AsyncSFTPManager(GObject.GObject):
         if passphrase:
             connect_kwargs["passphrase"] = passphrase
 
-        client.connect(**connect_kwargs)
-        sftp = client.open_sftp()
+        if proxy_sock is not None:
+            connect_kwargs["sock"] = proxy_sock
+
+        try:
+            client.connect(**connect_kwargs)
+            sftp = client.open_sftp()
+        except Exception:
+            if proxy_sock is not None:
+                try:
+                    proxy_sock.close()
+                except Exception:  # pragma: no cover - defensive cleanup
+                    pass
+            raise
+
         with self._lock:
             self._client = client
             self._sftp = sftp
             self._password = password
+            self._proxy_sock = proxy_sock
 
     # -- public operations ----------------------------------------------
 
