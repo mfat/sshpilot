@@ -2307,12 +2307,6 @@ class FilePane(Gtk.Box):
         # Navigate on row activation (double click / Enter)
         self._list_view = list_view
         list_view.connect("activate", self._on_list_activate)
-        self._list_drag_source = Gtk.DragSource()
-        self._list_drag_source.set_actions(Gdk.DragAction.COPY)
-        self._list_drag_source.connect("prepare", self._on_drag_prepare)
-        self._list_drag_source.connect("drag-begin", self._on_drag_begin)
-        self._list_drag_source.connect("drag-end", self._on_drag_end)
-        list_view.add_controller(self._list_drag_source)
 
         # Wrap list view in a scrolled window for proper scrolling
         list_scrolled = Gtk.ScrolledWindow()
@@ -2333,12 +2327,6 @@ class FilePane(Gtk.Box):
         self._grid_view = grid_view
         # Navigate on grid item activation (double click / Enter)
         grid_view.connect("activate", self._on_grid_activate)
-        self._grid_drag_source = Gtk.DragSource()
-        self._grid_drag_source.set_actions(Gdk.DragAction.COPY)
-        self._grid_drag_source.connect("prepare", self._on_drag_prepare)
-        self._grid_drag_source.connect("drag-begin", self._on_drag_begin)
-        self._grid_drag_source.connect("drag-end", self._on_drag_end)
-        grid_view.add_controller(self._grid_drag_source)
 
         # Wrap grid view in a scrolled window for proper scrolling
         grid_scrolled = Gtk.ScrolledWindow()
@@ -2409,8 +2397,6 @@ class FilePane(Gtk.Box):
         self._drop_zone_pointer = False
         self._partner_pane: Optional["FilePane"] = None
         self._drop_target: Optional[Gtk.DropTarget] = None
-        self._drag_sources: List[Gtk.DragSource] = []
-        self._current_drag_file: Optional[Gio.File] = None
 
         self._action_buttons: Dict[str, Gtk.Button] = {}
         action_bar = Gtk.ActionBar()
@@ -2657,126 +2643,27 @@ class FilePane(Gtk.Box):
             except (TypeError, AttributeError):
                 pass
             view.add_controller(drag_source)
-            self._drag_sources.append(drag_source)
 
-    def _on_drag_prepare(self, _source: Gtk.DragSource, _x: float, _y: float):
-        print(f"=== DRAG PREPARE CALLED on {'remote' if self._is_remote else 'local'} pane ===")
-        
-        try:
-            entries = self.get_selected_entries()
-            print(f"Selected entries: {[e.name for e in entries] if entries else 'None'}")
-            if not entries:
-                print("No entries selected, returning None")
-                return None
-
-            window = self.get_root()
-            print(f"Window type: {type(window)}")
-            if not isinstance(window, FileManagerWindow):
-                print("No FileManagerWindow found, returning None")
-                return None
-                
-            print(f"Window is FileManagerWindow: {isinstance(window, FileManagerWindow)}")
-            
-        except Exception as e:
-            print(f"Exception in drag prepare early checks: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-
-        if self._is_remote:
-            # For remote panes, create a string content provider
-            # According to GTK4 docs, we need to use proper GType formats
-            file_names = [entry.name for entry in entries]
-            payload = "\n".join(file_names)
-            print(f"Creating remote drag payload: {payload}")
-            
-            try:
-                # Method 1: Try new_typed if available (GTK 4.6+)
-                if hasattr(Gdk.ContentProvider, 'new_typed'):
-                    provider = Gdk.ContentProvider.new_typed(GObject.TYPE_STRING, payload)
-                    if provider is not None:
-                        print(f"Created new_typed string provider for remote files: {file_names}")
-                        return provider
-                
-                # Method 2: Use new_for_value with proper GValue
-                value = GObject.Value()
-                value.init(GObject.TYPE_STRING)
-                value.set_string(payload)
-                provider = Gdk.ContentProvider.new_for_value(value)
-                if provider is not None:
-                    print(f"Created GValue string provider for remote files: {file_names}")
-                    return provider
-                    
-                print("Both typed methods failed, trying fallback")
-                
-            except Exception as e:
-                print(f"Error creating typed content provider: {e}")
-            
-            # Fallback: Use text/plain MIME type with bytes
-            try:
-                data = GLib.Bytes.new(payload.encode("utf-8"))
-                provider = Gdk.ContentProvider.new_for_bytes("text/plain", data)
-                if provider is not None:
-                    print(f"Created text/plain bytes provider for remote files: {file_names}")
-                    return provider
-                print("text/plain provider creation failed")
-                
-            except Exception as e:
-                print(f"Error creating bytes content provider: {e}")
-                
-            return None
-        else:
-            # For local panes, create URI list as before
-            # Use the actual current path instead of the display path from path entry
-            # This handles Flatpak portal paths correctly
-            base_dir = getattr(self, '_current_path', None)
-            if not base_dir:
-                # Fallback to normalized path entry text for non-portal paths
-                base_dir = window._normalize_local_path(self.toolbar.path_entry.get_text())
-            uris: List[str] = []
-            files: List[Gio.File] = []
-            for entry in entries:
-                local_path = os.path.join(base_dir, entry.name)
-                if not os.path.exists(local_path):
-                    continue
-                try:
-                    gfile = Gio.File.new_for_path(local_path)
-                except Exception:
-                    continue
-                uri = gfile.get_uri()
-                if not uri:
-                    continue
-                uris.append(uri)
-                files.append(gfile)
-
-            if not uris:
-                return None
-
-            # Create content provider for URI list
-            try:
-                # Use GLib.Bytes for proper data handling
-                payload = ("\r\n".join(uris) + "\r\n").encode("utf-8")
-                data = GLib.Bytes.new(payload)
-                
-                # Create content provider with proper MIME type
-                provider = Gdk.ContentProvider.new_for_bytes("text/uri-list", data)
-                if provider is None:
-                    return None
-                    
-            except Exception as e:
-                print(f"Error creating drag content provider: {e}")
-                return None
-
-            self._current_drag_file = files[0] if files else None
-            return provider
-
-    def _on_drag_source_begin(self, _source: Gtk.DragSource, _drag: Gdk.Drag) -> None:
+    def _on_drag_source_begin(self, source: Gtk.DragSource, _drag: Gdk.Drag) -> None:
         print(f"Drag begin from {'remote' if self._is_remote else 'local'} pane")
-        
+
+        if self._drag_payload is None:
+            try:
+                source.drag_cancel()
+            except (AttributeError, TypeError):
+                try:
+                    source.drag_cancel(Gdk.DragCancelReason.NO_TARGET)
+                except Exception:
+                    pass
+            self._drag_in_progress = False
+            return
+
+        self._drag_in_progress = True
+
         # Check if we have selected entries
         selected = self.get_selected_entries()
         print(f"Selected entries at drag begin: {[e.name for e in selected] if selected else 'None'}")
-        
+
         partner = getattr(self, "_partner_pane", None)
         if partner is not None:
             print(f"Showing drop zone on {'remote' if partner._is_remote else 'local'} partner pane")
@@ -2791,7 +2678,8 @@ class FilePane(Gtk.Box):
 
     def _on_drag_source_end(self, _source: Gtk.DragSource, _drag: Gdk.Drag, _delete: bool) -> None:
         print(f"Drag end from {'remote' if self._is_remote else 'local'} pane, delete={_delete}")
-        self._current_drag_file = None
+        self._drag_in_progress = False
+        self._drag_payload = None
         partner = getattr(self, "_partner_pane", None)
         if partner is not None:
             partner.hide_drop_zone()
@@ -2805,7 +2693,8 @@ class FilePane(Gtk.Box):
 
     def _on_drag_source_cancel(self, _source: Gtk.DragSource, _drag: Gdk.Drag, _reason) -> None:
         print(f"Drag cancel from {'remote' if self._is_remote else 'local'} pane, reason={_reason}")
-        self._current_drag_file = None
+        self._drag_in_progress = False
+        self._drag_payload = None
         partner = getattr(self, "_partner_pane", None)
         if partner is not None:
             partner.hide_drop_zone()
@@ -3315,7 +3204,7 @@ class FilePane(Gtk.Box):
         return [pathlib.Path(os.path.join(base_dir, entry.name)) for entry in entries]
 
     def _on_drag_prepare(self, drag_source: Gtk.DragSource, _x: float, _y: float):
-        print(f"=== OLD DRAG PREPARE CALLED on {'remote' if self._is_remote else 'local'} pane ===")
+        print(f"Drag prepare called on {'remote' if self._is_remote else 'local'} pane")
         
         payload = self._build_drag_payload()
         print(f"Built drag payload: {payload}")
@@ -3400,38 +3289,6 @@ class FilePane(Gtk.Box):
             data = GLib.Bytes.new(text_payload.encode("utf-8"))
             print("Falling back to plain-text local provider")
             return Gdk.ContentProvider.new_for_bytes("text/plain", data)
-
-    def _on_drag_begin(self, drag_source: Gtk.DragSource, _drag: Gdk.Drag) -> None:
-        if self._drag_payload is None:
-            try:
-                drag_source.drag_cancel()
-            except (AttributeError, TypeError):
-                try:
-                    drag_source.drag_cancel(Gdk.DragCancelReason.NO_TARGET)
-                except Exception:
-                    pass
-            return
-
-        self._drag_in_progress = True
-
-        window = self.get_root()
-        if isinstance(window, FileManagerWindow):
-            window._register_drag_begin(self)
-
-
-    def _on_drag_end(
-        self,
-        _drag_source: Gtk.DragSource,
-        _drag: Optional[Gdk.Drag],
-        _delete_data: bool,
-    ) -> None:
-        self._drag_in_progress = False
-        self._drag_payload = None
-
-        window = self.get_root()
-        if isinstance(window, FileManagerWindow):
-            window._register_drag_finish(self)
-
 
     def _show_context_menu(self, widget: Gtk.Widget, x: float, y: float) -> None:
         self._update_selection_for_menu(widget, x, y)
