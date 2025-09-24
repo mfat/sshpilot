@@ -42,6 +42,11 @@ from .terminal import TerminalWidget
 from .terminal_manager import TerminalManager
 from .config import Config
 from .key_manager import KeyManager, SSHKey
+from .connection_display import (
+    get_connection_alias,
+    get_connection_host,
+    format_connection_host_display,
+)
 # Port forwarding UI is now integrated into connection_dialog.py
 from .connection_dialog import ConnectionDialog
 from .preferences import (
@@ -82,18 +87,9 @@ def maybe_set_native_controls(header_bar: Gtk.HeaderBar, value: bool = False) ->
             header_bar.set_use_native_controls(value)
         except AttributeError:
             pass  # extra safety in case of odd bindings
-
-
-def _get_connection_host(connection) -> str:
-    """Return the hostname for a connection object, falling back to legacy host attribute."""
-    host = getattr(connection, 'hostname', None)
-    if host:
-        return str(host)
-    legacy = getattr(connection, 'host', None)
-    if legacy:
-        return str(legacy)
-    nickname = getattr(connection, 'nickname', '')
-    return str(nickname or '')
+_get_connection_host = get_connection_host
+_get_connection_alias = get_connection_alias
+_format_connection_host_display = format_connection_host_display
 
 class MainWindow(Adw.ApplicationWindow, WindowActions):
     """Main application window"""
@@ -107,7 +103,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._internal_file_manager_windows: List[Any] = []
 
         # Initialize managers
-        self.config = Config()
+        app = self.get_application()
+        app_config = getattr(app, 'config', None) if app else None
+        if app_config is not None:
+            self.config = app_config
+        else:
+            self.config = Config()
+            if app is not None:
+                setattr(app, 'config', self.config)
         effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
         key_dir = Path(get_config_dir()) if effective_isolated else None
         self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
@@ -994,6 +997,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 new_data.pop('source', None)
 
             new_connection = Connection(new_data)
+            if self.connection_manager.isolated_mode:
+                new_connection.isolated_config = True
+                new_connection.config_root = self.connection_manager.ssh_config_path
+                new_connection.data['isolated_mode'] = True
+                if self.connection_manager.ssh_config_path:
+                    new_connection.data['config_root'] = self.connection_manager.ssh_config_path
             try:
                 new_connection.auth_method = int(new_data.get('auth_method', 0) or 0)
             except Exception:
@@ -1926,7 +1935,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Help submenu with platform-aware keyboard shortcuts overlay
         help_menu = Gio.Menu()
         help_menu.append('Keyboard Shortcuts', 'app.shortcuts')
-        help_menu.append('Shortcut Editor', 'win.edit-shortcuts')
         help_menu.append('Documentation', 'app.help')
         menu.append_submenu('Help', help_menu)
 
@@ -1967,17 +1975,50 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Get all connections
         connections = self.connection_manager.get_connections()
+        connections_dict = {conn.nickname: conn for conn in connections}
         search_text = ''
         if hasattr(self, 'search_entry') and self.search_entry:
             search_text = self.search_entry.get_text().strip().lower()
 
         if search_text:
-            matches = [c for c in connections if connection_matches(c, search_text)]
+            displayed_connections = set()
+
+            matched_groups: List[Dict[str, Any]] = []
+            try:
+                for group_info in self.group_manager.get_all_groups():
+                    group_name = group_info.get('name', '')
+                    if search_text in group_name.lower():
+                        group_id = group_info.get('id')
+                        if group_id and group_id in getattr(self.group_manager, 'groups', {}):
+                            matched_groups.append(
+                                copy.deepcopy(self.group_manager.groups[group_id])
+                            )
+            except Exception as error:
+                logger.error(f"Error gathering matching groups: {error}")
+                matched_groups = []
+
+            for group_info in matched_groups:
+                group_row = GroupRow(group_info, self.group_manager, connections_dict)
+                group_row.connect('group-toggled', self._on_group_toggled)
+                self.connection_list.append(group_row)
+
+                for conn_nickname in group_info.get('connections', []):
+                    if conn_nickname in connections_dict:
+                        conn = connections_dict[conn_nickname]
+                        self.add_connection_row(conn, indent_level=1)
+                        displayed_connections.add(conn_nickname)
+
+            matches = [
+                c for c in connections
+                if connection_matches(c, search_text)
+                and c.nickname not in displayed_connections
+            ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 # Get group info for this connection
                 group_id = self.group_manager.get_connection_group(conn.nickname)
                 group_info = self.group_manager.groups.get(group_id) if group_id else None
                 self.add_connection_row(conn, group_info=group_info)
+
             self._ungrouped_area_row = None
             # Restore scroll position
             if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
@@ -1986,7 +2027,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     GLib.idle_add(lambda: vadj.set_value(scroll_position))
             return
 
-        connections_dict = {conn.nickname: conn for conn in connections}
 
         # Get group hierarchy
         hierarchy = self.group_manager.get_group_hierarchy()
@@ -2572,8 +2612,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             name_label.set_halign(Gtk.Align.START)
             name_label.set_css_classes(['title-4'])
             
-            host_value = _get_connection_host(connection)
-            host_label = Gtk.Label(label=f"{connection.username}@{host_value}:{connection.port}")
+            host_label_text = _format_connection_host_display(connection, include_port=True)
+            if not host_label_text:
+                alias_display = _get_connection_alias(connection)
+                host_label_text = alias_display or ''
+            host_label = Gtk.Label(label=host_label_text)
             host_label.set_halign(Gtk.Align.START)
             host_label.set_css_classes(['dim-label'])
             
@@ -2888,16 +2931,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             editor.present()
         except Exception as e:
             logger.error(f"Failed to open known hosts editor: {e}")
-
-    def show_shortcut_editor(self):
-        """Launch the shortcut editor window"""
-        logger.info("Show shortcut editor window")
-        try:
-            from .shortcut_editor import ShortcutEditorWindow
-            editor = ShortcutEditorWindow(self)
-            editor.present()
-        except Exception as e:
-            logger.error(f"Failed to open shortcut editor: {e}")
 
     def show_preferences(self):
         """Show preferences dialog"""
@@ -3392,7 +3425,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             connection = self.terminal_to_connection.get(child)
             if connection:
                 # Check if this is a local terminal
-                if _get_connection_host(connection) == 'localhost':
+                host_value = _get_connection_host(connection) or _get_connection_alias(connection)
+                if host_value == 'localhost':
                     # Local terminal - clear selection
                     try:
                         if hasattr(self.connection_list, 'unselect_all'):
@@ -3733,7 +3767,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         - Header bar contains Cancel and Close buttons
         """
         logger.info("Main window: Starting ssh-copy-id terminal window creation")
-        host_value = _get_connection_host(connection)
+        host_value = _get_connection_host(connection) or _get_connection_alias(connection)
         logger.debug(f"Main window: Connection details - host: {host_value}, "
                     f"username: {getattr(connection, 'username', 'unknown')}, "
                     f"port: {getattr(connection, 'port', 22)}")
@@ -4131,7 +4165,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         logger.debug(f"Main window: SSH key object: {type(ssh_key)}")
         logger.debug(f"Main window: Force option: {force}")
         logger.info(f"Key object attributes: private_path={getattr(ssh_key, 'private_path', 'unknown')}, public_path={getattr(ssh_key, 'public_path', 'unknown')}")
-        host_value = _get_connection_host(connection)
+        host_value = _get_connection_host(connection) or _get_connection_alias(connection)
         
         # Verify the public key file exists
         logger.debug(f"Main window: Checking if public key file exists: {ssh_key.public_path}")
@@ -4316,7 +4350,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _show_scp_terminal_window(self, connection, sources, destination, direction):
         try:
-            host_value = _get_connection_host(connection)
+            host_value = _get_connection_host(connection) or _get_connection_alias(connection)
             target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
 
             if direction == 'upload':
@@ -4573,8 +4607,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         known_hosts_path: Optional[str] = None,
     ):
         argv = ['scp', '-v']
-        host_value = _get_connection_host(connection)
-        target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
+        host_value = _get_connection_host(connection) or _get_connection_alias(connection)
+        scp_host = host_value
+        if scp_host and ':' in scp_host and not (scp_host.startswith('[') and scp_host.endswith(']')):
+            scp_host = f"[{scp_host}]"
+        target = f"{connection.username}@{scp_host}" if getattr(connection, 'username', '') else scp_host
         transfer_sources, transfer_destination = assemble_scp_transfer_args(
             target,
             sources,
@@ -4623,29 +4660,31 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             keyfile_ok = False
         # Handle authentication with saved credentials
-        if key_mode == 1 and keyfile_ok:
-            argv += ['-i', keyfile, '-o', 'IdentitiesOnly=yes']
-            
-            # Try to get saved passphrase for the key
-            try:
-                if hasattr(self, 'connection_manager') and self.connection_manager:
-                    saved_passphrase = self.connection_manager.get_key_passphrase(keyfile)
-                    if saved_passphrase:
-                        # Use the secure askpass script for passphrase authentication
-                        # This avoids storing passphrases in plain text temporary files
-                        from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
-                        askpass_env = get_ssh_env_with_forced_askpass()
-                        # Store for later use in the main execution
-                        if not hasattr(self, '_scp_askpass_env'):
-                            self._scp_askpass_env = {}
-                        self._scp_askpass_env.update(askpass_env)
-                        logger.debug(f"SCP: Stored askpass environment for key passphrase: {list(askpass_env.keys())}")
-                        
-                        # Add SSH options to force public key authentication and prevent password fallback
-                        argv += get_scp_ssh_options()
-            except Exception as e:
-                logger.debug(f"Failed to get saved passphrase for SCP: {e}")
-                
+        if key_mode in (1, 2) and keyfile_ok:
+            argv += ['-i', keyfile]
+            if key_mode == 1:
+                argv += ['-o', 'IdentitiesOnly=yes']
+
+                # Try to get saved passphrase for the key
+                try:
+                    if hasattr(self, 'connection_manager') and self.connection_manager:
+                        saved_passphrase = self.connection_manager.get_key_passphrase(keyfile)
+                        if saved_passphrase:
+                            # Use the secure askpass script for passphrase authentication
+                            # This avoids storing passphrases in plain text temporary files
+                            from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
+                            askpass_env = get_ssh_env_with_forced_askpass()
+                            # Store for later use in the main execution
+                            if not hasattr(self, '_scp_askpass_env'):
+                                self._scp_askpass_env = {}
+                            self._scp_askpass_env.update(askpass_env)
+                            logger.debug(f"SCP: Stored askpass environment for key passphrase: {list(askpass_env.keys())}")
+
+                            # Add SSH options to force public key authentication and prevent password fallback
+                            argv += get_scp_ssh_options()
+                except Exception as e:
+                    logger.debug(f"Failed to get saved passphrase for SCP: {e}")
+
         elif prefer_password or combined_auth:
             if prefer_password:
                 argv += ['-o', 'PreferredAuthentications=password']
@@ -4845,7 +4884,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self._pending_close_terminal = terminal
             
             # Show confirmation dialog
-            host_value = _get_connection_host(connection)
+            host_value = _get_connection_host(connection) or _get_connection_alias(connection)
             dialog = Adw.MessageDialog(
                 transient_for=self,
                 modal=True,
@@ -5292,7 +5331,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Open files for the supplied connection using the best integration."""
 
         nickname = getattr(connection, 'nickname', None) or getattr(connection, 'hostname', None) or getattr(connection, 'host', None) or getattr(connection, 'username', 'Remote Host')
-        host_value = _get_connection_host(connection)
+        host_value = _get_connection_host(connection) or _get_connection_alias(connection)
         username = getattr(connection, 'username', '') or ''
         port_value = getattr(connection, 'port', 22)
         effective_port = port_value if port_value and port_value != 22 else None
@@ -6062,7 +6101,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def open_in_system_terminal(self, connection):
         """Open the connection in the system's default terminal"""
         try:
-            host_value = _get_connection_host(connection)
+            host_value = _get_connection_host(connection) or _get_connection_alias(connection)
             port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
             ssh_command = f"ssh{port_text} {connection.username}@{host_value}" if getattr(connection, 'username', '') else f"ssh{port_text} {host_value}"
 
@@ -6208,7 +6247,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def _open_connection_in_external_terminal(self, connection):
         """Open the connection in the user's preferred external terminal"""
         try:
-            host_value = _get_connection_host(connection)
+            host_value = _get_connection_host(connection) or _get_connection_alias(connection)
             port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
             ssh_command = f"ssh{port_text} {connection.username}@{host_value}" if getattr(connection, 'username', '') else f"ssh{port_text} {host_value}"
 
@@ -6643,6 +6682,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             else:
                 # Create new connection
                 connection = Connection(connection_data)
+                if self.connection_manager.isolated_mode:
+                    connection.isolated_config = True
+                    connection.config_root = self.connection_manager.ssh_config_path
+                    connection.data['isolated_mode'] = True
+                    if self.connection_manager.ssh_config_path:
+                        connection.data['config_root'] = self.connection_manager.ssh_config_path
                 # Ensure the in-memory object has the chosen auth_method immediately
                 try:
                     connection.auth_method = int(connection_data.get('auth_method', 0))

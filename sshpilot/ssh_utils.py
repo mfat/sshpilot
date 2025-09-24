@@ -124,14 +124,15 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
         except Exception:
             pass
         
-        # Only add specific key if key_select_mode == 1 (specific key)
-        if key_select_mode == 1 and hasattr(connection, 'keyfile') and connection.keyfile and \
+        # Only add specific key when a dedicated key mode is selected
+        if key_select_mode in (1, 2) and hasattr(connection, 'keyfile') and connection.keyfile and \
            os.path.isfile(connection.keyfile) and \
            not connection.keyfile.startswith('Select key file'):
-            
+
             if not for_ssh_copy_id:
                 options.extend(['-i', connection.keyfile])
-            options.extend(['-o', 'IdentitiesOnly=yes'])
+            if key_select_mode == 1:
+                options.extend(['-o', 'IdentitiesOnly=yes'])
             
             # Add certificate if specified
             if hasattr(connection, 'certificate') and connection.certificate and \

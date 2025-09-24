@@ -291,6 +291,7 @@ class WindowActions:
         except Exception as e:
             logger.error(f"Failed to open shortcut editor: {e}")
 
+
     def on_create_group_action(self, action, param=None):
         """Handle create group action"""
         try:
@@ -848,6 +849,7 @@ def register_window_actions(window):
         window.edit_shortcuts_action = Gio.SimpleAction.new("edit-shortcuts", None)
         window.edit_shortcuts_action.connect("activate", window.on_edit_shortcuts_action)
         window.add_action(window.edit_shortcuts_action)
+
 
     # Group management actions
     window.create_group_action = Gio.SimpleAction.new("create-group", None)

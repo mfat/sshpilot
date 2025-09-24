@@ -2,6 +2,7 @@ import os
 import sys
 import types
 import asyncio
+import subprocess
 
 # Stub external dependencies required by connection_manager
 
@@ -33,7 +34,7 @@ sys.modules['gi.repository.Secret'] = gi_repo.Secret
 # Ensure the project package is importable
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from sshpilot.connection_manager import ConnectionManager
+from sshpilot.connection_manager import Connection, ConnectionManager
 
 
 def test_host_token_used_when_hostname_missing(tmp_path):
@@ -54,7 +55,8 @@ def test_host_token_used_when_hostname_missing(tmp_path):
     assert conn.nickname == 'example.com'
     assert conn.data['hostname'] == ''
     assert conn.data['host'] == 'example.com'
-    assert conn.hostname == 'example.com'
+    assert conn.hostname == ''
+    assert conn.host == 'example.com'
 
 
 def test_multiple_labels_without_hostname_have_no_aliases(tmp_path):
@@ -76,7 +78,8 @@ def test_multiple_labels_without_hostname_have_no_aliases(tmp_path):
     assert sorted(c.nickname for c in manager.connections) == ['alias1', 'alias2', 'primary']
     for c in manager.connections:
         assert c.data['hostname'] == ''
-        assert c.hostname == c.nickname
+        assert c.hostname == ''
+        assert c.host == c.nickname
         assert not hasattr(c, 'aliases')
 
     primary = next(c for c in manager.connections if c.nickname == 'primary')
@@ -110,4 +113,79 @@ def test_alias_labels_with_hostname(tmp_path):
         assert c.hostname == '192.168.1.50'
         assert c.username == 'testuser'
         assert c.aliases == []
+
+
+def test_connect_command_preserves_empty_hostname(tmp_path):
+    """Connecting should use the alias for SSH while keeping hostname empty."""
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+    manager = ConnectionManager.__new__(ConnectionManager)
+    manager.connections = []
+
+    cfg = """Host example.com\n    User testuser\n"""
+    config_path = tmp_path / 'config'
+    config_path.write_text(cfg)
+    manager.ssh_config_path = str(config_path)
+
+    manager.load_ssh_config()
+
+    assert len(manager.connections) == 1
+    conn = manager.connections[0]
+    assert conn.hostname == ''
+    assert conn.host == 'example.com'
+
+    asyncio.get_event_loop().run_until_complete(conn.connect())
+
+    # Hostname remains empty but ssh command targets the alias
+    assert conn.hostname == ''
+    assert any(part.endswith('example.com') for part in conn.ssh_cmd)
+
+
+def test_isolated_config_used_for_effective_resolution(tmp_path, monkeypatch):
+    """Isolated configs should be passed to ssh -G via -F while preserving hostname."""
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+    config_dir = tmp_path / 'isolated'
+    config_dir.mkdir()
+    config_path = config_dir / 'ssh_config'
+    config_path.write_text(
+        "Host alias\n    HostName 10.0.0.5\n    User tester\n"
+    )
+
+    connection = Connection(
+        {
+            'nickname': 'alias',
+            'host': 'alias',
+            'hostname': '10.0.0.5',
+            'username': 'tester',
+            'source': str(config_path),
+        }
+    )
+    connection.isolated_mode = True
+
+    calls = []
+
+    class DummyResult:
+        def __init__(self, stdout: str):
+            self.stdout = stdout
+            self.stderr = ''
+
+    def fake_run(cmd, capture_output, text, check):
+        calls.append(cmd)
+        return DummyResult('hostname 10.0.0.5\nuser tester\n')
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    loop = asyncio.get_event_loop()
+    assert loop.run_until_complete(connection.connect())
+
+    expected_cmd = [
+        'ssh',
+        '-F',
+        os.path.abspath(str(config_path)),
+        '-G',
+        'alias',
+    ]
+    assert calls == [expected_cmd]
+    assert connection.hostname == '10.0.0.5'
 

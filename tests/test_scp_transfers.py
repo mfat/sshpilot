@@ -17,6 +17,17 @@ def test_assemble_scp_transfer_args_upload():
     assert destination == 'alice@example.com:/var/tmp'
 
 
+def test_assemble_scp_transfer_args_upload_ipv6():
+    sources, destination = assemble_scp_transfer_args(
+        'alice@[2001:db8::1]',
+        ['file1.txt'],
+        '/var/tmp',
+        'upload',
+    )
+    assert sources == ['file1.txt']
+    assert destination == 'alice@[2001:db8::1]:/var/tmp'
+
+
 def test_assemble_scp_transfer_args_download_normalizes_host():
     sources, destination = assemble_scp_transfer_args(
         'alice@example.com',
@@ -26,6 +37,19 @@ def test_assemble_scp_transfer_args_download_normalizes_host():
     )
     assert sources[0] == 'alice@example.com:~/logs/app.log'
     assert sources[1] == 'example.com:/opt/data.tar'
+    assert destination == '/tmp/out'
+
+
+def test_assemble_scp_transfer_args_download_ipv6():
+    sources, destination = assemble_scp_transfer_args(
+        'alice@[2001:db8::1]',
+        ['~/logs/app.log', '[2001:db8::1]:/opt/data.tar', 'bob@[2001:db8::2]:/srv/backup'],
+        '/tmp/out',
+        'download',
+    )
+    assert sources[0] == 'alice@[2001:db8::1]:~/logs/app.log'
+    assert sources[1] == '[2001:db8::1]:/opt/data.tar'
+    assert sources[2] == 'bob@[2001:db8::2]:/srv/backup'
     assert destination == '/tmp/out'
 
 

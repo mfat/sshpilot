@@ -10,6 +10,7 @@ from .file_manager_integration import (
     has_internal_file_manager,
     has_native_gvfs_support,
 )
+from .shortcut_editor import ShortcutsPreferencesPage
 
 
 import gi
@@ -336,6 +337,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
         super().__init__()
         self.set_transient_for(parent_window)
         self.set_modal(True)
+        self.parent_window = parent_window
         self.config = config
         
         # Set window properties
@@ -646,7 +648,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             # Window group
             window_group = Adw.PreferencesGroup()
             window_group.set_title("Window")
-            
+
             # Remember window size switch
             remember_size_switch = Adw.SwitchRow()
             remember_size_switch.set_title("Remember Window Size")
@@ -662,6 +664,57 @@ class PreferencesWindow(Adw.PreferencesWindow):
             window_group.add(remember_size_switch)
             window_group.add(auto_focus_switch)
             interface_page.add(window_group)
+
+            # Shortcuts page with inline editor
+            shortcuts_page = Adw.PreferencesPage()
+            shortcuts_page.set_title("Shortcuts")
+            shortcuts_page.set_icon_name("preferences-desktop-keyboard-shortcuts-symbolic")
+
+            shortcuts_intro_group = Adw.PreferencesGroup()
+            shortcuts_intro_group.set_title("Keyboard Shortcuts")
+
+            shortcuts_button_row = Adw.ActionRow()
+            shortcuts_button_row.set_title("Shortcut Overview")
+            shortcuts_button_row.set_subtitle("Open the shortcuts window for a full reference")
+
+            shortcuts_button = Gtk.Button(label="Open")
+            try:
+                shortcuts_button.add_css_class("flat")
+            except Exception:
+                pass
+            shortcuts_button.set_valign(Gtk.Align.CENTER)
+            shortcuts_button.connect('clicked', self.on_view_shortcuts_clicked)
+            shortcuts_button_row.add_suffix(shortcuts_button)
+            shortcuts_button_row.set_activatable_widget(shortcuts_button)
+
+            shortcuts_intro_group.add(shortcuts_button_row)
+            shortcuts_page.add(shortcuts_intro_group)
+
+            try:
+                self.shortcuts_editor_page = ShortcutsPreferencesPage(
+                    parent_widget=self.parent_window,
+                    app=self.parent_window.get_application() if self.parent_window else None,
+                    config=self.config,
+                    owner_window=self.parent_window,
+                )
+
+                groups_added = 0
+                for group in self.shortcuts_editor_page.iter_groups():
+                    shortcuts_page.add(group)
+                    groups_added += 1
+                    logger.debug(f"Added shortcut group: {group.get_title()}")
+                
+                logger.info(f"Shortcut editor successfully added to preferences with {groups_added} groups")
+            except Exception as e:
+                logger.error(f"Failed to create shortcut editor: {e}", exc_info=True)
+                # Add a fallback message to the shortcuts page
+                fallback_group = Adw.PreferencesGroup()
+                fallback_group.set_title("Shortcut Editor")
+                fallback_row = Adw.ActionRow()
+                fallback_row.set_title("Shortcut Editor Unavailable")
+                fallback_row.set_subtitle("The shortcut editor could not be loaded. Please check the logs for details.")
+                fallback_group.add(fallback_row)
+                shortcuts_page.add(fallback_group)
 
             # Advanced SSH settings
             advanced_page = Adw.PreferencesPage()
@@ -857,6 +910,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             # Add pages to the preferences window
             self.add(interface_page)
             self.add(terminal_page)
+            self.add(shortcuts_page)
             self.add(advanced_page)
             
             logger.info("Preferences window initialized")
@@ -866,6 +920,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
     def on_close_request(self, *args):
         """Persist settings when the preferences window closes"""
         try:
+            if hasattr(self, 'shortcuts_editor_page'):
+                self.shortcuts_editor_page.flush_changes()
             self.save_advanced_ssh_settings()
             # Ensure preferences are flushed to disk
             if hasattr(self.config, 'save_json_config'):
@@ -873,6 +929,15 @@ class PreferencesWindow(Adw.PreferencesWindow):
         except Exception:
             pass
         return False  # allow close
+
+    def on_view_shortcuts_clicked(self, _button):
+        """Open the standalone shortcuts window from preferences."""
+
+        if self.parent_window and hasattr(self.parent_window, 'show_shortcuts_window'):
+            try:
+                self.parent_window.show_shortcuts_window()
+            except Exception as exc:
+                logger.error("Failed to open shortcuts window: %s", exc)
     
     def on_font_button_clicked(self, button):
         """Handle font button click"""

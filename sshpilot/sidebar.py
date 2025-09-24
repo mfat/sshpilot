@@ -14,6 +14,11 @@ from gettext import gettext as _
 from gi.repository import Gdk, GLib, GObject, Graphene, Gtk
 
 from .connection_manager import Connection
+from .connection_display import (
+    get_connection_alias as _get_connection_alias,
+    get_connection_host as _get_connection_host,
+    format_connection_host_display as _format_connection_host_display,
+)
 from .groups import GroupManager
 
 logger = logging.getLogger(__name__)
@@ -553,6 +558,7 @@ class ConnectionRow(Gtk.ListBoxRow):
             )
             self.host_label.set_text(f"{self.connection.username}@{host_value}")
 
+
     def apply_hide_hosts(self, hide: bool):
         self._apply_host_label_text()
 
@@ -581,6 +587,7 @@ class ConnectionRow(Gtk.ListBoxRow):
                     self.connection,
                     "hostname",
                     getattr(self.connection, "host", getattr(self.connection, "nickname", "")),
+
                 )
                 self.status_icon.set_tooltip_text(f"Connected to {host_value}")
             else:
@@ -601,6 +608,7 @@ class ConnectionRow(Gtk.ListBoxRow):
             )
             port_text = f":{self.connection.port}" if getattr(self.connection, "port", 22) != 22 else ""
             self.host_label.set_text(f"{self.connection.username}@{host_value}{port_text}")
+
         self._update_forwarding_indicators()
         self.update_status()
 
@@ -670,6 +678,14 @@ def setup_connection_list_dnd(window):
     window._drop_indicator_position = None
     window._ungrouped_area_row = None
     window._ungrouped_area_visible = False
+    window._connection_autoscroll_timeout_id = 0
+    window._connection_autoscroll_velocity = 0.0
+    if not hasattr(window, "_connection_autoscroll_margin"):
+        window._connection_autoscroll_margin = 48.0
+    if not hasattr(window, "_connection_autoscroll_max_velocity"):
+        window._connection_autoscroll_max_velocity = 28.0
+    if not hasattr(window, "_connection_autoscroll_interval_ms"):
+        window._connection_autoscroll_interval_ms = 16
 
 
 def _on_connection_list_motion(window, target, x, y):
@@ -687,6 +703,7 @@ def _on_connection_list_motion(window, target, x, y):
         window._last_motion_time = current_time
 
         _show_ungrouped_area(window)
+        _update_connection_autoscroll(window, y)
 
         row = window.connection_list.get_row_at_y(int(y))
         if not row:
@@ -749,6 +766,8 @@ def _on_connection_list_motion(window, target, x, y):
 def _on_connection_list_leave(window, target):
     _clear_drop_indicator(window)
     _hide_ungrouped_area(window)
+
+    _stop_connection_autoscroll(window)
 
     # Restore selection mode after drag
     if hasattr(window, "_drag_in_progress"):
@@ -871,6 +890,7 @@ def _on_connection_list_drop(window, target, value, x, y):
     try:
         _clear_drop_indicator(window)
         _hide_ungrouped_area(window)
+
 
         # Restore selection mode after drag
         if hasattr(window, "_drag_in_progress"):
@@ -1038,6 +1058,108 @@ def _move_group(window, group_id, target_parent_id):
     except Exception as e:
         logger.error(f"Error moving group: {e}")
         return False
+
+
+def _update_connection_autoscroll(window, y):
+    """Update autoscroll velocity based on pointer position within the viewport."""
+    scrolled = getattr(window, "connection_scrolled", None)
+    if not scrolled:
+        _stop_connection_autoscroll(window)
+        return
+
+    allocation = scrolled.get_allocation()
+    height = allocation.height
+    if height <= 0:
+        _stop_connection_autoscroll(window)
+        return
+
+    margin = max(1.0, min(getattr(window, "_connection_autoscroll_margin", 48.0), height / 2))
+    max_velocity = max(1.0, getattr(window, "_connection_autoscroll_max_velocity", 28.0))
+
+    top_threshold = margin
+    bottom_threshold = height - margin
+
+    velocity = 0.0
+    if y < top_threshold:
+        distance = top_threshold - y
+        velocity = -_calculate_autoscroll_velocity(distance, margin, max_velocity)
+    elif y > bottom_threshold:
+        distance = y - bottom_threshold
+        velocity = _calculate_autoscroll_velocity(distance, margin, max_velocity)
+
+    if velocity:
+        _start_connection_autoscroll(window, velocity)
+    else:
+        _stop_connection_autoscroll(window)
+
+
+def _calculate_autoscroll_velocity(distance, margin, max_velocity):
+    """Scale the autoscroll velocity based on how deep the pointer is in the margin."""
+    ratio = min(1.0, max(0.0, distance) / margin)
+    return max_velocity * ratio
+
+
+def _start_connection_autoscroll(window, velocity):
+    """Ensure an autoscroll timeout is active with the requested velocity."""
+    window._connection_autoscroll_velocity = float(velocity)
+
+    timeout_id = getattr(window, "_connection_autoscroll_timeout_id", 0)
+    if timeout_id:
+        return
+
+    interval = max(10, int(getattr(window, "_connection_autoscroll_interval_ms", 16)))
+
+    def _step():
+        return _connection_autoscroll_step(window)
+
+    window._connection_autoscroll_timeout_id = GLib.timeout_add(interval, _step)
+
+
+def _stop_connection_autoscroll(window):
+    """Cancel any active autoscroll timeout and reset state."""
+    timeout_id = getattr(window, "_connection_autoscroll_timeout_id", 0)
+    if timeout_id:
+        GLib.source_remove(timeout_id)
+    window._connection_autoscroll_timeout_id = 0
+    window._connection_autoscroll_velocity = 0.0
+
+
+def _connection_autoscroll_step(window):
+    scrolled = getattr(window, "connection_scrolled", None)
+    if not scrolled:
+        window._connection_autoscroll_timeout_id = 0
+        window._connection_autoscroll_velocity = 0.0
+        return False
+
+    velocity = getattr(window, "_connection_autoscroll_velocity", 0.0)
+    if not velocity:
+        window._connection_autoscroll_timeout_id = 0
+        return False
+
+    adjustment = scrolled.get_vadjustment()
+    if not adjustment:
+        window._connection_autoscroll_timeout_id = 0
+        window._connection_autoscroll_velocity = 0.0
+        return False
+
+    lower = adjustment.get_lower()
+    upper = adjustment.get_upper() - adjustment.get_page_size()
+    current = adjustment.get_value()
+
+    if upper < lower:
+        upper = lower
+
+    new_value = max(lower, min(upper, current + velocity))
+
+    if new_value != current:
+        adjustment.set_value(new_value)
+
+    # Keep the timeout running as long as velocity remains set
+    if getattr(window, "_connection_autoscroll_velocity", 0.0):
+        return True
+
+    window._connection_autoscroll_timeout_id = 0
+    return False
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from gettext import gettext as _
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 import gi
 gi.require_version('Adw', '1')
@@ -10,6 +10,38 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import Adw, Gdk, Gtk
 
 logger = logging.getLogger(__name__)
+
+
+_GtkBoxBase = getattr(Gtk, 'Box', object)
+
+try:
+    PreferencesPageBase = Adw.PreferencesPage  # type: ignore[attr-defined]
+except AttributeError:
+
+    class PreferencesPageBase(_GtkBoxBase):  # type: ignore[misc]
+        """Fallback widget used in test environments without libadwaita."""
+
+        def __init__(self, *args, **kwargs):
+            try:
+                super().__init__(*args, **kwargs)  # type: ignore[misc]
+            except Exception:
+                pass
+            self._fallback_children: List[object] = []
+
+        def add(self, child):  # type: ignore[override]
+            self._fallback_children.append(child)
+
+        def append(self, child):  # type: ignore[override]
+            self._fallback_children.append(child)
+
+        def add_css_class(self, *_args):  # type: ignore[override]
+            return None
+
+        def set_title(self, *_args):  # type: ignore[override]
+            return None
+
+        def set_icon_name(self, *_args):  # type: ignore[override]
+            return None
 
 
 ACTION_LABELS: Dict[str, str] = {
@@ -102,17 +134,31 @@ class _ShortcutCaptureDialog(Adw.Window):
         return True
 
 
-class ShortcutEditorWindow(Adw.Window):
-    """Window that allows editing of application keyboard shortcuts."""
+class ShortcutsPreferencesPage(PreferencesPageBase):
+    """Preferences page that provides shortcut editing widgets."""
 
-    def __init__(self, parent_window):
-        super().__init__(transient_for=parent_window, modal=True)
-        self.set_title(_('Shortcut Editor'))
-        self.set_default_size(600, 600)
+    def __init__(
+        self,
+        parent_widget: Optional[Gtk.Widget],
+        app=None,
+        config=None,
+        owner_window: Optional[Gtk.Widget] = None,
+    ):
+        super().__init__()
 
-        self._parent_window = parent_window
-        self._app = parent_window.get_application()
-        self._config = getattr(self._app, 'config', None)
+        self._transient_parent = parent_widget
+        self._owner_window = owner_window or parent_widget
+        self._app = app
+        if self._app is None and parent_widget is not None and hasattr(parent_widget, 'get_application'):
+            try:
+                self._app = parent_widget.get_application()
+                logger.debug(f"Got application from parent widget: {self._app}")
+            except Exception as e:
+                logger.debug(f"Failed to get application from parent widget: {e}")
+                self._app = None
+        self._config = config or getattr(self._app, 'config', None)
+        logger.debug(f"Shortcut editor initialized with app: {self._app}, config: {self._config}")
+
         self._rows: Dict[str, Dict[str, Gtk.Widget]] = {}
         self._pending_overrides: Dict[str, List[str]] = {}
         self._default_shortcuts: Dict[str, Optional[List[str]]] = {}
@@ -127,35 +173,40 @@ class ShortcutEditorWindow(Adw.Window):
             except Exception as exc:
                 logger.error('Failed to load shortcut overrides: %s', exc)
 
-        try:
-            defaults = self._app.get_registered_shortcut_defaults()
-            if isinstance(defaults, dict):
-                self._default_shortcuts = defaults
-        except Exception as exc:
-            logger.error('Failed to load default shortcuts: %s', exc)
+        if self._app is not None:
+            try:
+                defaults = self._app.get_registered_shortcut_defaults()
+                if isinstance(defaults, dict):
+                    self._default_shortcuts = defaults
+            except Exception as exc:
+                logger.error('Failed to load default shortcuts: %s', exc)
 
         self._action_names = self._collect_actions()
+        logger.debug(f"Shortcut editor collected {len(self._action_names)} actions: {self._action_names}")
+        self._groups_list: List[Adw.PreferencesGroup] = []
 
-        toolbar_view = Adw.ToolbarView()
-        header = Adw.HeaderBar()
-        header.set_title_widget(Adw.WindowTitle.new(_('Shortcut Editor'), _('Customize keyboard shortcuts')))
-        toolbar_view.add_top_bar(header)
+        if hasattr(self, 'add_css_class'):
+            try:
+                self.add_css_class('shortcut-editor-page')
+            except Exception:
+                pass
 
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_child(self._build_list_box())
-
-        toolbar_view.set_content(scrolled)
-        self.set_content(toolbar_view)
-
-        self.connect('close-request', self._on_close_request)
+        self._build_groups()
+        logger.debug(f"Shortcut editor built {len(self._groups_list)} groups")
 
     def _collect_actions(self) -> List[str]:
         names: List[str] = []
-        try:
-            order = self._app.get_registered_action_order()
-        except Exception:
-            order = []
+        order: Iterable[str] = []
+        if self._app is not None:
+            try:
+                order = self._app.get_registered_action_order()
+                logger.debug(f"Got action order from app: {list(order)}")
+            except Exception as e:
+                logger.debug(f"Failed to get action order from app: {e}")
+                order = []
+
+        logger.debug(f"Default shortcuts: {self._default_shortcuts}")
+        logger.debug(f"Pending overrides: {self._pending_overrides}")
 
         for name in order:
             default = self._default_shortcuts.get(name)
@@ -163,38 +214,43 @@ class ShortcutEditorWindow(Adw.Window):
             if default is None and override is None:
                 continue
             names.append(name)
+            logger.debug(f"Added action to names: {name} (default: {default}, override: {override})")
+        
+        logger.debug(f"Final action names: {names}")
         return names
 
-    def _build_list_box(self) -> Gtk.Widget:
-        # Create preferences page for better organization
-        preferences_page = Adw.PreferencesPage()
-        
+    def _build_groups(self):
         # Group shortcuts by category for better UX
         general_group = Adw.PreferencesGroup()
         general_group.set_title(_('General'))
-        
+
         connection_group = Adw.PreferencesGroup()
         connection_group.set_title(_('Connection Management'))
-        
+
         terminal_group = Adw.PreferencesGroup()
         terminal_group.set_title(_('Terminal'))
-        
+
         tab_group = Adw.PreferencesGroup()
         tab_group.set_title(_('Tab Management'))
 
         # Categorize actions
         general_actions = ['quit', 'preferences', 'help', 'shortcuts']
-        connection_actions = ['new-connection', 'open-new-connection-tab', 'toggle-list', 'search', 
-                            'new-key', 'edit-ssh-config', 'quick-connect']
+        connection_actions = [
+            'new-connection',
+            'open-new-connection-tab',
+            'toggle-list',
+            'search',
+            'new-key',
+            'edit-ssh-config',
+            'quick-connect',
+        ]
         terminal_actions = ['local-terminal', 'broadcast-command']
         tab_actions = ['tab-next', 'tab-prev', 'tab-close', 'tab-overview']
 
         for name in self._action_names:
-            # Create ActionRow with switch for enable/disable
             row = Adw.ActionRow()
             row.set_title(_get_action_label(name))
-            
-            # Get current shortcuts for subtitle
+
             current_shortcuts = self._get_effective_shortcuts(name)
             if current_shortcuts is None or len(current_shortcuts) == 0:
                 subtitle = _('No shortcut assigned')
@@ -202,17 +258,15 @@ class ShortcutEditorWindow(Adw.Window):
             else:
                 subtitle = self._format_accelerators(current_shortcuts)
                 is_enabled = True
-            
+
             row.set_subtitle(subtitle)
 
-            # Add enable/disable switch
             enable_switch = Gtk.Switch()
             enable_switch.set_active(is_enabled)
             enable_switch.set_valign(Gtk.Align.CENTER)
             enable_switch.connect('notify::active', self._on_switch_toggled, name)
             row.add_suffix(enable_switch)
 
-            # Add assign button
             assign_button = Gtk.Button()
             assign_button.set_icon_name('input-keyboard-symbolic')
             assign_button.set_tooltip_text(_('Assign new shortcut'))
@@ -221,7 +275,6 @@ class ShortcutEditorWindow(Adw.Window):
             assign_button.connect('clicked', self._on_assign_clicked, name)
             row.add_suffix(assign_button)
 
-            # Add reset button (only show if different from default)
             default_shortcuts = self._default_shortcuts.get(name)
             if current_shortcuts != default_shortcuts:
                 reset_button = Gtk.Button()
@@ -232,34 +285,54 @@ class ShortcutEditorWindow(Adw.Window):
                 reset_button.connect('clicked', self._on_reset_clicked, name)
                 row.add_suffix(reset_button)
 
-            # Store references for updates
             self._rows[name] = {
                 'row': row,
                 'switch': enable_switch,
-                'assign_button': assign_button
+                'assign_button': assign_button,
             }
 
-            # Add to appropriate group
             if name in general_actions:
                 general_group.add(row)
+                logger.debug(f"Added {name} to General group")
             elif name in connection_actions:
                 connection_group.add(row)
+                logger.debug(f"Added {name} to Connection Management group")
             elif name in terminal_actions:
                 terminal_group.add(row)
+                logger.debug(f"Added {name} to Terminal group")
             elif name in tab_actions:
                 tab_group.add(row)
+                logger.debug(f"Added {name} to Tab Management group")
             else:
-                # Fallback to general group
                 general_group.add(row)
+                logger.debug(f"Added {name} to General group (fallback)")
 
-        # Add groups to preferences page
-        preferences_page.add(general_group)
-        preferences_page.add(connection_group)
-        preferences_page.add(terminal_group)
-        preferences_page.add(tab_group)
+        for group in (general_group, connection_group, terminal_group, tab_group):
+            try:
+                group.add_css_class('boxed-list')
+            except Exception:
+                pass
+            self._groups_list.append(group)
+            # Don't add to self - the groups will be added to the preferences page separately
+            logger.debug(f"Prepared group '{group.get_title()}' with {len(list(group))} children")
 
-        return preferences_page
+    def iter_groups(self) -> Iterable[Adw.PreferencesGroup]:
+        """Yield the preference groups managed by this page."""
 
+        yield from self._groups_list
+
+    def _add_group_widget(self, group: Adw.PreferencesGroup):
+        add_method = getattr(self, 'add', None)
+        if callable(add_method):
+            add_method(group)
+            return
+
+        append_method = getattr(self, 'append', None)
+        if callable(append_method):
+            append_method(group)
+            return
+
+        raise AttributeError('Unable to attach preferences group to shortcuts page')
 
     def _format_accelerators(self, accelerators: Optional[List[str]]) -> str:
         if accelerators is None:
@@ -282,21 +355,21 @@ class ShortcutEditorWindow(Adw.Window):
         return self._default_shortcuts.get(action_name)
 
     def _on_switch_toggled(self, switch: Gtk.Switch, _pspec, action_name: str):
-        """Handle enable/disable switch toggle"""
         if switch.get_active():
-            # Switch turned on - restore default or prompt for new shortcut
             default = self._default_shortcuts.get(action_name)
             if default:
                 self._attempt_set_override(action_name, default)
             else:
-                # No default, prompt for assignment
                 self._on_assign_clicked(None, action_name)
         else:
-            # Switch turned off - disable shortcut
             self._attempt_set_override(action_name, [])
 
     def _on_assign_clicked(self, _button, action_name: str):
-        dialog = _ShortcutCaptureDialog(self, lambda accel: self._attempt_set_override(action_name, [accel]))
+        dialog_parent = self._transient_parent or self.get_root()
+        dialog = _ShortcutCaptureDialog(
+            dialog_parent,
+            lambda accel: self._attempt_set_override(action_name, [accel]),
+        )
         dialog.present()
 
     def _on_reset_clicked(self, _button, action_name: str):
@@ -340,8 +413,7 @@ class ShortcutEditorWindow(Adw.Window):
         if row_data is not None:
             row = row_data['row']
             switch = row_data['switch']
-            
-            # Update subtitle and switch state
+
             current_shortcuts = self._get_effective_shortcuts(action_name)
             if current_shortcuts is None or len(current_shortcuts) == 0:
                 subtitle = _('No shortcut assigned')
@@ -349,10 +421,9 @@ class ShortcutEditorWindow(Adw.Window):
             else:
                 subtitle = self._format_accelerators(current_shortcuts)
                 is_enabled = True
-            
+
             row.set_subtitle(subtitle)
-            
-            # Update switch without triggering the callback
+
             switch.handler_block_by_func(self._on_switch_toggled)
             switch.set_active(is_enabled)
             switch.handler_unblock_by_func(self._on_switch_toggled)
@@ -369,8 +440,9 @@ class ShortcutEditorWindow(Adw.Window):
         return None
 
     def _show_conflict_dialog(self, conflict_action: str):
+        dialog_parent = self._transient_parent or self.get_root()
         dialog = Adw.MessageDialog(
-            transient_for=self,
+            transient_for=dialog_parent,
             modal=True,
             heading=_('Shortcut Already In Use'),
             body=_('The selected shortcut is already assigned to “{action}”.').format(
@@ -382,17 +454,61 @@ class ShortcutEditorWindow(Adw.Window):
         dialog.present()
 
     def _apply_shortcuts(self):
+        if self._app is None:
+            return
+
         try:
             self._app.apply_shortcut_overrides()
-            # Notify parent window that shortcuts have changed
-            if hasattr(self._parent_window, '_shortcuts_window'):
-                self._parent_window._shortcuts_window = None  # Force rebuild
+            owner = self._owner_window
+            if owner is not None and hasattr(owner, '_shortcuts_window'):
+                owner._shortcuts_window = None
         except Exception as exc:
             logger.error('Failed to reapply shortcuts: %s', exc)
 
-    def _on_close_request(self, *_args):
+    def flush_changes(self):
+        """Flush pending overrides to the application."""
+
         self._apply_shortcuts()
+
+
+class ShortcutEditorWindow(Adw.Window):
+    """Window that allows editing of application keyboard shortcuts."""
+
+    def __init__(self, parent_window):
+        super().__init__(transient_for=parent_window, modal=True)
+        self.set_title(_('Shortcut Editor'))
+        self.set_default_size(600, 600)
+
+        self._parent_window = parent_window
+        self._app = parent_window.get_application()
+        self._config = getattr(self._app, 'config', None)
+
+        toolbar_view = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        header.set_title_widget(
+            Adw.WindowTitle.new(_('Shortcut Editor'), _('Customize keyboard shortcuts'))
+        )
+        toolbar_view.add_top_bar(header)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+
+        self._preferences_page = ShortcutsPreferencesPage(
+            parent_widget=self,
+            app=self._app,
+            config=self._config,
+            owner_window=self._parent_window,
+        )
+        scrolled.set_child(self._preferences_page)
+
+        toolbar_view.set_content(scrolled)
+        self.set_content(toolbar_view)
+
+        self.connect('close-request', self._on_close_request)
+
+    def _on_close_request(self, *_args):
+        self._preferences_page.flush_changes()
         return False
 
 
-__all__ = ['ShortcutEditorWindow']
+__all__ = ['ShortcutEditorWindow', 'ShortcutsPreferencesPage']
