@@ -1121,6 +1121,8 @@ class AsyncSFTPManager(GObject.GObject):
         if not target_alias:
             target_alias = self._host
 
+        alias_for_config: Optional[str] = None
+
         if target_alias:
             try:
                 from .ssh_config_utils import get_effective_ssh_config
@@ -1128,6 +1130,8 @@ class AsyncSFTPManager(GObject.GObject):
                 effective_cfg = get_effective_ssh_config(
                     target_alias, config_file=config_override
                 )
+                alias_for_config = target_alias
+
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug(
                     "Failed to resolve effective SSH config for %s: %s",
@@ -1150,14 +1154,50 @@ class AsyncSFTPManager(GObject.GObject):
                     if str(token).strip()
                 ]
 
+        alias_for_substitution = alias_for_config or target_alias or self._host
+
+        def _expand_proxy_tokens(raw_command: str) -> str:
+            if not raw_command:
+                return raw_command
+
+            substitution_host = str(self._host)
+            substitution_port = str(self._port)
+            substitution_user = str(self._username) if self._username else ""
+            substitution_alias = str(alias_for_substitution) if alias_for_substitution else substitution_host
+
+            token_pattern = re.compile(r"%(?:%|h|p|r|n)")
+
+            def _replace(match: re.Match[str]) -> str:
+                token = match.group(0)
+                if token == "%%":
+                    return "%"
+                if token == "%h":
+                    return substitution_host
+                if token == "%p":
+                    return substitution_port
+                if token == "%r":
+                    return substitution_user
+                if token == "%n":
+                    return substitution_alias
+                return token
+
+            return token_pattern.sub(_replace, raw_command)
+
+
         proxy_sock: Optional[Any] = None
         proxy_command = proxy_command.strip()
         if proxy_command:
             try:
                 from paramiko.proxy import ProxyCommand as ParamikoProxyCommand
 
-                proxy_sock = ParamikoProxyCommand(proxy_command)
-                logger.debug("File manager: using ProxyCommand '%s'", proxy_command)
+                expanded_command = _expand_proxy_tokens(proxy_command)
+                proxy_sock = ParamikoProxyCommand(expanded_command)
+                logger.debug(
+                    "File manager: using ProxyCommand '%s' (expanded from '%s')",
+                    expanded_command,
+                    proxy_command,
+                )
+
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("Failed to set up ProxyCommand '%s': %s", proxy_command, exc)
                 proxy_sock = None
@@ -1167,8 +1207,14 @@ class AsyncSFTPManager(GObject.GObject):
             try:
                 from paramiko.proxy import ProxyCommand as ParamikoProxyCommand
 
-                proxy_sock = ParamikoProxyCommand(jump_command)
-                logger.debug("File manager: using ProxyJump via '%s'", jump_command)
+                expanded_jump = _expand_proxy_tokens(jump_command)
+                proxy_sock = ParamikoProxyCommand(expanded_jump)
+                logger.debug(
+                    "File manager: using ProxyJump via '%s' (expanded from '%s')",
+                    expanded_jump,
+                    jump_command,
+                )
+
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("Failed to set up ProxyJump '%s': %s", jump_command, exc)
                 proxy_sock = None

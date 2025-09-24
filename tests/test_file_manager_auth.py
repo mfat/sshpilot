@@ -195,8 +195,68 @@ def test_async_sftp_manager_uses_proxy_command(monkeypatch):
     assert "sock" in kwargs, "ProxyCommand should provide a socket to connect()"
     proxy_instance = kwargs["sock"]
     assert isinstance(proxy_instance, DummyProxyCommand)
-    assert proxy_instance.command == "ssh -W %h:%p bastion"
+    assert proxy_instance.command == "ssh -W example.com:22 bastion"
     assert not proxy_instance.closed
+
+
+def test_async_sftp_manager_expands_proxy_tokens(monkeypatch):
+    module = _load_file_manager_module(monkeypatch)
+
+    connection = types.SimpleNamespace(
+        hostname="example.com",
+        host="example.com",
+        username="alice",
+        nickname="prod",
+        auth_method=0,
+        key_select_mode=0,
+        proxy_command="ssh -W %h:%p %r@%n-%%bastion",
+    )
+
+    manager = module.AsyncSFTPManager(
+        "example.com",
+        "alice",
+        port=2200,
+        connection=connection,
+        connection_manager=None,
+        ssh_config={"auto_add_host_keys": True},
+    )
+
+    manager._connect_impl()
+
+    client = DummyClient.instances[-1]
+    kwargs = client.connect_calls[-1]
+    proxy_instance = kwargs["sock"]
+    assert proxy_instance.command == "ssh -W example.com:2200 alice@prod-%bastion"
+
+
+def test_async_sftp_manager_builds_proxy_jump_command(monkeypatch):
+    module = _load_file_manager_module(monkeypatch)
+
+    connection = types.SimpleNamespace(
+        hostname="example.com",
+        host="example.com",
+        username="alice",
+        auth_method=0,
+        key_select_mode=0,
+        proxy_jump=["Router"],
+    )
+
+    manager = module.AsyncSFTPManager(
+        "example.com",
+        "alice",
+        port=2222,
+        connection=connection,
+        connection_manager=None,
+        ssh_config={"auto_add_host_keys": True},
+    )
+
+    manager._connect_impl()
+
+    client = DummyClient.instances[-1]
+    kwargs = client.connect_calls[-1]
+    proxy_instance = kwargs["sock"]
+    assert proxy_instance.command == "ssh -W example.com:2222 -J Router example.com"
+
 
     manager.close()
     assert proxy_instance.closed, "ProxyCommand should be closed when manager closes"
