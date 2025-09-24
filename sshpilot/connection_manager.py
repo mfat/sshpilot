@@ -166,6 +166,75 @@ class Connection:
             return self.host
         return self.nickname
 
+    def resolve_host_identifier(self) -> str:
+        """Return the preferred host alias used for launching native SSH commands."""
+
+        candidates: List[str] = []
+        data = self.data if isinstance(self.data, dict) else {}
+
+        if isinstance(data, dict):
+            tokens = data.get('__host_tokens')
+            if isinstance(tokens, (list, tuple)):
+                for token in tokens:
+                    if not token:
+                        continue
+                    token = str(token).strip()
+                    if not token or token.startswith('!'):
+                        continue
+                    if any(ch in token for ch in ('*', '?')):
+                        continue
+                    candidates.append(token)
+            for key in ('host', 'nickname', 'hostname'):
+                value = data.get(key)
+                if isinstance(value, str) and value.strip():
+                    candidates.append(value.strip())
+
+        for attr in ('host', 'nickname', 'hostname'):
+            value = getattr(self, attr, '')
+            if isinstance(value, str) and value.strip():
+                candidates.append(value.strip())
+
+        try:
+            effective = self.get_effective_host()
+            if effective:
+                candidates.append(str(effective))
+        except Exception:
+            pass
+
+        for candidate in candidates:
+            if candidate:
+                return candidate
+        return ''
+
+    def _resolve_config_override_path(self) -> Optional[str]:
+        """Return an absolute path to the SSH config override, if any."""
+
+        config_override: Optional[str] = None
+
+        source_path = str(getattr(self, 'source', '') or '')
+        if source_path:
+            expanded_source = os.path.abspath(
+                os.path.expanduser(os.path.expandvars(source_path))
+            )
+            if os.path.exists(expanded_source):
+                config_override = expanded_source
+
+        if not config_override and getattr(self, 'isolated_mode', False):
+            isolated_candidate = os.path.join(get_config_dir(), 'ssh_config')
+            expanded_isolated = os.path.abspath(
+                os.path.expanduser(os.path.expandvars(isolated_candidate))
+            )
+            if os.path.exists(expanded_isolated):
+                config_override = expanded_isolated
+
+        if self.isolated_config and self.config_root:
+            config_override = self.config_root
+
+        if config_override:
+            return os.path.abspath(
+                os.path.expanduser(os.path.expandvars(config_override))
+            )
+        return None
 
     @property
     def source_file(self) -> str:
@@ -200,7 +269,7 @@ class Connection:
             connection_attempts = int(ssh_cfg.get('connection_attempts', 1)) if apply_adv else None
             strict_host = str(ssh_cfg.get('strict_host_key_checking', '')) if apply_adv else ''
             batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
-            compression = bool(ssh_cfg.get('compression', True)) if apply_adv else False
+            compression = bool(ssh_cfg.get('compression', False)) if apply_adv else False
             verbosity = int(ssh_cfg.get('verbosity', 0))
             debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
             auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
@@ -255,25 +324,8 @@ class Connection:
                 or self.host
                 or self.hostname
             )
-            config_override: Optional[str] = None
-            source_path = str(getattr(self, 'source', '') or '')
-            if source_path:
-                expanded_source = os.path.abspath(
-                    os.path.expanduser(os.path.expandvars(source_path))
-                )
-                if os.path.exists(expanded_source):
-                    config_override = expanded_source
-            if not config_override and getattr(self, 'isolated_mode', False):
-                isolated_candidate = os.path.join(get_config_dir(), 'ssh_config')
-                expanded_isolated = os.path.abspath(
-                    os.path.expanduser(os.path.expandvars(isolated_candidate))
-                )
-                if os.path.exists(expanded_isolated):
-                    config_override = expanded_isolated
-
+            config_override = self._resolve_config_override_path()
             if target_alias:
-                if self.isolated_config and self.config_root:
-                    config_override = self.config_root
                 if config_override:
                     effective_cfg = get_effective_ssh_config(
                         target_alias, config_file=config_override
@@ -340,7 +392,12 @@ class Connection:
                         if self.keyfile and os.path.exists(self.keyfile):
                             identity_files.append(self.keyfile)
                     for key_path in identity_files:
-                        ssh_cmd.extend(['-i', key_path])
+                        # Only add identity files that actually exist
+                        expanded_path = os.path.expanduser(key_path)
+                        if os.path.exists(expanded_path):
+                            ssh_cmd.extend(['-i', key_path])
+                        else:
+                            logger.debug(f"Skipping non-existent identity file: {key_path}")
                         if key_mode == 1:
                             ssh_cmd.extend(['-o', 'IdentitiesOnly=yes'])
                         if self.key_passphrase:
@@ -391,7 +448,42 @@ class Connection:
             logger.error(f"Failed to connect to {self}: {e}")
             self.is_connected = False
             return False
-            
+
+    async def native_connect(self):
+        """Prepare a minimal SSH command deferring to the user's SSH configuration."""
+        try:
+            quick_cmd = getattr(self, 'quick_connect_command', '')
+            if isinstance(quick_cmd, str) and quick_cmd.strip():
+                try:
+                    ssh_cmd = shlex.split(quick_cmd)
+                except ValueError:
+                    ssh_cmd = quick_cmd.split()
+                self.ssh_cmd = ssh_cmd
+                self.is_connected = True
+                return True
+
+            host_label = self.resolve_host_identifier()
+            if not host_label:
+                logger.error(f"Unable to determine host identifier for {self}")
+                self.is_connected = False
+                return False
+
+            ssh_cmd = ['ssh']
+
+            config_override = self._resolve_config_override_path()
+            if config_override:
+                ssh_cmd.extend(['-F', config_override])
+
+            ssh_cmd.append(host_label)
+
+            self.ssh_cmd = ssh_cmd
+            self.is_connected = True
+            return True
+        except Exception as exc:
+            logger.error(f"Failed to prepare native SSH command for {self}: {exc}")
+            self.is_connected = False
+            return False
+
     async def disconnect(self):
         """Close the SSH connection and clean up"""
         if not self.is_connected:
@@ -838,6 +930,10 @@ class ConnectionManager(GObject.Object):
         self._active_connection_keys: Dict[int, str] = {}
         self.ssh_config_path = ''
         self.known_hosts_path = ''
+        try:
+            self.native_connect_enabled = bool(self.config.get_setting('ssh.native_connect', False))
+        except Exception:
+            self.native_connect_enabled = False
 
         # Initialize SSH config paths
         self.set_isolated_mode(isolated_mode)
@@ -2141,7 +2237,11 @@ class ConnectionManager(GObject.Object):
             if hasattr(self, 'isolated_mode'):
                 connection.isolated_mode = bool(getattr(self, 'isolated_mode', False))
             # Connect to the SSH server
-            connected = await connection.connect()
+            use_native = bool(getattr(self, 'native_connect_enabled', False))
+            if use_native and hasattr(connection, 'native_connect'):
+                connected = await connection.native_connect()
+            else:
+                connected = await connection.connect()
             if not connected:
                 raise Exception("Failed to establish SSH connection")
             

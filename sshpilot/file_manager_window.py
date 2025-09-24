@@ -29,6 +29,7 @@ import shutil
 import stat
 import threading
 import time
+import re
 from datetime import datetime
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
@@ -345,75 +346,6 @@ def _pretty_path_for_display(path: str) -> str:
         return path
 
 
-_DROP_ZONE_CSS_PROVIDER: Optional[Gtk.CssProvider] = None
-
-
-def _ensure_drop_zone_css() -> None:
-    """Ensure the CSS used to highlight drop zones is loaded once."""
-
-    global _DROP_ZONE_CSS_PROVIDER
-
-    if _DROP_ZONE_CSS_PROVIDER is not None:
-        return
-
-    css_provider_cls = getattr(Gtk, "CssProvider", None)
-    if css_provider_cls is None:
-        _DROP_ZONE_CSS_PROVIDER = None
-        return
-
-    provider = css_provider_cls()
-    css_lines = [
-        b".file-pane-drop-zone {",
-        b"    border: 2px dashed alpha(@accent_color, 0.5);",
-        b"    border-radius: 24px;",
-        b"    background-color: alpha(@accent_color, 0.15);",
-        b"    padding: 12px 20px;",
-        b"    box-shadow: 0 4px 12px alpha(@shade_color, 0.15);",
-        b"    backdrop-filter: blur(8px);",
-        b"    transition: all 150ms ease;",
-        b"}",
-        b"",
-        b".file-pane-drop-zone.visible {",
-        b"    border-style: solid;",
-        b"    border-color: @accent_color;",
-        b"    background-color: alpha(@accent_color, 0.25);",
-        b"    box-shadow: 0 6px 16px alpha(@shade_color, 0.25);",
-        b"    transform: translateY(-2px);",
-        b"}",
-        b"",
-        b".file-pane-drop-zone .drop-zone-title {",
-        b"    font-weight: 600;",
-        b"    color: @accent_color;",
-        b"}",
-    ]
-    css_data = b"\n".join(css_lines)
-
-    try:
-        provider.load_from_data(css_data)
-    except Exception:
-        _DROP_ZONE_CSS_PROVIDER = provider
-        return
-
-    display = None
-    if hasattr(Gdk, "Display"):
-        get_default = getattr(Gdk.Display, "get_default", None)
-        if callable(get_default):
-            try:
-                display = get_default()
-            except Exception:
-                display = None
-
-    style_context = getattr(Gtk, "StyleContext", None)
-    add_provider = getattr(style_context, "add_provider_for_display", None) if style_context else None
-    priority = getattr(Gtk, "STYLE_PROVIDER_PRIORITY_APPLICATION", 600)
-
-    if display is not None and callable(add_provider):
-        try:
-            add_provider(display, provider, priority)
-        except Exception:
-            pass
-
-    _DROP_ZONE_CSS_PROVIDER = provider
 
 
 class TransferCancelledException(Exception):
@@ -425,15 +357,20 @@ class TransferCancelledException(Exception):
 # Utility data structures
 
 
-class SFTPProgressDialog(Adw.Window):
-    """GNOME HIG-compliant SFTP file transfer progress dialog"""
+class SFTPProgressDialog(Adw.MessageDialog):
+    """Modern GNOME HIG-compliant SFTP file transfer progress dialog"""
     
     def __init__(self, parent=None, operation_type="transfer"):
-        super().__init__()
+        # Set appropriate title based on operation
+        title = "Downloading Files" if operation_type == "download" else "Uploading Files"
         
-        # Window properties
-        self.set_title("File Transfer")
-        self.set_default_size(480, 320)
+        super().__init__(
+            title=title,
+            body="Preparing transfer...",
+            default_response="cancel"
+        )
+        
+        # Dialog properties
         self.set_modal(True)
         if parent:
             self.set_transient_for(parent)
@@ -452,62 +389,30 @@ class SFTPProgressDialog(Adw.Window):
         self._build_ui()
         
     def _build_ui(self):
-        """Build the HIG-compliant UI"""
+        """Build the modern GNOME HIG-compliant UI"""
         
-        # Main container
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.set_content(main_box)
+        # Add response buttons
+        self.add_response("cancel", "Cancel")
+        self.set_default_response("cancel")
+        self.set_close_response("cancel")
         
-        # Header bar
-        header = Adw.HeaderBar()
-        header.set_show_end_title_buttons(True)
-        main_box.append(header)
+        # Connect response signal
+        self.connect("response", self._on_response)
         
-        # Content area with proper spacing
-        content_box = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL,
-            spacing=24,
-            margin_top=24,
-            margin_bottom=24,
-            margin_start=24,
-            margin_end=24
-        )
-        main_box.append(content_box)
-        
-        # Status icon and title
-        status_box = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL,
-            spacing=12,
-            halign=Gtk.Align.CENTER
-        )
-        content_box.append(status_box)
-        
-        # Transfer icon
-        icon_name = "folder-download-symbolic" if self.operation_type == "download" else "folder-upload-symbolic"
-        self.status_icon = Gtk.Image.new_from_icon_name(icon_name)
-        self.status_icon.set_pixel_size(48)
-        self.status_icon.add_css_class("accent")
-        status_box.append(self.status_icon)
-        
-        # Main status label
-        self.status_label = Gtk.Label()
-        self.status_label.set_markup("<span size='large' weight='bold'>Preparing transfer…</span>")
-        self.status_label.set_justify(Gtk.Justification.CENTER)
-        status_box.append(self.status_label)
-        
-        # Current file label
-        self.file_label = Gtk.Label()
-        self.file_label.set_text("Scanning files...")
-        self.file_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.file_label.add_css_class("dim-label")
-        status_box.append(self.file_label)
-        
-        # Progress section
+        # Create progress content area
         progress_box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
-            spacing=12
+            spacing=12,
+            margin_top=12,
+            margin_bottom=12
         )
-        content_box.append(progress_box)
+        
+        # Current file label (primary info)
+        self.file_label = Gtk.Label()
+        self.file_label.set_text("Preparing transfer...")
+        self.file_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.file_label.set_justify(Gtk.Justification.CENTER)
+        progress_box.append(self.file_label)
         
         # Main progress bar
         self.progress_bar = Gtk.ProgressBar()
@@ -550,30 +455,8 @@ class SFTPProgressDialog(Adw.Window):
         self.counter_label.add_css_class("caption")
         details_box.append(self.counter_label)
         
-        # Button box
-        button_box = Gtk.Box(
-            orientation=Gtk.Orientation.HORIZONTAL,
-            spacing=12,
-            halign=Gtk.Align.END
-        )
-        content_box.append(button_box)
-        
-        # Cancel button
-        self.cancel_button = Gtk.Button()
-        self.cancel_button.set_label("Cancel")
-        self.cancel_button.connect("clicked", self._on_cancel_clicked)
-        button_box.append(self.cancel_button)
-        
-        # Done button (hidden initially)
-        self.done_button = Gtk.Button()
-        self.done_button.set_label("Done")
-        self.done_button.set_visible(False)
-        self.done_button.add_css_class("suggested-action")
-        self.done_button.connect("clicked", lambda w: self.close())
-        button_box.append(self.done_button)
-        
-        # Set initial focus to cancel button
-        self.cancel_button.grab_focus()
+        # Set the progress content as extra child
+        self.set_extra_child(progress_box)
     
     def set_operation_details(self, total_files, filename=None):
         """Set the operation details"""
@@ -585,6 +468,16 @@ class SFTPProgressDialog(Adw.Window):
             self.file_label.set_text(filename)
         
         self.counter_label.set_text(f"0 of {total_files} files")
+    
+    def _on_response(self, dialog, response):
+        """Handle dialog response"""
+        if response == "cancel":
+            self.is_cancelled = True
+            if self._current_future and hasattr(self._current_future, 'cancel'):
+                self._current_future.cancel()
+            self.close()
+        elif response == "done":
+            self.close()
     
     def update_progress(self, fraction, message=None, current_file=None):
         """Update progress bar and status"""
@@ -598,9 +491,9 @@ class SFTPProgressDialog(Adw.Window):
         self.progress_bar.set_fraction(fraction)
         self.progress_bar.set_text(f"{percentage}%")
         
-        # Update status message
+        # Update dialog body with status message
         if message:
-            self.status_label.set_markup(f"<span size='large' weight='bold'>{message}</span>")
+            self.set_body(message)
         
         # Update current file
         if current_file:
@@ -693,61 +586,26 @@ class SFTPProgressDialog(Adw.Window):
     def _show_completion_ui(self, success, error_message):
         """Update UI to show completion state"""
         if success:
-            self.status_icon.set_from_icon_name("emblem-ok-symbolic")
-            self.status_icon.remove_css_class("accent")
-            self.status_icon.add_css_class("success")
-            
-            self.status_label.set_markup("<span size='large' weight='bold'>Transfer complete</span>")
+            self.set_title("Transfer Complete")
+            self.set_body("Transfer completed successfully")
             self.file_label.set_text(f"Successfully transferred {self.files_completed} files")
-            
             self.progress_bar.set_fraction(1.0)
             self.progress_bar.set_text("100%")
         else:
-            self.status_icon.set_from_icon_name("dialog-error-symbolic")
-            self.status_icon.remove_css_class("accent")
-            self.status_icon.add_css_class("error")
-            
-            self.status_label.set_markup("<span size='large' weight='bold'>Transfer failed</span>")
+            self.set_title("Transfer Failed")
+            self.set_body("Transfer failed")
             if error_message:
                 self.file_label.set_text(f"Error: {error_message}")
             else:
                 self.file_label.set_text("An error occurred during transfer")
         
-        # Switch buttons
-        self.cancel_button.set_visible(False)
-        self.done_button.set_visible(True)
-        self.done_button.grab_focus()
+        # Switch to Done button
+        self.remove_response("cancel")
+        self.add_response("done", "Done")
+        self.set_default_response("done")
+        self.set_close_response("done")
         
         return False
-    
-    def _on_cancel_clicked(self, button):
-        """Handle cancel button click"""
-        self.is_cancelled = True
-        
-        # Cancel the future operation
-        if self._current_future and not self._current_future.done():
-            try:
-                self._current_future.cancel()
-                print("DEBUG: Future cancelled successfully")
-            except Exception as e:
-                print(f"DEBUG: Error cancelling future: {e}")
-        
-        # Update UI to show cancellation
-        self.status_label.set_markup("<span size='large' weight='bold'>Cancelled</span>")
-        self.file_label.set_text("Transfer was cancelled by user")
-        
-        # Change icon to indicate cancellation
-        self.status_icon.set_from_icon_name("process-stop-symbolic")
-        self.status_icon.remove_css_class("accent")
-        self.status_icon.add_css_class("warning")
-        
-        # Switch buttons immediately
-        button.set_visible(False)
-        self.done_button.set_label("Close")
-        self.done_button.set_visible(True)
-        self.done_button.grab_focus()
-        
-        print("DEBUG: Cancel operation completed")
 
 
 @dataclasses.dataclass
@@ -832,6 +690,9 @@ class AsyncSFTPManager(GObject.GObject):
         self._connection = connection
         self._connection_manager = connection_manager
         self._ssh_config = dict(ssh_config) if ssh_config else None
+        self._proxy_sock: Optional[Any] = None
+        self._jump_clients: List[paramiko.SSHClient] = []
+
     
     def _format_size(self, size_bytes):
         """Format file size for display"""
@@ -861,6 +722,21 @@ class AsyncSFTPManager(GObject.GObject):
             if self._client is not None:
                 self._client.close()
                 self._client = None
+            if self._jump_clients:
+                for jump_client in self._jump_clients:
+                    try:
+                        jump_client.close()
+                    except Exception as exc:  # pragma: no cover - defensive cleanup
+                        logger.debug("Error closing jump client: %s", exc)
+                self._jump_clients.clear()
+
+            if self._proxy_sock is not None:
+                try:
+                    self._proxy_sock.close()
+                except Exception as exc:  # pragma: no cover - defensive cleanup
+                    logger.debug("Error closing proxy socket: %s", exc)
+                finally:
+                    self._proxy_sock = None
         self._executor.shutdown(wait=False)
 
     # -- helpers --------------------------------------------------------
@@ -907,6 +783,191 @@ class AsyncSFTPManager(GObject.GObject):
             logger.debug("Failed to create host key policy for '%s': %s", normalized, exc)
 
         return paramiko.AutoAddPolicy() if auto_add else paramiko.RejectPolicy()
+
+    @staticmethod
+    def _parse_proxy_jump_entry(entry: str) -> Tuple[str, Optional[str], Optional[int]]:
+        """Parse a ``ProxyJump`` token into host, optional user, and port."""
+
+        token = entry.strip()
+        if not token:
+            return entry, None, None
+
+        username: Optional[str] = None
+        host_segment = token
+        if "@" in token:
+            username, host_segment = token.split("@", 1)
+
+        port: Optional[int] = None
+        hostname = host_segment
+
+        if host_segment.startswith("[") and "]" in host_segment:
+            bracket_end = host_segment.index("]")
+            hostname = host_segment[1:bracket_end]
+            remainder = host_segment[bracket_end + 1 :]
+            if remainder.startswith(":"):
+                try:
+                    port = int(remainder[1:])
+                except ValueError:
+                    port = None
+        elif ":" in host_segment:
+            host_part, port_str = host_segment.rsplit(":", 1)
+            hostname = host_part or host_segment
+            try:
+                port = int(port_str)
+            except ValueError:
+                port = None
+
+        return hostname or entry, username, port
+
+    def _create_proxy_jump_socket(
+        self,
+        jump_entries: List[str],
+        *,
+        config_override: Optional[str],
+        policy: paramiko.MissingHostKeyPolicy,
+        known_hosts_path: Optional[str],
+        allow_agent: bool,
+        look_for_keys: bool,
+        key_filename: Optional[str],
+        passphrase: Optional[str],
+        resolved_host: str,
+        resolved_port: int,
+        base_username: str,
+    ) -> Tuple[Any, List[paramiko.SSHClient]]:
+        """Create a socket by chaining SSH connections through jump hosts."""
+
+        from .ssh_config_utils import get_effective_ssh_config
+
+        def _coerce_port(value: Any, default: int) -> int:
+            try:
+                return int(str(value))
+            except (TypeError, ValueError):
+                return default
+
+        resolved_hops: List[Dict[str, Any]] = []
+        for raw_entry in jump_entries:
+            host_token, explicit_user, explicit_port = self._parse_proxy_jump_entry(raw_entry)
+            try:
+                hop_cfg = get_effective_ssh_config(host_token, config_file=config_override)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(
+                    "Failed to resolve effective SSH config for ProxyJump host %s: %s",
+                    host_token,
+                    exc,
+                )
+                hop_cfg = {}
+
+            hostname = str(hop_cfg.get("hostname", host_token) or host_token)
+            username = str(explicit_user or hop_cfg.get("user", base_username) or base_username)
+            port = explicit_port
+            if port is None:
+                port = _coerce_port(hop_cfg.get("port", 22), 22)
+            resolved_hops.append(
+                {
+                    "raw": raw_entry,
+                    "alias": host_token,
+                    "hostname": hostname,
+                    "username": username,
+                    "port": port,
+                    "config": hop_cfg,
+                }
+            )
+
+        jump_clients: List[paramiko.SSHClient] = []
+        upstream_sock: Optional[Any] = None
+
+        for index, hop in enumerate(resolved_hops):
+            jump_client = paramiko.SSHClient()
+            try:
+                jump_client.load_system_host_keys()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Unable to load system host keys for jump host: %s", exc)
+            jump_client.set_missing_host_key_policy(policy)
+
+            if known_hosts_path:
+                try:
+                    if os.path.exists(known_hosts_path):
+                        jump_client.load_host_keys(known_hosts_path)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug(
+                        "Failed to load known hosts for ProxyJump host %s: %s",
+                        hop["alias"],
+                        exc,
+                    )
+
+            hop_kwargs: Dict[str, Any] = {
+                "hostname": hop["hostname"],
+                "username": hop["username"],
+                "port": hop["port"],
+                "allow_agent": allow_agent,
+                "look_for_keys": look_for_keys,
+                "timeout": 15,
+            }
+
+            if upstream_sock is not None:
+                hop_kwargs["sock"] = upstream_sock
+
+            if key_filename:
+                hop_kwargs["key_filename"] = key_filename
+            if passphrase:
+                hop_kwargs["passphrase"] = passphrase
+
+            hop_password: Optional[str] = None
+            if self._connection_manager is not None and hasattr(
+                self._connection_manager, "get_password"
+            ):
+                try:
+                    hop_password = self._connection_manager.get_password(
+                        hop["alias"], hop["username"]
+                    )
+                    if not hop_password:
+                        hop_password = self._connection_manager.get_password(
+                            hop["hostname"], hop["username"]
+                        )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug(
+                        "Password lookup for ProxyJump host %s failed: %s",
+                        hop["alias"],
+                        exc,
+                    )
+
+            if hop_password:
+                hop_kwargs["password"] = hop_password
+
+            jump_client.connect(**hop_kwargs)
+            jump_clients.append(jump_client)
+
+            transport = jump_client.get_transport()
+            if transport is None:
+                raise RuntimeError(
+                    f"ProxyJump host {hop['alias']} did not provide a transport"
+                )
+
+            if index + 1 < len(resolved_hops):
+                next_hop = resolved_hops[index + 1]
+                dest = (next_hop["hostname"], next_hop["port"])
+            else:
+                dest = (resolved_host, resolved_port)
+
+            upstream_sock = transport.open_channel(
+                "direct-tcpip",
+                dest,
+                ("127.0.0.1", 0),
+            )
+
+            logger.debug(
+                "ProxyJump hop %s connected to %s:%s, chaining towards %s:%s",
+                hop["alias"],
+                hop["hostname"],
+                hop["port"],
+                dest[0],
+                dest[1],
+            )
+
+        if upstream_sock is None:
+            raise RuntimeError("ProxyJump chain failed to produce a socket")
+
+        return upstream_sock, jump_clients
 
     def _connect_impl(self) -> None:
         client = paramiko.SSHClient()
@@ -1064,10 +1125,181 @@ class AsyncSFTPManager(GObject.GObject):
                 allow_agent = False
                 look_for_keys = False
 
+        effective_cfg: Dict[str, Any] = {}
+        proxy_command: str = ""
+        proxy_jump: List[str] = []
+
+        target_alias: Optional[str] = None
+        config_override: Optional[str] = None
+
+        if connection is not None:
+            try:
+                proxy_command = str(getattr(connection, "proxy_command", "") or "")
+            except Exception:
+                proxy_command = ""
+            try:
+                raw_jump = getattr(connection, "proxy_jump", []) or []
+            except Exception:
+                raw_jump = []
+            if isinstance(raw_jump, str):
+                proxy_jump = [token.strip() for token in raw_jump.split(",") if token.strip()]
+            elif isinstance(raw_jump, (list, tuple, set)):
+                proxy_jump = [str(token).strip() for token in raw_jump if str(token).strip()]
+
+            source_path = str(getattr(connection, "source", "") or "")
+            if source_path:
+                expanded_source = os.path.abspath(
+                    os.path.expanduser(os.path.expandvars(source_path))
+                )
+                if os.path.exists(expanded_source):
+                    config_override = expanded_source
+
+            if not config_override and getattr(connection, "isolated_config", False):
+                root_candidate = str(getattr(connection, "config_root", "") or "")
+                if root_candidate:
+                    expanded_root = os.path.abspath(
+                        os.path.expanduser(os.path.expandvars(root_candidate))
+                    )
+                    if os.path.exists(expanded_root):
+                        config_override = expanded_root
+
+            target_alias = (
+                getattr(connection, "nickname", "")
+                or getattr(connection, "hostname", "")
+                or getattr(connection, "host", "")
+                or None
+            )
+
+        if not target_alias:
+            target_alias = self._host
+
+        alias_for_config: Optional[str] = None
+
+        if target_alias:
+            try:
+                from .ssh_config_utils import get_effective_ssh_config
+
+                effective_cfg = get_effective_ssh_config(
+                    target_alias, config_file=config_override
+                )
+                alias_for_config = target_alias
+
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(
+                    "Failed to resolve effective SSH config for %s: %s",
+                    target_alias,
+                    exc,
+                )
+                effective_cfg = {}
+
+        if not proxy_command:
+            proxy_command = str(effective_cfg.get("proxycommand", "") or "")
+
+        if not proxy_jump:
+            raw_cfg_jump = effective_cfg.get("proxyjump", [])
+            if isinstance(raw_cfg_jump, str):
+                proxy_jump = [token.strip() for token in re.split(r"[\s,]+", raw_cfg_jump) if token.strip()]
+            elif isinstance(raw_cfg_jump, (list, tuple, set)):
+                proxy_jump = [
+                    str(token).strip()
+                    for token in raw_cfg_jump
+                    if str(token).strip()
+                ]
+
+        alias_for_substitution = alias_for_config or target_alias or self._host
+
+        def _coerce_port(value: Any, default: int) -> int:
+            try:
+                return int(str(value))
+            except (TypeError, ValueError):
+                return default
+
+        resolved_host = str(effective_cfg.get("hostname", self._host) or self._host)
+        resolved_port = _coerce_port(effective_cfg.get("port", self._port), self._port)
+        resolved_username = str(effective_cfg.get("user", self._username) or self._username)
+
+
+        def _expand_proxy_tokens(raw_command: str) -> str:
+            if not raw_command:
+                return raw_command
+
+            substitution_host = str(resolved_host)
+            substitution_port = str(resolved_port)
+            substitution_user = str(resolved_username) if resolved_username else ""
+
+            substitution_alias = str(alias_for_substitution) if alias_for_substitution else substitution_host
+
+            token_pattern = re.compile(r"%(?:%|h|p|r|n)")
+
+            def _replace(match: re.Match[str]) -> str:
+                token = match.group(0)
+                if token == "%%":
+                    return "%"
+                if token == "%h":
+                    return substitution_host
+                if token == "%p":
+                    return substitution_port
+                if token == "%r":
+                    return substitution_user
+                if token == "%n":
+                    return substitution_alias
+                return token
+
+            return token_pattern.sub(_replace, raw_command)
+
+
+        proxy_sock: Optional[Any] = None
+        jump_clients: List[paramiko.SSHClient] = []
+        proxy_command = proxy_command.strip()
+        if proxy_command:
+            try:
+                from paramiko.proxy import ProxyCommand as ParamikoProxyCommand
+
+                expanded_command = _expand_proxy_tokens(proxy_command)
+                proxy_sock = ParamikoProxyCommand(expanded_command)
+                logger.debug(
+                    "File manager: using ProxyCommand '%s' (expanded from '%s')",
+                    expanded_command,
+                    proxy_command,
+                )
+
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Failed to set up ProxyCommand '%s': %s", proxy_command, exc)
+                proxy_sock = None
+        elif proxy_jump:
+            try:
+                proxy_sock, jump_clients = self._create_proxy_jump_socket(
+                    proxy_jump,
+                    config_override=config_override,
+                    policy=policy,
+                    known_hosts_path=known_hosts_path,
+                    allow_agent=allow_agent,
+                    look_for_keys=look_for_keys,
+                    key_filename=key_filename,
+                    passphrase=passphrase,
+                    resolved_host=resolved_host,
+                    resolved_port=resolved_port,
+                    base_username=resolved_username,
+                )
+                logger.debug(
+                    "File manager: using Paramiko ProxyJump chain via %s",
+                    ", ".join(proxy_jump),
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Failed to set up ProxyJump chain %s: %s", proxy_jump, exc)
+                proxy_sock = None
+                jump_clients = []
+        else:
+            jump_clients = []
+
+        if not proxy_jump:
+            jump_clients = []
+
+
         connect_kwargs: Dict[str, Any] = {
-            "hostname": self._host,
-            "username": self._username,
-            "port": self._port,
+            "hostname": resolved_host,
+            "username": resolved_username,
+            "port": resolved_port,
             "allow_agent": allow_agent,
             "look_for_keys": look_for_keys,
             "timeout": 15,
@@ -1082,12 +1314,34 @@ class AsyncSFTPManager(GObject.GObject):
         if passphrase:
             connect_kwargs["passphrase"] = passphrase
 
-        client.connect(**connect_kwargs)
-        sftp = client.open_sftp()
+        if proxy_sock is not None:
+            connect_kwargs["sock"] = proxy_sock
+
+        try:
+            client.connect(**connect_kwargs)
+            sftp = client.open_sftp()
+        except Exception:
+            if proxy_sock is not None:
+                try:
+                    proxy_sock.close()
+                except Exception:  # pragma: no cover - defensive cleanup
+                    pass
+            if proxy_jump:
+                for jump_client in jump_clients:
+                    try:
+                        jump_client.close()
+                    except Exception:  # pragma: no cover - defensive cleanup
+                        pass
+
+            raise
+
         with self._lock:
             self._client = client
             self._sftp = sftp
             self._password = password
+            self._proxy_sock = proxy_sock
+            self._jump_clients = jump_clients
+
 
     # -- public operations ----------------------------------------------
 
@@ -1904,18 +2158,13 @@ class FilePane(Gtk.Box):
         list_factory = Gtk.SignalListItemFactory()
         list_factory.connect("setup", self._on_list_setup)
         list_factory.connect("bind", self._on_list_bind)
+        list_factory.connect("unbind", self._on_list_unbind)
         list_view = Gtk.ListView(model=self._selection_model, factory=list_factory)
         list_view.add_css_class("rich-list")
         list_view.set_can_focus(True)  # Enable keyboard focus for typeahead
         # Navigate on row activation (double click / Enter)
         self._list_view = list_view
         list_view.connect("activate", self._on_list_activate)
-        self._list_drag_source = Gtk.DragSource()
-        self._list_drag_source.set_actions(Gdk.DragAction.COPY)
-        self._list_drag_source.connect("prepare", self._on_drag_prepare)
-        self._list_drag_source.connect("drag-begin", self._on_drag_begin)
-        self._list_drag_source.connect("drag-end", self._on_drag_end)
-        list_view.add_controller(self._list_drag_source)
 
         # Wrap list view in a scrolled window for proper scrolling
         list_scrolled = Gtk.ScrolledWindow()
@@ -1925,6 +2174,7 @@ class FilePane(Gtk.Box):
         grid_factory = Gtk.SignalListItemFactory()
         grid_factory.connect("setup", self._on_grid_setup)
         grid_factory.connect("bind", self._on_grid_bind)
+        grid_factory.connect("unbind", self._on_grid_unbind)
         grid_view = Gtk.GridView(
             model=self._selection_model,
             factory=grid_factory,
@@ -1936,12 +2186,6 @@ class FilePane(Gtk.Box):
         self._grid_view = grid_view
         # Navigate on grid item activation (double click / Enter)
         grid_view.connect("activate", self._on_grid_activate)
-        self._grid_drag_source = Gtk.DragSource()
-        self._grid_drag_source.set_actions(Gdk.DragAction.COPY)
-        self._grid_drag_source.connect("prepare", self._on_drag_prepare)
-        self._grid_drag_source.connect("drag-begin", self._on_drag_begin)
-        self._grid_drag_source.connect("drag-end", self._on_drag_end)
-        grid_view.add_controller(self._grid_drag_source)
 
         # Wrap grid view in a scrolled window for proper scrolling
         grid_scrolled = Gtk.ScrolledWindow()
@@ -1951,7 +2195,6 @@ class FilePane(Gtk.Box):
         self._stack.add_named(list_scrolled, "list")
         self._stack.add_named(grid_scrolled, "grid")
 
-        _ensure_drop_zone_css()
 
         overlay = Adw.ToastOverlay()
         self._overlay = overlay
@@ -1960,60 +2203,19 @@ class FilePane(Gtk.Box):
         content_overlay = Gtk.Overlay()
         content_overlay.set_child(self._stack)
 
-        drop_zone_revealer = Gtk.Revealer()
-        drop_zone_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
-        drop_zone_revealer.set_halign(Gtk.Align.CENTER)
-        drop_zone_revealer.set_valign(Gtk.Align.END)
-        if hasattr(drop_zone_revealer, "set_can_target"):
-            drop_zone_revealer.set_can_target(False)
-
-        drop_zone_box = Gtk.Box(
-            orientation=Gtk.Orientation.HORIZONTAL,
-            spacing=12,
-        )
-        drop_zone_box.set_hexpand(False)
-        drop_zone_box.set_vexpand(False)
-        drop_zone_box.set_halign(Gtk.Align.CENTER)
-        drop_zone_box.set_valign(Gtk.Align.CENTER)
-        drop_zone_box.set_margin_top(12)
-        drop_zone_box.set_margin_bottom(24)
-        drop_zone_box.set_margin_start(16)
-        drop_zone_box.set_margin_end(16)
-        if hasattr(drop_zone_box, "set_can_target"):
-            drop_zone_box.set_can_target(False)
-        drop_zone_box.add_css_class("file-pane-drop-zone")
-
-        # Create a compact horizontal layout
-        icon_name = "folder-upload-symbolic" if self._is_remote else "folder-download-symbolic"
-        drop_zone_icon = Gtk.Image.new_from_icon_name(icon_name)
-        drop_zone_icon.set_pixel_size(24)
-        drop_zone_icon.add_css_class("accent")
-        drop_zone_box.append(drop_zone_icon)
-
-        drop_zone_title = Gtk.Label()
-        drop_zone_title.set_text("Drop files to upload" if self._is_remote else "Drop items here")
-        drop_zone_title.set_justify(Gtk.Justification.CENTER)
-        drop_zone_title.set_halign(Gtk.Align.CENTER)
-        drop_zone_title.add_css_class("drop-zone-title")
-        drop_zone_title.add_css_class("heading")
-        drop_zone_box.append(drop_zone_title)
-
-        drop_zone_revealer.set_child(drop_zone_box)
-        drop_zone_revealer.set_reveal_child(False)
-
-        content_overlay.add_overlay(drop_zone_revealer)
         overlay.set_child(content_overlay)
         self.append(overlay)
 
-        self._drop_zone_revealer = drop_zone_revealer
-        self._drop_zone_box = drop_zone_box
-        self._drop_zone_visible = False
-        self._drop_zone_forced = False
-        self._drop_zone_pointer = False
+        # Add drop target for file operations - use string type for better compatibility
+        drop_target = Gtk.DropTarget.new(type=GObject.TYPE_STRING, actions=Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
+        drop_target.connect("drop", self._on_drop_string)
+        drop_target.connect("enter", self._on_drop_enter)
+        drop_target.connect("leave", self._on_drop_leave)
+        self.add_controller(drop_target)
+        
+        logger.debug(f"Added drop target to pane: {self._is_remote}")
+
         self._partner_pane: Optional["FilePane"] = None
-        self._drop_target: Optional[Gtk.DropTarget] = None
-        self._drag_sources: List[Gtk.DragSource] = []
-        self._current_drag_file: Optional[Gio.File] = None
 
         self._action_buttons: Dict[str, Gtk.Button] = {}
         action_bar = Gtk.ActionBar()
@@ -2092,28 +2294,23 @@ class FilePane(Gtk.Box):
         download_button.set_visible(self._is_remote)
         upload_button.set_visible(not self._is_remote)
 
-        # Add Request Access button for local pane in Flatpak only when no access is granted
+        # Add Request Access button for local pane in Flatpak (always show when in Flatpak)
         request_access_button = None
         if not self._is_remote and is_flatpak():
-            # Check if we already have persisted folder access
-            has_persisted_access = _load_first_doc_path() is not None
-            if not has_persisted_access:
-                request_access_button = _create_action_button(
-                    "request_access",
-                    "folder-open-symbolic",
-                    "Request Access",
-                    lambda _button: self._on_request_access_clicked(),
-                )
-                # Use ButtonContent for this special button to make it more prominent
-                content = Adw.ButtonContent()
-                content.set_icon_name("folder-open-symbolic")
-                content.set_label("Request Access")
-                request_access_button.set_child(content)
-                request_access_button.add_css_class("suggested-action")
-                # Store reference to the button so we can hide it later
-                self._request_access_button = request_access_button
-            else:
-                self._request_access_button = None
+            request_access_button = _create_action_button(
+                "request_access",
+                "folder-open-symbolic",
+                "Request Access",
+                lambda _button: self._on_request_access_clicked(),
+            )
+            # Use ButtonContent for this special button to make it more prominent
+            content = Adw.ButtonContent()
+            content.set_icon_name("folder-open-symbolic")
+            content.set_label("Request Access")
+            request_access_button.set_child(content)
+            request_access_button.add_css_class("suggested-action")
+            # Store reference to the button so we can hide it later
+            self._request_access_button = request_access_button
         else:
             self._request_access_button = None
 
@@ -2152,8 +2349,6 @@ class FilePane(Gtk.Box):
         self._show_hidden = False
         self._sort_key = "name"  # Default sort by name
         self._sort_descending = False  # Default ascending order
-        self._drag_in_progress = False
-        self._drag_payload: Optional[object] = None
 
         self._suppress_history_push: bool = False
         self._selection_model.connect("selection-changed", self._on_selection_changed)
@@ -2171,21 +2366,6 @@ class FilePane(Gtk.Box):
             view.add_controller(controller)
             self._attach_shortcuts(view)
 
-        # Drag and drop controllers – these provide the visual affordance and
-        # forward requests to the window which understands the context.
-        # Accept multiple formats: Gio.File, text/uri-list, and text/plain
-        drop_target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.COPY)
-        drop_target.set_gtypes([Gio.File, GObject.TYPE_STRING])
-        drop_target.connect("accept", self._on_drop_accept)
-        drop_target.connect("enter", self._on_drop_enter)
-        drop_target.connect("motion", self._on_drop_motion)
-        drop_target.connect("leave", self._on_drop_leave)
-        drop_target.connect("drop", self._on_drop)
-        self.add_controller(drop_target)
-        self._drop_target = drop_target
-
-        # Set up drag sources for both local and remote panes
-        self._setup_drag_sources((list_view, grid_view))
 
         self._update_menu_state()
         # Set up sorting actions for the split button
@@ -2203,277 +2383,10 @@ class FilePane(Gtk.Box):
     def set_partner_pane(self, partner: Optional["FilePane"]) -> None:
         self._partner_pane = partner
 
-    def show_drop_zone(self) -> None:
-        self._set_drop_zone_forced(True)
-
-    def hide_drop_zone(self) -> None:
-        self._set_drop_zone_forced(False)
-
-    def _set_drop_zone_forced(self, forced: bool) -> None:
-        if getattr(self, "_drop_zone_forced", False) == forced:
-            return
-        self._drop_zone_forced = forced
-        self._update_drop_zone_visibility()
-
-    def _set_drop_zone_pointer(self, active: bool) -> None:
-        if getattr(self, "_drop_zone_pointer", False) == active:
-            return
-        self._drop_zone_pointer = active
-        self._update_drop_zone_visibility()
-
-    def _update_drop_zone_visibility(self) -> None:
-        revealer = getattr(self, "_drop_zone_revealer", None)
-        if revealer is None:
-            return
-        should_show = bool(getattr(self, "_drop_zone_forced", False) or getattr(self, "_drop_zone_pointer", False))
-        if getattr(self, "_drop_zone_visible", False) == should_show:
-            return
-        self._drop_zone_visible = should_show
-        try:
-            revealer.set_reveal_child(should_show)
-        except Exception:
-            pass
-        box = getattr(self, "_drop_zone_box", None)
-        if box is not None and hasattr(box, "add_css_class") and hasattr(box, "remove_css_class"):
-            try:
-                if should_show:
-                    box.add_css_class("visible")
-                else:
-                    box.remove_css_class("visible")
-            except Exception:
-                pass
-
-    def _setup_drag_sources(self, views: Iterable[Gtk.Widget]) -> None:
-        for view in views:
-            drag_source = Gtk.DragSource()
-            drag_source.set_actions(Gdk.DragAction.COPY)
-            drag_source.connect("prepare", self._on_drag_prepare)
-            drag_source.connect("drag-begin", self._on_drag_source_begin)
-            drag_source.connect("drag-end", self._on_drag_source_end)
-            try:
-                drag_source.connect("drag-cancel", self._on_drag_source_cancel)
-            except (TypeError, AttributeError):
-                pass
-            view.add_controller(drag_source)
-            self._drag_sources.append(drag_source)
-
-    def _on_drag_prepare(self, _source: Gtk.DragSource, _x: float, _y: float):
-        print(f"=== DRAG PREPARE CALLED on {'remote' if self._is_remote else 'local'} pane ===")
-        
-        try:
-            entries = self.get_selected_entries()
-            print(f"Selected entries: {[e.name for e in entries] if entries else 'None'}")
-            if not entries:
-                print("No entries selected, returning None")
-                return None
-
-            window = self.get_root()
-            print(f"Window type: {type(window)}")
-            if not isinstance(window, FileManagerWindow):
-                print("No FileManagerWindow found, returning None")
-                return None
-                
-            print(f"Window is FileManagerWindow: {isinstance(window, FileManagerWindow)}")
-            
-        except Exception as e:
-            print(f"Exception in drag prepare early checks: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-
-        if self._is_remote:
-            # For remote panes, create a string content provider
-            # According to GTK4 docs, we need to use proper GType formats
-            file_names = [entry.name for entry in entries]
-            payload = "\n".join(file_names)
-            print(f"Creating remote drag payload: {payload}")
-            
-            try:
-                # Method 1: Try new_typed if available (GTK 4.6+)
-                if hasattr(Gdk.ContentProvider, 'new_typed'):
-                    provider = Gdk.ContentProvider.new_typed(GObject.TYPE_STRING, payload)
-                    if provider is not None:
-                        print(f"Created new_typed string provider for remote files: {file_names}")
-                        return provider
-                
-                # Method 2: Use new_for_value with proper GValue
-                value = GObject.Value()
-                value.init(GObject.TYPE_STRING)
-                value.set_string(payload)
-                provider = Gdk.ContentProvider.new_for_value(value)
-                if provider is not None:
-                    print(f"Created GValue string provider for remote files: {file_names}")
-                    return provider
-                    
-                print("Both typed methods failed, trying fallback")
-                
-            except Exception as e:
-                print(f"Error creating typed content provider: {e}")
-            
-            # Fallback: Use text/plain MIME type with bytes
-            try:
-                data = GLib.Bytes.new(payload.encode("utf-8"))
-                provider = Gdk.ContentProvider.new_for_bytes("text/plain", data)
-                if provider is not None:
-                    print(f"Created text/plain bytes provider for remote files: {file_names}")
-                    return provider
-                print("text/plain provider creation failed")
-                
-            except Exception as e:
-                print(f"Error creating bytes content provider: {e}")
-                
-            return None
-        else:
-            # For local panes, create URI list as before
-            # Use the actual current path instead of the display path from path entry
-            # This handles Flatpak portal paths correctly
-            base_dir = getattr(self, '_current_path', None)
-            if not base_dir:
-                # Fallback to normalized path entry text for non-portal paths
-                base_dir = window._normalize_local_path(self.toolbar.path_entry.get_text())
-            uris: List[str] = []
-            files: List[Gio.File] = []
-            for entry in entries:
-                local_path = os.path.join(base_dir, entry.name)
-                if not os.path.exists(local_path):
-                    continue
-                try:
-                    gfile = Gio.File.new_for_path(local_path)
-                except Exception:
-                    continue
-                uri = gfile.get_uri()
-                if not uri:
-                    continue
-                uris.append(uri)
-                files.append(gfile)
-
-            if not uris:
-                return None
-
-            # Create content provider for URI list
-            try:
-                # Use GLib.Bytes for proper data handling
-                payload = ("\r\n".join(uris) + "\r\n").encode("utf-8")
-                data = GLib.Bytes.new(payload)
-                
-                # Create content provider with proper MIME type
-                provider = Gdk.ContentProvider.new_for_bytes("text/uri-list", data)
-                if provider is None:
-                    return None
-                    
-            except Exception as e:
-                print(f"Error creating drag content provider: {e}")
-                return None
-
-            self._current_drag_file = files[0] if files else None
-            return provider
-
-    def _on_drag_source_begin(self, _source: Gtk.DragSource, _drag: Gdk.Drag) -> None:
-        print(f"Drag begin from {'remote' if self._is_remote else 'local'} pane")
-        
-        # Check if we have selected entries
-        selected = self.get_selected_entries()
-        print(f"Selected entries at drag begin: {[e.name for e in selected] if selected else 'None'}")
-        
-        partner = getattr(self, "_partner_pane", None)
-        if partner is not None:
-            print(f"Showing drop zone on {'remote' if partner._is_remote else 'local'} partner pane")
-            partner.show_drop_zone()
-        else:
-            print("No partner pane found!")
-
-        window = self.get_root()
-        if isinstance(window, FileManagerWindow):
-            window._register_drag_begin(self)
 
 
-    def _on_drag_source_end(self, _source: Gtk.DragSource, _drag: Gdk.Drag, _delete: bool) -> None:
-        print(f"Drag end from {'remote' if self._is_remote else 'local'} pane, delete={_delete}")
-        self._current_drag_file = None
-        partner = getattr(self, "_partner_pane", None)
-        if partner is not None:
-            partner.hide_drop_zone()
-            # Also reset pointer state to ensure drop zone hides
-            partner._set_drop_zone_pointer(False)
-
-        window = self.get_root()
-        if isinstance(window, FileManagerWindow):
-            window._register_drag_finish(self)
 
 
-    def _on_drag_source_cancel(self, _source: Gtk.DragSource, _drag: Gdk.Drag, _reason) -> None:
-        print(f"Drag cancel from {'remote' if self._is_remote else 'local'} pane, reason={_reason}")
-        self._current_drag_file = None
-        partner = getattr(self, "_partner_pane", None)
-        if partner is not None:
-            partner.hide_drop_zone()
-            # Also reset pointer state to ensure drop zone hides
-            partner._set_drop_zone_pointer(False)
-
-        window = self.get_root()
-        if isinstance(window, FileManagerWindow):
-            window._register_drag_finish(self)
-
-
-    def _on_drop_accept(self, target: Gtk.DropTarget, drop: Gdk.Drop) -> bool:
-        """Accept drops that contain files, URI lists, or plain text."""
-        try:
-            # Check if this pane is currently the active drag source
-            window = self.get_root()
-            if isinstance(window, FileManagerWindow):
-                active_drag_source = window.get_active_drag_source()
-                if active_drag_source is self:
-                    print(f"Drop accept check on {'remote' if self._is_remote else 'local'} pane: REJECTING (self is drag source)")
-                    return False
-            
-            formats = drop.get_formats()
-            print(f"Drop accept check on {'remote' if self._is_remote else 'local'} pane")
-            print(f"Available formats: {[formats.to_string()]}")
-            
-            has_file = formats.contain_gtype(Gio.File)
-            has_uri_list = formats.contain_mime_type("text/uri-list")
-            has_plain_text = formats.contain_mime_type("text/plain")
-            has_string = formats.contain_gtype(GObject.TYPE_STRING)
-            
-            print(f"Format check: File={has_file}, URI-list={has_uri_list}, Plain-text={has_plain_text}, String={has_string}")
-            
-            result = has_file or has_uri_list or has_plain_text or has_string
-            print(f"Drop accept result: {result}")
-            return result
-        except Exception as e:
-            print(f"Drop accept error: {e}")
-            return False
-
-    def _on_drop_enter(self, _target: Gtk.DropTarget, _x: float, _y: float):
-        # Check if this pane is currently the active drag source
-        window = self.get_root()
-        if isinstance(window, FileManagerWindow):
-            active_drag_source = window.get_active_drag_source()
-            if active_drag_source is self:
-                print(f"Drop enter on {'remote' if self._is_remote else 'local'} pane: IGNORING (self is drag source)")
-                return Gdk.DragAction.COPY
-        
-        print(f"Drop enter on {'remote' if self._is_remote else 'local'} pane")
-        self._set_drop_zone_pointer(True)
-        return Gdk.DragAction.COPY
-
-    def _on_drop_motion(self, _target: Gtk.DropTarget, _x: float, _y: float):
-        return Gdk.DragAction.COPY
-
-    def _on_drop_leave(self, _target: Gtk.DropTarget) -> None:
-        # Check if this pane is currently the active drag source
-        window = self.get_root()
-        if isinstance(window, FileManagerWindow):
-            active_drag_source = window.get_active_drag_source()
-            if active_drag_source is self:
-                print(f"Drop leave on {'remote' if self._is_remote else 'local'} pane: IGNORING (self is drag source)")
-                return
-        
-        print(f"Drop leave on {'remote' if self._is_remote else 'local'} pane")
-        self._set_drop_zone_pointer(False)
-        # Ensure drop zone is hidden when drag leaves
-        if not getattr(self, "_drop_zone_forced", False):
-            self.hide_drop_zone()
 
     # -- callbacks ------------------------------------------------------
 
@@ -2561,6 +2474,15 @@ class FilePane(Gtk.Box):
         box.icon = icon
         box.name_label = name_label
         box.metadata_label = metadata_label
+        
+        # Add drag source for file operations
+        drag_source = Gtk.DragSource()
+        drag_source.set_actions(Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
+        drag_source.connect("prepare", self._on_drag_prepare)
+        drag_source.connect("drag-begin", self._on_drag_begin)
+        drag_source.connect("drag-end", self._on_drag_end)
+        box.add_controller(drag_source)
+        
         item.set_child(box)
 
     def _on_list_bind(self, factory: Gtk.SignalListItemFactory, item):
@@ -2574,6 +2496,9 @@ class FilePane(Gtk.Box):
         entry: Optional[FileEntry] = None
         if position is not None and 0 <= position < len(self._entries):
             entry = self._entries[position]
+            
+        # Store position in the box for drag operations
+        box.drag_position = position
 
         if entry is None:
             value = item.get_item().get_string()
@@ -2605,6 +2530,14 @@ class FilePane(Gtk.Box):
             icon.set_from_icon_name("folder-symbolic")
         else:
             icon.set_from_icon_name("text-x-generic-symbolic")
+
+        box._pane_entry = entry
+        box._pane_index = position
+
+    def _on_list_unbind(self, factory: Gtk.SignalListItemFactory, item):
+        box = item.get_child()
+        if box is None:
+            return
 
     @staticmethod
     def _format_size(size_bytes: int) -> str:
@@ -2643,6 +2576,15 @@ class FilePane(Gtk.Box):
         content.append(label)
 
         button.set_child(content)
+        
+        # Add drag source for file operations
+        drag_source = Gtk.DragSource()
+        drag_source.set_actions(Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
+        drag_source.connect("prepare", self._on_drag_prepare)
+        drag_source.connect("drag-begin", self._on_drag_begin)
+        drag_source.connect("drag-end", self._on_drag_end)
+        button.add_controller(drag_source)
+        
         item.set_child(button)
 
     def _on_grid_bind(self, factory: Gtk.SignalListItemFactory, item):
@@ -2665,6 +2607,20 @@ class FilePane(Gtk.Box):
             image.set_from_icon_name("folder-symbolic")
         else:
             image.set_from_icon_name("text-x-generic-symbolic")
+
+        entry: Optional[FileEntry] = None
+        position = item.get_position()
+        if position is not None and 0 <= position < len(self._entries):
+            entry = self._entries[position]
+            
+        # Store position in the button for drag operations
+        button.drag_position = position
+
+
+    def _on_grid_unbind(self, factory: Gtk.SignalListItemFactory, item):
+        button = item.get_child()
+        if button is None:
+            return
 
     def _on_selection_changed(self, model, position, n_items):
         self._update_menu_state()
@@ -2823,153 +2779,7 @@ class FilePane(Gtk.Box):
         long_press.connect("pressed", _on_long_press)
         widget.add_controller(long_press)
 
-    def _build_drag_payload(self) -> Optional[object]:
-        entries = self.get_selected_entries()
-        if not entries:
-            return None
 
-        if self._is_remote:
-            return {
-                "type": "remote",
-                "directory": self._current_path,
-                "entries": [dataclasses.asdict(entry) for entry in entries],
-            }
-
-        window = self.get_root()
-        base_dir_text = self.toolbar.path_entry.get_text()
-        base_dir = base_dir_text or "/"
-        if isinstance(window, FileManagerWindow):
-            base_dir = window._normalize_local_path(base_dir)
-        else:
-            base_dir = os.path.abspath(os.path.expanduser(base_dir))
-
-        return [pathlib.Path(os.path.join(base_dir, entry.name)) for entry in entries]
-
-    def _on_drag_prepare(self, drag_source: Gtk.DragSource, _x: float, _y: float):
-        print(f"=== OLD DRAG PREPARE CALLED on {'remote' if self._is_remote else 'local'} pane ===")
-        
-        payload = self._build_drag_payload()
-        print(f"Built drag payload: {payload}")
-        if payload is None:
-            print("No payload built, canceling drag")
-            self._drag_payload = None
-            try:
-                drag_source.drag_cancel()
-            except (AttributeError, TypeError):
-                try:
-                    drag_source.drag_cancel(Gdk.DragCancelReason.NO_TARGET)
-                except Exception:
-                    pass
-            return None
-
-        self._drag_payload = payload
-        
-        # Create proper content provider instead of PyObject
-        if self._is_remote:
-            # For remote files, create string content with file names
-            try:
-                if hasattr(payload, '__iter__') and not isinstance(payload, str):
-                    file_names = [getattr(item, 'name', str(item)) for item in payload]
-                else:
-                    file_names = [str(payload)]
-                
-                content = "\n".join(file_names)
-                print(f"Creating string content provider with: {content}")
-                
-                # Try multiple methods for string content provider
-                try:
-                    value = GObject.Value()
-                    value.init(GObject.TYPE_STRING)
-                    value.set_string(content)
-                    provider = Gdk.ContentProvider.new_for_value(value)
-                    print("Created GValue string provider")
-                    return provider
-                except Exception as e:
-                    print(f"GValue method failed: {e}")
-                    # Fallback to bytes
-                    data = GLib.Bytes.new(content.encode("utf-8"))
-                    provider = Gdk.ContentProvider.new_for_bytes("text/plain", data)
-                    print("Created text/plain bytes provider")
-                    return provider
-                    
-            except Exception as e:
-                print(f"Error creating remote content provider: {e}")
-                # Final fallback to PyObject (but we'll know why)
-                print("Falling back to PyObject provider")
-                return Gdk.ContentProvider.new_for_value(
-                    GObject.Value(GObject.TYPE_PYOBJECT, payload)
-                )
-        else:
-            # For local files, try to create URI list
-            try:
-                if hasattr(payload, '__iter__') and not isinstance(payload, str):
-                    # Assume payload contains file entries with paths
-                    uris = []
-                    for item in payload:
-                        if hasattr(item, 'name'):
-                            # Build full path and convert to URI
-                            window = self.get_root()
-                            if isinstance(window, FileManagerWindow):
-                                # Use the actual current path instead of the display path from path entry
-                                # This handles Flatpak portal paths correctly
-                                base_dir = getattr(self, '_current_path', None)
-                                if not base_dir:
-                                    # Fallback to normalized path entry text for non-portal paths
-                                    base_dir = window._normalize_local_path(self.toolbar.path_entry.get_text())
-                                full_path = os.path.join(base_dir, item.name)
-                                if os.path.exists(full_path):
-                                    gfile = Gio.File.new_for_path(full_path)
-                                    uri = gfile.get_uri()
-                                    if uri:
-                                        uris.append(uri)
-                    
-                    if uris:
-                        uri_list = "\r\n".join(uris) + "\r\n"
-                        data = GLib.Bytes.new(uri_list.encode("utf-8"))
-                        provider = Gdk.ContentProvider.new_for_bytes("text/uri-list", data)
-                        print(f"Created URI list provider with {len(uris)} URIs")
-                        return provider
-                
-                print("Could not create URI list, falling back to PyObject")
-                        
-            except Exception as e:
-                print(f"Error creating local content provider: {e}")
-            
-            # Fallback to original PyObject method for local
-            return Gdk.ContentProvider.new_for_value(
-                GObject.Value(GObject.TYPE_PYOBJECT, payload)
-            )
-
-    def _on_drag_begin(self, drag_source: Gtk.DragSource, _drag: Gdk.Drag) -> None:
-        if self._drag_payload is None:
-            try:
-                drag_source.drag_cancel()
-            except (AttributeError, TypeError):
-                try:
-                    drag_source.drag_cancel(Gdk.DragCancelReason.NO_TARGET)
-                except Exception:
-                    pass
-            return
-
-        self._drag_in_progress = True
-
-        window = self.get_root()
-        if isinstance(window, FileManagerWindow):
-            window._register_drag_begin(self)
-
-
-    def _on_drag_end(
-        self,
-        _drag_source: Gtk.DragSource,
-        _drag: Optional[Gdk.Drag],
-        _delete_data: bool,
-    ) -> None:
-        self._drag_in_progress = False
-        self._drag_payload = None
-
-        window = self.get_root()
-        if isinstance(window, FileManagerWindow):
-            window._register_drag_finish(self)
 
 
     def _show_context_menu(self, widget: Gtk.Widget, x: float, y: float) -> None:
@@ -3035,11 +2845,6 @@ class FilePane(Gtk.Box):
     def get_selected_entries(self) -> List[FileEntry]:
         return [self._entries[index] for index in self._get_selected_indices()]
 
-    def is_drag_in_progress(self) -> bool:
-        return self._drag_in_progress
-
-    def get_drag_payload(self) -> Optional[object]:
-        return self._drag_payload
 
     def _update_menu_state(self) -> None:
         selected_entries = self.get_selected_entries()
@@ -3131,97 +2936,6 @@ class FilePane(Gtk.Box):
             return
         self._on_upload_clicked(None)
 
-    def _on_drop(self, target: Gtk.DropTarget, value, x: float, y: float):
-        print(f"Drop received on {'remote' if self._is_remote else 'local'} pane")
-        print(f"Drop value type: {type(value)}, value: {repr(value)}")
-        
-        self._set_drop_zone_pointer(False)
-        self.hide_drop_zone()
-        
-        window = self.get_root()
-        if isinstance(window, FileManagerWindow):
-            origin = window.get_active_drag_source()
-            print(f"Drop origin: {'remote' if origin and origin._is_remote else 'local' if origin else 'None'}")
-            
-            if origin is self:
-                print("Ignoring drop on same pane")
-                return False
-
-            # Handle remote-to-local file transfers
-            if origin and origin._is_remote and not self._is_remote:
-                print(f"=== PROCESSING REMOTE-TO-LOCAL DROP ===")
-                print(f"Value received: {repr(value)}")
-                print(f"Value type: {type(value)}")
-                
-                # For remote files, the value is a plain text list of filenames
-                if isinstance(value, str):
-                    file_names = [name.strip() for name in value.strip().split('\n') if name.strip()]
-                    print(f"Parsed file names: {file_names}")
-                    if file_names:
-                        # Get the selected entries from the origin pane
-                        selected_entries = origin.get_selected_entries()
-                        print(f"Selected entries from origin: {[e.name for e in selected_entries]}")
-                        
-                        # Get current directory on local pane (destination)
-                        # Use the actual current path instead of the display path from path entry
-                        # This handles Flatpak portal paths correctly
-                        current_path = getattr(self, '_current_path', None)
-                        if current_path:
-                            destination = pathlib.Path(current_path)
-                        else:
-                            # Fallback to normalized path entry text for non-portal paths
-                            local_dir = self.toolbar.path_entry.get_text() or os.path.expanduser("~")
-                            destination = pathlib.Path(window._normalize_local_path(local_dir))
-                        print(f"Local destination directory: {destination}")
-                        
-                        # Test if files would conflict
-                        for entry in selected_entries:
-                            target_path = destination / entry.name
-                            exists = target_path.exists()
-                            print(f"  {entry.name} -> {target_path} (exists: {exists})")
-                        
-                        # Create proper download payload
-                        payload = {
-                            "entries": selected_entries,
-                            "destination": destination,
-                            "directory": origin.toolbar.path_entry.get_text() or "/"
-                        }
-                        print(f"Download payload: entries={len(payload['entries'])}, destination={payload['destination']}")
-                        
-                        # Emit download operation with proper payload
-                        print("=== EMITTING DOWNLOAD REQUEST-OPERATION ===")
-                        print(f"Payload being emitted: {payload}")
-                        self.emit("request-operation", "download", payload)
-                        return True
-                print("No valid file names found in remote drop")
-                return False
-
-        # Handle regular file drops (local-to-remote or external files)
-        print("Processing regular file drop")
-        file_to_upload = None
-        if isinstance(value, Gio.File):
-            file_to_upload = value
-            print(f"Direct Gio.File: {file_to_upload.get_path()}")
-        elif isinstance(value, str):
-            # Handle URI list format
-            try:
-                # Take the first URI from the list
-                uri = value.strip().split('\n')[0].strip()
-                print(f"Parsing URI: {uri}")
-                if uri.startswith('file://'):
-                    file_to_upload = Gio.File.new_for_uri(uri)
-                    print(f"Created Gio.File from URI: {file_to_upload.get_path()}")
-            except Exception as e:
-                print(f"Error parsing URI from drop: {e}")
-                return False
-        
-        if file_to_upload is None:
-            print("No file to upload found")
-            return False
-
-        print("Emitting upload request-operation")
-        self.emit("request-operation", "upload", file_to_upload)
-        return True
 
     def get_selected_entry(self) -> Optional[FileEntry]:
         selected_entries = self.get_selected_entries()
@@ -3332,10 +3046,15 @@ class FilePane(Gtk.Box):
         dialog.present()
 
     def _hide_request_access_button(self) -> None:
-        """Hide the Request Access button after access has been granted."""
+        """Hide the Request Access button after access has been granted.
+        In Flatpak, always keep the button visible as requested."""
         if hasattr(self, '_request_access_button') and self._request_access_button:
-            self._request_access_button.set_visible(False)
-            logger.debug("Hid Request Access button after granting access")
+            # Don't hide the button in Flatpak - always keep it visible
+            if not is_flatpak():
+                self._request_access_button.set_visible(False)
+                logger.debug("Hid Request Access button after granting access")
+            else:
+                logger.debug("Keeping Request Access button visible in Flatpak")
 
     def _show_folder_picker(self) -> None:
         """Show a portal-aware folder picker for Flatpak with persistent access."""
@@ -3590,6 +3309,201 @@ class FilePane(Gtk.Box):
             entry = self._entries[position]
             if entry.is_dir:
                 self.emit("path-changed", os.path.join(self._current_path, entry.name))
+
+    def _on_drag_prepare(self, drag_source: Gtk.DragSource, x: float, y: float) -> Gdk.ContentProvider:
+        """Prepare drag data when drag operation starts."""
+        # Get the widget that initiated the drag
+        widget = drag_source.get_widget()
+        
+        # Get the position that was stored during binding
+        position = getattr(widget, 'drag_position', None)
+        
+        logger.debug(f"Drag prepare: position={position}, entries_count={len(self._entries)}")
+        
+        # Create a string representation of the drag data
+        if position is not None and 0 <= position < len(self._entries):
+            entry = self._entries[position]
+            drag_data_string = f"sshpilot_drag:{id(self)}:{self._current_path}:{position}:{entry.name}"
+        else:
+            drag_data_string = "sshpilot_drag:invalid"
+        
+        return Gdk.ContentProvider.new_for_value(drag_data_string)
+
+    def _on_drag_begin(self, drag_source: Gtk.DragSource, drag: Gdk.Drag) -> None:
+        """Called when drag operation begins - set drag icon."""
+        logger.debug(f"Drag begin: pane={self._is_remote}")
+        # Create a simple icon for the drag operation
+        widget = drag_source.get_widget()
+        if widget:
+            # Create a paintable from the widget to use as drag icon
+            paintable = Gtk.WidgetPaintable.new(widget)
+            drag_source.set_icon(paintable, 0, 0)
+
+    def _on_drag_end(self, drag_source: Gtk.DragSource, drag: Gdk.Drag, delete_data: bool) -> None:
+        """Called when drag operation ends."""
+        # Clean up any drag-related state if needed
+        pass
+
+    def _on_drop_string(self, drop_target: Gtk.DropTarget, value: str, x: float, y: float) -> bool:
+        """Handle dropped files from string data."""
+        logger.debug(f"Drop received: value={value}")
+        
+        if not isinstance(value, str) or not value.startswith("sshpilot_drag:"):
+            logger.debug("Drop rejected: invalid drag data")
+            return False
+            
+        # Parse the drag data string
+        parts = value.split(":")
+        if len(parts) < 5:
+            logger.debug("Drop rejected: invalid drag data format")
+            return False
+            
+        source_pane_id = int(parts[1])
+        source_path = parts[2]
+        position = int(parts[3])
+        entry_name = parts[4]
+        
+        # Find the source pane by ID
+        source_pane = None
+        window = self.get_root()
+        if isinstance(window, FileManagerWindow):
+            if id(window._left_pane) == source_pane_id:
+                source_pane = window._left_pane
+            elif id(window._right_pane) == source_pane_id:
+                source_pane = window._right_pane
+        
+        if source_pane is None:
+            logger.debug("Drop rejected: source pane not found")
+            return False
+            
+        logger.debug(f"Drop data: source_pane={source_pane._is_remote}, target_pane={self._is_remote}, position={position}")
+        
+        # Don't allow dropping on the same pane
+        if source_pane == self:
+            logger.debug("Drop rejected: same pane")
+            return False
+            
+        # Get the entry from the source pane
+        if position < 0 or position >= len(source_pane._entries):
+            logger.debug(f"Drop rejected: invalid position {position}, entries count: {len(source_pane._entries)}")
+            return False
+            
+        entry = source_pane._entries[position]
+        source_file_path = os.path.join(source_path, entry.name)
+        
+        logger.debug(f"Drop operation: {entry.name} from {source_file_path}")
+        
+        # Determine operation type based on source and target panes
+        if self._is_remote and not source_pane._is_remote:
+            # Local to remote - upload
+            logger.debug("Starting upload operation")
+            self._handle_upload_from_drag(source_file_path, entry)
+        elif not self._is_remote and source_pane._is_remote:
+            # Remote to local - download
+            logger.debug("Starting download operation")
+            self._handle_download_from_drag(source_file_path, entry)
+        else:
+            # Same type of pane - not supported for now
+            logger.debug("Drop rejected: same pane type")
+            return False
+        
+        return True
+
+    def _handle_upload_from_drag(self, source_path: str, entry: FileEntry) -> None:
+        """Handle upload operation from drag and drop."""
+        try:
+            import pathlib
+            source_path_obj = pathlib.Path(source_path)
+            destination_path = posixpath.join(self._current_path, entry.name)
+            
+            # Get the file manager window to access the SFTP manager
+            window = self.get_root()
+            if not isinstance(window, FileManagerWindow):
+                self.show_toast("Upload failed: Invalid window context")
+                return
+                
+            manager = window._manager
+            
+            # Check for file conflicts first
+            files_to_transfer = [(str(source_path_obj), destination_path)]
+            
+            def _proceed_with_upload(resolved_files: List[Tuple[str, str]]) -> None:
+                for local_path_str, dest_path in resolved_files:
+                    path_obj = pathlib.Path(local_path_str)
+                    
+                    if entry.is_dir:
+                        # Upload directory
+                        future = manager.upload_directory(path_obj, dest_path)
+                    else:
+                        # Upload file
+                        future = manager.upload(path_obj, dest_path)
+                    
+                    # Show progress dialog for upload
+                    window._show_progress_dialog("upload", entry.name, future)
+                    window._attach_refresh(
+                        future,
+                        refresh_remote=self,
+                        highlight_name=entry.name,
+                    )
+            
+            window._check_file_conflicts(files_to_transfer, "upload", _proceed_with_upload)
+            
+        except Exception as e:
+            self.show_toast(f"Upload failed: {str(e)}")
+
+    def _handle_download_from_drag(self, source_path: str, entry: FileEntry) -> None:
+        """Handle download operation from drag and drop."""
+        try:
+            import pathlib
+            destination_path = pathlib.Path(self._current_path) / entry.name
+            
+            # Get the file manager window to access the SFTP manager
+            window = self.get_root()
+            if not isinstance(window, FileManagerWindow):
+                self.show_toast("Download failed: Invalid window context")
+                return
+                
+            manager = window._manager
+            
+            # Check for file conflicts first
+            files_to_transfer = [(source_path, str(destination_path))]
+            
+            def _proceed_with_download(resolved_files: List[Tuple[str, str]]) -> None:
+                for source, target_path_str in resolved_files:
+                    target_path = pathlib.Path(target_path_str)
+                    
+                    if entry.is_dir:
+                        # Download directory
+                        future = manager.download_directory(source, target_path)
+                    else:
+                        # Download file
+                        future = manager.download(source, target_path)
+                    
+                    # Show progress dialog for download
+                    window._show_progress_dialog("download", entry.name, future)
+                    window._attach_refresh(
+                        future,
+                        refresh_local_path=str(self._current_path),
+                        highlight_name=entry.name,
+                    )
+            
+            window._check_file_conflicts(files_to_transfer, "download", _proceed_with_download)
+            
+        except Exception as e:
+            self.show_toast(f"Download failed: {str(e)}")
+
+    def _on_drop_enter(self, drop_target: Gtk.DropTarget, x: float, y: float) -> Gdk.DragAction:
+        """Called when drag enters drop target."""
+        logger.debug(f"Drop enter: pane={self._is_remote}")
+        # Add visual feedback - could highlight the drop area
+        self.add_css_class("drop-target-active")
+        return Gdk.DragAction.COPY
+
+    def _on_drop_leave(self, drop_target: Gtk.DropTarget) -> None:
+        """Called when drag leaves drop target."""
+        logger.debug(f"Drop leave: pane={self._is_remote}")
+        # Remove visual feedback
+        self.remove_css_class("drop-target-active")
 
     def _on_up_clicked(self, _button) -> None:
         parent = os.path.dirname(self._current_path.rstrip('/')) or '/'
@@ -3892,6 +3806,13 @@ class FileManagerWindow(Adw.Window):
             background-color: alpha(black, 0.6);
             border: 1px solid alpha(white, 0.1);
         }
+        
+        /* Drop target styling */
+        .drop-target-active {
+            background-color: alpha(@accent_color, 0.1);
+            border: 2px dashed @accent_color;
+            border-radius: 8px;
+        }
         """
         css_provider.load_from_data(toast_css.encode())
         self._toast_overlay.get_style_context().add_provider(
@@ -3944,7 +3865,6 @@ class FileManagerWindow(Adw.Window):
             self._right_pane: None,
         }
 
-        self._active_drag_source: Optional[FilePane] = None
 
         self._clipboard_entries: List[FileEntry] = []
         self._clipboard_directory: Optional[str] = None
@@ -4016,15 +3936,6 @@ class FileManagerWindow(Adw.Window):
 
     # -- signal handlers ------------------------------------------------
 
-    def _register_drag_begin(self, pane: FilePane) -> None:
-        self._active_drag_source = pane
-
-    def _register_drag_finish(self, pane: FilePane) -> None:
-        if self._active_drag_source is pane:
-            self._active_drag_source = None
-
-    def get_active_drag_source(self) -> Optional[FilePane]:
-        return self._active_drag_source
 
 
     def _clear_progress_toast(self) -> None:
@@ -4433,7 +4344,8 @@ class FileManagerWindow(Adw.Window):
             elif source_pane is self._left_pane and pane is self._right_pane:
                 self._perform_local_to_remote_clipboard_operation(entries, source_dir, destination, move_requested)
             elif source_pane is self._right_pane and pane is self._left_pane:
-                self._perform_remote_to_local_clipboard_operation(entries, source_dir, destination, move_requested)
+                # Remote to local clipboard operation not supported
+                pane.show_toast("Remote to local clipboard operation not supported")
             else:
                 pane.show_toast("Paste target is unavailable")
                 return
@@ -5074,32 +4986,6 @@ class FileManagerWindow(Adw.Window):
             }
         self._on_request_operation(self._left_pane, "upload", payload, user_data=user_data)
 
-    def _perform_remote_to_local_clipboard_operation(
-        self,
-        entries: List[FileEntry],
-        source_dir: str,
-        destination_dir: str,
-        move: bool,
-    ) -> None:
-        if not entries:
-            return
-        destination_path = pathlib.Path(destination_dir)
-        payload = {
-            "entries": entries,
-            "directory": source_dir or "/",
-            "destination": destination_path,
-        }
-        user_data = None
-        if move:
-            remote_sources = [
-                self._resolve_remote_entry_path(source_dir or "/", entry)
-                for entry in entries
-            ]
-            user_data = {
-                "move_remote_sources": remote_sources,
-                "move_remote_pane": self._right_pane,
-            }
-        self._on_request_operation(self._right_pane, "download", payload, user_data=user_data)
 
     def _schedule_local_move_cleanup(
         self,

@@ -180,10 +180,11 @@ class Config(GObject.Object):
             'ssh': {
                 'connection_timeout': 30,
                 'keepalive_interval': 60,
-                'compression': True,
+                'compression': False,
                 'auto_add_host_keys': True,
                 'verbosity': 0,
                 'debug_enabled': False,
+                'native_connect': False,
                 'use_isolated_config': is_flatpak(),
             },
             'file_manager': {
@@ -584,10 +585,11 @@ class Config(GObject.Object):
             'connection_attempts': self.get_setting('ssh.connection_attempts', 1),
             'keepalive_interval': self.get_setting('ssh.keepalive_interval', 60),
             'keepalive_count_max': self.get_setting('ssh.keepalive_count_max', 3),
-            'compression': self.get_setting('ssh.compression', True),
+            'compression': self.get_setting('ssh.compression', False),
             'auto_add_host_keys': self.get_setting('ssh.auto_add_host_keys', True),
             'verbosity': self.get_setting('ssh.verbosity', 0),
             'debug_enabled': self.get_setting('ssh.debug_enabled', False),
+            'native_connect': self.get_setting('ssh.native_connect', False),
         }
 
     def get_security_config(self) -> Dict[str, Any]:

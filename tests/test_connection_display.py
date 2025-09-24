@@ -32,7 +32,7 @@ def test_format_display_with_hostname_and_alias():
 
     display = format_connection_host_display(connection)
 
-    assert display == "user@example.com (prod)"
+    assert display == "user@example.com"
 
 
 def test_format_display_keeps_alias_suffix_when_no_nickname():

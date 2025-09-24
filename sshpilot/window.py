@@ -3,6 +3,7 @@ Main Window for sshPilot
 Primary UI with connection list, tabs, and terminal management
 """
 
+import asyncio
 import copy
 import os
 import logging
@@ -111,9 +112,26 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.config = Config()
             if app is not None:
                 setattr(app, 'config', self.config)
+        self._config_changed_handler = None
+        if hasattr(self.config, 'connect'):
+            try:
+                self._config_changed_handler = self.config.connect('setting-changed', self._on_config_setting_changed)
+            except Exception:
+                self._config_changed_handler = None
         effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
         key_dir = Path(get_config_dir()) if effective_isolated else None
         self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
+        # Ensure native connect preference is propagated to the connection manager
+        try:
+            native_cfg = bool(self.config.get_setting('ssh.native_connect', False))
+        except Exception:
+            native_cfg = False
+        app_native = None
+        if app is not None and hasattr(app, 'native_connect_enabled'):
+            app_native = bool(app.native_connect_enabled)
+        self.connection_manager.native_connect_enabled = app_native if app_native is not None else native_cfg
+        if app is not None and app_native is None:
+            app.native_connect_enabled = native_cfg
         self.key_manager = KeyManager(key_dir)
         self.group_manager = GroupManager(self.config)
         
@@ -156,8 +174,30 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connect('close-request', self.on_close_request)
         
         # Start with welcome view (tab view setup already shows welcome initially)
-        
+
         logger.info("Main window initialized")
+
+    def _on_config_setting_changed(self, _config, key, value):
+        """Synchronize runtime state when configuration values change."""
+        if key != 'ssh.native_connect':
+            return
+
+        bool_value = bool(value)
+        app = self.get_application()
+        override = None
+        if app is not None and hasattr(app, 'native_connect_override'):
+            override = app.native_connect_override
+
+        effective = bool_value if override is None else bool(override)
+
+        if app is not None and hasattr(app, 'native_connect_enabled'):
+            if override is None:
+                app.native_connect_enabled = bool_value
+            else:
+                app.native_connect_enabled = effective
+
+        if hasattr(self.connection_manager, 'native_connect_enabled'):
+            self.connection_manager.native_connect_enabled = effective
 
         # Install sidebar CSS
         try:
@@ -1857,7 +1897,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Create tab bar
         self.tab_bar = Adw.TabBar()
         self.tab_bar.set_view(self.tab_view)
-        self.tab_bar.set_autohide(True)
+        self.tab_bar.set_autohide(False)
         
         # Add local terminal button before the tabs
         self.local_terminal_button = Gtk.Button()
@@ -5984,9 +6024,30 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def _open_connection_in_external_terminal(self, connection):
         """Open the connection in the user's preferred external terminal"""
         try:
-            host_value = _get_connection_host(connection) or _get_connection_alias(connection)
-            port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
-            ssh_command = f"ssh{port_text} {connection.username}@{host_value}" if getattr(connection, 'username', '') else f"ssh{port_text} {host_value}"
+            cm = getattr(self, 'connection_manager', None)
+            use_native = bool(getattr(cm, 'native_connect_enabled', False))
+            app = self.get_application() if hasattr(self, 'get_application') else None
+            if not use_native and app is not None and hasattr(app, 'native_connect_enabled'):
+                use_native = bool(app.native_connect_enabled)
+
+            host_value = ''
+            if use_native and hasattr(connection, 'resolve_host_identifier'):
+                try:
+                    host_value = connection.resolve_host_identifier()
+                except Exception:
+                    host_value = ''
+            if not host_value:
+                host_value = _get_connection_host(connection) or _get_connection_alias(connection)
+
+            if use_native:
+                ssh_command = f"ssh {host_value}" if host_value else "ssh"
+            else:
+                port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
+                ssh_command = (
+                    f"ssh{port_text} {connection.username}@{host_value}"
+                    if getattr(connection, 'username', '')
+                    else f"ssh{port_text} {host_value}"
+                )
 
             terminal = self._get_user_preferred_terminal()
             if not terminal:
@@ -6381,6 +6442,56 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     pass
                 old_connection.x11_forwarding = connection_data['x11_forwarding']
                 old_connection.forwarding_rules = list(connection_data.get('forwarding_rules', []))
+                # Ensure proxy settings are refreshed in-memory so new connections
+                # immediately pick up the updated directives without needing a
+                # full application restart. The connection manager updates the
+                # serialized data, but the active Connection instance used by
+                # terminals/file manager must also reflect the new values.
+                try:
+                    proxy_jump_value = connection_data.get('proxy_jump', [])
+                    if isinstance(proxy_jump_value, str):
+                        proxy_jump_value = [
+                            h.strip() for h in re.split(r'[\s,]+', proxy_jump_value) if h.strip()
+                        ]
+                    else:
+                        proxy_jump_value = [
+                            str(h).strip() for h in (proxy_jump_value or []) if str(h).strip()
+                        ]
+                    old_connection.proxy_jump = proxy_jump_value
+                except Exception:
+                    proxy_jump_value = []
+                    old_connection.proxy_jump = []
+
+                proxy_command_value = connection_data.get('proxy_command', '') or ''
+                forward_agent_value = bool(connection_data.get('forward_agent', False))
+
+                old_connection.proxy_command = proxy_command_value
+                old_connection.forward_agent = forward_agent_value
+
+                # Keep the backing data dict synchronized so any downstream
+                # consumers that still read from connection.data see the new
+                # directives without waiting for another reload cycle.
+                try:
+                    if hasattr(old_connection, 'data') and isinstance(old_connection.data, dict):
+                        old_connection.data['proxy_jump'] = list(proxy_jump_value)
+                        old_connection.data['proxy_command'] = proxy_command_value
+                        old_connection.data['forward_agent'] = forward_agent_value
+                except Exception:
+                    pass
+
+                # Invalidate any prepared SSH command so future connection
+                # attempts rebuild the argument list using the refreshed proxy
+                # settings. Otherwise terminals reuse the cached command and
+                # continue using the previous ProxyJump chain until restart.
+                try:
+                    if hasattr(old_connection, 'ssh_cmd'):
+                        old_connection.ssh_cmd = []
+                except Exception:
+                    try:
+                        delattr(old_connection, 'ssh_cmd')
+                    except Exception:
+                        pass
+
                 # Update commands
                 try:
                     old_connection.local_command = connection_data.get('local_command', '')
@@ -6597,12 +6708,30 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if connection not in self.active_terminals:
             logger.warning(f"Connection {connection.nickname} not found in active terminals")
             return False  # Don't repeat the timeout
-            
+
         terminal = self.active_terminals[connection]
-        
+
         try:
             logger.debug(f"Attempting to reconnect terminal for {connection.nickname}")
-            
+
+            # Rebuild the SSH command using the latest configuration so that
+            # options resolved via ssh -G are honored for the reconnect.
+            try:
+                loop = asyncio.get_event_loop()
+                connect_coro = connection.connect()
+                if loop.is_running():
+                    future = asyncio.run_coroutine_threadsafe(connect_coro, loop)
+                    future.result()
+                else:
+                    loop.run_until_complete(connect_coro)
+            except Exception as prep_err:
+                logger.error(
+                    "Failed to prepare SSH command before reconnect: %s",
+                    prep_err,
+                )
+                GLib.idle_add(self._show_reconnect_error, connection, str(prep_err))
+                return False
+
             # Reconnect with new settings
             if not terminal._connect_ssh():
                 logger.error("Failed to reconnect with new settings")

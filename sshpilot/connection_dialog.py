@@ -104,9 +104,9 @@ class SSHConnectionValidator:
             elif ip.is_private:
                 return ValidationResult(True, _("Private network address"), "info")
             elif ip.is_multicast:
-                return ValidationResult(False, _("Multicast addresses not supported"), "error")
+                return ValidationResult(True, _("Multicast address"), "warning")
             elif getattr(ip, 'is_reserved', False):
-                return ValidationResult(False, _("Reserved IP address"), "error")
+                return ValidationResult(True, _("Reserved IP address"), "warning")
             elif ip.version == 4 and str(ip).startswith('169.254.'):
                 return ValidationResult(True, _("Link-local address"), "warning")
             return ValidationResult(True, _("Valid IPv{ver} address").format(ver=ip.version))
