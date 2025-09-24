@@ -1265,6 +1265,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             if update_toggle and hasattr(self, 'apply_advanced_row'):
                 self.apply_advanced_row.set_active(False)
 
+
             if hasattr(self, 'connect_timeout_row'):
                 self.config.set_setting('ssh.connection_timeout', defaults.get('connection_timeout'))
                 self.connect_timeout_row.set_value(int(defaults.get('connection_timeout', 30)))
