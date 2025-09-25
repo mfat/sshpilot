@@ -1580,7 +1580,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Manage files button (visibility controlled dynamically)
         self.manage_files_button = Gtk.Button.new_from_icon_name('folder-symbolic')
-        self.manage_files_button.set_tooltip_text('Open file manager for remote server')
+        primary_label = get_primary_modifier_label()
+        self.manage_files_button.set_tooltip_text(
+            f"Open file manager for remote server ({primary_label}+Shift+O)"
+        )
         self.manage_files_button.set_sensitive(False)
         self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
         self.manage_files_button.set_visible(not should_hide_file_manager_options())
@@ -2976,6 +2979,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             ('quick-connect', _('Quick Connect')),
             ('open-new-connection-tab', _('Open New Tab')),
             ('new-key', _('Copy Key to Server')),
+            ('manage-files', _('Manage Files')),
         ]
         
         for action_name, title in connection_actions:
@@ -3080,6 +3084,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             title=_('Focus Connection List'), accelerator=f"{primary}l"))
         group_connections.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Quick Connect'), accelerator=f"{primary}<Alt>c"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Manage Files'), accelerator=f"{primary}<Shift>o"))
         section.add_group(group_connections)
 
         # Terminal shortcuts

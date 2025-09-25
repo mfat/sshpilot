@@ -574,6 +574,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_clear_progress_toast()`** — Clear the progress dialog safely.
 
+- **`_compute_effective_split_width()`** — Determine the appropriate width to use when sizing the split view.
+
 - **`_copy_remote_directory(sftp, source_path, destination_path)`** — Handles copy remote directory.
 
 - **`_copy_remote_file(sftp, source_path, destination_path)`** — Handles copy remote file.
@@ -594,11 +596,15 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_on_connection_error(_manager, message)`** — Handle connection error with toast.
 
+- **`_on_content_size_allocate(_widget, allocation)`** — Adjust split position based on the actual allocated width of the content.
+
 - **`_on_directory_loaded(_manager, path, entries)`** — Handles directory loaded.
 
 - **`_on_local_pane_toggle(toggle_button)`** — Handle local pane toggle button.
 
 - **`_on_operation_error(_manager, message)`** — Handle operation error with toast.
+
+- **`_on_panes_size_changed(panes, pspec)`** — Handle panes widget size changes to maintain proportional split.
 
 - **`_on_path_changed(pane, path, user_data=None)`** — Handles path changed.
 
@@ -632,11 +638,15 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_schedule_remote_move_cleanup(future, source_path, pane)`** — Handles schedule remote move cleanup.
 
+- **`_set_initial_split_position()`** — Set the initial proportional split position after the widget is realized.
+
 - **`_show_progress(fraction, message)`** — Update progress dialog if active.
 
 - **`_show_progress_dialog(operation_type, filename, future)`** — Show and manage the progress dialog for a file operation.
 
 - **`_update_paste_targets()`** — Updates paste targets.
+
+- **`_update_split_position(width=None)`** — Update the split position, preserving user adjustments where possible.
 
 - **`detach_for_embedding(parent=None)`** — Detach the window content for embedding in another container.
 
@@ -985,6 +995,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`on_help(action, param)`** — Handle help action
 
 - **`on_local_terminal(action, param)`** — Handle local terminal action
+
+- **`on_manage_files(action, param)`** — Handle manage files shortcut.
 
 - **`on_new_connection(action, param)`** — Handle new connection action
 
@@ -1438,7 +1450,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`__init__(connection)`** — Handles init.
 
-- **`_apply_host_label_text()`** — Handles apply host label text.
+- **`_apply_host_label_text(include_port=None)`** — Handles apply host label text.
 
 - **`_install_pf_css()`** — Handles install pf css.
 

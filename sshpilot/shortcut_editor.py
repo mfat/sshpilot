@@ -51,6 +51,7 @@ ACTION_LABELS: Dict[str, str] = {
     'toggle-list': _('Focus Connection List'),
     'search': _('Search Connections'),
     'new-key': _('Copy Key to Server'),
+    'manage-files': _('Manage Files'),
     'edit-ssh-config': _('SSH Config Editor'),
     'local-terminal': _('Local Terminal'),
     'preferences': _('Preferences'),
@@ -241,6 +242,7 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             'toggle-list',
             'search',
             'new-key',
+            'manage-files',
             'edit-ssh-config',
             'quick-connect',
         ]
