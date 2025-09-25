@@ -1495,6 +1495,44 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             context_click.connect('pressed', _on_right_click)
             self.connection_list.add_controller(context_click)
+
+            middle_click = Gtk.GestureClick()
+            middle_click.set_button(Gdk.BUTTON_MIDDLE)
+
+            def _on_middle_click(gesture, n_press, x, y):
+                if n_press != 1:
+                    return
+
+                try:
+                    self._stop_pulse_on_interaction(None)
+                except Exception:
+                    pass
+
+                row, _, _ = self._resolve_connection_list_event(x, y)
+
+                if not row:
+                    try:
+                        row = self.connection_list.get_selected_row()
+                    except Exception:
+                        row = None
+
+                if not row or not hasattr(row, 'connection'):
+                    return
+
+                previous_row = getattr(self, '_context_menu_row', None)
+                previous_connection = getattr(self, '_context_menu_connection', None)
+
+                try:
+                    self._context_menu_row = row
+                    self._context_menu_connection = row.connection
+                    self.on_open_new_connection_action(None, None)
+                    gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+                finally:
+                    self._context_menu_row = previous_row
+                    self._context_menu_connection = previous_connection
+
+            middle_click.connect('pressed', _on_middle_click)
+            self.connection_list.add_controller(middle_click)
         except Exception:
             pass
         
