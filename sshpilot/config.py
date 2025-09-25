@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 from gi.repository import Gio, GLib, GObject
-from .platform_utils import get_config_dir, is_flatpak
+from .platform_utils import get_config_dir
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +185,7 @@ class Config(GObject.Object):
                 'verbosity': 0,
                 'debug_enabled': False,
                 'native_connect': False,
-                'use_isolated_config': is_flatpak(),
+                'use_isolated_config': False,
             },
             'file_manager': {
                 'force_internal': False,
@@ -693,6 +693,19 @@ class Config(GObject.Object):
             if 'open_externally' not in file_manager_cfg:
                 file_manager_cfg['open_externally'] = False
                 updated = True
+
+        ssh_cfg = config.get('ssh')
+        if not isinstance(ssh_cfg, dict):
+            default_ssh = self.get_default_config().get('ssh', {}).copy()
+            config['ssh'] = default_ssh
+            updated = True
+            ssh_cfg = config['ssh']
+        if 'use_isolated_config' not in ssh_cfg:
+            ssh_cfg['use_isolated_config'] = False
+            updated = True
+        elif not isinstance(ssh_cfg['use_isolated_config'], bool):
+            ssh_cfg['use_isolated_config'] = bool(ssh_cfg['use_isolated_config'])
+            updated = True
 
         return config, updated
 
