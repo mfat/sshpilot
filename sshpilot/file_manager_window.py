@@ -3844,7 +3844,8 @@ class FileManagerWindow(Adw.Window):
         
         # Set panes as the child of toast overlay
         self._toast_overlay.set_child(panes)
-        self._toast_overlay.connect("size-allocate", self._on_content_size_allocate)
+        panes.connect("size-allocate", self._on_content_size_allocate)
+
 
         self._left_pane = FilePane("Local")
         self._right_pane = FilePane("Remote")
