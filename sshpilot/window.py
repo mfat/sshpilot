@@ -5348,7 +5348,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             page.set_icon(Gio.ThemedIcon.new('folder-remote-symbolic'))
         except Exception:
             page.set_icon(Gio.ThemedIcon.new('folder-symbolic'))
-        page.set_tooltip_text(_('File manager for {name}').format(name=display_name))
+        # Note: AdwTabPage doesn't support set_tooltip_text in GTK4
+        # The title already provides the necessary information
 
         self._track_internal_file_manager_window(controller, widget=widget)
 

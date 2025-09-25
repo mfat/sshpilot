@@ -3844,7 +3844,10 @@ class FileManagerWindow(Adw.Window):
         
         # Set panes as the child of toast overlay
         self._toast_overlay.set_child(panes)
-        panes.connect("size-allocate", self._on_content_size_allocate)
+        # Connect to size changes to maintain proportional split
+        self.connect("notify::default-width", self._on_window_resize)
+        # Also connect to the panes widget size changes
+        panes.connect("notify::width-request", self._on_panes_size_changed)
 
 
         self._left_pane = FilePane("Local")
@@ -3860,6 +3863,9 @@ class FileManagerWindow(Adw.Window):
 
         # Connect to size-allocate to maintain proportional split
         self.connect("notify::default-width", self._on_window_resize)
+
+        # Set initial proportional split
+        GLib.idle_add(self._set_initial_split_position)
 
         # Initialize panes: left is LOCAL home, right is REMOTE home (~)
         self._pending_paths: Dict[FilePane, Optional[str]] = {
@@ -4797,6 +4803,27 @@ class FileManagerWindow(Adw.Window):
         if width <= 0:
             return
         self._update_split_position(width)
+
+    def _on_panes_size_changed(self, panes: Gtk.Paned, pspec: GObject.ParamSpec) -> None:
+        """Handle panes widget size changes to maintain proportional split."""
+        # Get the current allocation width
+        width = panes.get_allocated_width()
+        if width > 0:
+            self._update_split_position(width)
+
+    def _set_initial_split_position(self) -> None:
+        """Set the initial proportional split position after the widget is realized."""
+        panes = getattr(self, "_panes", None)
+        if panes is None:
+            return
+        
+        # Wait for the widget to be allocated
+        width = panes.get_allocated_width()
+        if width > 0:
+            self._update_split_position(width)
+            return False  # Don't repeat
+        else:
+            return True  # Try again later
 
     def _compute_effective_split_width(self) -> int:
         """Determine the appropriate width to use when sizing the split view."""
