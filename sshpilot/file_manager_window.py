@@ -3846,6 +3846,7 @@ class FileManagerWindow(Adw.Window):
         self._toast_overlay.set_child(panes)
         panes.connect("size-allocate", self._on_content_size_allocate)
 
+
         self._left_pane = FilePane("Local")
         self._right_pane = FilePane("Remote")
         self._left_pane.set_partner_pane(self._right_pane)
