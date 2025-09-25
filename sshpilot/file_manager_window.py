@@ -3844,6 +3844,7 @@ class FileManagerWindow(Adw.Window):
         
         # Set panes as the child of toast overlay
         self._toast_overlay.set_child(panes)
+        self._toast_overlay.connect("size-allocate", self._on_content_size_allocate)
 
         self._left_pane = FilePane("Local")
         self._right_pane = FilePane("Remote")
@@ -3854,7 +3855,8 @@ class FileManagerWindow(Adw.Window):
         
         # Store reference to panes for resize handling
         self._panes = panes
-        
+        self._last_split_width = 0
+
         # Connect to size-allocate to maintain proportional split
         self.connect("notify::default-width", self._on_window_resize)
 
@@ -4786,11 +4788,65 @@ class FileManagerWindow(Adw.Window):
 
     def _on_window_resize(self, window, pspec) -> None:
         """Maintain proportional paned split when window is resized following GNOME HIG"""
-        # Get current window width
-        width = self.get_width()
-        if width > 0:
-            # Set paned position to half the window width (maintaining 50/50 split)
-            self._panes.set_position(width // 2)
+        self._update_split_position()
+
+    def _on_content_size_allocate(self, _widget: Gtk.Widget, allocation: Gdk.Rectangle) -> None:
+        """Adjust split position based on the actual allocated width of the content."""
+        width = getattr(allocation, "width", 0) or 0
+        if width <= 0:
+            return
+        self._update_split_position(width)
+
+    def _compute_effective_split_width(self) -> int:
+        """Determine the appropriate width to use when sizing the split view."""
+        panes = getattr(self, "_panes", None)
+        if panes is None:
+            return 0
+
+        if getattr(self, "_embedded_mode", False):
+            overlay = getattr(self, "_toast_overlay", None)
+            if overlay is not None:
+                try:
+                    width = overlay.get_allocated_width()
+                except Exception:
+                    width = 0
+                if width:
+                    return width
+
+            try:
+                width = panes.get_allocated_width()
+            except Exception:
+                width = 0
+            if width:
+                return width
+
+        try:
+            return self.get_width()
+        except Exception:
+            return 0
+
+    def _update_split_position(self, width: Optional[int] = None) -> None:
+        """Update the split position, preserving user adjustments where possible."""
+        panes = getattr(self, "_panes", None)
+        if panes is None:
+            return
+
+        if width is None or width <= 0:
+            width = self._compute_effective_split_width()
+
+        if not width:
+            return
+
+        last_width = getattr(self, "_last_split_width", 0)
+        if width == last_width:
+            return
+
+        self._last_split_width = width
+
+        try:
+            panes.set_position(max(width // 2, 1))
+        except Exception:
+            pass
 
     def _attach_refresh(
         self,
