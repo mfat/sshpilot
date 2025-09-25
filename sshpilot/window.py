@@ -5317,7 +5317,44 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             open_externally = False
 
+        placeholder_info = None
         if not open_externally and has_internal_file_manager():
+            placeholder_info = self._create_file_manager_placeholder_tab(nickname, host_value)
+
+            def _create_embedded_file_manager():
+                try:
+                    widget, controller = create_internal_file_manager_tab(
+                        user=str(username or ''),
+                        host=str(host_value or ''),
+                        port=effective_port,
+                        nickname=str(nickname),
+                        parent_window=self,
+                        connection=connection,
+                        connection_manager=self.connection_manager,
+                        ssh_config=ssh_config,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.error("Embedded file manager failed: %s", exc)
+                    self._handle_file_manager_placeholder_error(
+                        placeholder_info,
+                        str(nickname or host_value or _('Remote Host')),
+                        str(exc) or _('Failed to open file manager'),
+                    )
+                else:
+                    self._register_file_manager_tab(
+                        widget,
+                        controller,
+                        nickname,
+                        host_value,
+                        page=placeholder_info.get('page') if placeholder_info else None,
+                        container=placeholder_info.get('container') if placeholder_info else None,
+                    )
+                return False
+
+            if GLib.idle_add(_create_embedded_file_manager, priority=GLib.PRIORITY_DEFAULT_IDLE):
+                return
+            # If idle_add failed, fall back to immediate creation using the placeholder
+            fallback_placeholder = placeholder_info
             try:
                 widget, controller = create_internal_file_manager_tab(
                     user=str(username or ''),
@@ -5331,8 +5368,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 )
             except Exception as exc:
                 logger.error("Embedded file manager failed: %s", exc)
+                self._handle_file_manager_placeholder_error(
+                    fallback_placeholder,
+                    str(nickname or host_value or _('Remote Host')),
+                    str(exc) or _('Failed to open file manager'),
+                )
             else:
-                self._register_file_manager_tab(widget, controller, nickname, host_value)
+                self._register_file_manager_tab(
+                    widget,
+                    controller,
+                    nickname,
+                    host_value,
+                    page=fallback_placeholder.get('page') if fallback_placeholder else None,
+                    container=fallback_placeholder.get('container') if fallback_placeholder else None,
+                )
                 return
 
         success, error_msg, window = launch_remote_file_manager(
@@ -5380,13 +5429,128 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:  # pragma: no cover - defensive
             logger.debug('Unable to attach close handler to internal file manager window')
 
-    def _register_file_manager_tab(self, widget, controller, nickname, host_value):
+    def _create_file_manager_placeholder_tab(self, nickname, host_value):
+        """Create and show a placeholder tab while the embedded manager loads."""
+
+        display_name = str(nickname or host_value or _('Remote Host'))
+        page_title = _('{name} Files').format(name=display_name)
+
+        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        container.set_hexpand(True)
+        container.set_vexpand(True)
+
+        inner_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        inner_box.set_halign(Gtk.Align.CENTER)
+        inner_box.set_valign(Gtk.Align.CENTER)
+        inner_box.set_hexpand(True)
+        inner_box.set_vexpand(True)
+
+        spinner = Gtk.Spinner()
+        spinner.start()
+        inner_box.append(spinner)
+
+        status_label = Gtk.Label(label=_('Opening file manager…'))
+        status_label.set_wrap(True)
+        status_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        status_label.set_justify(Gtk.Justification.CENTER)
+        try:
+            status_label.set_xalign(0.5)
+        except AttributeError:  # pragma: no cover - older GTK
+            pass
+        try:
+            status_label.set_halign(Gtk.Align.CENTER)
+        except AttributeError:  # pragma: no cover - alignment fallback
+            pass
+        inner_box.append(status_label)
+
+        container.append(inner_box)
+
+        page = self.tab_view.append(container)
+        page.set_title(page_title)
+        try:
+            page.set_icon(Gio.ThemedIcon.new('folder-remote-symbolic'))
+        except Exception:
+            page.set_icon(Gio.ThemedIcon.new('folder-symbolic'))
+
+        self.show_tab_view()
+        self.tab_view.set_selected_page(page)
+
+        return {
+            'page': page,
+            'container': container,
+            'spinner': spinner,
+            'label': status_label,
+            'inner_box': inner_box,
+        }
+
+    def _handle_file_manager_placeholder_error(self, placeholder_info, display_name, message):
+        """Update placeholder tab to reflect an error state."""
+
+        if placeholder_info is None:
+            self._show_manage_files_error(display_name, message)
+            return
+
+        spinner = placeholder_info.get('spinner')
+        if spinner is not None:
+            try:
+                spinner.stop()
+                parent = spinner.get_parent()
+                if parent is not None and hasattr(parent, 'remove'):
+                    parent.remove(spinner)
+            except Exception:  # pragma: no cover - defensive cleanup
+                pass
+
+        label = placeholder_info.get('label')
+        if label is not None:
+            try:
+                label.set_label(message)
+                label.add_css_class('error')
+            except Exception:  # pragma: no cover - defensive styling
+                pass
+
+        self._show_manage_files_error(display_name, message)
+
+    def _replace_placeholder_tab_content(self, container, widget):
+        """Replace placeholder children with the real widget."""
+
+        if container is None or widget is None:
+            return False
+
+        try:
+            while child := container.get_first_child():
+                container.remove(child)
+        except Exception as exc:  # pragma: no cover - defensive cleanup
+            logger.debug('Failed to clear placeholder content: %s', exc)
+            return False
+
+        try:
+            container.append(widget)
+        except Exception as exc:  # pragma: no cover - defensive append
+            logger.debug('Failed to attach embedded file manager to placeholder: %s', exc)
+            return False
+
+        try:
+            widget.set_hexpand(True)
+            widget.set_vexpand(True)
+        except Exception:  # pragma: no cover - optional sizing
+            pass
+
+        return True
+
+    def _register_file_manager_tab(self, widget, controller, nickname, host_value, *, page=None, container=None):
         """Add an embedded file manager tab to the tab view."""
 
         display_name = str(nickname or host_value or _('Remote Host'))
         page_title = _('{name} Files').format(name=display_name)
 
-        page = self.tab_view.append(widget)
+        if page is not None and container is not None:
+            replaced = self._replace_placeholder_tab_content(container, widget)
+            if not replaced:
+                page = None
+
+        if page is None:
+            page = self.tab_view.append(widget)
+
         page.set_title(page_title)
         try:
             page.set_icon(Gio.ThemedIcon.new('folder-remote-symbolic'))

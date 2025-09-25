@@ -1806,6 +1806,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_connections_from_rows(rows)`** — Return unique connections represented by the provided rows.
 
+- **`_create_file_manager_placeholder_tab(nickname, host_value)`** — Create and show a placeholder tab while the embedded manager loads.
+
 - **`_cycle_connection_tabs_or_open(connection)`** — If there are open tabs for this server, cycle to the next one (wrap).
 
 - **`_determine_neighbor_connection_row(target_rows)`** — Find the closest remaining connection row after deleting target_rows.
@@ -1839,6 +1841,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_get_target_connections(prefer_context=False)`** — Return connection objects targeted by the current action.
 
 - **`_get_user_preferred_terminal()`** — Get the user's preferred terminal from settings
+
+- **`_handle_file_manager_placeholder_error(placeholder_info, display_name, message)`** — Update placeholder tab to reflect an error state.
 
 - **`_info_dialog(heading, body)`** — Handles info dialog.
 
@@ -1884,7 +1888,9 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_reconnect_terminal(connection)`** — Reconnect a terminal with updated connection settings
 
-- **`_register_file_manager_tab(widget, controller, nickname, host_value)`** — Add an embedded file manager tab to the tab view.
+- **`_register_file_manager_tab(widget, controller, nickname, host_value, page=None, container=None)`** — Add an embedded file manager tab to the tab view.
+
+- **`_replace_placeholder_tab_content(container, widget)`** — Replace placeholder children with the real widget.
 
 - **`_reset_controlled_reconnect()`** — Reset the controlled reconnect flag
 
