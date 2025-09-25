@@ -10,7 +10,7 @@
   </a>
 </p>
 
-**sshPilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal. 
+**SSH Pilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal. 
 
 
 <table>
@@ -142,7 +142,7 @@ Enable verbose debugging with:
 python3 run.py --verbose
 ```
 
-###Telegram channel
+### Telegram channel
 https://t.me/sshpilot
 
 ## Special Thanks
