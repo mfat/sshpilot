@@ -447,17 +447,23 @@ class ConnectionRow(Gtk.ListBoxRow):
         if has_dynamic:
             self.indicator_box.append(make_badge("D", "pf-dynamic"))
 
-    def _apply_host_label_text(self):
+    def _apply_host_label_text(self, include_port: bool | None = None):
         try:
             window = self.get_root()
             hide = bool(getattr(window, "_hide_hosts", False)) if window else False
         except Exception:
             hide = False
+
         if hide:
             self.host_label.set_text("••••••••••")
-        else:
-            display = _format_connection_host_display(self.connection)
-            self.host_label.set_text(display or '')
+            return
+
+        format_kwargs = {}
+        if include_port is not None:
+            format_kwargs["include_port"] = include_port
+
+        display = _format_connection_host_display(self.connection, **format_kwargs)
+        self.host_label.set_text(display or '')
 
     def apply_hide_hosts(self, hide: bool):
         self._apply_host_label_text()
@@ -500,8 +506,7 @@ class ConnectionRow(Gtk.ListBoxRow):
             self.nickname_label.set_markup(f"<b>{self.connection.nickname}</b>")
 
         if hasattr(self.connection, "username") and hasattr(self, "host_label"):
-            display = _format_connection_host_display(self.connection, include_port=True)
-            self.host_label.set_text(display or '')
+            self._apply_host_label_text(include_port=True)
         self._update_forwarding_indicators()
         self.update_status()
 
