@@ -1,5 +1,5 @@
 """
-Main Window for sshPilot
+Main Window for SSH Pilot
 Primary UI with connection list, tabs, and terminal management
 """
 
@@ -676,7 +676,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def setup_window(self):
         """Configure main window properties"""
-        self.set_title('sshPilot')
+        self.set_title('SSH Pilot')
         self.set_icon_name('io.github.mfat.sshpilot')
         
         # Load window geometry
@@ -743,7 +743,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Create header bar
         self.header_bar = Gtk.HeaderBar()
-        self.header_bar.set_title_widget(Gtk.Label(label="sshPilot"))
+        self.header_bar.set_title_widget(Gtk.Label(label="SSH Pilot"))
         
         # Safely configure native window controls (macOS only, GTK 4.18+)
         maybe_set_native_controls(self.header_bar, False)
@@ -2905,7 +2905,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Show about dialog"""
         # Use Adw.AboutDialog to get support-url and issue-url properties
         about = Adw.AboutDialog()
-        about.set_application_name('sshPilot')
+        about.set_application_name('SSH Pilot')
         try:
             from . import __version__ as APP_VERSION
         except Exception:
