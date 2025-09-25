@@ -2456,7 +2456,7 @@ class FilePane(Gtk.Box):
 
     def _on_list_setup(self, factory: Gtk.SignalListItemFactory, item):
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        icon = Gtk.Image.new_from_icon_name("folder-symbolic")
+        icon = Gtk.Image.new_from_icon_name("folder")
         icon.set_valign(Gtk.Align.CENTER)
         name_label = Gtk.Label(xalign=0)
         name_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
@@ -2506,7 +2506,7 @@ class FilePane(Gtk.Box):
             name_label.set_tooltip_text(value)
             metadata_label.set_text("—")
             metadata_label.set_tooltip_text(None)
-            icon.set_from_icon_name("folder-symbolic" if value.endswith('/') else "text-x-generic-symbolic")
+            icon.set_from_icon_name("folder" if value.endswith('/') else "text-x-generic")
             return
 
         display_name = entry.name + ("/" if entry.is_dir else "")
@@ -2527,9 +2527,9 @@ class FilePane(Gtk.Box):
             metadata_label.set_tooltip_text(size_text)
 
         if entry.is_dir:
-            icon.set_from_icon_name("folder-symbolic")
+            icon.set_from_icon_name("folder")
         else:
-            icon.set_from_icon_name("text-x-generic-symbolic")
+            icon.set_from_icon_name("text-x-generic")
 
         box._pane_entry = entry
         box._pane_index = position
