@@ -28,10 +28,12 @@ SSH Pilot is designed for efficient keyboard navigation. This guide covers all a
 | **New Connection** | `Ctrl+N` | `Cmd+N` | Create a new SSH connection |
 | **Search Connections** | `Ctrl+F` | `Cmd+F` | Search/filter connection list |
 | **Focus Connection List** | `Ctrl+L` | `Cmd+L` | Focus the sidebar connection list |
-| **Quick Connect** | `Ctrl+Alt+C` | `Cmd+Alt+C` | Quick connect dialog |
-| **Open New Tab** | `Ctrl+Alt+N` | `Cmd+Alt+N` | Open selected connection in new tab |
-| **Connect to Selection** | `Ctrl+Enter` | `Cmd+Enter` | Connect to selected connection |
-| **Connect to First** | `Enter` | `Enter` | Connect to first connection (startup) |
+| **Quick Connect** | `Ctrl+Alt+C` | `Cmd+Alt+C` | Open the Quick Connect dialog |
+| **Open New Tab** | `Ctrl+Alt+N` | `Cmd+Alt+N` | Open the highlighted connection in a new tab |
+| **Open in New Tab** | `Ctrl+Enter` | `Cmd+Enter` | Force the selected connection to open in a new tab |
+| **Open or Focus Selected Connection** | `Enter` | `Enter` | Focus an existing tab for the selected connection or open a new one |
+| **Manage Remote Files** | `Ctrl+Shift+O` | `Cmd+Shift+O` | Launch the remote file manager for the selected connection* |
+| **Delete Selected Connection(s)** | `Delete` or `Backspace` | `Delete` (⌫) | Remove the highlighted connections after confirmation |
 
 ---
 
@@ -58,7 +60,7 @@ SSH Pilot is designed for efficient keyboard navigation. This guide covers all a
 | **Copy** | `Ctrl+Shift+C` | `Cmd+C` | Copy selected text |
 | **Paste** | `Ctrl+Shift+V` | `Cmd+V` | Paste text |
 | **Select All** | `Ctrl+Shift+A` | `Cmd+A` | Select all terminal text |
-| **Zoom In** | `Ctrl+Plus` | `Cmd+Plus` | Increase font size |
+| **Zoom In** | `Ctrl+=` (`Ctrl+Plus`) | `Cmd+=` (`Cmd+Plus`) | Increase font size |
 | **Zoom Out** | `Ctrl+Minus` | `Cmd+Minus` | Decrease font size |
 | **Reset Zoom** | `Ctrl+0` | `Cmd+0` | Reset font size to default |
 
@@ -87,9 +89,13 @@ SSH Pilot is designed for efficient keyboard navigation. This guide covers all a
 
 | Action | Linux/Windows | macOS | Description |
 |--------|---------------|-------|-------------|
-| **Focus path entry** | `Ctrl+L` | `Cmd+L` | Focus the active pane's path entry and select its contents |
-| **Refresh directory** | `F5` or `Ctrl+R` | `F5` or `Cmd+R` | Reload the visible directory in the focused pane |
-| **Delete selection** | `Delete` or `Shift+Delete` | `Delete` or `Shift+Delete` | Delete the selected files or folders in the focused pane |
+| **Focus Path Entry** | `Ctrl+L` | `Cmd+L` | Focus the active pane's path entry and select its contents |
+| **Refresh Directory** | `F5` or `Ctrl+R` | `F5` or `Cmd+R` | Reload the visible directory in the focused pane |
+| **Copy Selection** | `Ctrl+C` | `Cmd+C` | Queue the selected files or folders for copy |
+| **Cut Selection** | `Ctrl+X` | `Cmd+X` | Queue the selected files or folders for move |
+| **Paste** | `Ctrl+V` | `Cmd+V` | Paste the queued items into the current directory |
+| **Paste as Move** | `Ctrl+Shift+V` | `Cmd+Shift+V` | Move queued items into the current directory (force move) |
+| **Delete Selection** | `Delete` or `Shift+Delete` | `Delete` or `Shift+Delete` | Delete the selected files or folders in the focused pane |
 
 ---
 
@@ -107,16 +113,18 @@ When editing connection settings:
 ## 🏃 Quick Navigation Tips
 
 ### Efficient Connection Workflow
-1. **Startup**: Press `Enter` to connect to the first server immediately
+1. **Startup**: Press `Enter` on the highlighted server (the first row at launch) to open or focus it immediately
 2. **Search**: Use `Ctrl/Cmd+F` to quickly find connections
 3. **Multi-select**: Hold `Ctrl` while clicking to select multiple connections
 4. **Quick switch**: Use `Ctrl/Cmd+L` to focus the connection list from anywhere
+5. **Remote files**: `Ctrl/Cmd+Shift+O` jumps straight into the remote file manager when available
 
 ### Terminal Workflow
 1. **New connection**: `Ctrl/Cmd+Alt+N` opens the selected connection in a new tab
-2. **Local work**: `Ctrl/Cmd+Shift+T` for a local terminal
-3. **Tab switching**: `Alt+Left/Right` for quick tab navigation
-4. **Broadcast**: `Ctrl/Cmd+Shift+B` to send commands to multiple terminals
+2. **Force new tab**: `Ctrl/Cmd+Enter` always opens another tab for the highlighted connection
+3. **Local work**: `Ctrl/Cmd+Shift+T` for a local terminal
+4. **Tab switching**: `Alt+Left/Right` for quick tab navigation
+5. **Broadcast**: `Ctrl/Cmd+Shift+B` to send commands to multiple terminals
 
 ### Sidebar Management
 - **Toggle visibility**: `F9` or `Ctrl/Cmd+B`
@@ -135,5 +143,7 @@ When editing connection settings:
 - **Quick access**: Memorize `Ctrl/Cmd+Alt+C` for the quick connect dialog when you need to connect to an ad-hoc server
 
 ---
+
+*Remote file manager shortcuts and the `Ctrl/Cmd+Shift+O` accelerator are available when the file manager feature is enabled in your build.*
 
 *This document reflects SSH Pilot's current keyboard shortcuts. For the most up-to-date information, press `Ctrl/Cmd+Shift+/` within the application, or access via Help → Keyboard Shortcuts menu.*
