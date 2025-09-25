@@ -143,7 +143,7 @@ Enable verbose debugging with:
 python3 run.py --verbose
 ```
 
-###Telegram channel
+### Telegram channel
 https://t.me/sshpilot
 
 ## Special Thanks
