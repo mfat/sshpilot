@@ -2181,7 +2181,6 @@ class FilePane(Gtk.Box):
             max_columns=6,
         )
         grid_view.set_enable_rubberband(True)
-        grid_view.add_css_class("iconview")
         grid_view.set_can_focus(True)  # Enable keyboard focus for typeahead
         self._grid_view = grid_view
         # Navigate on grid item activation (double click / Enter)
@@ -2573,6 +2572,8 @@ class FilePane(Gtk.Box):
         label.set_wrap(True)
         label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         label.set_lines(2)
+        # Set normal font weight to override any bold styling
+        label.add_css_class("caption")
         content.append(label)
 
         button.set_child(content)
