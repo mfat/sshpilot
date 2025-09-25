@@ -3737,6 +3737,7 @@ class FileManagerWindow(Adw.Window):
         
         # Create header bar with window controls
         header_bar = Adw.HeaderBar()
+        self._header_bar = header_bar
         title_parts = []
         if nickname and nickname.strip():
             title_parts.append(str(nickname).strip())
@@ -3944,6 +3945,10 @@ class FileManagerWindow(Adw.Window):
         if content is None:
             raise RuntimeError("File manager UI is not initialised")
 
+        enable_embedding_mode = getattr(self, 'enable_embedding_mode', None)
+        if callable(enable_embedding_mode):
+            enable_embedding_mode()
+
         try:
             current_child = self.get_content()
         except Exception:
@@ -3960,6 +3965,38 @@ class FileManagerWindow(Adw.Window):
                     pass
 
         return content
+
+    def enable_embedding_mode(self) -> None:
+        """Adjust the window chrome for embedded usage."""
+
+        if getattr(self, '_embedded_mode', False):
+            return
+
+        self._embedded_mode = True
+
+        try:
+            self.set_decorated(False)
+        except Exception:  # pragma: no cover - defensive
+            pass
+
+        header_bar = getattr(self, '_header_bar', None)
+        if header_bar is not None:
+            try:
+                header_bar.set_show_start_title_buttons(False)
+                header_bar.set_show_end_title_buttons(False)
+                header_bar.set_visible(False)
+            except Exception:  # pragma: no cover - defensive UI cleanup
+                try:
+                    header_bar.hide()
+                except Exception:
+                    pass
+
+        toolbar_view = getattr(self, '_toolbar_view', None)
+        if toolbar_view is not None:
+            try:
+                toolbar_view.add_css_class('embedded')
+            except Exception:  # pragma: no cover - optional styling
+                pass
 
     # -- signal handlers ------------------------------------------------
 
