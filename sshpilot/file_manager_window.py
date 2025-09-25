@@ -3732,6 +3732,8 @@ class FileManagerWindow(Adw.Window):
         # Use ToolbarView like other Adw.Window instances
         toolbar_view = Adw.ToolbarView()
         self.set_content(toolbar_view)
+        self._toolbar_view = toolbar_view
+        self._embedded_parent: Optional[Gtk.Widget] = None
         
         # Create header bar with window controls
         header_bar = Adw.HeaderBar()
@@ -3933,6 +3935,31 @@ class FileManagerWindow(Adw.Window):
             self._manager.connect_to_server()
         except Exception as exc:
             print(f"Error connecting to server: {exc}")
+
+    def detach_for_embedding(self, parent: Optional[Gtk.Widget] = None) -> Gtk.Widget:
+        """Detach the window content for embedding in another container."""
+
+        self._embedded_parent = parent
+        content = getattr(self, '_toolbar_view', None)
+        if content is None:
+            raise RuntimeError("File manager UI is not initialised")
+
+        try:
+            current_child = self.get_content()
+        except Exception:
+            current_child = None
+
+        if current_child is content:
+            try:
+                self.set_content(None)
+            except Exception:
+                # Fallback to unparent if set_content is unavailable
+                try:
+                    content.unparent()
+                except Exception:
+                    pass
+
+        return content
 
     # -- signal handlers ------------------------------------------------
 
@@ -5120,7 +5147,18 @@ class FileManagerWindow(Adw.Window):
             
             # Create new progress dialog
             print(f"DEBUG: Creating progress dialog")
-            self._progress_dialog = SFTPProgressDialog(parent=self, operation_type=operation_type)
+            dialog_parent = self
+            if self._embedded_parent is not None:
+                dialog_parent = self._embedded_parent
+            else:
+                try:
+                    transient = self.get_transient_for()
+                    if transient is not None:
+                        dialog_parent = transient
+                except Exception:
+                    pass
+
+            self._progress_dialog = SFTPProgressDialog(parent=dialog_parent, operation_type=operation_type)
             self._progress_dialog.set_operation_details(total_files=1, filename=filename)
             self._progress_dialog.set_future(future)
             

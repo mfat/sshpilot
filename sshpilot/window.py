@@ -55,7 +55,11 @@ from .preferences import (
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
 )
-from .file_manager_integration import launch_remote_file_manager
+from .file_manager_integration import (
+    launch_remote_file_manager,
+    create_internal_file_manager_tab,
+    has_internal_file_manager,
+)
 from .sshcopyid_window import SshCopyIdWindow
 from .groups import GroupManager
 from .sidebar import GroupRow, ConnectionRow, build_sidebar
@@ -5263,6 +5267,30 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 logger.debug("Failed to read SSH configuration for file manager: %s", exc)
                 ssh_config = None
 
+        open_externally = False
+        try:
+            open_externally = bool(self.config.get_setting('file_manager.open_externally', False))
+        except Exception:
+            open_externally = False
+
+        if not open_externally and has_internal_file_manager():
+            try:
+                widget, controller = create_internal_file_manager_tab(
+                    user=str(username or ''),
+                    host=str(host_value or ''),
+                    port=effective_port,
+                    nickname=str(nickname),
+                    parent_window=self,
+                    connection=connection,
+                    connection_manager=self.connection_manager,
+                    ssh_config=ssh_config,
+                )
+            except Exception as exc:
+                logger.error("Embedded file manager failed: %s", exc)
+            else:
+                self._register_file_manager_tab(widget, controller, nickname, host_value)
+                return
+
         success, error_msg, window = launch_remote_file_manager(
             user=str(username or ''),
             host=str(host_value or ''),
@@ -5284,8 +5312,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.error(f"Failed to start file manager process for {nickname}: {message}")
             self._show_manage_files_error(str(nickname), message)
 
-    def _track_internal_file_manager_window(self, window):
-        """Keep a reference to in-app file manager windows to prevent GC."""
+    def _track_internal_file_manager_window(self, window, *, widget=None):
+        """Keep a reference to in-app file manager controllers to prevent GC."""
 
         if window in self._internal_file_manager_windows:
             return
@@ -5298,11 +5326,34 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 pass
             return False
 
+        if widget is not None and hasattr(widget, 'connect'):
+            widget.connect('destroy', lambda *_: _cleanup())
+            return
+
         try:
             if hasattr(window, 'connect'):
                 window.connect('close-request', _cleanup)
         except Exception:  # pragma: no cover - defensive
             logger.debug('Unable to attach close handler to internal file manager window')
+
+    def _register_file_manager_tab(self, widget, controller, nickname, host_value):
+        """Add an embedded file manager tab to the tab view."""
+
+        display_name = str(nickname or host_value or _('Remote Host'))
+        page_title = _('{name} Files').format(name=display_name)
+
+        page = self.tab_view.append(widget)
+        page.set_title(page_title)
+        try:
+            page.set_icon(Gio.ThemedIcon.new('folder-remote-symbolic'))
+        except Exception:
+            page.set_icon(Gio.ThemedIcon.new('folder-symbolic'))
+        page.set_tooltip_text(_('File manager for {name}').format(name=display_name))
+
+        self._track_internal_file_manager_window(controller, widget=widget)
+
+        self.show_tab_view()
+        self.tab_view.set_selected_page(page)
 
     def on_edit_connection_action(self, action, param=None):
         """Handle edit connection action from context menu"""
