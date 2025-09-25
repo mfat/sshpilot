@@ -10,7 +10,7 @@ SSH Pilot is designed for efficient keyboard navigation. This guide covers all a
 
 ---
 
-## 🚀 General Application
+## General Application
 
 | Action | Linux/Windows | macOS | Description |
 |--------|---------------|-------|-------------|
