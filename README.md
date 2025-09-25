@@ -2,7 +2,6 @@
 <img width="154" height="154" alt="logo" src="https://github.com/user-attachments/assets/42b73dbf-778c-45ff-9361-22a52988f1b3" />
 </p>
 
-[Download](#download)
 
 
 <p align="center">
