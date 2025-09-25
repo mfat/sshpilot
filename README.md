@@ -2,16 +2,11 @@
 <img width="154" height="154" alt="logo" src="https://github.com/user-attachments/assets/42b73dbf-778c-45ff-9361-22a52988f1b3" />
 </p>
 
-[Download](#download)
 
 
-<p align="center">
-<a href='https://flathub.org/apps/io.github.mfat.sshpilot'>
-    <img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?locale=en'/>
-  </a>
-</p>
 
-**sshPilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal. 
+
+**SSH Pilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal. 
 
 
 <table>
@@ -72,6 +67,14 @@ Latest release can be downloaded from here: https://github.com/mfat/sshpilot/rel
 
 - ### Flatpak
 Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
+
+<p align="center">
+<a href='https://flathub.org/apps/io.github.mfat.sshpilot'>
+    <img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?locale=en'/>
+  </a>
+</p>
+
+OR in a terminal typ: 
 
 `
 flatpak install flathub io.github.mfat.sshpilot
@@ -143,7 +146,7 @@ Enable verbose debugging with:
 python3 run.py --verbose
 ```
 
-###Telegram channel
+### Telegram channel
 https://t.me/sshpilot
 
 ## Special Thanks
