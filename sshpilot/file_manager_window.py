@@ -2561,7 +2561,7 @@ class FilePane(Gtk.Box):
         content.set_halign(Gtk.Align.CENTER)
         content.set_valign(Gtk.Align.CENTER)
 
-        image = Gtk.Image.new_from_icon_name("folder-symbolic")
+        image = Gtk.Image.new_from_icon_name("folder")
         image.set_pixel_size(64)
         image.set_halign(Gtk.Align.CENTER)
         content.append(image)
@@ -2604,9 +2604,9 @@ class FilePane(Gtk.Box):
 
         # Update the image icon based on type
         if value.endswith('/'):
-            image.set_from_icon_name("folder-symbolic")
+            image.set_from_icon_name("folder")
         else:
-            image.set_from_icon_name("text-x-generic-symbolic")
+            image.set_from_icon_name("text-x-generic")
 
         entry: Optional[FileEntry] = None
         position = item.get_position()
