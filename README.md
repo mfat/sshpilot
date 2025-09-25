@@ -4,11 +4,7 @@
 
 
 
-<p align="center">
-<a href='https://flathub.org/apps/io.github.mfat.sshpilot'>
-    <img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?locale=en'/>
-  </a>
-</p>
+
 
 **SSH Pilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal. 
 
@@ -71,6 +67,14 @@ Latest release can be downloaded from here: https://github.com/mfat/sshpilot/rel
 
 - ### Flatpak
 Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
+
+<p align="center">
+<a href='https://flathub.org/apps/io.github.mfat.sshpilot'>
+    <img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?locale=en'/>
+  </a>
+</p>
+
+OR in a terminal typ: 
 
 `
 flatpak install flathub io.github.mfat.sshpilot
