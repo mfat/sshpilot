@@ -42,7 +42,7 @@ if not load_resources():
     sys.exit(1)
 
 from .window import MainWindow
-from .platform_utils import is_macos, get_data_dir, is_flatpak
+from .platform_utils import is_macos, get_data_dir
 from .preferences import should_hide_file_manager_options
 
 class SshPilotApplication(Adw.Application):
@@ -85,14 +85,8 @@ class SshPilotApplication(Adw.Application):
             # Apply color overrides
             self.apply_color_overrides(cfg)
 
-            flatpak = is_flatpak()
-            self.isolated_mode = (
-                True
-                if flatpak
-                else isolated or bool(cfg.get_setting('ssh.use_isolated_config', False))
-            )
-            if flatpak:
-                cfg.set_setting('ssh.use_isolated_config', True)
+            configured_isolated = bool(cfg.get_setting('ssh.use_isolated_config', False))
+            self.isolated_mode = bool(isolated or configured_isolated)
 
             # Update native connect state from configuration when not overridden
             try:
@@ -108,7 +102,7 @@ class SshPilotApplication(Adw.Application):
                 # Override already active, ensure attribute is boolean
                 self.native_connect_enabled = bool(self.native_connect_enabled or native_cfg)
         except Exception:
-            self.isolated_mode = True if is_flatpak() else isolated
+            self.isolated_mode = bool(isolated)
             if self.native_connect_override is None:
                 self.native_connect_enabled = bool(native_connect)
 

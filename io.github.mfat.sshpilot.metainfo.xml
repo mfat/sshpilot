@@ -35,10 +35,11 @@
 
   <releases>
 
-    <release version="4.1.1" date="2025-09-25">
+    <release version="4.1.2" date="2025-09-25">
 
       <description>
-        <p>Latest stable release.</p>
+        <p>SSH Pilot can now manage your ~/.ssh/config file</p>
+        <p>Improvements to builtin file managers</p>
       </description>
     </release>
   </releases>
