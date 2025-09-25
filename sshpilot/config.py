@@ -189,6 +189,7 @@ class Config(GObject.Object):
             },
             'file_manager': {
                 'force_internal': False,
+                'open_externally': False,
             },
             'security': {
                 'store_passwords': True,
@@ -680,11 +681,18 @@ class Config(GObject.Object):
 
         file_manager_cfg = config.get('file_manager')
         if not isinstance(file_manager_cfg, dict):
-            config['file_manager'] = {'force_internal': False}
+            config['file_manager'] = {
+                'force_internal': False,
+                'open_externally': False,
+            }
             updated = True
-        elif 'force_internal' not in file_manager_cfg:
-            file_manager_cfg['force_internal'] = False
-            updated = True
+        else:
+            if 'force_internal' not in file_manager_cfg:
+                file_manager_cfg['force_internal'] = False
+                updated = True
+            if 'open_externally' not in file_manager_cfg:
+                file_manager_cfg['open_externally'] = False
+                updated = True
 
         return config, updated
 

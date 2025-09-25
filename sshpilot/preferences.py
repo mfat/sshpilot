@@ -769,6 +769,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             advanced_page.add(operation_group)
 
             self.force_internal_file_manager_row = None
+            self.open_file_manager_externally_row = None
             if has_internal_file_manager():
                 file_manager_group = Adw.PreferencesGroup()
                 file_manager_group.set_title("File Management")
@@ -786,6 +787,21 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 )
 
                 file_manager_group.add(self.force_internal_file_manager_row)
+
+                self.open_file_manager_externally_row = Adw.SwitchRow()
+                self.open_file_manager_externally_row.set_title("Open File Manager in Separate Window")
+                self.open_file_manager_externally_row.set_subtitle(
+                    "Show the built-in file manager in its own window instead of a tab"
+                )
+                self.open_file_manager_externally_row.set_active(
+                    bool(self.config.get_setting('file_manager.open_externally', False))
+                )
+                self.open_file_manager_externally_row.connect(
+                    'notify::active', self.on_open_file_manager_externally_changed
+                )
+
+                file_manager_group.add(self.open_file_manager_externally_row)
+                self._update_external_file_manager_row()
                 advanced_page.add(file_manager_group)
 
             advanced_group = Adw.PreferencesGroup()
@@ -1252,6 +1268,11 @@ class PreferencesWindow(Adw.PreferencesWindow):
                     'file_manager.force_internal',
                     bool(self.force_internal_file_manager_row.get_active()),
                 )
+            if getattr(self, 'open_file_manager_externally_row', None) is not None:
+                self.config.set_setting(
+                    'file_manager.open_externally',
+                    bool(self.open_file_manager_externally_row.get_active()),
+                )
         except Exception as e:
             logger.error(f"Failed to save advanced SSH settings: {e}")
 
@@ -1303,6 +1324,11 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.config.set_setting('file_manager.force_internal', default_force_internal)
             if getattr(self, 'force_internal_file_manager_row', None) is not None:
                 self.force_internal_file_manager_row.set_active(default_force_internal)
+            default_open_external = bool(file_manager_defaults.get('open_externally', False))
+            self.config.set_setting('file_manager.open_externally', default_open_external)
+            if getattr(self, 'open_file_manager_externally_row', None) is not None:
+                self.open_file_manager_externally_row.set_active(default_open_external)
+            self._update_external_file_manager_row()
         except Exception as e:
             logger.error(f"Failed to apply default advanced SSH settings: {e}")
 
@@ -1586,13 +1612,56 @@ class PreferencesWindow(Adw.PreferencesWindow):
         b = int(hex_color[4:6], 16) / 255.0
         return (r, g, b, 1.0)
 
+    def _is_internal_file_manager_enabled(self) -> bool:
+        """Return ``True`` when the application uses the built-in file manager."""
+
+        try:
+            if not has_internal_file_manager():
+                return False
+        except Exception as exc:  # pragma: no cover - defensive capability detection
+            logger.debug("Internal file manager check failed: %s", exc)
+            return False
+
+        try:
+            from .sftp_utils import should_use_in_app_file_manager  # pylint: disable=import-outside-toplevel
+
+            return bool(should_use_in_app_file_manager())
+        except Exception as exc:  # pragma: no cover - defensive capability detection
+            logger.debug("Failed to determine internal file manager usage: %s", exc)
+            try:
+                return bool(self.config.get_setting('file_manager.force_internal', False))
+            except Exception:
+                return False
+
+    def _update_external_file_manager_row(self) -> None:
+        """Sync the external window preference with the current availability."""
+
+        row = getattr(self, 'open_file_manager_externally_row', None)
+        if row is None:
+            return
+
+        use_internal = self._is_internal_file_manager_enabled()
+        row.set_sensitive(use_internal)
+
+        if not use_internal and row.get_active():
+            row.set_active(False)
+
     def on_force_internal_file_manager_changed(self, switch, *args):
         """Persist the preference for forcing the in-app file manager."""
         try:
             active = bool(switch.get_active())
             self.config.set_setting('file_manager.force_internal', active)
+            self._update_external_file_manager_row()
         except Exception as exc:
             logger.error("Failed to update file manager preference: %s", exc)
+
+    def on_open_file_manager_externally_changed(self, switch, *args):
+        """Persist whether the file manager should open in a separate window."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('file_manager.open_externally', active)
+        except Exception as exc:
+            logger.error("Failed to update external file manager preference: %s", exc)
 
     def on_confirm_disconnect_changed(self, switch, *args):
         """Handle confirm disconnect setting change"""

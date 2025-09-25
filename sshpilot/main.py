@@ -43,6 +43,7 @@ if not load_resources():
 
 from .window import MainWindow
 from .platform_utils import is_macos, get_data_dir, is_flatpak
+from .preferences import should_hide_file_manager_options
 
 class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
@@ -124,6 +125,8 @@ class SshPilotApplication(Adw.Application):
             self.create_action('search', self.on_search, ['<Meta>f'])
             self.create_action('new-key', self.on_new_key, ['<Meta><Shift>k'])
             self.create_action('edit-ssh-config', self.on_edit_ssh_config, ['<Meta><Shift>e'])
+            if not should_hide_file_manager_options():
+                self.create_action('manage-files', self.on_manage_files, ['<Meta><Shift>o'])
             logging.info("Using macOS-specific shortcuts (Meta key = Command key)")
         else:
             # Linux/Windows shortcuts using Primary key
@@ -134,6 +137,8 @@ class SshPilotApplication(Adw.Application):
             self.create_action('search', self.on_search, ['<primary>f'])
             self.create_action('new-key', self.on_new_key, ['<primary><shift>k'])
             self.create_action('edit-ssh-config', self.on_edit_ssh_config, ['<primary><shift>e'])
+            if not should_hide_file_manager_options():
+                self.create_action('manage-files', self.on_manage_files, ['<primary><shift>o'])
             logging.info("Using Linux/Windows shortcuts (Primary key = Ctrl key)")
         
         # Debug: Log registered shortcuts
@@ -411,6 +416,38 @@ class SshPilotApplication(Adw.Application):
                 logging.error(f"Failed to show SSH key copy dialog: {e}")
         else:
             logging.warning("No active window found for new SSH key action")
+
+    def on_manage_files(self, action, param):
+        """Handle manage files shortcut."""
+        if should_hide_file_manager_options():
+            return
+
+        win = self.props.active_window
+        if not win:
+            return
+
+        try:
+            handler = getattr(win, 'on_manage_files_button_clicked', None)
+            if callable(handler):
+                handler(None)
+                return
+
+            connection_list = getattr(win, 'connection_list', None)
+            if not connection_list:
+                return
+
+            row = connection_list.get_selected_row()
+            connection = getattr(row, 'connection', None) if row else None
+            if connection and hasattr(win, '_open_manage_files_for_connection'):
+                win._open_manage_files_for_connection(connection)
+        except Exception as exc:
+            logging.error(f"Failed to open file manager via shortcut: {exc}")
+            try:
+                connection_name = getattr(connection, 'nickname', '') if 'connection' in locals() else ''
+                if connection_name and hasattr(win, '_show_manage_files_error'):
+                    win._show_manage_files_error(connection_name, str(exc))
+            except Exception:
+                pass
 
     def on_local_terminal(self, action, param):
         """Handle local terminal action"""

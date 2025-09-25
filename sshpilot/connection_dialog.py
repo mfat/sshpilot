@@ -3193,13 +3193,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Connect refresh button
         refresh_button.connect("clicked", lambda *_: refresh_port_info())
         
-        # Create header bar with close button
+        # Create header bar with window controls
         header_bar = Adw.HeaderBar()
         header_bar.set_show_end_title_buttons(True)
-        
-        close_button = Gtk.Button(label=_("Close"))
-        close_button.add_css_class("flat")
-        header_bar.pack_end(close_button)
         
         # Create main container
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -3212,11 +3208,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Load initial data
         refresh_port_info()
         
-        # Handle close button
-        def _on_close_clicked(button):
-            dialog.destroy()
-        
-        close_button.connect('clicked', _on_close_clicked)
+        # Ensure dialog closes when the window controller is activated
+        dialog.connect("close-request", lambda *_: dialog.destroy())
         
         # Show the window
         dialog.present()

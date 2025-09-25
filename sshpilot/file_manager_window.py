@@ -2146,6 +2146,7 @@ class FilePane(Gtk.Box):
         self.append(self.toolbar)
 
         self._is_remote = label.lower() == "remote"
+        self._window: Optional["FileManagerWindow"] = None
 
         self._stack = Gtk.Stack()
         self._stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
@@ -2181,7 +2182,6 @@ class FilePane(Gtk.Box):
             max_columns=6,
         )
         grid_view.set_enable_rubberband(True)
-        grid_view.add_css_class("iconview")
         grid_view.set_can_focus(True)  # Enable keyboard focus for typeahead
         self._grid_view = grid_view
         # Navigate on grid item activation (double click / Enter)
@@ -2456,7 +2456,7 @@ class FilePane(Gtk.Box):
 
     def _on_list_setup(self, factory: Gtk.SignalListItemFactory, item):
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        icon = Gtk.Image.new_from_icon_name("folder-symbolic")
+        icon = Gtk.Image.new_from_icon_name("folder")
         icon.set_valign(Gtk.Align.CENTER)
         name_label = Gtk.Label(xalign=0)
         name_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
@@ -2506,7 +2506,7 @@ class FilePane(Gtk.Box):
             name_label.set_tooltip_text(value)
             metadata_label.set_text("—")
             metadata_label.set_tooltip_text(None)
-            icon.set_from_icon_name("folder-symbolic" if value.endswith('/') else "text-x-generic-symbolic")
+            icon.set_from_icon_name("folder" if value.endswith('/') else "text-x-generic")
             return
 
         display_name = entry.name + ("/" if entry.is_dir else "")
@@ -2527,9 +2527,9 @@ class FilePane(Gtk.Box):
             metadata_label.set_tooltip_text(size_text)
 
         if entry.is_dir:
-            icon.set_from_icon_name("folder-symbolic")
+            icon.set_from_icon_name("folder")
         else:
-            icon.set_from_icon_name("text-x-generic-symbolic")
+            icon.set_from_icon_name("text-x-generic")
 
         box._pane_entry = entry
         box._pane_index = position
@@ -2561,7 +2561,7 @@ class FilePane(Gtk.Box):
         content.set_halign(Gtk.Align.CENTER)
         content.set_valign(Gtk.Align.CENTER)
 
-        image = Gtk.Image.new_from_icon_name("folder-symbolic")
+        image = Gtk.Image.new_from_icon_name("folder")
         image.set_pixel_size(64)
         image.set_halign(Gtk.Align.CENTER)
         content.append(image)
@@ -2573,6 +2573,8 @@ class FilePane(Gtk.Box):
         label.set_wrap(True)
         label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         label.set_lines(2)
+        # Set normal font weight to override any bold styling
+        label.add_css_class("caption")
         content.append(label)
 
         button.set_child(content)
@@ -2604,9 +2606,9 @@ class FilePane(Gtk.Box):
 
         # Update the image icon based on type
         if value.endswith('/'):
-            image.set_from_icon_name("folder-symbolic")
+            image.set_from_icon_name("folder")
         else:
-            image.set_from_icon_name("text-x-generic-symbolic")
+            image.set_from_icon_name("text-x-generic")
 
         entry: Optional[FileEntry] = None
         position = item.get_position()
@@ -2943,9 +2945,29 @@ class FilePane(Gtk.Box):
             return None
         return selected_entries[0]
 
+    def set_file_manager_window(self, window: "FileManagerWindow") -> None:
+        """Associate this pane with its owning file manager window."""
+
+        self._window = window
+
+    def _get_file_manager_window(self) -> Optional["FileManagerWindow"]:
+        """Return the controlling FileManagerWindow if available."""
+
+        window = getattr(self, "_window", None)
+        if window is not None:
+            return window
+
+        root = self.get_root()
+        if isinstance(root, FileManagerWindow):
+            self._window = root
+            return root
+
+        return None
+
     def _on_upload_clicked(self, _button: Gtk.Button) -> None:
-        window = self.get_root()
+        window = self._get_file_manager_window()
         if not isinstance(window, FileManagerWindow):
+            self.show_toast("File manager is not available")
             return
 
         local_pane = getattr(window, "_left_pane", None)
@@ -2993,8 +3015,9 @@ class FilePane(Gtk.Box):
             self.show_toast("Select items to download")
             return
 
-        window = self.get_root()
+        window = self._get_file_manager_window()
         if not isinstance(window, FileManagerWindow):
+            self.show_toast("File manager is not available")
             return
 
         local_pane = getattr(window, "_left_pane", None)
@@ -3365,7 +3388,7 @@ class FilePane(Gtk.Box):
         
         # Find the source pane by ID
         source_pane = None
-        window = self.get_root()
+        window = self._get_file_manager_window()
         if isinstance(window, FileManagerWindow):
             if id(window._left_pane) == source_pane_id:
                 source_pane = window._left_pane
@@ -3417,7 +3440,7 @@ class FilePane(Gtk.Box):
             destination_path = posixpath.join(self._current_path, entry.name)
             
             # Get the file manager window to access the SFTP manager
-            window = self.get_root()
+            window = self._get_file_manager_window()
             if not isinstance(window, FileManagerWindow):
                 self.show_toast("Upload failed: Invalid window context")
                 return
@@ -3458,7 +3481,7 @@ class FilePane(Gtk.Box):
             destination_path = pathlib.Path(self._current_path) / entry.name
             
             # Get the file manager window to access the SFTP manager
-            window = self.get_root()
+            window = self._get_file_manager_window()
             if not isinstance(window, FileManagerWindow):
                 self.show_toast("Download failed: Invalid window context")
                 return
@@ -3732,9 +3755,12 @@ class FileManagerWindow(Adw.Window):
         # Use ToolbarView like other Adw.Window instances
         toolbar_view = Adw.ToolbarView()
         self.set_content(toolbar_view)
+        self._toolbar_view = toolbar_view
+        self._embedded_parent: Optional[Gtk.Widget] = None
         
         # Create header bar with window controls
         header_bar = Adw.HeaderBar()
+        self._header_bar = header_bar
         title_parts = []
         if nickname and nickname.strip():
             title_parts.append(str(nickname).strip())
@@ -3841,9 +3867,16 @@ class FileManagerWindow(Adw.Window):
         
         # Set panes as the child of toast overlay
         self._toast_overlay.set_child(panes)
+        # Connect to size changes to maintain proportional split
+        self.connect("notify::default-width", self._on_window_resize)
+        # Also connect to the panes widget size changes
+        panes.connect("notify::width-request", self._on_panes_size_changed)
+
 
         self._left_pane = FilePane("Local")
         self._right_pane = FilePane("Remote")
+        self._left_pane.set_file_manager_window(self)
+        self._right_pane.set_file_manager_window(self)
         self._left_pane.set_partner_pane(self._right_pane)
         self._right_pane.set_partner_pane(self._left_pane)
         panes.set_start_child(self._left_pane)
@@ -3851,9 +3884,13 @@ class FileManagerWindow(Adw.Window):
         
         # Store reference to panes for resize handling
         self._panes = panes
-        
+        self._last_split_width = 0
+
         # Connect to size-allocate to maintain proportional split
         self.connect("notify::default-width", self._on_window_resize)
+
+        # Set initial proportional split
+        GLib.idle_add(self._set_initial_split_position)
 
         # Initialize panes: left is LOCAL home, right is REMOTE home (~)
         self._pending_paths: Dict[FilePane, Optional[str]] = {
@@ -3933,6 +3970,67 @@ class FileManagerWindow(Adw.Window):
             self._manager.connect_to_server()
         except Exception as exc:
             print(f"Error connecting to server: {exc}")
+
+    def detach_for_embedding(self, parent: Optional[Gtk.Widget] = None) -> Gtk.Widget:
+        """Detach the window content for embedding in another container."""
+
+        self._embedded_parent = parent
+        content = getattr(self, '_toolbar_view', None)
+        if content is None:
+            raise RuntimeError("File manager UI is not initialised")
+
+        enable_embedding_mode = getattr(self, 'enable_embedding_mode', None)
+        if callable(enable_embedding_mode):
+            enable_embedding_mode()
+
+        try:
+            current_child = self.get_content()
+        except Exception:
+            current_child = None
+
+        if current_child is content:
+            try:
+                self.set_content(None)
+            except Exception:
+                # Fallback to unparent if set_content is unavailable
+                try:
+                    content.unparent()
+                except Exception:
+                    pass
+
+        return content
+
+    def enable_embedding_mode(self) -> None:
+        """Adjust the window chrome for embedded usage."""
+
+        if getattr(self, '_embedded_mode', False):
+            return
+
+        self._embedded_mode = True
+
+        try:
+            self.set_decorated(False)
+        except Exception:  # pragma: no cover - defensive
+            pass
+
+        header_bar = getattr(self, '_header_bar', None)
+        if header_bar is not None:
+            try:
+                header_bar.set_show_start_title_buttons(False)
+                header_bar.set_show_end_title_buttons(False)
+                header_bar.set_visible(False)
+            except Exception:  # pragma: no cover - defensive UI cleanup
+                try:
+                    header_bar.hide()
+                except Exception:
+                    pass
+
+        toolbar_view = getattr(self, '_toolbar_view', None)
+        if toolbar_view is not None:
+            try:
+                toolbar_view.add_css_class('embedded')
+            except Exception:  # pragma: no cover - optional styling
+                pass
 
     # -- signal handlers ------------------------------------------------
 
@@ -4722,11 +4820,86 @@ class FileManagerWindow(Adw.Window):
 
     def _on_window_resize(self, window, pspec) -> None:
         """Maintain proportional paned split when window is resized following GNOME HIG"""
-        # Get current window width
-        width = self.get_width()
+        self._update_split_position()
+
+    def _on_content_size_allocate(self, _widget: Gtk.Widget, allocation: Gdk.Rectangle) -> None:
+        """Adjust split position based on the actual allocated width of the content."""
+        width = getattr(allocation, "width", 0) or 0
+        if width <= 0:
+            return
+        self._update_split_position(width)
+
+    def _on_panes_size_changed(self, panes: Gtk.Paned, pspec: GObject.ParamSpec) -> None:
+        """Handle panes widget size changes to maintain proportional split."""
+        # Get the current allocation width
+        width = panes.get_allocated_width()
         if width > 0:
-            # Set paned position to half the window width (maintaining 50/50 split)
-            self._panes.set_position(width // 2)
+            self._update_split_position(width)
+
+    def _set_initial_split_position(self) -> None:
+        """Set the initial proportional split position after the widget is realized."""
+        panes = getattr(self, "_panes", None)
+        if panes is None:
+            return
+        
+        # Wait for the widget to be allocated
+        width = panes.get_allocated_width()
+        if width > 0:
+            self._update_split_position(width)
+            return False  # Don't repeat
+        else:
+            return True  # Try again later
+
+    def _compute_effective_split_width(self) -> int:
+        """Determine the appropriate width to use when sizing the split view."""
+        panes = getattr(self, "_panes", None)
+        if panes is None:
+            return 0
+
+        if getattr(self, "_embedded_mode", False):
+            overlay = getattr(self, "_toast_overlay", None)
+            if overlay is not None:
+                try:
+                    width = overlay.get_allocated_width()
+                except Exception:
+                    width = 0
+                if width:
+                    return width
+
+            try:
+                width = panes.get_allocated_width()
+            except Exception:
+                width = 0
+            if width:
+                return width
+
+        try:
+            return self.get_width()
+        except Exception:
+            return 0
+
+    def _update_split_position(self, width: Optional[int] = None) -> None:
+        """Update the split position, preserving user adjustments where possible."""
+        panes = getattr(self, "_panes", None)
+        if panes is None:
+            return
+
+        if width is None or width <= 0:
+            width = self._compute_effective_split_width()
+
+        if not width:
+            return
+
+        last_width = getattr(self, "_last_split_width", 0)
+        if width == last_width:
+            return
+
+        self._last_split_width = width
+
+        try:
+            panes.set_position(max(width // 2, 1))
+        except Exception:
+            pass
 
     def _attach_refresh(
         self,
@@ -5120,7 +5293,18 @@ class FileManagerWindow(Adw.Window):
             
             # Create new progress dialog
             print(f"DEBUG: Creating progress dialog")
-            self._progress_dialog = SFTPProgressDialog(parent=self, operation_type=operation_type)
+            dialog_parent = self
+            if self._embedded_parent is not None:
+                dialog_parent = self._embedded_parent
+            else:
+                try:
+                    transient = self.get_transient_for()
+                    if transient is not None:
+                        dialog_parent = transient
+                except Exception:
+                    pass
+
+            self._progress_dialog = SFTPProgressDialog(parent=dialog_parent, operation_type=operation_type)
             self._progress_dialog.set_operation_details(total_files=1, filename=filename)
             self._progress_dialog.set_future(future)
             

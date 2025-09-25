@@ -32,7 +32,7 @@ def open_remote_in_file_manager(
     # Build sftp URI
     port_part = f":{port}" if port else ""
     
-    if _should_use_in_app_file_manager():
+    if should_use_in_app_file_manager():
         # For in-app file manager, use the specified path
         p = path or "~"
         uri = f"sftp://{user}@{host}{port_part}{p}"
@@ -45,7 +45,7 @@ def open_remote_in_file_manager(
 
     logger.info(f"Opening SFTP URI: {uri}")
 
-    if _should_use_in_app_file_manager():
+    if should_use_in_app_file_manager():
         logger.info("Using in-app file manager window for remote browsing")
 
         try:
@@ -113,6 +113,12 @@ def open_remote_in_file_manager(
     _verify_ssh_connection_async(user, host, port, _on_verify_complete)
 
     return True, None
+
+
+def should_use_in_app_file_manager() -> bool:
+    """Return ``True`` when the libadwaita based file manager should be used."""
+
+    return _should_use_in_app_file_manager()
 
 
 def _should_use_in_app_file_manager() -> bool:

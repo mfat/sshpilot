@@ -1,5 +1,5 @@
 """
-Main Window for sshPilot
+Main Window for SSH Pilot
 Primary UI with connection list, tabs, and terminal management
 """
 
@@ -55,7 +55,11 @@ from .preferences import (
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
 )
-from .file_manager_integration import launch_remote_file_manager
+from .file_manager_integration import (
+    launch_remote_file_manager,
+    create_internal_file_manager_tab,
+    has_internal_file_manager,
+)
 from .sshcopyid_window import SshCopyIdWindow
 from .groups import GroupManager
 from .sidebar import GroupRow, ConnectionRow, build_sidebar
@@ -672,7 +676,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def setup_window(self):
         """Configure main window properties"""
-        self.set_title('sshPilot')
+        self.set_title('SSH Pilot')
         self.set_icon_name('io.github.mfat.sshpilot')
         
         # Load window geometry
@@ -739,7 +743,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Create header bar
         self.header_bar = Gtk.HeaderBar()
-        self.header_bar.set_title_widget(Gtk.Label(label="sshPilot"))
+        self.header_bar.set_title_widget(Gtk.Label(label="SSH Pilot"))
         
         # Safely configure native window controls (macOS only, GTK 4.18+)
         maybe_set_native_controls(self.header_bar, False)
@@ -1491,6 +1495,44 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             context_click.connect('pressed', _on_right_click)
             self.connection_list.add_controller(context_click)
+
+            middle_click = Gtk.GestureClick()
+            middle_click.set_button(Gdk.BUTTON_MIDDLE)
+
+            def _on_middle_click(gesture, n_press, x, y):
+                if n_press != 1:
+                    return
+
+                try:
+                    self._stop_pulse_on_interaction(None)
+                except Exception:
+                    pass
+
+                row, _, _ = self._resolve_connection_list_event(x, y)
+
+                if not row:
+                    try:
+                        row = self.connection_list.get_selected_row()
+                    except Exception:
+                        row = None
+
+                if not row or not hasattr(row, 'connection'):
+                    return
+
+                previous_row = getattr(self, '_context_menu_row', None)
+                previous_connection = getattr(self, '_context_menu_connection', None)
+
+                try:
+                    self._context_menu_row = row
+                    self._context_menu_connection = row.connection
+                    self.on_open_new_connection_action(None, None)
+                    gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+                finally:
+                    self._context_menu_row = previous_row
+                    self._context_menu_connection = previous_connection
+
+            middle_click.connect('pressed', _on_middle_click)
+            self.connection_list.add_controller(middle_click)
         except Exception:
             pass
         
@@ -1576,7 +1618,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Manage files button (visibility controlled dynamically)
         self.manage_files_button = Gtk.Button.new_from_icon_name('folder-symbolic')
-        self.manage_files_button.set_tooltip_text('Open file manager for remote server')
+        primary_label = get_primary_modifier_label()
+        self.manage_files_button.set_tooltip_text(
+            f"Open file manager for remote server ({primary_label}+Shift+O)"
+        )
         self.manage_files_button.set_sensitive(False)
         self.manage_files_button.connect('clicked', self.on_manage_files_button_clicked)
         self.manage_files_button.set_visible(not should_hide_file_manager_options())
@@ -2860,7 +2905,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Show about dialog"""
         # Use Adw.AboutDialog to get support-url and issue-url properties
         about = Adw.AboutDialog()
-        about.set_application_name('sshPilot')
+        about.set_application_name('SSH Pilot')
         try:
             from . import __version__ as APP_VERSION
         except Exception:
@@ -2972,6 +3017,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             ('quick-connect', _('Quick Connect')),
             ('open-new-connection-tab', _('Open New Tab')),
             ('new-key', _('Copy Key to Server')),
+            ('manage-files', _('Manage Files')),
         ]
         
         for action_name, title in connection_actions:
@@ -3076,6 +3122,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             title=_('Focus Connection List'), accelerator=f"{primary}l"))
         group_connections.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Quick Connect'), accelerator=f"{primary}<Alt>c"))
+        group_connections.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Manage Files'), accelerator=f"{primary}<Shift>o"))
         section.add_group(group_connections)
 
         # Terminal shortcuts
@@ -5263,6 +5311,79 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 logger.debug("Failed to read SSH configuration for file manager: %s", exc)
                 ssh_config = None
 
+        open_externally = False
+        try:
+            open_externally = bool(self.config.get_setting('file_manager.open_externally', False))
+        except Exception:
+            open_externally = False
+
+        placeholder_info = None
+        if not open_externally and has_internal_file_manager():
+            placeholder_info = self._create_file_manager_placeholder_tab(nickname, host_value)
+
+            def _create_embedded_file_manager():
+                try:
+                    widget, controller = create_internal_file_manager_tab(
+                        user=str(username or ''),
+                        host=str(host_value or ''),
+                        port=effective_port,
+                        nickname=str(nickname),
+                        parent_window=self,
+                        connection=connection,
+                        connection_manager=self.connection_manager,
+                        ssh_config=ssh_config,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.error("Embedded file manager failed: %s", exc)
+                    self._handle_file_manager_placeholder_error(
+                        placeholder_info,
+                        str(nickname or host_value or _('Remote Host')),
+                        str(exc) or _('Failed to open file manager'),
+                    )
+                else:
+                    self._register_file_manager_tab(
+                        widget,
+                        controller,
+                        nickname,
+                        host_value,
+                        page=placeholder_info.get('page') if placeholder_info else None,
+                        container=placeholder_info.get('container') if placeholder_info else None,
+                    )
+                return False
+
+            if GLib.idle_add(_create_embedded_file_manager, priority=GLib.PRIORITY_DEFAULT_IDLE):
+                return
+            # If idle_add failed, fall back to immediate creation using the placeholder
+            fallback_placeholder = placeholder_info
+            try:
+                widget, controller = create_internal_file_manager_tab(
+                    user=str(username or ''),
+                    host=str(host_value or ''),
+                    port=effective_port,
+                    nickname=str(nickname),
+                    parent_window=self,
+                    connection=connection,
+                    connection_manager=self.connection_manager,
+                    ssh_config=ssh_config,
+                )
+            except Exception as exc:
+                logger.error("Embedded file manager failed: %s", exc)
+                self._handle_file_manager_placeholder_error(
+                    fallback_placeholder,
+                    str(nickname or host_value or _('Remote Host')),
+                    str(exc) or _('Failed to open file manager'),
+                )
+            else:
+                self._register_file_manager_tab(
+                    widget,
+                    controller,
+                    nickname,
+                    host_value,
+                    page=fallback_placeholder.get('page') if fallback_placeholder else None,
+                    container=fallback_placeholder.get('container') if fallback_placeholder else None,
+                )
+                return
+
         success, error_msg, window = launch_remote_file_manager(
             user=str(username or ''),
             host=str(host_value or ''),
@@ -5284,8 +5405,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.error(f"Failed to start file manager process for {nickname}: {message}")
             self._show_manage_files_error(str(nickname), message)
 
-    def _track_internal_file_manager_window(self, window):
-        """Keep a reference to in-app file manager windows to prevent GC."""
+    def _track_internal_file_manager_window(self, window, *, widget=None):
+        """Keep a reference to in-app file manager controllers to prevent GC."""
 
         if window in self._internal_file_manager_windows:
             return
@@ -5298,11 +5419,150 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 pass
             return False
 
+        if widget is not None and hasattr(widget, 'connect'):
+            widget.connect('destroy', lambda *_: _cleanup())
+            return
+
         try:
             if hasattr(window, 'connect'):
                 window.connect('close-request', _cleanup)
         except Exception:  # pragma: no cover - defensive
             logger.debug('Unable to attach close handler to internal file manager window')
+
+    def _create_file_manager_placeholder_tab(self, nickname, host_value):
+        """Create and show a placeholder tab while the embedded manager loads."""
+
+        display_name = str(nickname or host_value or _('Remote Host'))
+        page_title = _('{name} Files').format(name=display_name)
+
+        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        container.set_hexpand(True)
+        container.set_vexpand(True)
+
+        inner_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        inner_box.set_halign(Gtk.Align.CENTER)
+        inner_box.set_valign(Gtk.Align.CENTER)
+        inner_box.set_hexpand(True)
+        inner_box.set_vexpand(True)
+
+        spinner = Gtk.Spinner()
+        spinner.start()
+        inner_box.append(spinner)
+
+        status_label = Gtk.Label(label=_('Opening file manager…'))
+        status_label.set_wrap(True)
+        status_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        status_label.set_justify(Gtk.Justification.CENTER)
+        try:
+            status_label.set_xalign(0.5)
+        except AttributeError:  # pragma: no cover - older GTK
+            pass
+        try:
+            status_label.set_halign(Gtk.Align.CENTER)
+        except AttributeError:  # pragma: no cover - alignment fallback
+            pass
+        inner_box.append(status_label)
+
+        container.append(inner_box)
+
+        page = self.tab_view.append(container)
+        page.set_title(page_title)
+        try:
+            page.set_icon(Gio.ThemedIcon.new('folder-remote-symbolic'))
+        except Exception:
+            page.set_icon(Gio.ThemedIcon.new('folder-symbolic'))
+
+        self.show_tab_view()
+        self.tab_view.set_selected_page(page)
+
+        return {
+            'page': page,
+            'container': container,
+            'spinner': spinner,
+            'label': status_label,
+            'inner_box': inner_box,
+        }
+
+    def _handle_file_manager_placeholder_error(self, placeholder_info, display_name, message):
+        """Update placeholder tab to reflect an error state."""
+
+        if placeholder_info is None:
+            self._show_manage_files_error(display_name, message)
+            return
+
+        spinner = placeholder_info.get('spinner')
+        if spinner is not None:
+            try:
+                spinner.stop()
+                parent = spinner.get_parent()
+                if parent is not None and hasattr(parent, 'remove'):
+                    parent.remove(spinner)
+            except Exception:  # pragma: no cover - defensive cleanup
+                pass
+
+        label = placeholder_info.get('label')
+        if label is not None:
+            try:
+                label.set_label(message)
+                label.add_css_class('error')
+            except Exception:  # pragma: no cover - defensive styling
+                pass
+
+        self._show_manage_files_error(display_name, message)
+
+    def _replace_placeholder_tab_content(self, container, widget):
+        """Replace placeholder children with the real widget."""
+
+        if container is None or widget is None:
+            return False
+
+        try:
+            while child := container.get_first_child():
+                container.remove(child)
+        except Exception as exc:  # pragma: no cover - defensive cleanup
+            logger.debug('Failed to clear placeholder content: %s', exc)
+            return False
+
+        try:
+            container.append(widget)
+        except Exception as exc:  # pragma: no cover - defensive append
+            logger.debug('Failed to attach embedded file manager to placeholder: %s', exc)
+            return False
+
+        try:
+            widget.set_hexpand(True)
+            widget.set_vexpand(True)
+        except Exception:  # pragma: no cover - optional sizing
+            pass
+
+        return True
+
+    def _register_file_manager_tab(self, widget, controller, nickname, host_value, *, page=None, container=None):
+        """Add an embedded file manager tab to the tab view."""
+
+        display_name = str(nickname or host_value or _('Remote Host'))
+        page_title = _('{name} Files').format(name=display_name)
+
+        if page is not None and container is not None:
+            replaced = self._replace_placeholder_tab_content(container, widget)
+            if not replaced:
+                page = None
+
+        if page is None:
+            page = self.tab_view.append(widget)
+
+        page.set_title(page_title)
+        try:
+            page.set_icon(Gio.ThemedIcon.new('folder-remote-symbolic'))
+        except Exception:
+            page.set_icon(Gio.ThemedIcon.new('folder-symbolic'))
+        # Note: AdwTabPage doesn't support set_tooltip_text in GTK4
+        # The title already provides the necessary information
+
+        self._track_internal_file_manager_window(controller, widget=widget)
+
+        self.show_tab_view()
+        self.tab_view.set_selected_page(page)
 
     def on_edit_connection_action(self, action, param=None):
         """Handle edit connection action from context menu"""
