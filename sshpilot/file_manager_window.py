@@ -2146,6 +2146,7 @@ class FilePane(Gtk.Box):
         self.append(self.toolbar)
 
         self._is_remote = label.lower() == "remote"
+        self._window: Optional["FileManagerWindow"] = None
 
         self._stack = Gtk.Stack()
         self._stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
@@ -2944,9 +2945,29 @@ class FilePane(Gtk.Box):
             return None
         return selected_entries[0]
 
+    def set_file_manager_window(self, window: "FileManagerWindow") -> None:
+        """Associate this pane with its owning file manager window."""
+
+        self._window = window
+
+    def _get_file_manager_window(self) -> Optional["FileManagerWindow"]:
+        """Return the controlling FileManagerWindow if available."""
+
+        window = getattr(self, "_window", None)
+        if window is not None:
+            return window
+
+        root = self.get_root()
+        if isinstance(root, FileManagerWindow):
+            self._window = root
+            return root
+
+        return None
+
     def _on_upload_clicked(self, _button: Gtk.Button) -> None:
-        window = self.get_root()
+        window = self._get_file_manager_window()
         if not isinstance(window, FileManagerWindow):
+            self.show_toast("File manager is not available")
             return
 
         local_pane = getattr(window, "_left_pane", None)
@@ -2994,8 +3015,9 @@ class FilePane(Gtk.Box):
             self.show_toast("Select items to download")
             return
 
-        window = self.get_root()
+        window = self._get_file_manager_window()
         if not isinstance(window, FileManagerWindow):
+            self.show_toast("File manager is not available")
             return
 
         local_pane = getattr(window, "_left_pane", None)
@@ -3366,7 +3388,7 @@ class FilePane(Gtk.Box):
         
         # Find the source pane by ID
         source_pane = None
-        window = self.get_root()
+        window = self._get_file_manager_window()
         if isinstance(window, FileManagerWindow):
             if id(window._left_pane) == source_pane_id:
                 source_pane = window._left_pane
@@ -3418,7 +3440,7 @@ class FilePane(Gtk.Box):
             destination_path = posixpath.join(self._current_path, entry.name)
             
             # Get the file manager window to access the SFTP manager
-            window = self.get_root()
+            window = self._get_file_manager_window()
             if not isinstance(window, FileManagerWindow):
                 self.show_toast("Upload failed: Invalid window context")
                 return
@@ -3459,7 +3481,7 @@ class FilePane(Gtk.Box):
             destination_path = pathlib.Path(self._current_path) / entry.name
             
             # Get the file manager window to access the SFTP manager
-            window = self.get_root()
+            window = self._get_file_manager_window()
             if not isinstance(window, FileManagerWindow):
                 self.show_toast("Download failed: Invalid window context")
                 return
@@ -3853,6 +3875,8 @@ class FileManagerWindow(Adw.Window):
 
         self._left_pane = FilePane("Local")
         self._right_pane = FilePane("Remote")
+        self._left_pane.set_file_manager_window(self)
+        self._right_pane.set_file_manager_window(self)
         self._left_pane.set_partner_pane(self._right_pane)
         self._right_pane.set_partner_pane(self._left_pane)
         panes.set_start_child(self._left_pane)
