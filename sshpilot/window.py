@@ -117,6 +117,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if app is not None:
                 setattr(app, 'config', self.config)
         self._config_changed_handler = None
+        self._startup_tasks_scheduled = False
         if hasattr(self.config, 'connect'):
             try:
                 self._config_changed_handler = self.config.connect('setting-changed', self._on_config_setting_changed)
@@ -176,8 +177,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Connect to close request signal
         self.connect('close-request', self.on_close_request)
-        
+
         # Start with welcome view (tab view setup already shows welcome initially)
+
+        # Schedule deferred startup behaviors
+        self._schedule_startup_tasks()
 
         logger.info("Main window initialized")
 
@@ -209,13 +213,28 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to install sidebar CSS: {e}")
 
+        # Ensure startup behaviors run at least once
+        self._schedule_startup_tasks()
+
+    def _schedule_startup_tasks(self):
+        """Schedule one-time startup behaviors such as focus and welcome state."""
+        if getattr(self, '_startup_tasks_scheduled', False):
+            return
+
+        self._startup_tasks_scheduled = True
+
+        try:
+            self._install_sidebar_css()
+        except Exception as e:
+            logger.error(f"Failed to install sidebar CSS: {e}")
+
         # On startup, focus the first item in the connection list (not the toolbar buttons)
         # Delay this to ensure the UI is fully set up
         try:
             GLib.timeout_add(100, self._focus_connection_list_first_row)
         except Exception:
             pass
-        
+
         # Check startup behavior setting and show appropriate view
         try:
             startup_behavior = self.config.get_setting('app-startup-behavior', 'terminal')
@@ -225,7 +244,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # If startup_behavior == 'welcome', the welcome view is already shown by default
         except Exception as e:
             logger.error(f"Error handling startup behavior: {e}")
-        
+
         # Mark startup as complete after a short delay to allow all initialization to finish
         GLib.timeout_add(500, lambda: setattr(self, '_startup_complete', True) or False)
 
