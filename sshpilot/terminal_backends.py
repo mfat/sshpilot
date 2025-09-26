@@ -527,25 +527,27 @@ class PyXtermTerminalBackend:
         self.widget.set_hexpand(True)
         self.widget.set_vexpand(True)
 
-    def _on_webview_load_finished(self, webview, *args):
-        """Called when the WebView finishes loading the page"""
+    def _on_webview_load_changed(self, webview, load_event, *args):
+        """Called when the WebView load state changes"""
         try:
-            logger.debug("WebView load finished, applying focus")
-            # Apply focus after WebView is fully loaded
-            def apply_focus():
-                try:
-                    logger.debug("WebView load-finished: applying focus")
-                    # Just focus the WebView - HTML template handles terminal focus
-                    self.widget.grab_focus()
-                    logger.debug("Focus applied after WebView load finished")
-                except Exception:
-                    logger.debug("Failed to apply focus after WebView load", exc_info=True)
-                return False  # Don't repeat
-            
-            # Small delay to ensure page is ready
-            GLib.timeout_add(200, apply_focus)
+            # Only apply focus when loading is finished
+            if load_event == 3:  # WEBKIT_LOAD_FINISHED
+                logger.debug("WebView load finished, applying focus")
+                # Apply focus after WebView is fully loaded
+                def apply_focus():
+                    try:
+                        logger.debug("WebView load-finished: applying focus")
+                        # Just focus the WebView - HTML template handles terminal focus
+                        self.widget.grab_focus()
+                        logger.debug("Focus applied after WebView load finished")
+                    except Exception:
+                        logger.debug("Failed to apply focus after WebView load", exc_info=True)
+                    return False  # Don't repeat
+                
+                # Small delay to ensure page is ready
+                GLib.timeout_add(200, apply_focus)
         except Exception:
-            logger.debug("Error in WebView load-finished handler", exc_info=True)
+            logger.debug("Error in WebView load-changed handler", exc_info=True)
 
     def set_font(self, font_desc: "Pango.FontDescription") -> None:
         # Web backend manages fonts via CSS; ignore request.
@@ -671,6 +673,7 @@ class PyXtermTerminalBackend:
         import subprocess
         import threading
         import time
+        import os
 
         # Find an available port
         import socket
@@ -699,7 +702,6 @@ class PyXtermTerminalBackend:
             if command[0] == 'ssh' and len(command) > 1:
                 # Create a temporary script to handle the SSH command properly
                 import tempfile
-                import os
                 
                 # Create a temporary script file that properly handles the SSH command
                 script_content = '#!/bin/bash\n'
@@ -774,11 +776,11 @@ class PyXtermTerminalBackend:
                 uri = f"http://127.0.0.1:{port}"
                 self._webview.load_uri(uri)
                 
-                # Connect to load-finished signal to track when WebView is ready
+                # Connect to load-changed signal to track when WebView is ready
                 try:
-                    self._webview.connect('load-finished', self._on_webview_load_finished)
+                    self._webview.connect('load-changed', self._on_webview_load_changed)
                 except Exception:
-                    logger.debug("Failed to connect to WebView load-finished signal", exc_info=True)
+                    logger.debug("Failed to connect to WebView load-changed signal", exc_info=True)
 
             if callback:
                 def _notify() -> bool:
