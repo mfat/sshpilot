@@ -118,7 +118,7 @@
       term.attachCustomKeyEventHandler(handleClipboardShortcuts);
       term.open(terminalContainer);
 
-      const socket = io({ path: "/pty" });
+      const socket = io("/pty", { path: "/socket.io" });
 
       socket.on("connect", () => {
         updateStatus("connected", "#34d399");
