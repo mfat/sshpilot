@@ -1513,6 +1513,11 @@ class TerminalWidget(Gtk.Box):
     def _setup_context_menu(self):
         """Set up a robust per-terminal context menu and actions."""
         try:
+            # Skip context menu setup for PyXterm backend as it has its own WebView context menu
+            if self._backend_name == "pyxterm":
+                logger.debug("Skipping context menu setup for PyXterm backend (uses WebView context menu)")
+                return
+                
             logger.debug("Setting up terminal context menu...")
             # Per-widget action group
             self._menu_actions = Gio.SimpleActionGroup()
@@ -1615,6 +1620,10 @@ class TerminalWidget(Gtk.Box):
     def _teardown_context_menu(self):
         """Remove any previously installed context menu resources."""
         try:
+            # Skip teardown for PyXterm backend as no custom context menu was set up
+            if self._backend_name == "pyxterm":
+                return
+                
             if getattr(self, '_menu_popover', None) is not None:
                 try:
                     self._menu_popover.unparent()
