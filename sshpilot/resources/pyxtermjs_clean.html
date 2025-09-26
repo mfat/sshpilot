@@ -1,196 +1,134 @@
-<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>pyxterm.js</title>
+    <title>sshPilot Terminal</title>
     <style>
-      html,
-      body {
-        height: 100%;
+      html, body {
         margin: 0;
-        font-family: Arial, Helvetica, sans-serif;
-        background: #111;
-        color: #f3f4f6;
+        padding: 0;
+        height: 100%;
+        font-family: arial;
+        background-color: #1e1e1e;
+        color: #ffffff;
       }
-
-      body {
-        display: flex;
-        flex-direction: column;
-      }
-
-      header,
-      footer {
-        padding: 0.5rem 1rem;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        background: #1f2933;
-        color: inherit;
-        font-size: 0.9rem;
-      }
-
-      header a,
-      footer a {
-        color: inherit;
-      }
-
       #terminal {
-        flex: 1;
+        width: 100%;
+        height: 100%;
       }
     </style>
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.3.0/css/xterm.min.css"
-      integrity="sha256-Fv2JjcMNrrfcX20orKqq4wQLKPN15RcmCr0Sq1FF3UI="
-      crossorigin="anonymous"
+      href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css"
     />
   </head>
   <body>
-    <header>
-      <div>
-        <a href="https://github.com/cs01/pyxtermjs" target="_blank" rel="noreferrer"
-          >pyxterm.js</a
-        >
-        &nbsp;status:
-        <span id="status">connecting…</span>
-      </div>
-      <span id="terminal-dimensions"></span>
-    </header>
-
     <div id="terminal"></div>
 
-    <footer>
-      <span>
-        Built by <a href="https://chadsmith.dev">Chad Smith</a>
-        <a href="https://github.com/cs01">@cs01</a>
-      </span>
-      <span>
-        Copy: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / Paste:
-        <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>
-      </span>
-    </footer>
-
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.3.0/lib/xterm.min.js"
-      integrity="sha256-XCdzPoOrwE0zV6wcYqfumF7Oe/yVh4I94uF/TgthVhw="
-      crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"
-      integrity="sha256-IjIcTBhZwrW4X1HjK6apcuZYfVgU5ewPIc8J3Lo5P9s="
-      crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.10.0/lib/addon-web-links.min.js"
-      integrity="sha256-05hKPiLMtFupX1xmkxUU6a5nkcgNVOlLZ7DUxNs9vlo="
-      crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-search@0.15.0/lib/addon-search.min.js"
-      integrity="sha256-8+/J8Sx2PSxPJn9Ozd5ydBtYArhcXdI2AzVsyS3+MlY="
-      crossorigin="anonymous"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"
-      integrity="sha512-JWuJsM5qjmJwfwf3aqgS85+D0rW5iL8qBIqu1FVWHXGpHbkUjTP5tBKTORzZCPpKiq7x7C7dX0D5M1hpXcFGxw=="
-      crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <!-- xterm -->
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-search@0.15.0/lib/addon-search.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
 
     <script>
-      const statusEl = document.getElementById("status");
-      const terminalContainer = document.getElementById("terminal");
-      const dimensionEl = document.getElementById("terminal-dimensions");
-
       const term = new Terminal({
-        allowTransparency: true,
-        convertEol: true,
         cursorBlink: true,
-        cursorStyle: "block",
-        fontFamily: "Menlo, Monaco, 'Courier New', monospace",
-        fontSize: 14,
         macOptionIsMeta: true,
-        rightClickSelectsWord: true,
         scrollback: 1000,
         theme: {
-          background: "#111827",
-        },
+          background: '#1e1e1e',
+          foreground: '#ffffff',
+          cursor: '#ffffff',
+          selectionBackground: '#ffffff40'
+        }
       });
+      term.attachCustomKeyEventHandler(customKeyEventHandler);
+      
+      const fit = new FitAddon.FitAddon();
+      term.loadAddon(fit);
+      term.loadAddon(new WebLinksAddon.WebLinksAddon());
+      term.loadAddon(new SearchAddon.SearchAddon());
+
+      // Expose terminal globally for debugging and automated testing hooks
       window.term = term;
 
-      const fitAddon = new FitAddon();
-      const webLinksAddon = new WebLinksAddon();
-      const searchAddon = new SearchAddon();
-
-      term.loadAddon(fitAddon);
-      term.loadAddon(webLinksAddon);
-      term.loadAddon(searchAddon);
-      term.attachCustomKeyEventHandler(handleClipboardShortcuts);
-      term.open(terminalContainer);
-
-      const socket = io({ path: "/pty" });
-
-      socket.on("connect", () => {
-        updateStatus("connected", "#34d399");
-        fitAndResize();
-      });
-
-      socket.on("disconnect", () => {
-        updateStatus("disconnected", "#f87171");
-      });
-
-      socket.on("pty-output", ({ output }) => {
-        term.write(output);
-      });
-
+      term.open(document.getElementById("terminal"));
+      fit.fit();
+      term.resize(15, 50);
+      console.log(`size: ${term.cols} columns, ${term.rows} rows`);
+      fit.fit();
+      
+      // Auto-focus the terminal when it's ready
+      setTimeout(() => {
+        term.focus();
+        console.log('Terminal auto-focused');
+      }, 100);
+      
       term.onData((data) => {
+        console.log("browser terminal received new data:", data);
         socket.emit("pty-input", { input: data });
       });
 
-      window.addEventListener("resize", debounce(fitAndResize, 50));
+      const socket = io.connect("/pty");
 
-      function fitAndResize() {
-        if (!terminalContainer.isConnected) {
-          return;
-        }
-        fitAddon.fit();
+      socket.on("pty-output", function (data) {
+        console.log("new output received from server:", data.output);
+        term.write(data.output);
+      });
+
+      socket.on("connect", () => {
+        fitToscreen();
+      });
+
+      socket.on("disconnect", () => {
+        // Handle disconnect if needed
+      });
+
+      function fitToscreen() {
+        fit.fit();
         const dims = { cols: term.cols, rows: term.rows };
-        dimensionEl.textContent = `${dims.cols}×${dims.rows}`;
+        console.log("sending new dimensions to server's pty", dims);
         socket.emit("resize", dims);
       }
 
-      function handleClipboardShortcuts(event) {
-        if (event.type !== "keydown") {
+      function debounce(func, wait_ms) {
+        let timeout;
+        return function (...args) {
+          const context = this;
+          clearTimeout(timeout);
+          timeout = setTimeout(() => func.apply(context, args), wait_ms);
+        };
+      }
+
+      /**
+       * Handle copy and paste events
+       */
+      function customKeyEventHandler(e) {
+        if (e.type !== "keydown") {
           return true;
         }
-
-        if (!event.ctrlKey || !event.shiftKey) {
-          return true;
-        }
-
-        const key = event.key.toLowerCase();
-        if (key === "v") {
-          navigator.clipboard
-            .readText()
-            .then((text) => {
-              term.paste(text);
-            })
-            .catch(() => {});
-          return false;
-        }
-
-        if (key === "c" || key === "x") {
-          const selection = term.getSelection();
-          if (selection) {
-            navigator.clipboard.writeText(selection).catch(() => {});
+        if (e.ctrlKey && e.shiftKey) {
+          const key = e.key.toLowerCase();
+          if (key === "v") {
+            // ctrl+shift+v: paste whatever is in the clipboard
+            navigator.clipboard.readText().then((toPaste) => {
+              term.paste(toPaste);
+            });
+            return false;
+          } else if (key === "c" || key === "x") {
+            // ctrl+shift+x: copy whatever is highlighted to clipboard
+            const toCopy = term.getSelection();
+            navigator.clipboard.writeText(toCopy);
+            term.focus();
+            return false;
           }
-          term.focus();
-          return false;
         }
-
         return true;
       }
 
-      function updateStatus(text, background) {
-        statusEl.innerHTML = `<span style="background-color: ${background}; padding: 0.1rem 0.3rem; border-radius: 0.25rem;">${text}</span>`;
-      }
-
-      function debounce(func, wait) {
-        let timeoutId;
-        return (...args) => {
-          clearTimeout(timeoutId);
-          timeoutId = setTimeout(() => func.apply(null, args), wait);
-        };
-      }
+      const wait_ms = 50;
+      window.onresize = debounce(fitToscreen, wait_ms);
     </script>
   </body>
 </html>

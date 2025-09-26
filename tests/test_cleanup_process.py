@@ -17,7 +17,13 @@ def test_cleanup_process_sends_sigterm_to_pgid(monkeypatch):
     )
     repo.GLib = types.SimpleNamespace()
     repo.Vte = types.SimpleNamespace()
-    repo.Pango = types.SimpleNamespace()
+    repo.Pango = types.SimpleNamespace(
+        FontDescription=type(
+            "FontDescription",
+            (),
+            {"from_string": staticmethod(lambda *_: object())},
+        )
+    )
     repo.Gdk = types.SimpleNamespace()
     repo.Gio = types.SimpleNamespace()
     repo.Adw = types.SimpleNamespace()
