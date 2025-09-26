@@ -579,7 +579,6 @@ class PyXtermTerminalBackend:
 
         import subprocess
         import threading
-        import time
 
         # Find an available port
         import socket
@@ -652,24 +651,68 @@ class PyXtermTerminalBackend:
                 env=env
             )
             self._child_pid = self._server_process.pid
-            
-            # Wait a moment for the server to start
-            time.sleep(1)
-            
-            # Load the terminal in WebView
-            if self._webview:
-                uri = f"http://127.0.0.1:{port}"
-                self._webview.load_uri(uri)
 
-            if callback:
-                def _notify() -> bool:
+            uri = f"http://127.0.0.1:{port}"
+
+            def _notify_ready(uri_to_load: str) -> bool:
+                if self._webview:
+                    self._webview.load_uri(uri_to_load)
+
+                if callback:
                     try:
                         callback(self.widget, self._child_pid or 0, None, user_data)
                     except TypeError:
                         callback(self.widget, None)
-                    return False
+                return False
 
-                GLib.idle_add(_notify)
+            def _notify_error(err: Exception) -> bool:
+                if callback:
+                    try:
+                        callback(self.widget, None, err, user_data)
+                    except TypeError:
+                        callback(self.widget, None)
+                return False
+
+            def _wait_for_server() -> None:
+                import http.client
+                import time
+
+                deadline = time.time() + 10
+                last_error: Optional[Exception] = None
+
+                while time.time() < deadline:
+                    if self._server_process and self._server_process.poll() is not None:
+                        last_error = RuntimeError("pyxtermjs process exited before becoming ready")
+                        break
+
+                    connection = None
+                    try:
+                        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+                        connection.request("GET", "/")
+                        response = connection.getresponse()
+                        # Reading the response ensures the server handled the request
+                        response.read()
+
+                        if response.status >= 200:
+                            GLib.idle_add(_notify_ready, uri)
+                            return
+                    except Exception as err:  # pragma: no cover - network timing dependent
+                        last_error = err
+                    finally:
+                        if connection is not None:
+                            try:
+                                connection.close()
+                            except Exception:
+                                pass
+
+                    time.sleep(0.1)
+
+                if last_error is None:
+                    last_error = TimeoutError("Timed out waiting for pyxtermjs server readiness")
+
+                GLib.idle_add(_notify_error, last_error)
+
+            threading.Thread(target=_wait_for_server, name="pyxterm-readiness", daemon=True).start()
 
         except Exception as e:
             logger.error(f"Failed to start pyxtermjs server: {e}")
