@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>pyxterm.js</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        font-family: Arial, Helvetica, sans-serif;
+        background: #111;
+        color: #f3f4f6;
+      }
+
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+
+      header,
+      footer {
+        padding: 0.5rem 1rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: #1f2933;
+        color: inherit;
+        font-size: 0.9rem;
+      }
+
+      header a,
+      footer a {
+        color: inherit;
+      }
+
+      #terminal {
+        flex: 1;
+      }
+    </style>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.3.0/css/xterm.min.css"
+      integrity="sha256-Fv2JjcMNrrfcX20orKqq4wQLKPN15RcmCr0Sq1FF3UI="
+      crossorigin="anonymous"
+    />
+  </head>
+  <body>
+    <header>
+      <div>
+        <a href="https://github.com/cs01/pyxtermjs" target="_blank" rel="noreferrer"
+          >pyxterm.js</a
+        >
+        &nbsp;status:
+        <span id="status">connecting…</span>
+      </div>
+      <span id="terminal-dimensions"></span>
+    </header>
+
+    <div id="terminal"></div>
+
+    <footer>
+      <span>
+        Built by <a href="https://chadsmith.dev">Chad Smith</a>
+        <a href="https://github.com/cs01">@cs01</a>
+      </span>
+      <span>
+        Copy: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / Paste:
+        <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>
+      </span>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.3.0/lib/xterm.min.js"
+      integrity="sha256-XCdzPoOrwE0zV6wcYqfumF7Oe/yVh4I94uF/TgthVhw="
+      crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"
+      integrity="sha256-IjIcTBhZwrW4X1HjK6apcuZYfVgU5ewPIc8J3Lo5P9s="
+      crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.10.0/lib/addon-web-links.min.js"
+      integrity="sha256-05hKPiLMtFupX1xmkxUU6a5nkcgNVOlLZ7DUxNs9vlo="
+      crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-search@0.15.0/lib/addon-search.min.js"
+      integrity="sha256-8+/J8Sx2PSxPJn9Ozd5ydBtYArhcXdI2AzVsyS3+MlY="
+      crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"
+      integrity="sha512-JWuJsM5qjmJwfwf3aqgS85+D0rW5iL8qBIqu1FVWHXGpHbkUjTP5tBKTORzZCPpKiq7x7C7dX0D5M1hpXcFGxw=="
+      crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+    <script>
+      const statusEl = document.getElementById("status");
+      const terminalContainer = document.getElementById("terminal");
+      const dimensionEl = document.getElementById("terminal-dimensions");
+
+      const term = new Terminal({
+        allowTransparency: true,
+        convertEol: true,
+        cursorBlink: true,
+        cursorStyle: "block",
+        fontFamily: "Menlo, Monaco, 'Courier New', monospace",
+        fontSize: 14,
+        macOptionIsMeta: true,
+        rightClickSelectsWord: true,
+        scrollback: 1000,
+        theme: {
+          background: "#111827",
+        },
+      });
+      window.term = term;
+
+      const fitAddon = new FitAddon();
+      const webLinksAddon = new WebLinksAddon();
+      const searchAddon = new SearchAddon();
+
+      term.loadAddon(fitAddon);
+      term.loadAddon(webLinksAddon);
+      term.loadAddon(searchAddon);
+      term.attachCustomKeyEventHandler(handleClipboardShortcuts);
+      term.open(terminalContainer);
+
+      const socket = io({ path: "/pty" });
+
+      socket.on("connect", () => {
+        updateStatus("connected", "#34d399");
+        fitAndResize();
+      });
+
+      socket.on("disconnect", () => {
+        updateStatus("disconnected", "#f87171");
+      });
+
+      socket.on("pty-output", ({ output }) => {
+        term.write(output);
+      });
+
+      term.onData((data) => {
+        socket.emit("pty-input", { input: data });
+      });
+
+      window.addEventListener("resize", debounce(fitAndResize, 50));
+
+      function fitAndResize() {
+        if (!terminalContainer.isConnected) {
+          return;
+        }
+        fitAddon.fit();
+        const dims = { cols: term.cols, rows: term.rows };
+        dimensionEl.textContent = `${dims.cols}×${dims.rows}`;
+        socket.emit("resize", dims);
+      }
+
+      function handleClipboardShortcuts(event) {
+        if (event.type !== "keydown") {
+          return true;
+        }
+
+        if (!event.ctrlKey || !event.shiftKey) {
+          return true;
+        }
+
+        const key = event.key.toLowerCase();
+        if (key === "v") {
+          navigator.clipboard
+            .readText()
+            .then((text) => {
+              term.paste(text);
+            })
+            .catch(() => {});
+          return false;
+        }
+
+        if (key === "c" || key === "x") {
+          const selection = term.getSelection();
+          if (selection) {
+            navigator.clipboard.writeText(selection).catch(() => {});
+          }
+          term.focus();
+          return false;
+        }
+
+        return true;
+      }
+
+      function updateStatus(text, background) {
+        statusEl.innerHTML = `<span style="background-color: ${background}; padding: 0.1rem 0.3rem; border-radius: 0.25rem;">${text}</span>`;
+      }
+
+      function debounce(func, wait) {
+        let timeoutId;
+        return (...args) => {
+          clearTimeout(timeoutId);
+          timeoutId = setTimeout(() => func.apply(null, args), wait);
+        };
+      }
+    </script>
+  </body>
+</html>
