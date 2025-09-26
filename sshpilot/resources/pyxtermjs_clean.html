@@ -18,29 +18,29 @@
     </style>
     <link
       rel="stylesheet"
-      href="https://unpkg.com/xterm@4.11.0/css/xterm.css"
+      href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css"
     />
   </head>
   <body>
     <div id="terminal"></div>
 
     <!-- xterm -->
-    <script src="https://unpkg.com/xterm@4.11.0/lib/xterm.js"></script>
-    <script src="https://unpkg.com/xterm-addon-fit@0.5.0/lib/xterm-addon-fit.js"></script>
-    <script src="https://unpkg.com/xterm-addon-web-links@0.4.0/lib/xterm-addon-web-links.js"></script>
-    <script src="https://unpkg.com/xterm-addon-search@0.8.0/lib/xterm-addon-search.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-search@0.15.0/lib/addon-search.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
 
     <script>
       const term = new Terminal({
         cursorBlink: true,
         macOptionIsMeta: true,
-        scrollback: true,
+        scrollback: 1000,
         theme: {
           background: '#1e1e1e',
           foreground: '#ffffff',
           cursor: '#ffffff',
-          selection: '#ffffff40'
+          selectionBackground: '#ffffff40'
         }
       });
       term.attachCustomKeyEventHandler(customKeyEventHandler);
@@ -49,6 +49,9 @@
       term.loadAddon(fit);
       term.loadAddon(new WebLinksAddon.WebLinksAddon());
       term.loadAddon(new SearchAddon.SearchAddon());
+
+      // Expose terminal globally for debugging and automated testing hooks
+      window.term = term;
 
       term.open(document.getElementById("terminal"));
       fit.fit();
@@ -110,7 +113,7 @@
           if (key === "v") {
             // ctrl+shift+v: paste whatever is in the clipboard
             navigator.clipboard.readText().then((toPaste) => {
-              term.writeText(toPaste);
+              term.paste(toPaste);
             });
             return false;
           } else if (key === "c" || key === "x") {
