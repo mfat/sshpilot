@@ -146,6 +146,22 @@ Enable verbose debugging with:
 python3 run.py --verbose
 ```
 
+Optional terminal backends
+--------------------------
+
+The default terminal uses the native VTE widget. To enable the optional
+PyXterm.js backend install the extra dependency bundle:
+
+```
+pip install "sshpilot[pyxterm]"
+```
+
+or install `pyxtermjs` manually if you prefer:
+
+```
+pip install pyxtermjs
+```
+
 ### Telegram channel
 https://t.me/sshpilot
 

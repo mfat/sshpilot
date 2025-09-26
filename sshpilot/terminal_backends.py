@@ -98,6 +98,18 @@ class BaseTerminalBackend(Protocol):
     def get_pty(self) -> Optional[Any]:
         """Return the PTY instance if the backend exposes one."""
 
+    def set_font(self, font_desc: "Pango.FontDescription") -> None:
+        """Set the font for the backend if supported."""
+
+    def queue_draw(self) -> None:
+        """Queue a redraw of the backend widget if supported."""
+
+    def show(self) -> None:
+        """Ensure the backend widget is visible."""
+
+    def feed_child(self, data: bytes) -> None:
+        """Feed raw bytes to the child process input if supported."""
+
 
 
 from typing import TYPE_CHECKING
@@ -296,6 +308,12 @@ class VTETerminalBackend:
         except Exception:
             logger.error("Failed to apply terminal theme", exc_info=True)
 
+    def set_font(self, font_desc: Pango.FontDescription) -> None:
+        try:
+            self.vte.set_font(font_desc)
+        except Exception:
+            logger.debug("Failed to set font on VTE backend", exc_info=True)
+
     def grab_focus(self) -> None:
         try:
             self.vte.grab_focus()
@@ -351,6 +369,18 @@ class VTETerminalBackend:
         except Exception:
             logger.debug("Failed to disconnect VTE handler", exc_info=True)
 
+    def queue_draw(self) -> None:
+        try:
+            self.vte.queue_draw()
+        except Exception:
+            logger.debug("Failed to queue draw on VTE backend", exc_info=True)
+
+    def show(self) -> None:
+        try:
+            self.vte.show()
+        except Exception:
+            logger.debug("Failed to show VTE widget", exc_info=True)
+
     # ------------------------------------------------------------------
     # Clipboard helpers
     # ------------------------------------------------------------------
@@ -375,6 +405,12 @@ class VTETerminalBackend:
 
     def feed(self, data: bytes) -> None:
         self.vte.feed(data)
+
+    def feed_child(self, data: bytes) -> None:
+        try:
+            self.vte.feed_child(data)
+        except Exception:
+            logger.debug("Failed to feed child on VTE backend", exc_info=True)
 
     def search_set_regex(self, regex: Optional[Any]) -> None:
         if regex is None:
@@ -465,6 +501,10 @@ class PyXtermTerminalBackend:
         self.widget.set_hexpand(True)
         self.widget.set_vexpand(True)
 
+    def set_font(self, font_desc: "Pango.FontDescription") -> None:
+        # Web backend manages fonts via CSS; ignore request.
+        return
+
     def destroy(self) -> None:
         if self._server:
             try:
@@ -548,6 +588,23 @@ class PyXtermTerminalBackend:
         # No-op, as the backend does not expose Gtk signal handlers.
         return
 
+    def queue_draw(self) -> None:
+        if self.widget:
+            try:
+                self.widget.queue_draw()
+            except Exception:
+                logger.debug("Failed to queue draw on pyxterm widget", exc_info=True)
+
+    def show(self) -> None:
+        if self.widget:
+            try:
+                if hasattr(self.widget, "set_visible"):
+                    self.widget.set_visible(True)
+                if hasattr(self.widget, "show"):
+                    self.widget.show()
+            except Exception:
+                logger.debug("Failed to show pyxterm widget", exc_info=True)
+
     def copy_clipboard(self) -> None:
         # Web view handles clipboard internally; no-op here.
         return
@@ -573,6 +630,10 @@ class PyXtermTerminalBackend:
 
     def feed(self, data: bytes) -> None:
         # pyxterm.js receives data via websocket; nothing to do here.
+        return
+
+    def feed_child(self, data: bytes) -> None:
+        # pyxterm.js handles user input via websocket.
         return
 
     def search_set_regex(self, regex: Optional[Any]) -> None:
