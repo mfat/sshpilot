@@ -18,6 +18,7 @@ import weakref
 import subprocess
 import pwd
 from datetime import datetime
+from typing import Optional
 from .port_utils import get_port_checker
 from .platform_utils import is_macos
 from .terminal_backends import BaseTerminalBackend, PyXtermTerminalBackend, VTETerminalBackend
@@ -222,6 +223,9 @@ class TerminalWidget(Gtk.Box):
         self._is_quitting = False  # Flag to suppress signal handlers during quit
         self.last_error_message = None  # Store last SSH error for reporting
         self._fallback_timer_id = None  # GLib timeout ID for spawn fallback
+        self._backend_name = "vte"
+        self.vte = None
+        self._is_local_shell = False
         
         # Job detection state
         self._job_status = "UNKNOWN"  # IDLE, RUNNING, PROMPT, UNKNOWN
@@ -243,6 +247,7 @@ class TerminalWidget(Gtk.Box):
         
         # Set up the terminal backend
         self.backend: BaseTerminalBackend = self._create_backend()
+        self.vte = getattr(self.backend, 'vte', None)
 
         # Initialize terminal with basic settings and apply configured theme early
         self.setup_terminal()
@@ -393,12 +398,10 @@ class TerminalWidget(Gtk.Box):
             self.terminal_widget.set_vexpand(True)
 
         # Connect terminal signals and store handler IDs for cleanup
-        self._child_exited_handler = self.backend.connect_child_exited(self.on_child_exited)
-        self._title_changed_handler = self.backend.connect_title_changed(self.on_title_changed)
-
-        # Connect termprops-changed signal if available (VTE 0.78+)
-        # This signal is used for job detection in local terminals
-        self._termprops_changed_handler = self.backend.connect_termprops_changed(self._on_termprops_changed)
+        self._child_exited_handler = None
+        self._title_changed_handler = None
+        self._termprops_changed_handler = None
+        self._connect_backend_signals()
 
         # Apply theme
         self.force_style_refresh()
@@ -412,24 +415,28 @@ class TerminalWidget(Gtk.Box):
         self._set_connecting_overlay_visible(True)
         logger.debug("Terminal widget initialized")
 
-    def _create_backend(self) -> BaseTerminalBackend:
+    def _create_backend(self, preferred: Optional[str] = None) -> BaseTerminalBackend:
         """Create the terminal backend based on configuration."""
 
-        backend_name = "vte"
-        if self.config:
+        backend_name = preferred or "vte"
+        if preferred is None and self.config:
             try:
                 backend_name = self.config.get_setting("terminal.backend", backend_name)
             except Exception:
                 backend_name = "vte"
 
-        if backend_name and backend_name.lower() == "pyxterm":
+        backend_name = (backend_name or "vte").lower()
+
+        if backend_name == "pyxterm":
             backend = PyXtermTerminalBackend(self)
             if getattr(backend, "available", False):
                 logger.info("Using PyXterm terminal backend")
+                self._backend_name = "pyxterm"
                 return backend
             logger.warning("PyXterm backend unavailable, falling back to VTE")
 
         logger.debug("Using VTE terminal backend")
+        self._backend_name = "vte"
         return VTETerminalBackend(self)
 
     def _set_disconnected_banner_visible(self, visible: bool, message: str = None):
@@ -473,12 +480,13 @@ class TerminalWidget(Gtk.Box):
         if not self.connection:
             logger.error("No connection configured")
             return False
-            
+
         # Ensure terminal backend is properly initialized
         if not getattr(self, 'backend', None) or getattr(self, 'terminal_widget', None) is None:
             logger.error("Terminal backend not initialized")
             return False
-        
+
+        self._is_local_shell = False
         try:
             # Connect in a separate thread to avoid blocking UI
             thread = threading.Thread(target=self._connect_ssh_thread)
@@ -1254,15 +1262,62 @@ class TerminalWidget(Gtk.Box):
 
         # Install terminal shortcuts and custom context menu
         self._install_shortcuts()
+        self._teardown_context_menu()
         self._setup_context_menu()
+
+    def _connect_backend_signals(self):
+        """Connect to backend signals and store handler IDs."""
+        backend = getattr(self, 'backend', None)
+        if backend is None:
+            return
+        try:
+            self._child_exited_handler = backend.connect_child_exited(self.on_child_exited)
+        except Exception:
+            self._child_exited_handler = None
+        try:
+            self._title_changed_handler = backend.connect_title_changed(self.on_title_changed)
+        except Exception:
+            self._title_changed_handler = None
+        try:
+            self._termprops_changed_handler = backend.connect_termprops_changed(self._on_termprops_changed)
+        except Exception:
+            self._termprops_changed_handler = None
+
+    def _disconnect_backend_signals(self, backend: Optional[BaseTerminalBackend] = None):
+        """Disconnect previously connected backend signals."""
+        backend = backend or getattr(self, 'backend', None)
+        if backend is None:
+            return
+        if getattr(self, '_child_exited_handler', None):
+            try:
+                backend.disconnect(self._child_exited_handler)
+            except Exception:
+                logger.debug("Failed to disconnect child-exited handler", exc_info=True)
+            finally:
+                self._child_exited_handler = None
+        if getattr(self, '_title_changed_handler', None):
+            try:
+                backend.disconnect(self._title_changed_handler)
+            except Exception:
+                logger.debug("Failed to disconnect title-changed handler", exc_info=True)
+            finally:
+                self._title_changed_handler = None
+        if getattr(self, '_termprops_changed_handler', None):
+            try:
+                backend.disconnect(self._termprops_changed_handler)
+            except Exception:
+                logger.debug("Failed to disconnect termprops handler", exc_info=True)
+            finally:
+                self._termprops_changed_handler = None
 
     def setup_local_shell(self):
         """Set up the terminal for local shell (not SSH)"""
         logger.info("Setting up local shell terminal")
         try:
+            self._is_local_shell = True
             # Hide connecting overlay immediately for local shell
             self._set_connecting_overlay_visible(False)
-            
+
             # Set up the terminal for local shell
             self.setup_terminal()
             
@@ -1298,6 +1353,154 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.error(f"Failed to setup local shell: {e}")
             self.emit('connection-failed', str(e))
+
+    # ------------------------------------------------------------------
+    # Backend utilities
+    # ------------------------------------------------------------------
+    def get_backend_name(self) -> str:
+        return getattr(self, '_backend_name', 'vte')
+
+    def set_font(self, font_desc: Pango.FontDescription) -> None:
+        backend = getattr(self, 'backend', None)
+        applied = False
+        if backend and hasattr(backend, 'set_font'):
+            try:
+                backend.set_font(font_desc)
+                applied = True
+            except Exception:
+                logger.debug("Backend-specific font application failed", exc_info=True)
+        if not applied and getattr(self, 'vte', None) is not None:
+            try:
+                self.vte.set_font(font_desc)
+            except Exception:
+                logger.debug("Legacy VTE font application failed", exc_info=True)
+
+    def queue_draw_terminal(self) -> None:
+        backend = getattr(self, 'backend', None)
+        if backend and hasattr(backend, 'queue_draw'):
+            try:
+                backend.queue_draw()
+                return
+            except Exception:
+                logger.debug("Backend queue_draw failed", exc_info=True)
+        widget = getattr(self, 'terminal_widget', None)
+        if widget and hasattr(widget, 'queue_draw'):
+            widget.queue_draw()
+        elif getattr(self, 'vte', None) is not None:
+            try:
+                self.vte.queue_draw()
+            except Exception:
+                logger.debug("Legacy VTE queue_draw failed", exc_info=True)
+
+    def show_terminal_widget(self) -> None:
+        widget = getattr(self, 'terminal_widget', None)
+        if widget is None:
+            widget = getattr(self, 'backend', None)
+            widget = getattr(widget, 'widget', None) if widget else None
+        if widget is None:
+            return
+        try:
+            if hasattr(widget, 'set_visible'):
+                widget.set_visible(True)
+            if hasattr(widget, 'show'):
+                widget.show()
+        except Exception:
+            logger.debug("Failed to show terminal widget", exc_info=True)
+
+    def feed_child(self, data: bytes) -> bool:
+        backend = getattr(self, 'backend', None)
+        if backend and hasattr(backend, 'feed_child'):
+            try:
+                backend.feed_child(data)
+                return True
+            except Exception:
+                logger.debug("Backend feed_child failed", exc_info=True)
+        if getattr(self, 'vte', None) is not None:
+            try:
+                self.vte.feed_child(data)
+                return True
+            except Exception:
+                logger.debug("Legacy VTE feed_child failed", exc_info=True)
+        return False
+
+    def switch_backend(self, backend_name: str) -> bool:
+        desired = (backend_name or 'vte').lower()
+        current = self.get_backend_name().lower()
+        if desired == current:
+            return False
+
+        was_connected = bool(self.is_connected)
+        was_local = bool(getattr(self, '_is_local_shell', False))
+        old_backend = getattr(self, 'backend', None)
+
+        # Clean up UI elements tied to the old backend
+        self._teardown_context_menu()
+        self._disconnect_backend_signals(old_backend)
+
+        if was_connected:
+            try:
+                self.disconnect()
+            except Exception:
+                logger.debug("Failed to disconnect before backend switch", exc_info=True)
+
+        # Remove existing widget
+        old_widget = getattr(self, 'terminal_widget', None)
+        if old_widget is not None:
+            try:
+                if self.scrolled_window.get_child() is old_widget:
+                    self.scrolled_window.set_child(None)
+            except Exception:
+                logger.debug("Failed to detach old backend widget", exc_info=True)
+
+        if old_backend and hasattr(old_backend, 'destroy'):
+            try:
+                old_backend.destroy()
+            except Exception:
+                logger.debug("Backend destroy failed", exc_info=True)
+
+        # Create and initialize the new backend
+        self.backend = self._create_backend(desired)
+        self.vte = getattr(self.backend, 'vte', None)
+        self.terminal_widget = getattr(self.backend, 'widget', None)
+
+        if self.terminal_widget is not None:
+            try:
+                self.terminal_widget.set_hexpand(True)
+                self.terminal_widget.set_vexpand(True)
+                if hasattr(self.terminal_widget, 'set_visible'):
+                    self.terminal_widget.set_visible(True)
+                self.scrolled_window.set_child(self.terminal_widget)
+            except Exception:
+                logger.debug("Failed to attach new backend widget", exc_info=True)
+
+        # Reinitialize state and listeners
+        self._child_exited_handler = None
+        self._title_changed_handler = None
+        self._termprops_changed_handler = None
+        self.setup_terminal()
+        self.force_style_refresh()
+        self._connect_backend_signals()
+        self._set_disconnected_banner_visible(False)
+
+        if was_connected:
+            if was_local:
+                try:
+                    self.setup_local_shell()
+                except Exception:
+                    logger.error("Failed to restart local shell after backend switch", exc_info=True)
+            else:
+                self._set_connecting_overlay_visible(True)
+                if not self._connect_ssh():
+                    logger.error("Failed to reconnect after backend switch")
+                    self._set_connecting_overlay_visible(False)
+        return True
+
+    def ensure_backend(self, backend_name: str) -> bool:
+        try:
+            return self.switch_backend(backend_name)
+        except Exception:
+            logger.error("Failed to ensure backend %s", backend_name, exc_info=True)
+            return False
 
     def _setup_context_menu(self):
         """Set up a robust per-terminal context menu and actions."""
@@ -1400,6 +1603,26 @@ class TerminalWidget(Gtk.Box):
             logger.debug("Terminal context menu setup completed successfully")
         except Exception as e:
             logger.error(f"Context menu setup failed: {e}")
+
+    def _teardown_context_menu(self):
+        """Remove any previously installed context menu resources."""
+        try:
+            if getattr(self, '_menu_popover', None) is not None:
+                try:
+                    self._menu_popover.unparent()
+                except Exception:
+                    pass
+            if getattr(self, '_menu_actions', None) is not None:
+                try:
+                    self.remove_action_group('term')
+                except Exception:
+                    pass
+        except Exception:
+            logger.debug("Failed to tear down context menu", exc_info=True)
+        finally:
+            self._menu_actions = None
+            self._menu_popover = None
+            self._menu_model = None
 
     def _install_shortcuts(self):
         """Install local shortcuts on the VTE widget for copy/paste/select-all"""
@@ -1682,20 +1905,11 @@ class TerminalWidget(Gtk.Box):
         """Handle widget destruction"""
         logger.debug(f"Terminal widget {self.session_id} being destroyed")
         
-        # Disconnect VTE signal handlers first to prevent callbacks on destroyed objects
-        if getattr(self, 'backend', None):
-            try:
-                if getattr(self, '_child_exited_handler', None):
-                    self.backend.disconnect(self._child_exited_handler)
-                    logger.debug("Disconnected child-exited signal handler")
-                if getattr(self, '_title_changed_handler', None):
-                    self.backend.disconnect(self._title_changed_handler)
-                    logger.debug("Disconnected title-changed signal handler")
-                if getattr(self, '_termprops_changed_handler', None):
-                    self.backend.disconnect(self._termprops_changed_handler)
-                    logger.debug("Disconnected termprops-changed signal handler")
-            except Exception as e:
-                logger.error(f"Error disconnecting backend signals: {e}")
+        # Disconnect backend signal handlers first to prevent callbacks on destroyed objects
+        try:
+            self._disconnect_backend_signals(getattr(self, 'backend', None))
+        except Exception as e:
+            logger.error(f"Error disconnecting backend signals: {e}")
         
         # Disconnect from connection manager signals
         if hasattr(self, '_connection_updated_handler') and hasattr(self.connection_manager, 'disconnect'):
