@@ -530,6 +530,60 @@ class PyXtermTerminalBackend:
         # Web backend manages fonts via CSS; ignore request.
         return
 
+    def _backup_pyxtermjs_template(self) -> None:
+        """Backup the original pyxtermjs template"""
+        try:
+            import pyxtermjs
+            import os
+            import shutil
+            
+            pyxtermjs_path = os.path.dirname(pyxtermjs.__file__)
+            original_template = os.path.join(pyxtermjs_path, 'index.html')
+            backup_template = os.path.join(pyxtermjs_path, 'index.html.backup')
+            
+            if os.path.exists(original_template) and not os.path.exists(backup_template):
+                shutil.copy2(original_template, backup_template)
+                self._template_backed_up = True
+                logger.debug("Backed up original pyxtermjs template")
+        except Exception as e:
+            logger.debug(f"Failed to backup pyxtermjs template: {e}")
+            self._template_backed_up = False
+
+    def _replace_pyxtermjs_template(self) -> None:
+        """Replace the pyxtermjs template with our clean version"""
+        try:
+            import pyxtermjs
+            import os
+            import shutil
+            
+            pyxtermjs_path = os.path.dirname(pyxtermjs.__file__)
+            original_template = os.path.join(pyxtermjs_path, 'index.html')
+            clean_template = os.path.join(os.path.dirname(__file__), 'resources', 'pyxtermjs_clean.html')
+            
+            if os.path.exists(clean_template):
+                shutil.copy2(clean_template, original_template)
+                logger.debug("Replaced pyxtermjs template with clean version")
+        except Exception as e:
+            logger.debug(f"Failed to replace pyxtermjs template: {e}")
+
+    def _restore_pyxtermjs_template(self) -> None:
+        """Restore the original pyxtermjs template"""
+        try:
+            import pyxtermjs
+            import os
+            import shutil
+            
+            pyxtermjs_path = os.path.dirname(pyxtermjs.__file__)
+            original_template = os.path.join(pyxtermjs_path, 'index.html')
+            backup_template = os.path.join(pyxtermjs_path, 'index.html.backup')
+            
+            if hasattr(self, '_template_backed_up') and self._template_backed_up and os.path.exists(backup_template):
+                shutil.copy2(backup_template, original_template)
+                os.unlink(backup_template)
+                logger.debug("Restored original pyxtermjs template")
+        except Exception as e:
+            logger.debug(f"Failed to restore pyxtermjs template: {e}")
+
     def destroy(self) -> None:
         if hasattr(self, '_server_process') and self._server_process:
             import subprocess
@@ -542,6 +596,9 @@ class PyXtermTerminalBackend:
             except Exception:
                 logger.debug("Failed to close pyxterm server", exc_info=True)
         self._server_process = None
+        
+        # Restore the original pyxtermjs template
+        self._restore_pyxtermjs_template()
         
         # Clean up temporary script if it exists
         if hasattr(self, '_temp_script_path') and self._temp_script_path:
@@ -644,6 +701,10 @@ class PyXtermTerminalBackend:
             pyxterm_cmd.extend(['--command', 'bash'])
 
         try:
+            # Replace the pyxtermjs template with our clean version
+            self._backup_pyxtermjs_template()
+            self._replace_pyxtermjs_template()
+            
             # Start the pyxtermjs server
             self._server_process = subprocess.Popen(
                 pyxterm_cmd,

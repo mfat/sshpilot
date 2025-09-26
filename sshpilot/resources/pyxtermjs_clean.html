@@ -1,0 +1,125 @@
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>sshPilot Terminal</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        font-family: arial;
+        background-color: #1e1e1e;
+        color: #ffffff;
+      }
+      #terminal {
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/xterm@4.11.0/css/xterm.css"
+    />
+  </head>
+  <body>
+    <div id="terminal"></div>
+
+    <!-- xterm -->
+    <script src="https://unpkg.com/xterm@4.11.0/lib/xterm.js"></script>
+    <script src="https://unpkg.com/xterm-addon-fit@0.5.0/lib/xterm-addon-fit.js"></script>
+    <script src="https://unpkg.com/xterm-addon-web-links@0.4.0/lib/xterm-addon-web-links.js"></script>
+    <script src="https://unpkg.com/xterm-addon-search@0.8.0/lib/xterm-addon-search.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
+
+    <script>
+      const term = new Terminal({
+        cursorBlink: true,
+        macOptionIsMeta: true,
+        scrollback: true,
+        theme: {
+          background: '#1e1e1e',
+          foreground: '#ffffff',
+          cursor: '#ffffff',
+          selection: '#ffffff40'
+        }
+      });
+      term.attachCustomKeyEventHandler(customKeyEventHandler);
+      
+      const fit = new FitAddon.FitAddon();
+      term.loadAddon(fit);
+      term.loadAddon(new WebLinksAddon.WebLinksAddon());
+      term.loadAddon(new SearchAddon.SearchAddon());
+
+      term.open(document.getElementById("terminal"));
+      fit.fit();
+      term.resize(15, 50);
+      console.log(`size: ${term.cols} columns, ${term.rows} rows`);
+      fit.fit();
+      
+      term.onData((data) => {
+        console.log("browser terminal received new data:", data);
+        socket.emit("pty-input", { input: data });
+      });
+
+      const socket = io.connect("/pty");
+
+      socket.on("pty-output", function (data) {
+        console.log("new output received from server:", data.output);
+        term.write(data.output);
+      });
+
+      socket.on("connect", () => {
+        fitToscreen();
+      });
+
+      socket.on("disconnect", () => {
+        // Handle disconnect if needed
+      });
+
+      function fitToscreen() {
+        fit.fit();
+        const dims = { cols: term.cols, rows: term.rows };
+        console.log("sending new dimensions to server's pty", dims);
+        socket.emit("resize", dims);
+      }
+
+      function debounce(func, wait_ms) {
+        let timeout;
+        return function (...args) {
+          const context = this;
+          clearTimeout(timeout);
+          timeout = setTimeout(() => func.apply(context, args), wait_ms);
+        };
+      }
+
+      /**
+       * Handle copy and paste events
+       */
+      function customKeyEventHandler(e) {
+        if (e.type !== "keydown") {
+          return true;
+        }
+        if (e.ctrlKey && e.shiftKey) {
+          const key = e.key.toLowerCase();
+          if (key === "v") {
+            // ctrl+shift+v: paste whatever is in the clipboard
+            navigator.clipboard.readText().then((toPaste) => {
+              term.writeText(toPaste);
+            });
+            return false;
+          } else if (key === "c" || key === "x") {
+            // ctrl+shift+x: copy whatever is highlighted to clipboard
+            const toCopy = term.getSelection();
+            navigator.clipboard.writeText(toCopy);
+            term.focus();
+            return false;
+          }
+        }
+        return true;
+      }
+
+      const wait_ms = 50;
+      window.onresize = debounce(fitToscreen, wait_ms);
+    </script>
+  </body>
+</html>
