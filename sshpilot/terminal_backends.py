@@ -474,6 +474,7 @@ class PyXtermTerminalBackend:
         self._server = None
         self._terminal_id: Optional[str] = None
         self._child_pid: Optional[int] = None
+        self._child_exited_callback: Optional[Callable] = None
         
         # Initialize with a fallback widget
         self.widget: Gtk.Widget = Gtk.Box()
@@ -744,10 +745,43 @@ class PyXtermTerminalBackend:
                 GLib.idle_add(_notify_error)
 
     def connect_child_exited(self, callback: Callable[[Gtk.Widget, int], None]) -> Any:
-        # pyxtermjs does not expose child-exited notifications directly; callers
-        # should rely on websocket events. We simply return None so callers can
-        # handle the lack of signal gracefully.
-        return None
+        # pyxtermjs does not expose child-exited notifications directly, but we can
+        # monitor the server process to detect when it exits
+        if not self._server_process:
+            return None
+            
+        # Store the callback for later use
+        self._child_exited_callback = callback
+        
+        # Start monitoring the server process
+        self._monitor_server_process()
+        
+        # Return a dummy handler ID
+        return "pyxtermjs_child_exited"
+
+    def _monitor_server_process(self):
+        """Monitor the pyxtermjs server process for exit"""
+        if not self._server_process or not hasattr(self, '_child_exited_callback'):
+            return
+            
+        def check_process():
+            if self._server_process and self._server_process.poll() is not None:
+                # Process has exited
+                exit_code = self._server_process.returncode
+                logger.debug(f"PyXtermJS server process exited with code: {exit_code}")
+                
+                # Call the child-exited callback
+                if self._child_exited_callback:
+                    try:
+                        self._child_exited_callback(self.widget, exit_code)
+                    except Exception as e:
+                        logger.error(f"Error in child-exited callback: {e}")
+                
+                return False  # Stop monitoring
+            return True  # Continue monitoring
+            
+        # Check every 100ms
+        GLib.timeout_add(100, check_process)
 
     def connect_title_changed(self, callback: Callable[[Gtk.Widget, str], None]) -> Any:
         return None
@@ -756,7 +790,11 @@ class PyXtermTerminalBackend:
         return None
 
     def disconnect(self, handler_id: Any) -> None:
-        # No-op, as the backend does not expose Gtk signal handlers.
+        # Handle PyXtermJS-specific handler IDs
+        if handler_id == "pyxtermjs_child_exited":
+            # Clear the callback for PyXtermJS
+            self._child_exited_callback = None
+        # No-op for other handlers, as the backend does not expose Gtk signal handlers.
         return
 
     def queue_draw(self) -> None:

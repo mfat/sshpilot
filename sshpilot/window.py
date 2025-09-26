@@ -5192,6 +5192,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def show_quit_confirmation_dialog(self):
         """Show confirmation dialog when quitting with active connections"""
+        # Prevent multiple quit confirmation dialogs
+        if hasattr(self, '_quit_confirmation_dialog') and self._quit_confirmation_dialog:
+            try:
+                self._quit_confirmation_dialog.present()
+                return
+            except Exception:
+                # Dialog is invalid, clean it up
+                self._quit_confirmation_dialog = None
+        
         # Bring the main window to the foreground first
         try:
             self.present()
@@ -5250,6 +5259,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if app is not None:
             app.hold()
 
+        # Store reference to prevent multiple dialogs
+        self._quit_confirmation_dialog = dialog
         dialog.present(self)
 
     def on_quit_confirmation_response(self, dialog, response):
@@ -5262,7 +5273,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         finally:
             if app is not None:
                 app.release()
-            dialog.close()
+            # Clear the dialog reference and destroy
+            self._quit_confirmation_dialog = None
+            try:
+                dialog.destroy()
+            except Exception as e:
+                logger.debug(f"Error destroying quit confirmation dialog: {e}")
 
 
 
