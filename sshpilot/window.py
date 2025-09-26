@@ -3174,8 +3174,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             current_page = self.tab_view.get_selected_page()
             if current_page:
                 child = current_page.get_child()
-                if hasattr(child, 'vte'):
-                    child.vte.grab_focus()
+                self._focus_terminal_widget(child)
         else:
             # Focus connection list with toast notification
             self.focus_connection_list()
@@ -3263,6 +3262,28 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
 
+    def _focus_terminal_widget(self, terminal: TerminalWidget) -> None:
+        """Attempt to focus a terminal widget's backend, falling back to VTE."""
+        if terminal is None:
+            return
+
+        try:
+            backend = getattr(terminal, 'backend', None)
+            if backend is not None:
+                focus = getattr(backend, 'grab_focus', None)
+                if callable(focus):
+                    focus()
+                    return
+        except Exception:
+            pass
+
+        vte = getattr(terminal, 'vte', None)
+        if vte is not None:
+            try:
+                vte.grab_focus()
+            except Exception:
+                pass
+
     def _focus_most_recent_tab(self, connection: Connection) -> None:
         """Focus the most recent tab for a connection if one exists.
 
@@ -3295,10 +3316,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.tab_view.set_selected_page(page)
 
             self.active_terminals[connection] = target_term
-            try:
-                target_term.vte.grab_focus()
-            except Exception:
-                pass
+            self._focus_terminal_widget(target_term)
         except Exception as e:
             logger.error(f"Failed to focus most recent tab for {getattr(connection, 'nickname', '')}: {e}")
 
@@ -3335,8 +3353,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self.tab_view.set_selected_page(page)
                     # Update most-recent mapping
                     self.active_terminals[connection] = target_term
-                    # Give focus to the VTE terminal so user can start typing immediately
-                    target_term.vte.grab_focus()
+                    # Give focus to the terminal backend so user can start typing immediately
+                    self._focus_terminal_widget(target_term)
                     return
 
             # No existing tabs for this connection -> open a new one
@@ -3379,10 +3397,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self.tab_view.set_selected_page(page)
                     # Update most-recent mapping
                     self.active_terminals[connection] = next_term
-                    try:
-                        next_term.vte.grab_focus()
-                    except Exception:
-                        pass
+                    self._focus_terminal_widget(next_term)
                     return
 
             # No existing tabs for this connection -> open a new one
