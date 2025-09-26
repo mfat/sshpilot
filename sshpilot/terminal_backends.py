@@ -773,9 +773,12 @@ class PyXtermTerminalBackend:
             # Start the pyxtermjs server in its own process group/session so the
             # parent process remains isolated from termination signals.
             popen_kwargs: dict[str, Any] = {
-                "stdout": subprocess.DEVNULL,
-                "stderr": subprocess.DEVNULL,
                 "env": env,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "text": True,
+                "bufsize": 1,
+                "encoding": "utf-8",
             }
 
             if cwd:
@@ -796,6 +799,19 @@ class PyXtermTerminalBackend:
                 **popen_kwargs,
             )
             self._child_pid = self._server_process.pid
+
+            if self._server_process.stdout:
+                threading.Thread(
+                    target=self._log_stream,
+                    args=(self._server_process.stdout, "stdout"),
+                    daemon=True,
+                ).start()
+            if self._server_process.stderr:
+                threading.Thread(
+                    target=self._log_stream,
+                    args=(self._server_process.stderr, "stderr"),
+                    daemon=True,
+                ).start()
             
             # Wait a moment for the server to start
             time.sleep(1)
@@ -831,6 +847,21 @@ class PyXtermTerminalBackend:
                         callback(self.widget, None)
                     return False
                 GLib.idle_add(_notify_error)
+
+    def _log_stream(self, stream, stream_name: str) -> None:
+        """Relay output from the pyxterm server to the logger."""
+        try:
+            for line in iter(stream.readline, ""):
+                if not line:
+                    break
+                logger.debug("pyxtermjs %s: %s", stream_name, line.rstrip())
+        except Exception:
+            logger.debug("Failed to read pyxtermjs %s stream", stream_name, exc_info=True)
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                logger.debug("Failed to close pyxtermjs %s stream", stream_name, exc_info=True)
 
     def connect_child_exited(self, callback: Callable[[Gtk.Widget, int], None]) -> Any:
         # pyxtermjs does not expose child-exited notifications directly, but we can
