@@ -729,10 +729,39 @@ class PyXtermTerminalBackend:
                 # Use the script as the command (no additional args needed)
                 pyxterm_cmd.extend(['--command', script_path])
             else:
-                # For other commands, use the original approach
-                pyxterm_cmd.extend(['--command', command[0]])
-                if len(command) > 1:
-                    pyxterm_cmd.extend(['--cmd-args', ' '.join(command[1:])])
+                # For local shell commands (like bash -l), create a script to handle them properly
+                if len(command) > 1 and command[0] in ['/bin/bash', 'bash', '/bin/zsh', 'zsh', '/bin/sh', 'sh']:
+                    import tempfile
+                    
+                    # Create a temporary script for the shell command
+                    script_content = '#!/bin/bash\n'
+                    script_content += 'exec '
+                    
+                    # Properly quote each argument
+                    for arg in command:
+                        escaped_arg = arg.replace("'", "'\"'\"'")
+                        script_content += f"'{escaped_arg}' "
+                    
+                    script_content += '\n'
+                    
+                    # Write to temporary file
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
+                        f.write(script_content)
+                        script_path = f.name
+                    
+                    # Make it executable
+                    os.chmod(script_path, 0o755)
+                    
+                    # Store the script path for cleanup
+                    self._temp_script_path = script_path
+                    
+                    # Use the script as the command
+                    pyxterm_cmd.extend(['--command', script_path])
+                else:
+                    # For simple commands, use the original approach
+                    pyxterm_cmd.extend(['--command', command[0]])
+                    if len(command) > 1:
+                        pyxterm_cmd.extend(['--cmd-args', ' '.join(command[1:])])
         else:
             pyxterm_cmd.extend(['--command', 'bash'])
 
