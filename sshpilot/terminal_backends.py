@@ -468,27 +468,52 @@ class PyXtermTerminalBackend:
     def __init__(self, owner: "TerminalWidget") -> None:
         self.owner = owner
         self.available = False
-        self.widget: Gtk.Widget = Gtk.Box()
         self.import_error: Optional[Exception] = None
         self._pyxterm = None
         self._webview = None
         self._server = None
         self._terminal_id: Optional[str] = None
         self._child_pid: Optional[int] = None
+        
+        # Initialize with a fallback widget
+        self.widget: Gtk.Widget = Gtk.Box()
 
         try:
             import pyxtermjs  # type: ignore
+            import subprocess
+            import shutil
 
-            gi.require_version("WebKit2", "4.0")
-            from gi.repository import WebKit2
+            # Check if pyxtermjs command is available
+            if not shutil.which('pyxtermjs'):
+                raise ImportError("pyxtermjs command not found in PATH. Please install pyxtermjs package.")
+
+            # Use WebKit 6.0 (GTK4 compatible) - this is the preferred approach
+            try:
+                gi.require_version("WebKit", "6.0")
+                from gi.repository import WebKit
+                self.WebKit = WebKit
+                self._webview = WebKit.WebView()
+                logger.debug("Using WebKit 6.0 (GTK4 compatible)")
+            except Exception as webkit6_error:
+                logger.debug(f"WebKit 6.0 not available: {webkit6_error}")
+                
+                # Check if GTK 4.0 is already loaded (which conflicts with WebKit2)
+                if hasattr(Gtk, 'get_major_version') and Gtk.get_major_version() == 4:
+                    raise ImportError("PyXterm backend requires WebKit 6.0 for GTK 4.0 compatibility, but WebKit 6.0 is not available")
+                
+                # Fall back to WebKit2 4.0 (only if GTK 3.0 is available)
+                gi.require_version("WebKit2", "4.0")
+                from gi.repository import WebKit2
+                self.WebKit2 = WebKit2
+                self._webview = WebKit2.WebView()
+                logger.debug("Using WebKit2 4.0 (GTK3 compatible)")
+
         except Exception as exc:  # pragma: no cover - optional dependency
             self.import_error = exc
             logger.debug("PyXterm backend unavailable", exc_info=True)
             return
 
         self._pyxterm = pyxtermjs
-        self.WebKit2 = WebKit2
-        self._webview = WebKit2.WebView()
         self.widget = self._webview
         self.available = True
 
@@ -506,12 +531,17 @@ class PyXtermTerminalBackend:
         return
 
     def destroy(self) -> None:
-        if self._server:
+        if hasattr(self, '_server_process') and self._server_process:
+            import subprocess
             try:
-                self._server.close()  # type: ignore[attr-defined]
+                self._server_process.terminate()
+                self._server_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._server_process.kill()
+                self._server_process.wait()
             except Exception:
                 logger.debug("Failed to close pyxterm server", exc_info=True)
-        self._server = None
+        self._server_process = None
 
     def apply_theme(self, theme_name: Optional[str] = None) -> None:  # type: ignore[override]
         # Web based terminal handles its own theming through CSS.
@@ -538,39 +568,84 @@ class PyXtermTerminalBackend:
         if not self.available:
             raise RuntimeError("pyxterm backend is not available")
 
-        if self._server is None:
-            self._server = self._pyxterm.Server()  # type: ignore[attr-defined]
-            self._server.run_in_thread()  # type: ignore[attr-defined]
+        import subprocess
+        import threading
+        import time
 
-        manager = getattr(self._pyxterm, "TerminalManager", None)
-        if manager is None:
-            raise RuntimeError("pyxterm terminal manager is not available")
+        # Find an available port
+        import socket
+        def find_free_port():
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('', 0))
+                s.listen(1)
+                port = s.getsockname()[1]
+            return port
 
-        manager = manager()  # type: ignore[call-arg]
+        # Start pyxtermjs server
+        port = find_free_port()
         command = list(argv)
-        env_dict = dict(env or {})
-        cwd_value = cwd or os.path.expanduser("~")
-        self._terminal_id = manager.create(  # type: ignore[attr-defined]
-            command=command,
-            cwd=cwd_value,
-            env=env_dict,
-        )
-        terminal = manager.get(self._terminal_id)  # type: ignore[attr-defined]
-        self._child_pid = getattr(terminal, "pid", None)
+        
+        # Build pyxtermjs command
+        pyxterm_cmd = [
+            'pyxtermjs',
+            '--port', str(port),
+            '--host', '127.0.0.1'
+        ]
+        
+        # Handle the command and arguments properly
+        if command:
+            # For SSH commands, we need to pass the full command as a single string
+            # to avoid issues with argument parsing
+            if command[0] == 'ssh' and len(command) > 1:
+                # Join all SSH arguments into a single command string
+                full_command = ' '.join(command)
+                pyxterm_cmd.extend(['--command', 'bash', '--cmd-args', f'-c "{full_command}"'])
+            else:
+                # For other commands, use the original approach
+                pyxterm_cmd.extend(['--command', command[0]])
+                if len(command) > 1:
+                    pyxterm_cmd.extend(['--cmd-args', ' '.join(command[1:])])
+        else:
+            pyxterm_cmd.extend(['--command', 'bash'])
 
-        if self._webview:
-            uri = f"http://127.0.0.1:{self._server.port}/?id={self._terminal_id}"  # type: ignore[attr-defined]
-            self._webview.load_uri(uri)
+        try:
+            # Start the pyxtermjs server
+            self._server_process = subprocess.Popen(
+                pyxterm_cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env
+            )
+            self._child_pid = self._server_process.pid
+            
+            # Wait a moment for the server to start
+            time.sleep(1)
+            
+            # Load the terminal in WebView
+            if self._webview:
+                uri = f"http://127.0.0.1:{port}"
+                self._webview.load_uri(uri)
 
-        if callback:
-            def _notify() -> bool:
-                try:
-                    callback(self.widget, self._child_pid or 0, None, user_data)
-                except TypeError:
-                    callback(self.widget, None)
-                return False
+            if callback:
+                def _notify() -> bool:
+                    try:
+                        callback(self.widget, self._child_pid or 0, None, user_data)
+                    except TypeError:
+                        callback(self.widget, None)
+                    return False
 
-            GLib.idle_add(_notify)
+                GLib.idle_add(_notify)
+
+        except Exception as e:
+            logger.error(f"Failed to start pyxtermjs server: {e}")
+            if callback:
+                def _notify_error() -> bool:
+                    try:
+                        callback(self.widget, None, e, user_data)
+                    except TypeError:
+                        callback(self.widget, None)
+                    return False
+                GLib.idle_add(_notify_error)
 
     def connect_child_exited(self, callback: Callable[[Gtk.Widget, int], None]) -> Any:
         # pyxtermjs does not expose child-exited notifications directly; callers
