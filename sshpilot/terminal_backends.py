@@ -530,8 +530,14 @@ class PyXtermTerminalBackend:
     def _on_webview_load_changed(self, webview, load_event, *args):
         """Called when the WebView load state changes"""
         try:
-            # Only apply focus when loading is finished
-            if load_event == 3:  # WEBKIT_LOAD_FINISHED
+            # Handle different load events
+            if load_event == 1:  # WEBKIT_LOAD_STARTED
+                logger.debug("WebView load started")
+            elif load_event == 2:  # WEBKIT_LOAD_REDIRECTED
+                logger.debug("WebView load redirected")
+            elif load_event == 3:  # WEBKIT_LOAD_COMMITTED
+                logger.debug("WebView load committed")
+            elif load_event == 4:  # WEBKIT_LOAD_FINISHED
                 logger.debug("WebView load finished, applying focus")
                 # Apply focus after WebView is fully loaded
                 def apply_focus():
@@ -546,6 +552,11 @@ class PyXtermTerminalBackend:
                 
                 # Small delay to ensure page is ready
                 GLib.timeout_add(200, apply_focus)
+            elif load_event == 5:  # WEBKIT_LOAD_FAILED
+                logger.error("WebView load failed - this may indicate connection refused error")
+                # Emit connection failed signal to the terminal widget
+                if hasattr(self.owner, 'emit'):
+                    self.owner.emit('connection-failed', 'Could not connect to PyXterm server: Connection refused')
         except Exception:
             logger.debug("Error in WebView load-changed handler", exc_info=True)
 
@@ -729,10 +740,16 @@ class PyXtermTerminalBackend:
                 # Use the script as the command (no additional args needed)
                 pyxterm_cmd.extend(['--command', script_path])
             else:
-                # For other commands, use the original approach
-                pyxterm_cmd.extend(['--command', command[0]])
-                if len(command) > 1:
-                    pyxterm_cmd.extend(['--cmd-args', ' '.join(command[1:])])
+                # For other commands, separate the executable from arguments
+                # pyxtermjs expects --command to be just the executable and --cmd-args for arguments
+                executable = command[0]
+                args = command[1:] if len(command) > 1 else []
+                
+                pyxterm_cmd.extend(['--command', executable])
+                if args:
+                    # Join arguments with spaces for --cmd-args
+                    args_string = ' '.join(args)
+                    pyxterm_cmd.extend([f'--cmd-args={args_string}'])
         else:
             pyxterm_cmd.extend(['--command', 'bash'])
 
@@ -762,18 +779,45 @@ class PyXtermTerminalBackend:
                 # versions while using the modern API when available.
                 popen_kwargs["start_new_session"] = True
 
+            logger.debug(f"Starting PyXterm server with command: {' '.join(pyxterm_cmd)}")
+            logger.debug(f"Working directory: {cwd}")
+            logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET') if env else 'NOT_SET'}")
+
             self._server_process = subprocess.Popen(
                 pyxterm_cmd,
                 **popen_kwargs,
             )
             self._child_pid = self._server_process.pid
             
-            # Wait a moment for the server to start
-            time.sleep(1)
+            # Wait for the server to be ready with retry logic
+            max_retries = 10
+            retry_delay = 0.5
+            server_ready = False
+            
+            for attempt in range(max_retries):
+                try:
+                    # Test if the server is responding
+                    import socket
+                    with socket.create_connection(('127.0.0.1', port), timeout=1):
+                        server_ready = True
+                        logger.debug(f"PyXterm server ready on port {port} after {attempt + 1} attempts")
+                        break
+                except (socket.error, ConnectionRefusedError) as e:
+                    logger.debug(f"Server not ready yet, attempt {attempt + 1}/{max_retries}: {e}")
+                    # Check if the process is still running
+                    if self._server_process and self._server_process.poll() is not None:
+                        logger.error(f"PyXterm server process exited early with return code: {self._server_process.returncode}")
+                        break
+                    time.sleep(retry_delay)
+            
+            if not server_ready:
+                logger.error(f"PyXterm server failed to start on port {port} after {max_retries} attempts")
+                raise RuntimeError(f"PyXterm server failed to start on port {port}")
             
             # Load the terminal in WebView
             if self._webview:
                 uri = f"http://127.0.0.1:{port}"
+                logger.debug(f"Loading WebView with URI: {uri}")
                 self._webview.load_uri(uri)
                 
                 # Connect to load-changed signal to track when WebView is ready
