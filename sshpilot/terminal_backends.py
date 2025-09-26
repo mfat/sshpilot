@@ -739,12 +739,30 @@ class PyXtermTerminalBackend:
             self._backup_pyxtermjs_template()
             self._replace_pyxtermjs_template()
             
-            # Start the pyxtermjs server
+            # Start the pyxtermjs server in its own process group/session so the
+            # parent process remains isolated from termination signals.
+            popen_kwargs: dict[str, Any] = {
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+                "env": env,
+            }
+
+            if cwd:
+                popen_kwargs["cwd"] = cwd
+
+            if os.name == "nt":  # pragma: no cover - Windows specific behaviour
+                creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                if creationflags:
+                    popen_kwargs["creationflags"] = creationflags
+            else:
+                # start_new_session ensures pyxtermjs becomes the leader of a new
+                # session; this mirrors `preexec_fn=os.setsid` for older Python
+                # versions while using the modern API when available.
+                popen_kwargs["start_new_session"] = True
+
             self._server_process = subprocess.Popen(
                 pyxterm_cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=env
+                **popen_kwargs,
             )
             self._child_pid = self._server_process.pid
             
