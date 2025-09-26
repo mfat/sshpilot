@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
+import tempfile
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
 
 import gi
@@ -474,6 +476,7 @@ class PyXtermTerminalBackend:
         self._server = None
         self._terminal_id: Optional[str] = None
         self._child_pid: Optional[int] = None
+        self._temp_script_path: Optional[str] = None
         
         # Initialize with a fallback widget
         self.widget: Gtk.Widget = Gtk.Box()
@@ -542,19 +545,22 @@ class PyXtermTerminalBackend:
             except Exception:
                 logger.debug("Failed to close pyxterm server", exc_info=True)
         self._server_process = None
-        
+
         # Clean up temporary script if it exists
-        if hasattr(self, '_temp_script_path') and self._temp_script_path:
-            try:
-                import os
-                os.unlink(self._temp_script_path)
-            except Exception:
-                logger.debug("Failed to clean up temporary script", exc_info=True)
-            self._temp_script_path = None
+        self._cleanup_temp_script()
 
     def apply_theme(self, theme_name: Optional[str] = None) -> None:  # type: ignore[override]
         # Web based terminal handles its own theming through CSS.
         pass
+
+    def _cleanup_temp_script(self) -> None:
+        if self._temp_script_path:
+            try:
+                os.unlink(self._temp_script_path)
+            except Exception:
+                logger.debug("Failed to clean up temporary script", exc_info=True)
+            finally:
+                self._temp_script_path = None
 
     def grab_focus(self) -> None:
         if not self.available:
@@ -603,43 +609,30 @@ class PyXtermTerminalBackend:
         
         # Handle the command and arguments properly
         if command:
-            # For SSH commands, we need to pass the full command as a single string
-            # to avoid issues with argument parsing
-            if command[0] == 'ssh' and len(command) > 1:
-                # Create a temporary script to handle the SSH command properly
-                import tempfile
-                import os
-                
-                # Create a temporary script file that properly handles the SSH command
-                script_content = '#!/bin/bash\n'
-                script_content += 'exec '
-                
-                # Properly quote each argument to handle spaces and special characters
-                for arg in command:
-                    # Escape any single quotes in the argument
-                    escaped_arg = arg.replace("'", "'\"'\"'")
-                    script_content += f"'{escaped_arg}' "
-                
-                script_content += '\n'
-                
-                # Write to temporary file
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
+            def _arg_requires_script(arg: str) -> bool:
+                return any(ch.isspace() for ch in arg)
+
+            if any(_arg_requires_script(arg) for arg in command):
+                self._cleanup_temp_script()
+
+                script_content = "#!/bin/bash\n"
+                script_content += "exec " + " ".join(shlex.quote(arg) for arg in command) + "\n"
+
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
                     f.write(script_content)
                     script_path = f.name
-                
-                # Make it executable
+
                 os.chmod(script_path, 0o755)
-                
-                # Store the script path for cleanup
                 self._temp_script_path = script_path
-                
-                # Use the script as the command (no additional args needed)
-                pyxterm_cmd.extend(['--command', script_path])
+                pyxterm_cmd.extend(["--command", script_path])
             else:
-                # For other commands, use the original approach
-                pyxterm_cmd.extend(['--command', command[0]])
+                pyxterm_cmd.extend(["--command", command[0]])
                 if len(command) > 1:
-                    pyxterm_cmd.extend(['--cmd-args', ' '.join(command[1:])])
+                    try:
+                        cmd_args = shlex.join(command[1:])
+                    except AttributeError:  # pragma: no cover - Python < 3.8 fallback
+                        cmd_args = " ".join(shlex.quote(arg) for arg in command[1:])
+                    pyxterm_cmd.extend(["--cmd-args", cmd_args])
         else:
             pyxterm_cmd.extend(['--command', 'bash'])
 
