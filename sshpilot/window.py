@@ -4022,22 +4022,33 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.debug(f"Main window: Environment variables count: {len(envv)}")
 
             try:
-                logger.debug("Main window: Spawning ssh-copy-id process in VTE terminal")
+                logger.debug("Main window: Spawning ssh-copy-id process in terminal")
                 logger.debug(f"Main window: Working directory: {os.path.expanduser('~') or '/'}")
-                logger.debug(f"Main window: Command: ['bash', '-lc', '{cmdline}']")
+                logger.debug(f"Main window: Command: {argv}")
                 
-                term_widget.vte.spawn_async(
-                    Vte.PtyFlags.DEFAULT,
-                    os.path.expanduser('~') or '/',
-                    ['bash', '-lc', cmdline],
-                    envv,  # <— use merged env
-                    GLib.SpawnFlags.DEFAULT,
-                    None,
-                    None,
-                    -1,
-                    None,
-                    None
-                )
+                # Use the backend's spawn_async method instead of direct VTE access
+                if hasattr(term_widget, 'backend') and term_widget.backend:
+                    term_widget.backend.spawn_async(
+                        argv,
+                        env=dict(item.split('=', 1) for item in envv if '=' in item),
+                        cwd=os.path.expanduser('~') or '/',
+                        callback=None,
+                        user_data=None
+                    )
+                else:
+                    # Fallback to VTE if backend is not available
+                    term_widget.vte.spawn_async(
+                        Vte.PtyFlags.DEFAULT,
+                        os.path.expanduser('~') or '/',
+                        argv,
+                        envv,  # <— use merged env
+                        GLib.SpawnFlags.DEFAULT,
+                        None,
+                        None,
+                        -1,
+                        None,
+                        None
+                    )
                 logger.debug("Main window: ssh-copy-id process spawned successfully")
 
                 # Show result modal when the command finishes
@@ -5276,6 +5287,34 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Store reference to prevent multiple dialogs
         self._quit_confirmation_dialog = dialog
+        
+        # Connect to close signal to clean up reference
+        def on_dialog_close(dialog):
+            if hasattr(self, '_quit_confirmation_dialog') and self._quit_confirmation_dialog == dialog:
+                self._quit_confirmation_dialog = None
+        
+        try:
+            dialog.connect('close-request', on_dialog_close)
+        except Exception:
+            # Some dialog types might not have this signal
+            pass
+        
+        # Add timeout to prevent hanging
+        def timeout_quit():
+            if hasattr(self, '_quit_confirmation_dialog') and self._quit_confirmation_dialog:
+                logger.warning("Quit confirmation dialog timed out, forcing quit")
+                self._quit_confirmation_dialog = None
+                try:
+                    dialog.close()
+                except Exception:
+                    pass
+                # Force quit after timeout
+                shutdown.cleanup_and_quit(self)
+            return False  # Don't repeat
+        
+        # Set 30 second timeout
+        GLib.timeout_add_seconds(30, timeout_quit)
+            
         dialog.present(self)
 
     def on_quit_confirmation_response(self, dialog, response):
@@ -5288,12 +5327,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         finally:
             if app is not None:
                 app.release()
-            # Clear the dialog reference and destroy
+            # Clear the dialog reference and close
             self._quit_confirmation_dialog = None
             try:
-                dialog.destroy()
+                # Only close if dialog is still valid
+                if dialog and hasattr(dialog, 'close'):
+                    dialog.close()
             except Exception as e:
-                logger.debug(f"Error destroying quit confirmation dialog: {e}")
+                logger.debug(f"Error closing quit confirmation dialog: {e}")
 
 
 

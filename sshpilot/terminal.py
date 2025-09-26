@@ -247,6 +247,10 @@ class TerminalWidget(Gtk.Box):
         
         # Set up the terminal backend
         self.backend: BaseTerminalBackend = self._create_backend()
+        if self.backend is None:
+            logger.error("Failed to create terminal backend, creating VTE fallback")
+            self.backend = VTETerminalBackend(self)
+            self._backend_name = "vte"
         self.vte = getattr(self.backend, 'vte', None)
 
         # Initialize terminal with basic settings and apply configured theme early
@@ -428,12 +432,16 @@ class TerminalWidget(Gtk.Box):
         backend_name = (backend_name or "vte").lower()
 
         if backend_name == "pyxterm":
-            backend = PyXtermTerminalBackend(self)
-            if getattr(backend, "available", False):
-                logger.info("Using PyXterm terminal backend")
-                self._backend_name = "pyxterm"
-                return backend
-            logger.warning("PyXterm backend unavailable, falling back to VTE")
+            try:
+                backend = PyXtermTerminalBackend(self)
+                if getattr(backend, "available", False):
+                    logger.info("Using PyXterm terminal backend")
+                    self._backend_name = "pyxterm"
+                    return backend
+                logger.warning("PyXterm backend unavailable, falling back to VTE")
+            except Exception as e:
+                logger.error(f"Failed to create PyXterm backend: {e}")
+                logger.warning("PyXterm backend creation failed, falling back to VTE")
 
         logger.debug("Using VTE terminal backend")
         self._backend_name = "vte"
