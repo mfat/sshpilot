@@ -527,6 +527,26 @@ class PyXtermTerminalBackend:
         self.widget.set_hexpand(True)
         self.widget.set_vexpand(True)
 
+    def _on_webview_load_finished(self, webview, *args):
+        """Called when the WebView finishes loading the page"""
+        try:
+            logger.debug("WebView load finished, applying focus")
+            # Apply focus after WebView is fully loaded
+            def apply_focus():
+                try:
+                    logger.debug("WebView load-finished: applying focus")
+                    # Just focus the WebView - HTML template handles terminal focus
+                    self.widget.grab_focus()
+                    logger.debug("Focus applied after WebView load finished")
+                except Exception:
+                    logger.debug("Failed to apply focus after WebView load", exc_info=True)
+                return False  # Don't repeat
+            
+            # Small delay to ensure page is ready
+            GLib.timeout_add(200, apply_focus)
+        except Exception:
+            logger.debug("Error in WebView load-finished handler", exc_info=True)
+
     def set_font(self, font_desc: "Pango.FontDescription") -> None:
         # Web backend manages fonts via CSS; ignore request.
         return
@@ -621,6 +641,19 @@ class PyXtermTerminalBackend:
             self.widget.grab_focus()
         except Exception:
             logger.debug("Failed to focus pyxterm widget", exc_info=True)
+    
+    def grab_focus_with_js(self) -> None:
+        """Special focus method for pyxtermjs - simplified approach"""
+        if not self.available:
+            logger.debug("Pyxtermjs backend not available")
+            return
+        try:
+            logger.debug("Starting grab_focus_with_js (simplified)")
+            # Just focus the WebView - the HTML template will handle terminal focus
+            self.widget.grab_focus()
+            logger.debug("WebView focused - terminal should auto-focus from HTML template")
+        except Exception as e:
+            logger.debug(f"Failed to focus pyxterm widget: {e}", exc_info=True)
 
     def spawn_async(
         self,
@@ -722,6 +755,12 @@ class PyXtermTerminalBackend:
             if self._webview:
                 uri = f"http://127.0.0.1:{port}"
                 self._webview.load_uri(uri)
+                
+                # Connect to load-finished signal to track when WebView is ready
+                try:
+                    self._webview.connect('load-finished', self._on_webview_load_finished)
+                except Exception:
+                    logger.debug("Failed to connect to WebView load-finished signal", exc_info=True)
 
             if callback:
                 def _notify() -> bool:

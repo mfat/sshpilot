@@ -322,6 +322,31 @@ class TerminalManager:
         else:
             logger.debug(
                 f"Terminal reconnected after settings update: {terminal.connection.nickname}")
+        
+        # Apply focus after connection is established (same as Ctrl+L + Enter method)
+        def apply_focus_after_connection():
+            try:
+                # Use special focus method for pyxtermjs backend
+                if hasattr(terminal, 'backend') and hasattr(terminal.backend, '_pyxterm'):
+                    logger.debug("Using pyxtermjs special focus method")
+                    # For pyxtermjs, use the special focus method with JavaScript injection
+                    if hasattr(terminal.backend, 'grab_focus_with_js'):
+                        terminal.backend.grab_focus_with_js()
+                        logger.debug("Called grab_focus_with_js for pyxtermjs")
+                    else:
+                        logger.debug("grab_focus_with_js not available, using normal focus")
+                        self.window._focus_terminal_widget(terminal)
+                else:
+                    logger.debug("Using normal focus method for non-pyxtermjs backend")
+                    # For other backends, use the normal focus method
+                    self.window._focus_terminal_widget(terminal)
+            except Exception:
+                logger.debug("Failed to apply focus after terminal connection", exc_info=True)
+            return False  # Don't repeat
+        
+        # Use a longer delay for pyxtermjs backend to ensure WebView is fully ready
+        delay = 500 if hasattr(terminal, 'backend') and hasattr(terminal.backend, '_pyxterm') else 100
+        GLib.timeout_add(delay, apply_focus_after_connection)
 
     def on_terminal_disconnected(self, terminal):
         terminal.connection.is_connected = False

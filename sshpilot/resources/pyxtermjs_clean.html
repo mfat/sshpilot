@@ -56,6 +56,12 @@
       console.log(`size: ${term.cols} columns, ${term.rows} rows`);
       fit.fit();
       
+      // Auto-focus the terminal when it's ready
+      setTimeout(() => {
+        term.focus();
+        console.log('Terminal auto-focused');
+      }, 100);
+      
       term.onData((data) => {
         console.log("browser terminal received new data:", data);
         socket.emit("pty-input", { input: data });
