@@ -161,6 +161,7 @@ class Config(GObject.Object):
                 'scrollback_lines': 10000,
                 'cursor_blink': True,
                 'audible_bell': False,
+                'backend': 'vte',
             },
             'ui': {
                 'show_hostname': True,
@@ -677,6 +678,15 @@ class Config(GObject.Object):
         shortcuts = config.get('shortcuts')
         if not isinstance(shortcuts, dict):
             config['shortcuts'] = {}
+            updated = True
+
+        terminal_cfg = config.get('terminal')
+        if not isinstance(terminal_cfg, dict):
+            config['terminal'] = self.get_default_config().get('terminal', {}).copy()
+            updated = True
+            terminal_cfg = config['terminal']
+        if 'backend' not in terminal_cfg:
+            terminal_cfg['backend'] = 'vte'
             updated = True
 
         file_manager_cfg = config.get('file_manager')
