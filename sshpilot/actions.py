@@ -20,6 +20,25 @@ logger = logging.getLogger(__name__)
 class WindowActions:
     """Mixin providing action handlers for :class:`MainWindow`."""
 
+    def _update_sidebar_accelerators(self):
+        """Apply sidebar accelerators respecting pass-through settings."""
+        app = None
+        try:
+            if hasattr(self, 'get_application'):
+                app = self.get_application()
+        except Exception:
+            app = None
+
+        if not app:
+            return
+
+        shortcuts = ['F9']
+        if is_macos():
+            shortcuts.append('<Meta>b')
+
+        enabled = getattr(app, 'accelerators_enabled', True)
+        app.set_accels_for_action('win.toggle_sidebar', shortcuts if enabled else [])
+
     def on_toggle_sidebar_action(self, action, param):
         """Handle sidebar toggle action (for keyboard shortcuts)"""
         try:
@@ -736,9 +755,6 @@ def register_window_actions(window):
         window.add_action(sidebar_action)
         app = window.get_application()
         if app:
-            shortcuts = ['F9']
-            if is_macos():
-                shortcuts.append('<Meta>b')
-            app.set_accels_for_action('win.toggle_sidebar', shortcuts)
+            window._update_sidebar_accelerators()
     except Exception as e:
         logger.error(f"Failed to register sidebar toggle action: {e}")

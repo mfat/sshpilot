@@ -187,6 +187,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _on_config_setting_changed(self, _config, key, value):
         """Synchronize runtime state when configuration values change."""
+        if key == 'terminal.pass_through_mode':
+            try:
+                self._update_sidebar_accelerators()
+            except Exception:
+                pass
+            return
+
         if key != 'ssh.native_connect':
             return
 
