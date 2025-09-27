@@ -692,6 +692,19 @@ class Config(GObject.Object):
         elif not isinstance(terminal_cfg['pass_through_mode'], bool):
             terminal_cfg['pass_through_mode'] = bool(terminal_cfg['pass_through_mode'])
             updated = True
+        if 'term' not in terminal_cfg:
+            terminal_cfg['term'] = None
+            updated = True
+        else:
+            term_value = terminal_cfg['term']
+            normalized_term = None
+            if isinstance(term_value, str):
+                normalized_term = term_value.strip() or None
+            elif term_value is None:
+                normalized_term = None
+            if normalized_term != term_value:
+                terminal_cfg['term'] = normalized_term
+                updated = True
 
         file_manager_cfg = config.get('file_manager')
         if not isinstance(file_manager_cfg, dict):
