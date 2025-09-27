@@ -228,22 +228,49 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to install sidebar CSS: {e}")
 
-        # On startup, focus the first item in the connection list (not the toolbar buttons)
-        # Delay this to ensure the UI is fully set up
-        try:
-            GLib.timeout_add(100, self._focus_connection_list_first_row)
-        except Exception:
-            pass
-
         # Check startup behavior setting and show appropriate view
         try:
             startup_behavior = self.config.get_setting('app-startup-behavior', 'terminal')
-            if startup_behavior == 'terminal':
-                # Show local terminal on startup
-                GLib.idle_add(self.terminal_manager.show_local_terminal)
-            # If startup_behavior == 'welcome', the welcome view is already shown by default
         except Exception as e:
             logger.error(f"Error handling startup behavior: {e}")
+            startup_behavior = 'terminal'
+
+        # On startup, focus the appropriate widget based on preference
+        if startup_behavior == 'welcome':
+            # Delay focus to ensure the UI is fully set up
+            try:
+                GLib.timeout_add(100, self._focus_connection_list_first_row)
+            except Exception:
+                pass
+        else:
+            # Default to terminal behavior for unknown preferences
+            try:
+                GLib.idle_add(self.terminal_manager.show_local_terminal)
+            except Exception as e:
+                logger.error(f"Failed to show local terminal on startup: {e}")
+
+            def _focus_terminal_when_ready(attempt=[0]):
+                attempt[0] += 1
+                try:
+                    page = self.tab_view.get_selected_page() if hasattr(self, 'tab_view') else None
+                    if page is None:
+                        return attempt[0] < 20
+                    terminal_widget = page.get_child()
+                    if terminal_widget is None:
+                        return attempt[0] < 20
+                    if hasattr(terminal_widget, 'vte') and hasattr(terminal_widget.vte, 'grab_focus'):
+                        terminal_widget.vte.grab_focus()
+                    elif hasattr(terminal_widget, 'grab_focus'):
+                        terminal_widget.grab_focus()
+                    return False
+                except Exception as focus_error:
+                    logger.debug(f"Failed to focus startup terminal: {focus_error}")
+                    return False
+
+            try:
+                GLib.timeout_add(150, _focus_terminal_when_ready)
+            except Exception as e:
+                logger.debug(f"Unable to queue terminal focus: {e}")
 
         # Mark startup as complete after a short delay to allow all initialization to finish
         GLib.timeout_add(500, lambda: setattr(self, '_startup_complete', True) or False)
