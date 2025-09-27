@@ -18,6 +18,7 @@ import weakref
 import subprocess
 import pwd
 from datetime import datetime
+from typing import MutableMapping, Optional
 from .port_utils import get_port_checker
 from .platform_utils import is_macos
 
@@ -28,6 +29,18 @@ gi.require_version('Adw', '1')
 from gi.repository import Gtk, GObject, GLib, Vte, Pango, Gdk, Gio, Adw
 
 logger = logging.getLogger(__name__)
+
+_VTE_COMPATIBLE_TERM_ALIASES = {
+    'screen',
+    'screen-256color',
+    'tmux',
+    'tmux-256color',
+    'vte',
+    'vte-256color',
+    'xterm',
+    'xterm-color',
+    'xterm-256color',
+}
 
 class SSHProcessManager:
     """Manages SSH processes and ensures proper cleanup"""
@@ -966,7 +979,7 @@ class TerminalWidget(Gtk.Box):
                 from .askpass_utils import get_ssh_env_with_askpass
                 askpass_env = get_ssh_env_with_askpass()
                 env.update(askpass_env)
-            env['TERM'] = env.get('TERM', 'xterm-256color')
+            self._normalize_spawn_env(env)
             env['SHELL'] = env.get('SHELL', '/bin/bash')
             env['SSHPILOT_FLATPAK'] = '1'
             # Add /app/bin to PATH for Flatpak compatibility
@@ -1426,6 +1439,43 @@ class TerminalWidget(Gtk.Box):
         self._install_shortcuts()
         self._setup_context_menu()
 
+    def _get_configured_term(self) -> Optional[str]:
+        """Return the preferred TERM value from user settings when available."""
+
+        config = getattr(self, 'config', None)
+        if not config:
+            return None
+
+        for key in ('terminal.term', 'terminal.term_override'):
+            try:
+                value = config.get_setting(key, None)
+            except Exception:
+                value = None
+
+            if isinstance(value, str):
+                stripped = value.strip()
+                if stripped:
+                    return stripped
+
+        return None
+
+    def _normalize_spawn_env(self, env: MutableMapping[str, str]) -> None:
+        """Ensure the spawn environment advertises a VTE-compatible TERM."""
+
+        override = self._get_configured_term()
+        if override:
+            env['TERM'] = override
+            return
+
+        current_term = env.get('TERM')
+        if isinstance(current_term, str):
+            sanitized = current_term.strip()
+            if sanitized and sanitized.lower() in _VTE_COMPATIBLE_TERM_ALIASES:
+                env['TERM'] = sanitized
+                return
+
+        env['TERM'] = 'xterm-256color'
+
     def setup_local_shell(self):
         """Set up the terminal for local shell (not SSH)"""
         logger.info("Setting up local shell terminal")
@@ -1444,8 +1494,7 @@ class TerminalWidget(Gtk.Box):
 
             # Ensure we have a proper environment
             env['SHELL'] = shell
-            if 'TERM' not in env:
-                env['TERM'] = 'xterm-256color'
+            self._normalize_spawn_env(env)
 
             # Set initial title for local terminal
             self.emit('title-changed', 'Local Terminal')
