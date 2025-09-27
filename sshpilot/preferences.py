@@ -445,6 +445,27 @@ class PreferencesWindow(Adw.PreferencesWindow):
             preview_group.add(preview_box)
             appearance_group.add(preview_group)
             terminal_page.add(appearance_group)
+
+            keyboard_group = Adw.PreferencesGroup()
+            keyboard_group.set_title("Keyboard")
+
+            self.pass_through_switch = Adw.SwitchRow()
+            self.pass_through_switch.set_title("Terminal Shortcut Pass-through")
+            self.pass_through_switch.set_subtitle(
+                "Use the terminal's native copy, paste, and zoom shortcuts"
+            )
+            try:
+                pass_through_active = bool(
+                    self.config.get_setting('terminal.pass_through_mode', False)
+                )
+            except Exception:
+                pass_through_active = False
+            self._pass_through_enabled = pass_through_active
+            self.pass_through_switch.set_active(pass_through_active)
+            self.pass_through_switch.connect('notify::active', self.on_pass_through_mode_toggled)
+            keyboard_group.add(self.pass_through_switch)
+
+            terminal_page.add(keyboard_group)
             
             # Preferred Terminal group (shown when external terminals are available)
             if not should_hide_external_terminal_options():
@@ -703,7 +724,14 @@ class PreferencesWindow(Adw.PreferencesWindow):
                     shortcuts_page.add(group)
                     groups_added += 1
                     logger.debug(f"Added shortcut group: {group.get_title()}")
-                
+
+                try:
+                    self.shortcuts_editor_page.set_pass_through_enabled(
+                        getattr(self, '_pass_through_enabled', False)
+                    )
+                except Exception:
+                    pass
+
                 logger.info(f"Shortcut editor successfully added to preferences with {groups_added} groups")
             except Exception as e:
                 logger.error(f"Failed to create shortcut editor: {e}", exc_info=True)
@@ -983,7 +1011,22 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 self.parent_window.show_shortcuts_window()
             except Exception as exc:
                 logger.error("Failed to open shortcuts window: %s", exc)
-    
+
+    def on_pass_through_mode_toggled(self, switch, _pspec):
+        """Persist changes to the terminal pass-through preference."""
+        active = bool(switch.get_active())
+        self._pass_through_enabled = active
+        try:
+            self.config.set_setting('terminal.pass_through_mode', active)
+        except Exception as exc:
+            logger.error("Failed to update pass-through mode: %s", exc)
+
+        if hasattr(self, 'shortcuts_editor_page') and self.shortcuts_editor_page is not None:
+            try:
+                self.shortcuts_editor_page.set_pass_through_enabled(active)
+            except Exception as exc:
+                logger.debug("Failed to propagate pass-through state to shortcut editor: %s", exc)
+
     def on_font_button_clicked(self, button):
         """Handle font button click"""
         logger.info("Font button clicked")

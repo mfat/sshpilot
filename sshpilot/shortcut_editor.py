@@ -163,6 +163,15 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
         self._rows: Dict[str, Dict[str, Gtk.Widget]] = {}
         self._pending_overrides: Dict[str, List[str]] = {}
         self._default_shortcuts: Dict[str, Optional[List[str]]] = {}
+        if self._config is not None:
+            try:
+                self._pass_through_enabled = bool(
+                    self._config.get_setting('terminal.pass_through_mode', False)
+                )
+            except Exception:
+                self._pass_through_enabled = False
+        else:
+            self._pass_through_enabled = False
 
         if self._config is not None:
             try:
@@ -261,8 +270,6 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
                 subtitle = self._format_accelerators(current_shortcuts)
                 is_enabled = True
 
-            row.set_subtitle(subtitle)
-
             enable_switch = Gtk.Switch()
             enable_switch.set_active(is_enabled)
             enable_switch.set_valign(Gtk.Align.CENTER)
@@ -278,6 +285,7 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             row.add_suffix(assign_button)
 
             default_shortcuts = self._default_shortcuts.get(name)
+            reset_button: Optional[Gtk.Widget] = None
             if current_shortcuts != default_shortcuts:
                 reset_button = Gtk.Button()
                 reset_button.set_icon_name('edit-undo-symbolic')
@@ -291,7 +299,11 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
                 'row': row,
                 'switch': enable_switch,
                 'assign_button': assign_button,
+                'reset_button': reset_button,
+                'base_subtitle': subtitle,
             }
+
+            row.set_subtitle(subtitle)
 
             if name in general_actions:
                 general_group.add(row)
@@ -317,6 +329,8 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             self._groups_list.append(group)
             # Don't add to self - the groups will be added to the preferences page separately
             logger.debug(f"Prepared group '{group.get_title()}' with {len(list(group))} children")
+
+        self.set_pass_through_enabled(self._pass_through_enabled)
 
     def iter_groups(self) -> Iterable[Adw.PreferencesGroup]:
         """Yield the preference groups managed by this page."""
@@ -424,11 +438,14 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
                 subtitle = self._format_accelerators(current_shortcuts)
                 is_enabled = True
 
+            row_data['base_subtitle'] = subtitle
             row.set_subtitle(subtitle)
 
             switch.handler_block_by_func(self._on_switch_toggled)
             switch.set_active(is_enabled)
             switch.handler_unblock_by_func(self._on_switch_toggled)
+
+            self._apply_pass_through_state_to_row(action_name)
 
     def _find_conflict(self, action_name: str, accelerator: str) -> Optional[str]:
         for other in self._action_names:
@@ -471,6 +488,36 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
         """Flush pending overrides to the application."""
 
         self._apply_shortcuts()
+
+
+    def set_pass_through_enabled(self, enabled: bool):
+        self._pass_through_enabled = bool(enabled)
+        for name in self._rows:
+            self._apply_pass_through_state_to_row(name)
+
+    def _apply_pass_through_state_to_row(self, action_name: str):
+        row_data = self._rows.get(action_name)
+        if not row_data:
+            return
+
+        row = row_data['row']
+        base = row_data.get('base_subtitle', row.get_subtitle() or '')
+        notice = _('Shortcuts disabled while terminal pass-through mode is active')
+
+        if self._pass_through_enabled:
+            if base:
+                row.set_subtitle(f"{base} — {notice}")
+            else:
+                row.set_subtitle(notice)
+        else:
+            row.set_subtitle(base)
+
+        for key in ('switch', 'assign_button', 'reset_button'):
+            widget = row_data.get(key)
+            if widget is not None:
+                widget.set_sensitive(not self._pass_through_enabled)
+
+        row.set_tooltip_text(notice if self._pass_through_enabled else None)
 
 
 class ShortcutEditorWindow(Adw.Window):
