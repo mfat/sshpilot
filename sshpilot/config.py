@@ -161,6 +161,7 @@ class Config(GObject.Object):
                 'scrollback_lines': 10000,
                 'cursor_blink': True,
                 'audible_bell': False,
+                'term': None,
                 'pass_through_mode': False,
             },
             'ui': {
