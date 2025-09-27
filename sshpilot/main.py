@@ -68,11 +68,24 @@ class SshPilotApplication(Adw.Application):
         self.config = None
         self._default_shortcuts = {}
         self._action_order = []
+        self._accelerators_enabled = True
+        self.accelerators_enabled = True
+        self._config_handler = None
 
         try:
             from .config import Config
             cfg = Config()
             self.config = cfg
+            try:
+                self._accelerators_enabled = not bool(cfg.get_setting('terminal.pass_through_mode', False))
+            except Exception:
+                self._accelerators_enabled = True
+            self.accelerators_enabled = self._accelerators_enabled
+            if hasattr(cfg, 'connect'):
+                try:
+                    self._config_handler = cfg.connect('setting-changed', self._on_config_setting_changed)
+                except Exception:
+                    self._config_handler = None
             saved_theme = str(cfg.get_setting('app-theme', 'default'))
             style_manager = Adw.StyleManager.get_default()
             if saved_theme == 'light':
@@ -213,6 +226,14 @@ class SshPilotApplication(Adw.Application):
     def on_shutdown(self, app):
         """Clean up all resources when application is shutting down"""
         logging.info("Application shutdown initiated, cleaning up...")
+        if self._config_handler is not None and self.config is not None:
+            try:
+                self.config.disconnect(self._config_handler)
+            except Exception:
+                pass
+            finally:
+                self._config_handler = None
+        self.accelerators_enabled = getattr(self, '_accelerators_enabled', True)
         from .terminal import process_manager
         process_manager.cleanup_all()
         logging.info("Cleanup completed")
@@ -278,6 +299,26 @@ class SshPilotApplication(Adw.Application):
         logging.getLogger('sshpilot').setLevel(app_level)
         logging.getLogger(__name__).setLevel(app_level)
 
+    def _on_config_setting_changed(self, _config, key, value):
+        if key != 'terminal.pass_through_mode':
+            return
+
+        self._accelerators_enabled = not bool(value)
+        self.accelerators_enabled = self._accelerators_enabled
+        self.apply_shortcut_overrides()
+
+        try:
+            windows = list(self.get_windows())
+        except Exception:
+            windows = []
+
+        for win in windows:
+            if hasattr(win, '_update_sidebar_accelerators'):
+                try:
+                    win._update_sidebar_accelerators()
+                except Exception:
+                    logging.debug("Failed to update window accelerators for pass-through toggle")
+
     def create_action(self, name, callback, shortcuts=None):
         """Create a GAction with optional keyboard shortcuts"""
         action = Gio.SimpleAction.new(name, None)
@@ -304,6 +345,13 @@ class SshPilotApplication(Adw.Application):
             source = 'override'
 
         action_name = f"app.{name}"
+        if not getattr(self, '_accelerators_enabled', True):
+            self.set_accels_for_action(action_name, [])
+            logging.debug(
+                "Skipping accelerators for action '%s' because terminal pass-through mode is active",
+                name,
+            )
+            return
         if effective is None:
             self.set_accels_for_action(action_name, [])
             logging.debug(f"Registered action '{name}' without shortcuts")
