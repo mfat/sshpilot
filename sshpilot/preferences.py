@@ -660,8 +660,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
             reset_colors_row.add_suffix(reset_button)
             color_override_group.add(reset_colors_row)
 
-            interface_appearance_group.add(color_override_group)
             interface_page.add(interface_appearance_group)
+            interface_page.add(color_override_group)
 
             # Initialize color button states
             self.refresh_color_buttons()
