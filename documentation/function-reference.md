@@ -528,7 +528,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`__init__(host, username, port=22, password=None, dispatcher=None, connection=None, connection_manager=None, ssh_config=None)`** — Handles init.
 
-- **`_connect_impl()`** — Connects impl.
+- **`_connect_impl()`** — Connects impl and configures optional SSH keepalive handling when advanced preferences enable it.
 
 - **`_create_proxy_jump_socket(jump_entries, config_override, policy, known_hosts_path, allow_agent, look_for_keys, key_filename, passphrase, resolved_host, resolved_port, base_username)`** — Create a socket by chaining SSH connections through jump hosts.
 
@@ -540,7 +540,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_submit(func, on_success=None, on_error=None)`** — Handles submit.
 
-- **`close()`** — Handles close.
+- **`close()`** — Handles close and shuts down the SFTP keepalive worker.
 
 - **`connect_to_server()`** — Connects to server.
 
