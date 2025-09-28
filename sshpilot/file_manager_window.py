@@ -692,6 +692,11 @@ class AsyncSFTPManager(GObject.GObject):
         self._ssh_config = dict(ssh_config) if ssh_config else None
         self._proxy_sock: Optional[Any] = None
         self._jump_clients: List[paramiko.SSHClient] = []
+        self._keepalive_interval: int = 0
+        self._keepalive_count_max: int = 0
+        self._keepalive_thread: Optional[threading.Thread] = None
+        self._keepalive_stop_event: Optional[threading.Event] = None
+        self._keepalive_failures: int = 0
 
     
     def _format_size(self, size_bytes):
@@ -715,6 +720,7 @@ class AsyncSFTPManager(GObject.GObject):
         )
 
     def close(self) -> None:
+        self._stop_keepalive_worker()
         with self._lock:
             if self._sftp is not None:
                 self._sftp.close()
@@ -738,6 +744,89 @@ class AsyncSFTPManager(GObject.GObject):
                 finally:
                     self._proxy_sock = None
         self._executor.shutdown(wait=False)
+
+    def _start_keepalive_worker(self) -> None:
+        with self._lock:
+            if self._keepalive_interval <= 0 or self._sftp is None:
+                return
+            if self._keepalive_thread is not None and self._keepalive_thread.is_alive():
+                return
+
+            stop_event = threading.Event()
+            interval = self._keepalive_interval
+            self._keepalive_stop_event = stop_event
+            self._keepalive_failures = 0
+
+        def _worker() -> None:
+            logger.debug("SFTP keepalive worker started for %s", self._host)
+            try:
+                while not stop_event.wait(interval):
+                    with self._lock:
+                        sftp = self._sftp
+                        count_max = self._keepalive_count_max
+                    if sftp is None:
+                        logger.debug("Keepalive worker exiting because SFTP client is gone")
+                        break
+
+                    try:
+                        sftp.stat(".")
+                    except Exception as exc:  # pragma: no cover - defensive logging
+                        with self._lock:
+                            self._keepalive_failures += 1
+                            failures = self._keepalive_failures
+                            count_max = self._keepalive_count_max
+                        logger.debug(
+                            "SFTP keepalive attempt failed (%s/%s): %s",
+                            failures,
+                            count_max,
+                            exc,
+                        )
+                        if count_max >= 0 and failures > count_max:
+                            message = (
+                                "SFTP keepalive failed too many times; connection may be down"
+                            )
+                            logger.warning(message)
+                            self._dispatcher(
+                                self.emit,
+                                ("operation-error", message),
+                                {},
+                            )
+                            break
+                    else:
+                        with self._lock:
+                            self._keepalive_failures = 0
+            finally:
+                logger.debug("SFTP keepalive worker exiting for %s", self._host)
+                with self._lock:
+                    if self._keepalive_thread is threading.current_thread():
+                        self._keepalive_thread = None
+                        self._keepalive_stop_event = None
+                        self._keepalive_failures = 0
+
+        thread = threading.Thread(
+            target=_worker,
+            name=f"SFTPKeepalive-{self._host}",
+            daemon=True,
+        )
+        with self._lock:
+            self._keepalive_thread = thread
+        thread.start()
+
+    def _stop_keepalive_worker(self) -> None:
+        thread: Optional[threading.Thread]
+        event: Optional[threading.Event]
+        with self._lock:
+            thread = self._keepalive_thread
+            event = self._keepalive_stop_event
+        if event is not None:
+            event.set()
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
+        with self._lock:
+            if thread is None or not thread.is_alive():
+                self._keepalive_thread = None
+                self._keepalive_stop_event = None
+                self._keepalive_failures = 0
 
     # -- helpers --------------------------------------------------------
 
@@ -970,6 +1059,7 @@ class AsyncSFTPManager(GObject.GObject):
         return upstream_sock, jump_clients
 
     def _connect_impl(self) -> None:
+        self._stop_keepalive_worker()
         client = paramiko.SSHClient()
 
         try:
@@ -989,6 +1079,30 @@ class AsyncSFTPManager(GObject.GObject):
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("Failed to load SSH configuration for file manager: %s", exc)
                 ssh_cfg = {}
+
+        def _coerce_int(value: Any, default: int) -> int:
+            try:
+                return int(str(value))
+            except (TypeError, ValueError):
+                return default
+
+        apply_advanced = bool(ssh_cfg.get("apply_advanced", False))
+        keepalive_interval = 0
+        keepalive_count_max = 0
+        if apply_advanced:
+            keepalive_interval = max(
+                0,
+                _coerce_int(ssh_cfg.get("keepalive_interval", 60), 60),
+            )
+            keepalive_count_max = max(
+                0,
+                _coerce_int(ssh_cfg.get("keepalive_count_max", 3), 3),
+            )
+
+        with self._lock:
+            self._keepalive_interval = keepalive_interval
+            self._keepalive_count_max = keepalive_count_max
+            self._keepalive_failures = 0
 
         strict_host = str(ssh_cfg.get("strict_host_key_checking", "") or "").strip()
         auto_add = bool(ssh_cfg.get("auto_add_host_keys", True))
@@ -1317,9 +1431,23 @@ class AsyncSFTPManager(GObject.GObject):
         if proxy_sock is not None:
             connect_kwargs["sock"] = proxy_sock
 
+        transport: Optional[Any] = None
         try:
             client.connect(**connect_kwargs)
             sftp = client.open_sftp()
+            transport = client.get_transport()
+            interval = 0
+            with self._lock:
+                interval = self._keepalive_interval
+            if (
+                transport is not None
+                and hasattr(transport, "set_keepalive")
+                and interval > 0
+            ):
+                try:
+                    transport.set_keepalive(interval)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("Failed to configure SSH keepalive: %s", exc)
         except Exception:
             if proxy_sock is not None:
                 try:
@@ -1341,6 +1469,8 @@ class AsyncSFTPManager(GObject.GObject):
             self._password = password
             self._proxy_sock = proxy_sock
             self._jump_clients = jump_clients
+
+        self._start_keepalive_worker()
 
 
     # -- public operations ----------------------------------------------
