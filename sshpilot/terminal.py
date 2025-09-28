@@ -1615,7 +1615,7 @@ class TerminalWidget(Gtk.Box):
                     return False
 
                 GLib.idle_add(_runner)
-                return False
+                return True
 
             def _cb_copy(widget, *args):
                 if not self.vte.get_has_selection():
