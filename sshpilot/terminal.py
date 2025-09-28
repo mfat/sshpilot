@@ -1604,25 +1604,29 @@ class TerminalWidget(Gtk.Box):
         try:
             controller = Gtk.ShortcutController()
             controller.set_scope(Gtk.ShortcutScope.LOCAL)
-            
+            controller.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
+
+            def _schedule_vte_action(action, *action_args):
+                def _runner():
+                    try:
+                        action(*action_args)
+                    except Exception as exc:
+                        logger.debug("VTE shortcut action failed: %s", exc)
+                    return False
+
+                GLib.idle_add(_runner)
+                return False
+
             def _cb_copy(widget, *args):
-                try:
-                    self.copy_text()
-                except Exception:
-                    pass
-                return True
+                if not self.vte.get_has_selection():
+                    return False
+                return _schedule_vte_action(self.vte.copy_clipboard_format, Vte.Format.TEXT)
+
             def _cb_paste(widget, *args):
-                try:
-                    self.paste_text()
-                except Exception:
-                    pass
-                return True
+                return _schedule_vte_action(self.vte.paste_clipboard)
+
             def _cb_select_all(widget, *args):
-                try:
-                    self.select_all()
-                except Exception:
-                    pass
-                return True
+                return _schedule_vte_action(self.vte.select_all)
             
             if is_macos():
                 # macOS: Use standard Cmd+C/V for copy/paste, Cmd+Shift+C/V for terminal-specific operations
@@ -1666,23 +1670,23 @@ class TerminalWidget(Gtk.Box):
             def _cb_zoom_in(widget, *args):
                 try:
                     self.zoom_in()
-                except Exception:
-                    pass
-                return True
-            
+                except Exception as exc:
+                    logger.debug("Zoom in shortcut failed: %s", exc)
+                return False
+
             def _cb_zoom_out(widget, *args):
                 try:
                     self.zoom_out()
-                except Exception:
-                    pass
-                return True
-            
+                except Exception as exc:
+                    logger.debug("Zoom out shortcut failed: %s", exc)
+                return False
+
             def _cb_reset_zoom(widget, *args):
                 try:
                     self.reset_zoom()
-                except Exception:
-                    pass
-                return True
+                except Exception as exc:
+                    logger.debug("Zoom reset shortcut failed: %s", exc)
+                return False
             
             controller.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string(zoom_in_trigger),
