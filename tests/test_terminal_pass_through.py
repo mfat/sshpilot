@@ -1,54 +1,48 @@
 """Regression tests for terminal pass-through shortcut handling."""
 
+import types
+
 from sshpilot import terminal as terminal_mod
 
 
-def test_pass_through_mode_toggles_accelerators(monkeypatch):
-    """Pass-through mode should disable accelerators and re-enable them when turned off."""
+def test_pass_through_mode_allows_ctrl_shift_v(monkeypatch):
+    """When pass-through mode is enabled, custom controllers are removed so Ctrl+Shift+V reaches VTE."""
 
     terminal_cls = terminal_mod.TerminalWidget
     terminal = terminal_cls.__new__(terminal_cls)
 
-    class DummyManager:
-        def __init__(self):
-            self.calls = []
+    removed_controllers = []
 
-        def set_accels_for_action(self, action, accels):
-            self.calls.append((action, tuple(accels)))
+    class DummyVte:
+        def remove_controller(self, controller):
+            removed_controllers.append(controller)
 
-    manager = DummyManager()
-
-    terminal.vte = object()
+    terminal.vte = DummyVte()
+    terminal._shortcut_controller = 'shortcut-controller'
     terminal._scroll_controller = 'scroll-controller'
     terminal._pass_through_mode = False
 
     monkeypatch.setattr(terminal_mod, 'is_macos', lambda: False)
     monkeypatch.setattr(terminal_cls, '_setup_mouse_wheel_zoom', lambda self: None, raising=False)
-    monkeypatch.setattr(terminal_cls, '_remove_mouse_wheel_zoom', lambda self: None, raising=False)
-    monkeypatch.setattr(terminal_cls, '_get_accel_manager', lambda self: manager)
+
+    installs = []
+
+    def fake_install(self):
+        installs.append('install')
+        self._shortcut_controller = 'new-shortcut'
+
+    terminal._install_shortcuts = types.MethodType(fake_install, terminal)
 
     terminal._apply_pass_through_mode(True)
 
-    expected_disabled = [
-        ('term.copy', ()),
-        ('term.paste', ()),
-        ('term.select_all', ()),
-        ('term.zoom_in', ()),
-        ('term.zoom_out', ()),
-        ('term.reset_zoom', ()),
-    ]
-    assert manager.calls[:6] == expected_disabled
+    assert removed_controllers == ['shortcut-controller', 'scroll-controller']
+    assert terminal._shortcut_controller is None
+    assert terminal._scroll_controller is None
     assert terminal._pass_through_mode is True
+    assert installs == []
 
     terminal._apply_pass_through_mode(False)
 
-    expected_enabled = [
-        ('term.copy', ('<Primary><Shift>c',)),
-        ('term.paste', ('<Primary><Shift>v',)),
-        ('term.select_all', ('<Primary><Shift>a',)),
-        ('term.zoom_in', ('<Primary>equal', '<Primary>KP_Add')),
-        ('term.zoom_out', ('<Primary>minus', '<Primary>KP_Subtract')),
-        ('term.reset_zoom', ('<Primary>0',)),
-    ]
-    assert manager.calls[6:] == expected_enabled
+    assert installs == ['install']
+    assert terminal._shortcut_controller == 'new-shortcut'
     assert terminal._pass_through_mode is False

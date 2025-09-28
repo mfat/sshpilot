@@ -242,6 +242,7 @@ class TerminalWidget(Gtk.Box):
         
         # Set up the terminal
         self.vte = Vte.Terminal()
+        self._shortcut_controller = None
         self._scroll_controller = None
         self._config_handler = None
         try:
@@ -1592,87 +1593,124 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Context menu setup failed: {e}")
 
     def _install_shortcuts(self):
-        """Configure application-level accelerators for terminal actions."""
+        """Install local shortcuts on the VTE widget for copy/paste/select-all."""
         if getattr(self, '_pass_through_mode', False):
-            logger.debug("Pass-through mode active; skipping accelerator installation")
+            logger.debug("Pass-through mode active; skipping custom terminal shortcuts")
             return
 
-        if not self._configure_terminal_accelerators(True):
-            logger.debug("No accelerator manager available; skipping terminal accelerators")
+        if getattr(self, '_shortcut_controller', None) is not None:
             return
 
-        # Add mouse wheel zoom functionality
-        self._setup_mouse_wheel_zoom()
-
-    def _configure_terminal_accelerators(self, enable: bool) -> bool:
-        """Enable or disable accelerators for terminal actions."""
-        manager = self._get_accel_manager()
-        if manager is None:
-            return False
-
-        shortcuts = self._get_terminal_shortcut_map()
-        for action, accels in shortcuts.items():
-            try:
-                manager.set_accels_for_action(action, accels if enable else [])
-                logger.debug(
-                    "%s accelerators for %s: %s",
-                    "Enabled" if enable else "Disabled",
-                    action,
-                    accels if enable else [],
-                )
-            except Exception as exc:
-                logger.debug("Failed to configure accelerator for %s: %s", action, exc)
-
-        return True
-
-    def _get_accel_manager(self):
-        """Resolve the Gtk.ShortcutManager that should own the accelerators."""
         try:
-            root = self.get_root()
-        except Exception:
-            root = None
+            controller = Gtk.ShortcutController()
+            controller.set_scope(Gtk.ShortcutScope.LOCAL)
+            controller.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
 
-        # Prefer the application when available
-        try:
-            if root and hasattr(root, 'get_application'):
-                app = root.get_application()
-                if app and hasattr(app, 'set_accels_for_action'):
-                    return app
-        except Exception as exc:
-            logger.debug("Failed to obtain application for accelerators: %s", exc)
+            def _schedule_vte_action(action, *action_args):
+                def _runner():
+                    try:
+                        action(*action_args)
+                    except Exception as exc:
+                        logger.debug("VTE shortcut action failed: %s", exc)
+                    return False
 
-        try:
-            app = Gtk.Application.get_default()
-            if app and hasattr(app, 'set_accels_for_action'):
-                return app
-        except Exception as exc:
-            logger.debug("Gtk.Application.get_default failed: %s", exc)
+                GLib.idle_add(_runner)
+                return True
 
-        if root and hasattr(root, 'set_accels_for_action'):
-            return root
+            def _cb_copy(widget, *args):
+                if not self.vte.get_has_selection():
+                    return False
+                return _schedule_vte_action(self.vte.copy_clipboard_format, Vte.Format.TEXT)
 
-        return None
+            def _cb_paste(widget, *args):
+                return _schedule_vte_action(self.vte.paste_clipboard)
 
-    def _get_terminal_shortcut_map(self):
-        """Return the accelerator map for terminal actions based on platform."""
-        if is_macos():
-            return {
-                'term.copy': ['<Meta>c'],
-                'term.paste': ['<Meta>v'],
-                'term.select_all': ['<Meta>a'],
-                'term.zoom_in': ['<Meta>equal', '<Meta>plus'],
-                'term.zoom_out': ['<Meta>minus'],
-                'term.reset_zoom': ['<Meta>0'],
-            }
+            def _cb_select_all(widget, *args):
+                return _schedule_vte_action(self.vte.select_all)
+            
+            if is_macos():
+                # macOS: Use standard Cmd+C/V for copy/paste, Cmd+Shift+C/V for terminal-specific operations
+                copy_trigger = "<Meta>c"
+                paste_trigger = "<Meta>v"
+                select_trigger = "<Meta>a"
+            else:
+                # Linux/Windows: Use Ctrl+Shift+C/V for terminal copy/paste (standard for terminals)
+                copy_trigger = "<Primary><Shift>c"
+                paste_trigger = "<Primary><Shift>v"
+                select_trigger = "<Primary><Shift>a"
+            
+            controller.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string(copy_trigger),
+                Gtk.CallbackAction.new(_cb_copy)
+            ))
+            controller.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string(paste_trigger),
+                Gtk.CallbackAction.new(_cb_paste)
+            ))
+            controller.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string(select_trigger),
+                Gtk.CallbackAction.new(_cb_select_all)
+            ))
+            
+            # Add zoom shortcuts
+            if is_macos():
+                # macOS: Use Cmd+= (equals key), Cmd+-, and Cmd+0 for zoom
+                # Note: On macOS, Cmd+Shift+= is the same as Cmd+=
+                zoom_in_trigger = "<Meta>equal"
+                zoom_out_trigger = "<Meta>minus"
+                zoom_reset_trigger = "<Meta>0"
+            else:
+                # Linux/Windows: Use Ctrl++, Ctrl+-, and Ctrl+0 for zoom
+                zoom_in_trigger = "<Primary>equal"
+                zoom_out_trigger = "<Primary>minus"
+                zoom_reset_trigger = "<Primary>0"
+            
+            logger.debug(f"Setting up terminal zoom shortcuts: in={zoom_in_trigger}, out={zoom_out_trigger}, reset={zoom_reset_trigger}")
+            
+            def _cb_zoom_in(widget, *args):
+                try:
+                    self.zoom_in()
+                except Exception as exc:
+                    logger.debug("Zoom in shortcut failed: %s", exc)
+                return False
 
-        return {
-            'term.copy': ['<Primary><Shift>c'],
-            'term.paste': ['<Primary><Shift>v'],
-            'term.select_all': ['<Primary><Shift>a'],
-            'term.zoom_in': ['<Primary>equal', '<Primary>KP_Add'],
-            'term.zoom_out': ['<Primary>minus', '<Primary>KP_Subtract'],
-            'term.reset_zoom': ['<Primary>0'],
-        }
+            def _cb_zoom_out(widget, *args):
+                try:
+                    self.zoom_out()
+                except Exception as exc:
+                    logger.debug("Zoom out shortcut failed: %s", exc)
+                return False
+
+            def _cb_reset_zoom(widget, *args):
+                try:
+                    self.reset_zoom()
+                except Exception as exc:
+                    logger.debug("Zoom reset shortcut failed: %s", exc)
+                return False
+            
+            controller.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string(zoom_in_trigger),
+                Gtk.CallbackAction.new(_cb_zoom_in)
+            ))
+            
+            controller.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string(zoom_out_trigger),
+                Gtk.CallbackAction.new(_cb_zoom_out)
+            ))
+            
+            controller.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string(zoom_reset_trigger),
+                Gtk.CallbackAction.new(_cb_reset_zoom)
+            ))
+            
+            self.vte.add_controller(controller)
+            self._shortcut_controller = controller
+
+            # Add mouse wheel zoom functionality
+            self._setup_mouse_wheel_zoom()
+            
+        except Exception as e:
+            logger.debug(f"Failed to install shortcuts: {e}")
     
     def _setup_mouse_wheel_zoom(self):
         """Set up mouse wheel zoom functionality with Cmd+MouseWheel."""
@@ -1717,8 +1755,18 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.debug(f"Failed to setup mouse wheel zoom: {e}")
 
-    def _remove_mouse_wheel_zoom(self):
-        """Detach the custom mouse wheel zoom controller from the VTE widget."""
+    def _remove_custom_shortcut_controllers(self):
+        """Detach any custom shortcut or scroll controllers from the VTE widget."""
+        ctrl = getattr(self, '_shortcut_controller', None)
+        if ctrl is not None:
+            try:
+                if hasattr(self.vte, 'remove_controller'):
+                    self.vte.remove_controller(ctrl)
+            except Exception as exc:
+                logger.debug("Failed to remove shortcut controller: %s", exc)
+            finally:
+                self._shortcut_controller = None
+
         scroll = getattr(self, '_scroll_controller', None)
         if scroll is not None:
             try:
@@ -1732,11 +1780,18 @@ class TerminalWidget(Gtk.Box):
     def _apply_pass_through_mode(self, enabled: bool):
         """Enable or disable custom shortcut handling based on configuration."""
         enabled = bool(enabled)
-        self._pass_through_mode = enabled
+        current = getattr(self, '_pass_through_mode', False)
+        if enabled == current:
+            if enabled:
+                self._remove_custom_shortcut_controllers()
+            else:
+                if self._shortcut_controller is None:
+                    self._install_shortcuts()
+            return False
 
+        self._pass_through_mode = enabled
         if enabled:
-            self._configure_terminal_accelerators(False)
-            self._remove_mouse_wheel_zoom()
+            self._remove_custom_shortcut_controllers()
         else:
             self._install_shortcuts()
         return False
@@ -1905,7 +1960,7 @@ class TerminalWidget(Gtk.Box):
 
         # Remove custom controllers and disconnect config listeners
         try:
-            self._remove_mouse_wheel_zoom()
+            self._remove_custom_shortcut_controllers()
         except Exception:
             pass
 
