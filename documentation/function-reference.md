@@ -983,8 +983,6 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`get_registered_action_order()`** — Return the order in which actions were registered.
 
 - **`get_registered_shortcut_defaults()`** — Return a mapping of action names to their default accelerators.
-- **`pop_terminal_focus()`** — Restore application accelerators after a terminal widget loses focus.
-- **`push_terminal_focus()`** — Suspend application accelerators while a terminal widget has focus.
 
 - **`on_about(action, param)`** — Handle about dialog action
 
@@ -1718,14 +1716,13 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`setup_terminal()`** — Initialize the VTE terminal with appropriate settings.
 
-- **`_resolve_application()`** — Locate the active application instance for focus notifications.
 
 - **`zoom_in()`** — Zoom in the terminal font
 
 - **`zoom_out()`** — Zoom out the terminal font
 
 
-Focus-aware accelerator suspension layers on top of the existing `terminal.pass_through_mode` preference: enabling pass-through keeps shortcuts disabled globally, while disabling it allows `push_terminal_focus()` and `pop_terminal_focus()` to temporarily clear shortcuts during terminal focus and automatically restore the configured mappings afterward.
+Application accelerators now remain available even while the terminal widget is focused unless the `terminal.pass_through_mode` preference is enabled, matching GNOME Terminal's pass-through behavior.
 
 
 ## Module: `sshpilot.terminal_manager`
