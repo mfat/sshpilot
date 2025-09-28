@@ -245,6 +245,9 @@ class TerminalWidget(Gtk.Box):
         self._shortcut_controller = None
         self._scroll_controller = None
         self._config_handler = None
+        self._focus_signal_id = None
+        self._focus_app_ref = None
+        self._focus_tracking_active = False
         try:
             self._pass_through_mode = bool(self.config.get_setting('terminal.pass_through_mode', False))
         except Exception:
@@ -393,12 +396,15 @@ class TerminalWidget(Gtk.Box):
         self.container_box.append(self.disconnected_banner)
 
         self.append(self.container_box)
-        
+
         # Set expansion properties
         self.scrolled_window.set_hexpand(True)
         self.scrolled_window.set_vexpand(True)
         self.vte.set_hexpand(True)
         self.vte.set_vexpand(True)
+
+        # Register focus tracking to inform the application when accelerators should be suspended
+        self._register_focus_hooks()
         
         # Connect terminal signals and store handler IDs for cleanup
         self._child_exited_handler = self.vte.connect('child-exited', self.on_child_exited)
@@ -1955,6 +1961,12 @@ class TerminalWidget(Gtk.Box):
             except Exception as e:
                 logger.error(f"Error disconnecting from connection manager: {e}")
         
+        # Disconnect focus handlers before tearing down the terminal
+        try:
+            self._teardown_focus_hooks()
+        except Exception:
+            pass
+
         # Disconnect the terminal
         self.disconnect()
 
@@ -1980,6 +1992,113 @@ class TerminalWidget(Gtk.Box):
                     logger.debug(f"Removed terminal {self.session_id} from process manager terminals set")
             except Exception as e:
                 logger.debug(f"Error removing terminal from process manager: {e}")
+
+    def _register_focus_hooks(self):
+        """Install focus tracking on the VTE widget."""
+        if getattr(self, '_focus_signal_id', None) is not None:
+            return
+
+        if not hasattr(self, 'vte') or self.vte is None:
+            return
+
+        try:
+            self._focus_signal_id = self.vte.connect('notify::has-focus', self._on_vte_focus_changed)
+        except Exception as exc:
+            logger.debug("Failed to connect terminal focus handler: %s", exc)
+            self._focus_signal_id = None
+            return
+
+        # Apply initial state in case the terminal is already focused
+        try:
+            current_focus = bool(self.vte.has_focus())
+        except Exception:
+            current_focus = False
+        self._update_focus_accelerators(current_focus)
+
+    def _teardown_focus_hooks(self):
+        """Remove focus tracking and ensure accelerators are restored."""
+        signal_id = getattr(self, '_focus_signal_id', None)
+        if signal_id is not None and hasattr(self, 'vte') and self.vte is not None:
+            try:
+                self.vte.disconnect(signal_id)
+            except Exception:
+                pass
+            finally:
+                self._focus_signal_id = None
+
+        if getattr(self, '_focus_tracking_active', False):
+            app = None
+            if self._focus_app_ref is not None:
+                try:
+                    app = self._focus_app_ref()
+                except Exception:
+                    app = None
+            if app is None:
+                app = self._resolve_application()
+            if app is not None and hasattr(app, 'pop_terminal_focus'):
+                try:
+                    app.pop_terminal_focus()
+                except Exception as exc:
+                    logger.debug("Failed to restore accelerators during teardown: %s", exc)
+        self._focus_tracking_active = False
+        self._focus_app_ref = None
+
+    def _on_vte_focus_changed(self, widget, _param):
+        """Handle VTE focus changes."""
+        try:
+            focused = bool(widget.has_focus())
+        except Exception:
+            focused = False
+        self._update_focus_accelerators(focused)
+
+    def _update_focus_accelerators(self, focused: bool):
+        focused = bool(focused)
+        if focused == getattr(self, '_focus_tracking_active', False):
+            return
+
+        app = None
+        if self._focus_app_ref is not None:
+            try:
+                app = self._focus_app_ref()
+            except Exception:
+                app = None
+
+        if app is None:
+            app = self._resolve_application()
+            if app is not None:
+                try:
+                    self._focus_app_ref = weakref.ref(app)
+                except Exception:
+                    self._focus_app_ref = None
+
+        if app is not None:
+            try:
+                if focused and hasattr(app, 'push_terminal_focus'):
+                    app.push_terminal_focus()
+                elif not focused and hasattr(app, 'pop_terminal_focus'):
+                    app.pop_terminal_focus()
+            except Exception as exc:
+                logger.debug("Failed to notify application about focus change: %s", exc)
+
+        self._focus_tracking_active = focused
+
+    def _resolve_application(self):
+        """Attempt to resolve the active application instance."""
+        app = None
+        try:
+            root = self.get_root()
+            if root is not None and hasattr(root, 'get_application'):
+                app = root.get_application()
+        except Exception:
+            app = None
+
+        if app is None:
+            try:
+                app = Adw.Application.get_default()
+            except Exception:
+                app = None
+
+        return app
 
     def _terminate_process_tree(self, pid):
         """Terminate a process and all its children"""

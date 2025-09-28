@@ -983,6 +983,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`get_registered_action_order()`** — Return the order in which actions were registered.
 
 - **`get_registered_shortcut_defaults()`** — Return a mapping of action names to their default accelerators.
+- **`pop_terminal_focus()`** — Restore application accelerators after a terminal widget loses focus.
+- **`push_terminal_focus()`** — Suspend application accelerators while a terminal widget has focus.
 
 - **`on_about(action, param)`** — Handle about dialog action
 
@@ -1654,6 +1656,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_on_termprops_changed(terminal, ids, user_data=None)`** — Handle terminal properties changes for job detection (local terminals only)
 
+- **`_on_vte_focus_changed(widget, _param)`** — Track focus changes on the embedded VTE widget.
+
 - **`_set_connecting_overlay_visible(visible)`** — Sets connecting overlay visible.
 
 - **`_set_disconnected_banner_visible(visible, message=None)`** — Sets disconnected banner visible.
@@ -1668,7 +1672,11 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_show_forwarding_error_dialog(message)`** — Shows forwarding error dialog.
 
+- **`_register_focus_hooks()`** — Register focus tracking hooks so the application can suspend accelerators.
+
 - **`_terminate_process_tree(pid)`** — Terminate a process and all its children
+
+- **`_teardown_focus_hooks()`** — Remove focus tracking hooks and release any suspended accelerators.
 
 - **`apply_theme(theme_name=None)`** — Apply terminal theme and font settings
 
@@ -1710,10 +1718,14 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`setup_terminal()`** — Initialize the VTE terminal with appropriate settings.
 
+- **`_resolve_application()`** — Locate the active application instance for focus notifications.
+
 - **`zoom_in()`** — Zoom in the terminal font
 
 - **`zoom_out()`** — Zoom out the terminal font
 
+
+Focus-aware accelerator suspension layers on top of the existing `terminal.pass_through_mode` preference: enabling pass-through keeps shortcuts disabled globally, while disabling it allows `push_terminal_focus()` and `pop_terminal_focus()` to temporarily clear shortcuts during terminal focus and automatically restore the configured mappings afterward.
 
 
 ## Module: `sshpilot.terminal_manager`

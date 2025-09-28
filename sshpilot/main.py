@@ -69,6 +69,7 @@ class SshPilotApplication(Adw.Application):
         self._default_shortcuts = {}
         self._action_order = []
         self._accelerators_enabled = True
+        self._focus_accel_stack = []
         self.accelerators_enabled = True
         self._config_handler = None
 
@@ -80,7 +81,7 @@ class SshPilotApplication(Adw.Application):
                 self._accelerators_enabled = not bool(cfg.get_setting('terminal.pass_through_mode', False))
             except Exception:
                 self._accelerators_enabled = True
-            self.accelerators_enabled = self._accelerators_enabled
+            self._update_accelerators_enabled_flag()
             if hasattr(cfg, 'connect'):
                 try:
                     self._config_handler = cfg.connect('setting-changed', self._on_config_setting_changed)
@@ -233,7 +234,7 @@ class SshPilotApplication(Adw.Application):
                 pass
             finally:
                 self._config_handler = None
-        self.accelerators_enabled = getattr(self, '_accelerators_enabled', True)
+        self._update_accelerators_enabled_flag()
         from .terminal import process_manager
         process_manager.cleanup_all()
         logging.info("Cleanup completed")
@@ -304,20 +305,9 @@ class SshPilotApplication(Adw.Application):
             return
 
         self._accelerators_enabled = not bool(value)
-        self.accelerators_enabled = self._accelerators_enabled
+        self._update_accelerators_enabled_flag()
         self.apply_shortcut_overrides()
-
-        try:
-            windows = list(self.get_windows())
-        except Exception:
-            windows = []
-
-        for win in windows:
-            if hasattr(win, '_update_sidebar_accelerators'):
-                try:
-                    win._update_sidebar_accelerators()
-                except Exception:
-                    logging.debug("Failed to update window accelerators for pass-through toggle")
+        self._refresh_window_accelerators()
 
     def create_action(self, name, callback, shortcuts=None):
         """Create a GAction with optional keyboard shortcuts"""
@@ -345,10 +335,14 @@ class SshPilotApplication(Adw.Application):
             source = 'override'
 
         action_name = f"app.{name}"
-        if not getattr(self, '_accelerators_enabled', True):
+        accelerators_blocked = (
+            not getattr(self, '_accelerators_enabled', True)
+            or bool(getattr(self, '_focus_accel_stack', []))
+        )
+        if accelerators_blocked:
             self.set_accels_for_action(action_name, [])
             logging.debug(
-                "Skipping accelerators for action '%s' because terminal pass-through mode is active",
+                "Skipping accelerators for action '%s' because accelerators are suspended",
                 name,
             )
             return
@@ -371,6 +365,69 @@ class SshPilotApplication(Adw.Application):
         """Reapply all shortcut overrides to the registered actions."""
         for name in self._action_order:
             self._apply_shortcut_for_action(name)
+
+    def push_terminal_focus(self):
+        """Temporarily disable accelerators while a terminal widget has focus."""
+        mapping = {}
+        for name in self._action_order:
+            action_name = f"app.{name}"
+            try:
+                current = list(self.get_accels_for_action(action_name))
+            except Exception:
+                current = []
+            mapping[action_name] = current
+
+        self._focus_accel_stack.append(mapping)
+        if len(self._focus_accel_stack) == 1:
+            for action_name in mapping:
+                try:
+                    self.set_accels_for_action(action_name, [])
+                except Exception:
+                    logging.debug("Failed to suspend accelerators for action %s", action_name)
+            self._update_accelerators_enabled_flag()
+            self._refresh_window_accelerators()
+            logging.debug("Application accelerators suspended while terminal is focused")
+
+    def pop_terminal_focus(self):
+        """Restore accelerators after terminal focus leaves."""
+        if not self._focus_accel_stack:
+            return
+
+        mapping = self._focus_accel_stack.pop()
+        if self._focus_accel_stack:
+            return
+
+        for action_name, accels in mapping.items():
+            try:
+                self.set_accels_for_action(action_name, accels)
+            except Exception:
+                logging.debug("Failed to restore accelerators for action %s", action_name)
+
+        self.apply_shortcut_overrides()
+        self._update_accelerators_enabled_flag()
+        self._refresh_window_accelerators()
+        logging.debug("Application accelerators restored after terminal focus")
+
+    def _refresh_window_accelerators(self):
+        """Notify windows to refresh accelerator state."""
+        try:
+            windows = list(self.get_windows())
+        except Exception:
+            windows = []
+
+        for win in windows:
+            if hasattr(win, '_update_sidebar_accelerators'):
+                try:
+                    win._update_sidebar_accelerators()
+                except Exception:
+                    logging.debug("Failed to update window accelerators for current state")
+
+    def _update_accelerators_enabled_flag(self):
+        """Update the exposed accelerator enabled flag considering focus state."""
+        self.accelerators_enabled = bool(
+            getattr(self, '_accelerators_enabled', True)
+            and not bool(self._focus_accel_stack)
+        )
 
     def get_registered_shortcut_defaults(self):
         """Return a mapping of action names to their default accelerators."""
