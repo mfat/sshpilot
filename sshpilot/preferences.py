@@ -452,7 +452,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.pass_through_switch = Adw.SwitchRow()
             self.pass_through_switch.set_title("Terminal Shortcut Pass-through")
             self.pass_through_switch.set_subtitle(
-                "Use the terminal's native copy, paste, and zoom shortcuts"
+                "Disable all keyboard shortcuts, pass all key events directly to terminal"
             )
             try:
                 pass_through_active = bool(
