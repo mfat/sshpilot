@@ -65,6 +65,8 @@ ACTION_LABELS: Dict[str, str] = {
     'quick-connect': _('Quick Connect'),
 }
 
+PASS_THROUGH_NOTICE = _('Shortcuts disabled while terminal pass-through mode is active')
+
 
 def _get_action_label(name: str) -> str:
     label = ACTION_LABELS.get(name)
@@ -163,6 +165,8 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
         self._rows: Dict[str, Dict[str, Gtk.Widget]] = {}
         self._pending_overrides: Dict[str, List[str]] = {}
         self._default_shortcuts: Dict[str, Optional[List[str]]] = {}
+        self._shortcuts_container: Optional[Gtk.Box] = None
+        self._editor_root: Optional[Gtk.Box] = None
         if self._config is not None:
             try:
                 self._pass_through_enabled = bool(
@@ -194,6 +198,13 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
         self._action_names = self._collect_actions()
         logger.debug(f"Shortcut editor collected {len(self._action_names)} actions: {self._action_names}")
         self._groups_list: List[Adw.PreferencesGroup] = []
+
+        self._pass_through_notice = self._create_pass_through_notice_widget()
+        self._shortcuts_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self._shortcuts_container.set_margin_top(12)
+        self._shortcuts_container.set_margin_bottom(12)
+        self._shortcuts_container.set_margin_start(12)
+        self._shortcuts_container.set_margin_end(12)
 
         if hasattr(self, 'add_css_class'):
             try:
@@ -327,10 +338,70 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             except Exception:
                 pass
             self._groups_list.append(group)
+            if self._shortcuts_container is not None:
+                try:
+                    self._shortcuts_container.append(group)
+                except AttributeError:
+                    self._shortcuts_container.add(group)
             # Don't add to self - the groups will be added to the preferences page separately
             logger.debug(f"Prepared group '{group.get_title()}' with {len(list(group))} children")
 
         self.set_pass_through_enabled(self._pass_through_enabled)
+
+    def _create_pass_through_notice_widget(self) -> Gtk.Widget:
+        message = PASS_THROUGH_NOTICE
+        if hasattr(Adw, 'Banner'):
+            try:
+                banner = Adw.Banner.new(message)
+                banner.set_revealed(False)
+                banner.add_css_class('warning')
+                banner.set_margin_top(12)
+                banner.set_margin_start(12)
+                banner.set_margin_end(12)
+                return banner
+            except Exception:
+                pass
+
+        label = Gtk.Label(label=message)
+        label.set_wrap(True)
+        label.set_visible(False)
+        label.add_css_class('warning')
+        label.set_margin_top(12)
+        label.set_margin_bottom(0)
+        label.set_margin_start(12)
+        label.set_margin_end(12)
+        return label
+
+    def get_pass_through_notice_widget(self) -> Gtk.Widget:
+        return self._pass_through_notice
+
+    def get_shortcuts_container(self) -> Gtk.Widget:
+        if self._shortcuts_container is None:
+            self._shortcuts_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        return self._shortcuts_container
+
+    def create_editor_widget(self) -> Gtk.Widget:
+        if self._editor_root is None:
+            container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            container.set_margin_bottom(12)
+            notice_widget = self.get_pass_through_notice_widget()
+            shortcuts_container = self.get_shortcuts_container()
+            for widget in (notice_widget, shortcuts_container):
+                parent = widget.get_parent()
+                if parent is not None:
+                    remove_method = getattr(parent, 'remove', None)
+                    if callable(remove_method):
+                        remove_method(widget)
+            container.append(notice_widget)
+            container.append(shortcuts_container)
+            self._editor_root = container
+        else:
+            parent = self._editor_root.get_parent()
+            if parent is not None:
+                remove_method = getattr(parent, 'remove', None)
+                if callable(remove_method):
+                    remove_method(self._editor_root)
+        return self._editor_root
 
     def iter_groups(self) -> Iterable[Adw.PreferencesGroup]:
         """Yield the preference groups managed by this page."""
@@ -492,6 +563,19 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
 
     def set_pass_through_enabled(self, enabled: bool):
         self._pass_through_enabled = bool(enabled)
+        notice_widget = getattr(self, '_pass_through_notice', None)
+        if notice_widget is not None:
+            if hasattr(notice_widget, 'set_revealed'):
+                try:
+                    notice_widget.set_revealed(self._pass_through_enabled)
+                except Exception:
+                    notice_widget.set_visible(self._pass_through_enabled)
+            else:
+                notice_widget.set_visible(self._pass_through_enabled)
+
+        if self._shortcuts_container is not None:
+            self._shortcuts_container.set_sensitive(not self._pass_through_enabled)
+
         for name in self._rows:
             self._apply_pass_through_state_to_row(name)
 
@@ -502,20 +586,16 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
 
         row = row_data['row']
         base = row_data.get('base_subtitle', row.get_subtitle() or '')
-        notice = _('Shortcuts disabled while terminal pass-through mode is active')
-
-        if self._pass_through_enabled:
-            if base:
-                row.set_subtitle(f"{base} — {notice}")
-            else:
-                row.set_subtitle(notice)
-        else:
+        if row.get_subtitle() != base:
             row.set_subtitle(base)
 
-        for key in ('switch', 'assign_button', 'reset_button'):
-            widget = row_data.get(key)
-            if widget is not None:
-                widget.set_sensitive(not self._pass_through_enabled)
+        notice = PASS_THROUGH_NOTICE
+
+        if self._shortcuts_container is None:
+            for key in ('switch', 'assign_button', 'reset_button'):
+                widget = row_data.get(key)
+                if widget is not None:
+                    widget.set_sensitive(not self._pass_through_enabled)
 
         row.set_tooltip_text(notice if self._pass_through_enabled else None)
 
@@ -537,6 +617,29 @@ class ShortcutEditorWindow(Adw.Window):
         header.set_title_widget(
             Adw.WindowTitle.new(_('Shortcut Editor'), _('Customize keyboard shortcuts'))
         )
+        pass_through_active = False
+        if self._config is not None:
+            try:
+                pass_through_active = bool(
+                    self._config.get_setting('terminal.pass_through_mode', False)
+                )
+            except Exception:
+                pass
+
+        toggle_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        toggle_label = Gtk.Label(label=_('Pass-through'))
+        toggle_label.set_halign(Gtk.Align.END)
+        toggle_label.set_valign(Gtk.Align.CENTER)
+        self._pass_through_switch = Gtk.Switch()
+        self._pass_through_switch.set_active(pass_through_active)
+        self._pass_through_switch.set_valign(Gtk.Align.CENTER)
+        self._pass_through_switch.connect('notify::active', self._on_pass_through_switch_toggled)
+        toggle_box.append(toggle_label)
+        toggle_box.append(self._pass_through_switch)
+        try:
+            header.pack_end(toggle_box)
+        except AttributeError:
+            header.add_suffix(toggle_box)
         toolbar_view.add_top_bar(header)
 
         scrolled = Gtk.ScrolledWindow()
@@ -548,12 +651,24 @@ class ShortcutEditorWindow(Adw.Window):
             config=self._config,
             owner_window=self._parent_window,
         )
-        scrolled.set_child(self._preferences_page)
+        editor_widget = self._preferences_page.create_editor_widget()
+        scrolled.set_child(editor_widget)
 
         toolbar_view.set_content(scrolled)
         self.set_content(toolbar_view)
 
+        self._preferences_page.set_pass_through_enabled(pass_through_active)
+
         self.connect('close-request', self._on_close_request)
+
+    def _on_pass_through_switch_toggled(self, switch: Gtk.Switch, _pspec):
+        active = bool(switch.get_active())
+        self._preferences_page.set_pass_through_enabled(active)
+        if self._config is not None:
+            try:
+                self._config.set_setting('terminal.pass_through_mode', active)
+            except Exception as exc:
+                logger.error('Failed to persist pass-through mode: %s', exc)
 
     def _on_close_request(self, *_args):
         self._preferences_page.flush_changes()
