@@ -746,39 +746,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
 
-        # Global shortcuts for tab navigation: Alt+Right / Alt+Left
-        try:
-            nav = Gtk.ShortcutController()
-            nav.set_scope(Gtk.ShortcutScope.GLOBAL)
-            if hasattr(nav, 'set_propagation_phase'):
-                nav.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
-
-            def _cb_next(widget, *args):
-                try:
-                    self._select_tab_relative(1)
-                except Exception:
-                    pass
-                return True
-
-            def _cb_prev(widget, *args):
-                try:
-                    self._select_tab_relative(-1)
-                except Exception:
-                    pass
-                return True
-
-            nav.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string('<Alt>Right'),
-                Gtk.CallbackAction.new(_cb_next)
-            ))
-            nav.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string('<Alt>Left'),
-                Gtk.CallbackAction.new(_cb_prev)
-            ))
-            
-            self.add_controller(nav)
-        except Exception:
-            pass
+        # Tab navigation shortcuts are handled by application actions (see sshpilot/main.py)
         
     def on_window_size_changed(self, window, param):
         """Handle window size changes and save the new dimensions"""
@@ -1937,6 +1905,34 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tab_view = Adw.TabView()
         self.tab_view.set_hexpand(True)
         self.tab_view.set_vexpand(True)
+
+        # Provide widget-scoped Alt+Arrow navigation helpers for tab-specific focus
+        try:
+            tab_nav = Gtk.ShortcutController()
+            tab_nav.set_scope(Gtk.ShortcutScope.LOCAL)
+
+            def _on_tab_step(step: int):
+                def _handler(widget, *args):
+                    try:
+                        self._select_tab_relative(step)
+                    except Exception:
+                        pass
+                    return True
+
+                return _handler
+
+            tab_nav.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string('<Alt>Right'),
+                Gtk.CallbackAction.new(_on_tab_step(1))
+            ))
+            tab_nav.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string('<Alt>Left'),
+                Gtk.CallbackAction.new(_on_tab_step(-1))
+            ))
+
+            self.tab_view.add_controller(tab_nav)
+        except Exception:
+            pass
 
         # Connect tab signals
         self.tab_view.connect('close-page', self.on_tab_close)
