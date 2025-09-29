@@ -719,11 +719,11 @@ class PreferencesWindow(Adw.PreferencesWindow):
                     owner_window=self.parent_window,
                 )
 
-                groups_added = 0
-                for group in self.shortcuts_editor_page.iter_groups():
-                    shortcuts_page.add(group)
-                    groups_added += 1
-                    logger.debug(f"Added shortcut group: {group.get_title()}")
+                groups_added = len(list(self.shortcuts_editor_page.iter_groups()))
+                self.shortcuts_editor_page.attach_to_preferences_page(shortcuts_page)
+                logger.debug(
+                    "Added shortcut editor widget with %d groups", groups_added
+                )
 
                 try:
                     self.shortcuts_editor_page.set_pass_through_enabled(
