@@ -3473,20 +3473,26 @@ class FilePane(Gtk.Box):
         
         logger.debug(f"Drag prepare: position={position}, entries_count={len(self._entries)}")
         
-        # Create a string representation of the drag data
+        # Create a JSON representation of the drag data so arbitrary characters
+        # in paths or filenames are preserved without relying on delimiter
+        # parsing.  Consumers expect the payload under the "payload" key.
+        payload_dict: Optional[Dict[str, Any]] = None
         if position is not None and 0 <= position < len(self._entries):
             entry = self._entries[position]
             entry_path = os.path.join(self._current_path or "", entry.name)
-            payload = {
+            payload_dict = {
                 "pane_id": id(self),
                 "path": self._current_path,
                 "position": position,
                 "entry_name": entry.name,
                 "entry_path": entry_path,
             }
-            drag_data_string = "sshpilot_drag:" + json.dumps(payload, separators=(",", ":"), sort_keys=True)
-        else:
-            drag_data_string = "sshpilot_drag:invalid"
+
+        drag_data = {
+            "format": "sshpilot_drag",
+            "payload": payload_dict,
+        }
+        drag_data_string = json.dumps(drag_data, separators=(",", ":"), sort_keys=True)
 
         return Gdk.ContentProvider.new_for_value(drag_data_string)
 
@@ -3508,40 +3514,34 @@ class FilePane(Gtk.Box):
     def _on_drop_string(self, drop_target: Gtk.DropTarget, value: str, x: float, y: float) -> bool:
         """Handle dropped files from string data."""
         logger.debug(f"Drop received: value={value}")
-        
-        if not isinstance(value, str) or not value.startswith("sshpilot_drag:"):
-            logger.debug("Drop rejected: invalid drag data")
-            return False
-            
-        payload_text = value[len("sshpilot_drag:"):]
 
-        if payload_text == "invalid":
-            logger.debug("Drop rejected: invalid drag payload marker")
+        if not isinstance(value, str):
+            logger.debug("Drop rejected: non-string drag data")
             return False
 
-        payload: Dict[str, Any]
         try:
-            parsed = json.loads(payload_text)
-            if not isinstance(parsed, dict):
-                raise ValueError("payload is not a dict")
-            payload = parsed
-        except (json.JSONDecodeError, ValueError):
-            # Fall back to the legacy colon separated format for safety
-            parts = value.split(":")
-            if len(parts) < 5:
-                logger.debug("Drop rejected: invalid drag data format")
-                return False
-            try:
-                payload = {
-                    "pane_id": int(parts[1]),
-                    "path": parts[2],
-                    "position": int(parts[3]),
-                    "entry_name": parts[4],
-                    "entry_path": os.path.join(parts[2], parts[4]),
-                }
-            except ValueError:
-                logger.debug("Drop rejected: invalid legacy drag data values")
-                return False
+            container = json.loads(value)
+        except json.JSONDecodeError as exc:
+            logger.debug("Drop rejected: invalid JSON drag data (%s)", exc)
+            return False
+
+        if not isinstance(container, dict):
+            logger.debug("Drop rejected: drag container is not a mapping")
+            return False
+
+        if container.get("format") != "sshpilot_drag":
+            logger.debug("Drop rejected: unexpected drag format")
+            return False
+
+        payload = container.get("payload")
+        if not isinstance(payload, dict):
+            logger.debug("Drop rejected: payload missing or invalid")
+            return False
+
+        missing_keys = [key for key in ("pane_id", "entry_name") if key not in payload]
+        if missing_keys:
+            logger.debug("Drop rejected: payload missing keys %s", missing_keys)
+            return False
 
         try:
             source_pane_id = int(payload.get("pane_id"))
