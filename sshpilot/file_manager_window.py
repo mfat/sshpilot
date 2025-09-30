@@ -1153,7 +1153,6 @@ class AsyncSFTPManager(GObject.GObject):
         allow_agent = True
         look_for_keys = True
         key_filename: Optional[str] = None
-        normalized_keyfile: Optional[str] = None
         passphrase: Optional[str] = None
         auth_method = 0
         key_mode = 0
@@ -1182,80 +1181,40 @@ class AsyncSFTPManager(GObject.GObject):
         else:
             logger.debug("File manager: No connection object provided")
 
-        if connection is not None and key_mode in (1, 2) and keyfile:
-            expanded_keyfile = os.path.expanduser(os.path.expandvars(keyfile))
-            candidate_keyfile = os.path.realpath(expanded_keyfile)
-            if os.path.isfile(candidate_keyfile):
-                normalized_keyfile = candidate_keyfile
-
-        if normalized_keyfile:
-            key_filename = normalized_keyfile
-            look_for_keys = False
-            logger.debug(
-                "File manager: Using specific key file: %s (normalized from %s)",
-                normalized_keyfile,
-                keyfile,
-            )
-            # Prepare key for connection (add to ssh-agent if needed)
-            key_prepared = False
-            if (
-                self._connection_manager is not None
-                and hasattr(self._connection_manager, "prepare_key_for_connection")
-            ):
-                try:
-                    key_prepared = self._connection_manager.prepare_key_for_connection(
-                        normalized_keyfile
-                    )
-                    if key_prepared:
-                        logger.debug(
-                            "Successfully prepared key for file manager: %s",
-                            normalized_keyfile,
-                        )
-                    else:
-                        logger.warning(
-                            "Failed to prepare key for file manager: %s",
-                            normalized_keyfile,
-                        )
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.warning(
-                        "Error preparing key for file manager %s: %s",
-                        normalized_keyfile,
-                        exc,
-                    )
-                    key_prepared = False
-
-            # If key preparation failed, we still try to connect but may prompt for passphrase
-            if not key_prepared:
-                logger.info(
-                    "Key preparation failed for %s, connection may prompt for passphrase",
-                    normalized_keyfile,
-                )
-
-            passphrase = getattr(connection, "key_passphrase", None) or None
-            if (
-                not passphrase
-                and self._connection_manager is not None
-                and hasattr(self._connection_manager, "get_key_passphrase")
-            ):
-                keyring_candidates = [keyfile]
-                if normalized_keyfile and normalized_keyfile not in keyring_candidates:
-                    keyring_candidates.append(normalized_keyfile)
-
-                for keyring_path in keyring_candidates:
+        if connection is not None and key_mode in (1, 2) and keyfile and os.path.isfile(keyfile):
+                key_filename = keyfile
+                look_for_keys = False
+                logger.debug("File manager: Using specific key file: %s", keyfile)
+                # Prepare key for connection (add to ssh-agent if needed)
+                key_prepared = False
+                if (
+                    self._connection_manager is not None
+                    and hasattr(self._connection_manager, "prepare_key_for_connection")
+                ):
                     try:
-                        candidate_passphrase = (
-                            self._connection_manager.get_key_passphrase(keyring_path)
-                        )
+                        key_prepared = self._connection_manager.prepare_key_for_connection(keyfile)
+                        if key_prepared:
+                            logger.debug("Successfully prepared key for file manager: %s", keyfile)
+                        else:
+                            logger.warning("Failed to prepare key for file manager: %s", keyfile)
                     except Exception as exc:  # pragma: no cover - defensive
-                        logger.debug(
-                            "Failed to load key passphrase for %s: %s",
-                            keyring_path,
-                            exc,
-                        )
-                        continue
-                    if candidate_passphrase:
-                        passphrase = candidate_passphrase
-                        break
+                        logger.warning("Error preparing key for file manager %s: %s", keyfile, exc)
+                        key_prepared = False
+                
+                # If key preparation failed, we still try to connect but may prompt for passphrase
+                if not key_prepared:
+                    logger.info("Key preparation failed for %s, connection may prompt for passphrase", keyfile)
+
+                passphrase = getattr(connection, "key_passphrase", None) or None
+                if (
+                    not passphrase
+                    and self._connection_manager is not None
+                    and hasattr(self._connection_manager, "get_key_passphrase")
+                ):
+                    try:
+                        passphrase = self._connection_manager.get_key_passphrase(keyfile)
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.debug("Failed to load key passphrase for %s: %s", keyfile, exc)
 
                 # Only disable agent if explicitly configured to do so
                 if getattr(connection, "pubkey_auth_no", False):
