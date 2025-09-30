@@ -118,6 +118,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 setattr(app, 'config', self.config)
         self._config_changed_handler = None
         self._startup_tasks_scheduled = False
+        self._startup_complete = False
+        self._pending_focus_operations = []
         if hasattr(self.config, 'connect'):
             try:
                 self._config_changed_handler = self.config.connect('setting-changed', self._on_config_setting_changed)
@@ -256,31 +258,52 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception as e:
                 logger.error(f"Failed to show local terminal on startup: {e}")
 
-            def _focus_terminal_when_ready(attempt=[0]):
-                attempt[0] += 1
+            def _focus_terminal_when_ready():
                 try:
                     page = self.tab_view.get_selected_page() if hasattr(self, 'tab_view') else None
                     if page is None:
-                        return attempt[0] < 20
+                        return
                     terminal_widget = page.get_child()
                     if terminal_widget is None:
-                        return attempt[0] < 20
+                        return
                     if hasattr(terminal_widget, 'vte') and hasattr(terminal_widget.vte, 'grab_focus'):
                         terminal_widget.vte.grab_focus()
                     elif hasattr(terminal_widget, 'grab_focus'):
                         terminal_widget.grab_focus()
-                    return False
                 except Exception as focus_error:
                     logger.debug(f"Failed to focus startup terminal: {focus_error}")
-                    return False
 
-            try:
-                GLib.timeout_add(150, _focus_terminal_when_ready)
-            except Exception as e:
-                logger.debug(f"Unable to queue terminal focus: {e}")
+            # Queue terminal focus operation to avoid race conditions
+            self._queue_focus_operation(_focus_terminal_when_ready)
 
         # Mark startup as complete after a short delay to allow all initialization to finish
-        GLib.timeout_add(500, lambda: setattr(self, '_startup_complete', True) or False)
+        GLib.timeout_add(500, self._on_startup_complete)
+    
+    def _on_startup_complete(self):
+        """Called when startup is complete - process any pending focus operations"""
+        self._startup_complete = True
+        
+        # Process any pending focus operations
+        for focus_op in self._pending_focus_operations:
+            try:
+                focus_op()
+            except Exception as e:
+                logger.debug(f"Failed to execute pending focus operation: {e}")
+        
+        self._pending_focus_operations.clear()
+        return False  # Don't repeat
+    
+    def _queue_focus_operation(self, focus_func):
+        """Queue a focus operation to be executed after startup is complete"""
+        if self._startup_complete:
+            # Startup is complete, execute immediately
+            try:
+                focus_func()
+            except Exception as e:
+                logger.debug(f"Failed to execute focus operation: {e}")
+        else:
+            # Queue for later execution
+            self._pending_focus_operations.append(focus_func)
 
     def _install_sidebar_css(self):
         """Install sidebar focus CSS"""
@@ -1283,7 +1306,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_list.set_activate_on_single_click(False)  # Require double-click to activate
         
         # Set connection list as the default focus widget for the sidebar
-        sidebar_box.set_focus_child(self.connection_list)
+        # Queue this operation to avoid race conditions during startup
+        def _set_sidebar_focus():
+            if self.connection_list.get_parent() == sidebar_box:
+                sidebar_box.set_focus_child(self.connection_list)
+        
+        self._queue_focus_operation(_set_sidebar_focus)
         
         # Set up drag and drop for reordering
         build_sidebar(self)
@@ -2034,20 +2062,87 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Start with welcome view visible
         self.content_stack.set_visible_child_name("welcome")
 
+        # Create broadcast command banner (custom banner-like widget)
+        self.broadcast_banner = Gtk.Revealer()
+        self.broadcast_banner.set_reveal_child(False)
+        self.broadcast_banner.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        
+        # Create banner content box
+        banner_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        banner_box.add_css_class('banner')
+        
+        # Create banner header with title and send button
+        banner_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        banner_header.set_margin_start(12)
+        banner_header.set_margin_end(12)
+        banner_header.set_margin_top(8)
+        banner_header.set_margin_bottom(4)
+        
+        # Banner title
+        banner_title = Gtk.Label(label=_("Broadcast Command"))
+        banner_title.set_xalign(0)
+        banner_title.add_css_class('title-4')
+        banner_header.append(banner_title)
+        
+        # Send button
+        self.broadcast_send_button = Gtk.Button()
+        self.broadcast_send_button.set_label(_("Send"))
+        self.broadcast_send_button.add_css_class('suggested-action')
+        self.broadcast_send_button.connect('clicked', self.on_broadcast_send_clicked)
+        banner_header.append(self.broadcast_send_button)
+        
+        banner_box.append(banner_header)
+        
+        # Create banner content with entry and cancel button
+        banner_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        banner_content.set_margin_start(12)
+        banner_content.set_margin_end(12)
+        banner_content.set_margin_bottom(8)
+        
+        # Create command entry
+        self.broadcast_entry = Gtk.Entry()
+        self.broadcast_entry.set_placeholder_text(_("e.g., ls -la"))
+        self.broadcast_entry.set_hexpand(True)
+        self.broadcast_entry.connect('activate', self.on_broadcast_entry_activate)
+        banner_content.append(self.broadcast_entry)
+        
+        # Create cancel button
+        self.broadcast_cancel_button = Gtk.Button()
+        self.broadcast_cancel_button.set_label(_("Cancel"))
+        self.broadcast_cancel_button.connect('clicked', self.on_broadcast_cancel_clicked)
+        banner_content.append(self.broadcast_cancel_button)
+        
+        banner_box.append(banner_content)
+        
+        # Set the banner box as the revealer's child
+        self.broadcast_banner.set_child(banner_box)
+
         if HAS_OVERLAY_SPLIT:
             content_box = Adw.ToolbarView()
             content_box.add_top_bar(self.header_bar)
             content_box.set_content(self.content_stack)
-            self._set_content_widget(content_box)
+            # Add banner to the main content area instead of toolbar view
+            main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            main_box.append(self.broadcast_banner)
+            main_box.append(content_box)
+            self._set_content_widget(main_box)
             logger.debug("Set content widget for OverlaySplitView")
         elif HAS_NAV_SPLIT:
             content_box = Adw.ToolbarView()
             content_box.add_top_bar(self.header_bar)
             content_box.set_content(self.content_stack)
-            self._set_content_widget(content_box)
+            # Add banner to the main content area instead of toolbar view
+            main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            main_box.append(self.broadcast_banner)
+            main_box.append(content_box)
+            self._set_content_widget(main_box)
             logger.debug("Set content widget for NavigationSplitView")
         else:
-            self._set_content_widget(self.content_stack)
+            # For non-split views, create a vertical box to contain banner and content
+            main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            main_box.append(self.broadcast_banner)
+            main_box.append(self.content_stack)
+            self._set_content_widget(main_box)
             logger.debug("Set content widget for other split view types")
 
 
@@ -5656,8 +5751,44 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to open in system terminal: {e}")
 
+    def on_broadcast_send_clicked(self, button):
+        """Handle broadcast banner send button click"""
+        command = self.broadcast_entry.get_text().strip()
+        if command:
+            sent_count, failed_count = self.terminal_manager.broadcast_command(command)
+            
+            # Update banner message with result (we'll need to find the title label)
+            # For now, just hide the banner after sending
+            GLib.timeout_add(2000, self.hide_broadcast_banner)
+        else:
+            # Show error for empty command - could add error styling here
+            GLib.timeout_add(2000, self.hide_broadcast_banner)
+    
+    def on_broadcast_cancel_clicked(self, button):
+        """Handle broadcast banner cancel button click"""
+        self.hide_broadcast_banner()
+    
+    def on_broadcast_entry_activate(self, entry):
+        """Handle Enter key press in broadcast entry"""
+        self.on_broadcast_send_clicked(self.broadcast_send_button)
+    
+    def hide_broadcast_banner(self):
+        """Hide the broadcast banner"""
+        self.broadcast_banner.set_reveal_child(False)
+        self.broadcast_entry.set_text("")
+        return False  # Don't repeat the timeout
+    
+    def show_broadcast_banner(self):
+        """Show the broadcast banner"""
+        self.broadcast_banner.set_reveal_child(True)
+        # Focus the entry after a short delay to ensure banner is visible
+        def focus_entry():
+            self.broadcast_entry.grab_focus()
+            return False
+        GLib.idle_add(focus_entry)
+
     def on_broadcast_command_action(self, action, param=None):
-        """Handle broadcast command action - shows dialog to input command"""
+        """Handle broadcast command action - shows banner to input command"""
         try:
             # Check if there are any SSH terminals open
             ssh_terminals_count = 0
@@ -5690,86 +5821,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     logger.error(f"Failed to show error dialog: {e}")
                 return
             
-            # Create a custom dialog window instead of using Adw.MessageDialog
-            dialog = Gtk.Dialog(
-                title=_("Broadcast Command"),
-                transient_for=self,
-                modal=True,
-                destroy_with_parent=True
-            )
-            
-            # Set dialog properties
-            dialog.set_default_size(400, 150)
-            dialog.set_resizable(False)
-            
-            # Get the content area
-            content_area = dialog.get_content_area()
-            content_area.set_margin_start(20)
-            content_area.set_margin_end(20)
-            content_area.set_margin_top(20)
-            content_area.set_margin_bottom(20)
-            content_area.set_spacing(12)
-            
-            # Add label
-            label = Gtk.Label(label=_("Enter a command to send to all open SSH terminals:"))
-            label.set_wrap(True)
-            label.set_xalign(0)
-            content_area.append(label)
-            
-            # Add text entry
-            entry = Gtk.Entry()
-            entry.set_placeholder_text(_("e.g., ls -la"))
-            entry.set_activates_default(True)
-            entry.set_hexpand(True)
-            content_area.append(entry)
-            
-            # Add buttons
-            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-            send_button = dialog.add_button(_('Send'), Gtk.ResponseType.OK)
-            send_button.get_style_context().add_class('suggested-action')
-            
-            # Set default button
-            dialog.set_default_response(Gtk.ResponseType.OK)
-            
-            # Connect to response signal
-            def on_response(dialog, response):
-                if response == Gtk.ResponseType.OK:
-                    command = entry.get_text().strip()
-                    if command:
-                        sent_count, failed_count = self.terminal_manager.broadcast_command(command)
-                        
-                        # Show result dialog
-                        result_dialog = Adw.MessageDialog(
-                            transient_for=self,
-                            modal=True,
-                            heading=_("Command Sent"),
-                            body=_("Command sent to {} SSH terminals. {} failed.").format(sent_count, failed_count)
-                        )
-                        result_dialog.add_response('ok', _('OK'))
-                        result_dialog.present()
-                    else:
-                        # Show error for empty command
-                        error_dialog = Adw.MessageDialog(
-                            transient_for=self,
-                            modal=True,
-                            heading=_("Error"),
-                            body=_("Please enter a command to send.")
-                        )
-                        error_dialog.add_response('ok', _('OK'))
-                        error_dialog.present()
-                dialog.destroy()
-            
-            dialog.connect('response', on_response)
-            
-            # Show the dialog
-            dialog.present()
-            
-            # Focus the entry after the dialog is shown
-            def focus_entry():
-                entry.grab_focus()
-                return False
-            
-            GLib.idle_add(focus_entry)
+            # Show the broadcast banner instead of a dialog
+            self.show_broadcast_banner()
             
         except Exception as e:
             logger.error(f"Failed to show broadcast command dialog: {e}")

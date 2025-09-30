@@ -203,21 +203,23 @@ class TerminalManager:
             GLib.idle_add(terminal_widget.show)
             GLib.idle_add(terminal_widget.vte.show)
 
-            def _focus_local_terminal(attempt=[0]):
-                attempt[0] += 1
+            def _focus_local_terminal():
                 try:
                     if hasattr(terminal_widget, 'get_mapped') and not terminal_widget.get_mapped():
-                        return attempt[0] < 20
+                        return
                     if hasattr(terminal_widget, 'vte') and hasattr(terminal_widget.vte, 'grab_focus'):
                         terminal_widget.vte.grab_focus()
                     elif hasattr(terminal_widget, 'grab_focus'):
                         terminal_widget.grab_focus()
-                    return False
                 except Exception as focus_error:
                     logger.debug(f"Failed to focus local terminal: {focus_error}")
-                    return False
 
-            GLib.timeout_add(100, _focus_local_terminal)
+            # Use window's focus coordinator to avoid race conditions
+            if hasattr(self.window, '_queue_focus_operation'):
+                self.window._queue_focus_operation(_focus_local_terminal)
+            else:
+                # Fallback for older versions
+                GLib.timeout_add(100, _focus_local_terminal)
             logger.info("Local terminal tab created successfully")
         except Exception as e:
             logger.error(f"Failed to show local terminal: {e}")
