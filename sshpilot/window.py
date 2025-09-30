@@ -5772,10 +5772,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             # Update banner message with result (we'll need to find the title label)
             # For now, just hide the banner after sending
-            GLib.timeout_add(2000, self.hide_broadcast_banner)
+            GLib.timeout_add(5000, self.hide_broadcast_banner)
         else:
             # Show error for empty command - could add error styling here
-            GLib.timeout_add(2000, self.hide_broadcast_banner)
+            GLib.timeout_add(5000, self.hide_broadcast_banner)
     
     def on_broadcast_cancel_clicked(self, button):
         """Handle broadcast banner cancel button click"""
