@@ -2070,6 +2070,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Create banner content box
         banner_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         banner_box.add_css_class('banner')
+        banner_box.set_can_focus(True)
+        banner_box.set_focusable(True)
         
         # Create banner header with title and send button
         banner_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -2104,6 +2106,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.broadcast_entry.set_placeholder_text(_("e.g., ls -la"))
         self.broadcast_entry.set_hexpand(True)
         self.broadcast_entry.connect('activate', self.on_broadcast_entry_activate)
+        
+        # Add ESC key handling to the entry
+        entry_controller = Gtk.EventControllerKey()
+        entry_controller.connect('key-pressed', self.on_broadcast_entry_key_pressed)
+        self.broadcast_entry.add_controller(entry_controller)
+        
         banner_content.append(self.broadcast_entry)
         
         # Create cancel button
@@ -2116,6 +2124,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Set the banner box as the revealer's child
         self.broadcast_banner.set_child(banner_box)
+        
+        # Add global ESC key handling to the entire banner
+        banner_controller = Gtk.EventControllerKey()
+        banner_controller.connect('key-pressed', self.on_broadcast_banner_key_pressed)
+        banner_box.add_controller(banner_controller)
 
         if HAS_OVERLAY_SPLIT:
             content_box = Adw.ToolbarView()
@@ -5772,11 +5785,42 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Handle Enter key press in broadcast entry"""
         self.on_broadcast_send_clicked(self.broadcast_send_button)
     
+    def on_broadcast_entry_key_pressed(self, controller, keyval, keycode, state):
+        """Handle key presses in broadcast entry"""
+        if keyval == Gdk.KEY_Escape:
+            self.hide_broadcast_banner()
+            return True  # Consume the key event
+        return False  # Let other keys pass through
+    
+    def on_broadcast_banner_key_pressed(self, controller, keyval, keycode, state):
+        """Handle key presses on the entire broadcast banner"""
+        if keyval == Gdk.KEY_Escape:
+            self.hide_broadcast_banner()
+            return True  # Consume the key event
+        return False  # Let other keys pass through
+    
     def hide_broadcast_banner(self):
         """Hide the broadcast banner"""
         self.broadcast_banner.set_reveal_child(False)
         self.broadcast_entry.set_text("")
-        return False  # Don't repeat the timeout
+        
+        # Focus the active terminal tab after hiding the banner
+        self._focus_active_terminal_tab()
+    
+    def _focus_active_terminal_tab(self):
+        """Focus the currently active terminal tab"""
+        try:
+            if hasattr(self, 'tab_view') and self.tab_view:
+                selected_page = self.tab_view.get_selected_page()
+                if selected_page:
+                    terminal_widget = selected_page.get_child()
+                    if terminal_widget:
+                        if hasattr(terminal_widget, 'vte') and hasattr(terminal_widget.vte, 'grab_focus'):
+                            terminal_widget.vte.grab_focus()
+                        elif hasattr(terminal_widget, 'grab_focus'):
+                            terminal_widget.grab_focus()
+        except Exception as e:
+            logger.debug(f"Failed to focus active terminal tab: {e}")
     
     def show_broadcast_banner(self):
         """Show the broadcast banner"""
