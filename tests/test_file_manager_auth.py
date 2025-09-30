@@ -1,4 +1,5 @@
 import importlib
+import os
 import sys
 import threading
 import types
@@ -224,6 +225,71 @@ def test_async_sftp_manager_uses_stored_password(monkeypatch):
     assert client.set_missing_host_key_policy_calls
     assert client.set_missing_host_key_policy_calls[-1].name == "auto"
     assert sftp_manager._password == "stored-secret"
+
+
+def test_async_sftp_manager_normalizes_keyfile_for_agent(monkeypatch, tmp_path):
+    module = _load_file_manager_module(monkeypatch)
+
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home_dir))
+
+    ssh_dir = home_dir / ".ssh"
+    ssh_dir.mkdir()
+    key_path = ssh_dir / "id_ed25519"
+    key_path.write_text("dummy", encoding="utf-8")
+
+    raw_keyfile = "~/.ssh/id_ed25519"
+    normalized_keyfile = os.path.realpath(os.path.expanduser(raw_keyfile))
+
+    connection = types.SimpleNamespace(
+        hostname="example.com",
+        host="example.com",
+        username="alice",
+        auth_method=0,
+        key_select_mode=1,
+        keyfile=raw_keyfile,
+        key_passphrase="",
+    )
+
+    class DummyManager:
+        def __init__(self) -> None:
+            self.prepare_calls = []
+            self.passphrase_calls = []
+            self.known_hosts_path = None
+
+        def prepare_key_for_connection(self, key_path):
+            self.prepare_calls.append(key_path)
+            return True
+
+        def get_key_passphrase(self, key_path):
+            self.passphrase_calls.append(key_path)
+            if key_path == normalized_keyfile:
+                return "stored-passphrase"
+            return None
+
+    manager = DummyManager()
+
+    sftp_manager = module.AsyncSFTPManager(
+        "example.com",
+        "alice",
+        port=22,
+        connection=connection,
+        connection_manager=manager,
+        ssh_config={"auto_add_host_keys": True},
+    )
+
+    sftp_manager._connect_impl()
+
+    assert manager.prepare_calls == [normalized_keyfile]
+    assert manager.passphrase_calls == [raw_keyfile, normalized_keyfile]
+
+    client = DummyClient.instances[-1]
+    kwargs = client.connect_calls[-1]
+    assert kwargs["key_filename"] == normalized_keyfile
+    assert kwargs["passphrase"] == "stored-passphrase"
+    assert kwargs["allow_agent"] is True
+    assert kwargs["look_for_keys"] is True
 
 
 def test_async_sftp_manager_uses_proxy_command(monkeypatch):
