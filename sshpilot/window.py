@@ -2066,6 +2066,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.broadcast_banner = Gtk.Revealer()
         self.broadcast_banner.set_reveal_child(False)
         self.broadcast_banner.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.broadcast_hide_timeout_id: Optional[int] = None
+        self.broadcast_entry_dirty = False
+        self._suppress_broadcast_entry_changed = False
         
         # Create banner content box
         banner_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -2106,12 +2109,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.broadcast_entry.set_placeholder_text(_("e.g., ls -la"))
         self.broadcast_entry.set_hexpand(True)
         self.broadcast_entry.connect('activate', self.on_broadcast_entry_activate)
-        
+        self.broadcast_entry.connect('changed', self.on_broadcast_entry_changed)
+
         # Add ESC key handling to the entry
         entry_controller = Gtk.EventControllerKey()
         entry_controller.connect('key-pressed', self.on_broadcast_entry_key_pressed)
         self.broadcast_entry.add_controller(entry_controller)
-        
+
+        focus_controller = Gtk.EventControllerFocus()
+        focus_controller.connect('enter', self.on_broadcast_entry_focus_enter)
+        focus_controller.connect('leave', self.on_broadcast_entry_focus_leave)
+        self.broadcast_entry.add_controller(focus_controller)
+
         banner_content.append(self.broadcast_entry)
         
         # Create cancel button
@@ -5769,14 +5778,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         command = self.broadcast_entry.get_text().strip()
         if command:
             sent_count, failed_count = self.terminal_manager.broadcast_command(command)
-            
+
             # Update banner message with result (we'll need to find the title label)
             # For now, just hide the banner after sending
-            GLib.timeout_add(5000, self.hide_broadcast_banner)
+            self.broadcast_entry_dirty = False
+            self._schedule_broadcast_hide_timeout()
         else:
             # Show error for empty command - could add error styling here
-            GLib.timeout_add(5000, self.hide_broadcast_banner)
-    
+            self.broadcast_entry_dirty = False
+            self._schedule_broadcast_hide_timeout()
+
     def on_broadcast_cancel_clicked(self, button):
         """Handle broadcast banner cancel button click"""
         self.hide_broadcast_banner()
@@ -5790,8 +5801,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if keyval == Gdk.KEY_Escape:
             self.hide_broadcast_banner()
             return True  # Consume the key event
+        self._cancel_broadcast_hide_timeout()
         return False  # Let other keys pass through
-    
+
     def on_broadcast_banner_key_pressed(self, controller, keyval, keycode, state):
         """Handle key presses on the entire broadcast banner"""
         if keyval == Gdk.KEY_Escape:
@@ -5801,12 +5813,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     def hide_broadcast_banner(self):
         """Hide the broadcast banner"""
+        self._cancel_broadcast_hide_timeout()
         self.broadcast_banner.set_reveal_child(False)
-        self.broadcast_entry.set_text("")
-        
+        self.broadcast_entry_dirty = False
+        self._suppress_broadcast_entry_changed = True
+        try:
+            self.broadcast_entry.set_text("")
+        finally:
+            self._suppress_broadcast_entry_changed = False
+
         # Focus the active terminal tab after hiding the banner
         self._focus_active_terminal_tab()
-    
+
     def _focus_active_terminal_tab(self):
         """Focus the currently active terminal tab"""
         try:
@@ -5824,12 +5842,61 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     def show_broadcast_banner(self):
         """Show the broadcast banner"""
+        self._cancel_broadcast_hide_timeout()
         self.broadcast_banner.set_reveal_child(True)
+        self.broadcast_entry_dirty = bool(self.broadcast_entry.get_text())
         # Focus the entry after a short delay to ensure banner is visible
         def focus_entry():
             self.broadcast_entry.grab_focus()
             return False
         GLib.idle_add(focus_entry)
+
+    def on_broadcast_entry_changed(self, entry):
+        """Track user edits to the broadcast entry"""
+        if self._suppress_broadcast_entry_changed:
+            return
+        self.broadcast_entry_dirty = True
+        self._cancel_broadcast_hide_timeout()
+
+    def on_broadcast_entry_focus_enter(self, controller, *args):
+        """Cancel hide timeout when the entry gains focus"""
+        self._cancel_broadcast_hide_timeout()
+
+    def on_broadcast_entry_focus_leave(self, controller, *args):
+        """Schedule hiding when the entry loses focus"""
+        if not self.broadcast_banner.get_reveal_child():
+            return
+        self._schedule_broadcast_hide_timeout()
+
+    def _cancel_broadcast_hide_timeout(self):
+        """Cancel any pending hide timeout for the broadcast banner"""
+        if self.broadcast_hide_timeout_id is not None:
+            try:
+                GLib.source_remove(self.broadcast_hide_timeout_id)
+            except Exception:
+                pass
+            finally:
+                self.broadcast_hide_timeout_id = None
+
+    def _schedule_broadcast_hide_timeout(self, timeout_ms: int = 5000):
+        """Schedule hiding the broadcast banner after a delay"""
+        self._cancel_broadcast_hide_timeout()
+
+        def maybe_hide_banner():
+            self.broadcast_hide_timeout_id = None
+            entry_has_focus = False
+            try:
+                entry_has_focus = self.broadcast_entry.has_focus()
+            except Exception:
+                entry_has_focus = False
+
+            if entry_has_focus and self.broadcast_entry_dirty:
+                return False
+
+            self.hide_broadcast_banner()
+            return False
+
+        self.broadcast_hide_timeout_id = GLib.timeout_add(timeout_ms, maybe_hide_banner)
 
     def on_broadcast_command_action(self, action, param=None):
         """Handle broadcast command action - shows banner to input command"""
