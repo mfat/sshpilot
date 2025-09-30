@@ -720,8 +720,46 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 )
 
                 groups_added = len(list(self.shortcuts_editor_page.iter_groups()))
-                editor_widget = self.shortcuts_editor_page.create_editor_widget()
-                shortcuts_page.add(editor_widget)
+                self.shortcuts_editor_page.create_editor_widget()
+
+                notice_widget = getattr(
+                    self.shortcuts_editor_page, 'get_pass_through_notice_widget', None
+                )
+                if callable(notice_widget):
+                    notice_widget = notice_widget()
+                if notice_widget is not None:
+                    parent = notice_widget.get_parent()
+                    if parent is not None:
+                        remove_method = getattr(parent, 'remove', None)
+                        if callable(remove_method):
+                            remove_method(notice_widget)
+                        else:
+                            remove_child = getattr(parent, 'remove_child', None)
+                            if callable(remove_child):
+                                remove_child(notice_widget)
+
+                    notice_row = Gtk.ListBoxRow()
+                    if hasattr(notice_row, 'set_selectable'):
+                        notice_row.set_selectable(False)
+                    if hasattr(notice_row, 'set_activatable'):
+                        notice_row.set_activatable(False)
+                    notice_row.set_child(notice_widget)
+
+                    notice_group = Adw.PreferencesGroup()
+                    notice_group.add(notice_row)
+                    shortcuts_page.add(notice_group)
+
+                for group in self.shortcuts_editor_page.iter_groups():
+                    parent = group.get_parent()
+                    if parent is not None:
+                        remove_method = getattr(parent, 'remove', None)
+                        if callable(remove_method):
+                            remove_method(group)
+                        else:
+                            remove_child = getattr(parent, 'remove_child', None)
+                            if callable(remove_child):
+                                remove_child(group)
+                    shortcuts_page.add(group)
                 logger.debug(
                     "Added shortcut editor widget with %d groups", groups_added
                 )
