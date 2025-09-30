@@ -3476,10 +3476,18 @@ class FilePane(Gtk.Box):
         # Create a string representation of the drag data
         if position is not None and 0 <= position < len(self._entries):
             entry = self._entries[position]
-            drag_data_string = f"sshpilot_drag:{id(self)}:{self._current_path}:{position}:{entry.name}"
+            entry_path = os.path.join(self._current_path or "", entry.name)
+            payload = {
+                "pane_id": id(self),
+                "path": self._current_path,
+                "position": position,
+                "entry_name": entry.name,
+                "entry_path": entry_path,
+            }
+            drag_data_string = "sshpilot_drag:" + json.dumps(payload, separators=(",", ":"), sort_keys=True)
         else:
             drag_data_string = "sshpilot_drag:invalid"
-        
+
         return Gdk.ContentProvider.new_for_value(drag_data_string)
 
     def _on_drag_begin(self, drag_source: Gtk.DragSource, drag: Gdk.Drag) -> None:
@@ -3505,17 +3513,62 @@ class FilePane(Gtk.Box):
             logger.debug("Drop rejected: invalid drag data")
             return False
             
-        # Parse the drag data string
-        parts = value.split(":")
-        if len(parts) < 5:
-            logger.debug("Drop rejected: invalid drag data format")
+        payload_text = value[len("sshpilot_drag:"):]
+
+        if payload_text == "invalid":
+            logger.debug("Drop rejected: invalid drag payload marker")
             return False
-            
-        source_pane_id = int(parts[1])
-        source_path = parts[2]
-        position = int(parts[3])
-        entry_name = parts[4]
-        
+
+        payload: Dict[str, Any]
+        try:
+            parsed = json.loads(payload_text)
+            if not isinstance(parsed, dict):
+                raise ValueError("payload is not a dict")
+            payload = parsed
+        except (json.JSONDecodeError, ValueError):
+            # Fall back to the legacy colon separated format for safety
+            parts = value.split(":")
+            if len(parts) < 5:
+                logger.debug("Drop rejected: invalid drag data format")
+                return False
+            try:
+                payload = {
+                    "pane_id": int(parts[1]),
+                    "path": parts[2],
+                    "position": int(parts[3]),
+                    "entry_name": parts[4],
+                    "entry_path": os.path.join(parts[2], parts[4]),
+                }
+            except ValueError:
+                logger.debug("Drop rejected: invalid legacy drag data values")
+                return False
+
+        try:
+            source_pane_id = int(payload.get("pane_id"))
+        except (TypeError, ValueError):
+            logger.debug("Drop rejected: missing source pane id")
+            return False
+
+        position_raw = payload.get("position")
+        try:
+            position = int(position_raw)
+        except (TypeError, ValueError):
+            position = -1
+
+        entry_name = payload.get("entry_name")
+        if not isinstance(entry_name, str):
+            logger.debug("Drop rejected: invalid entry name in payload")
+            return False
+
+        source_path = payload.get("path")
+        if source_path is not None and not isinstance(source_path, str):
+            logger.debug("Drop rejected: invalid source path in payload")
+            return False
+
+        stored_entry_path = payload.get("entry_path")
+        if stored_entry_path is not None and not isinstance(stored_entry_path, str):
+            stored_entry_path = None
+
         # Find the source pane by ID
         source_pane = None
         window = self._get_file_manager_window()
@@ -3529,21 +3582,78 @@ class FilePane(Gtk.Box):
             logger.debug("Drop rejected: source pane not found")
             return False
             
-        logger.debug(f"Drop data: source_pane={source_pane._is_remote}, target_pane={self._is_remote}, position={position}")
-        
+        logger.debug(
+            "Drop data: source_pane=%s, target_pane=%s, position=%s",
+            source_pane._is_remote,
+            self._is_remote,
+            position,
+        )
+
         # Don't allow dropping on the same pane
         if source_pane == self:
             logger.debug("Drop rejected: same pane")
             return False
-            
-        # Get the entry from the source pane
-        if position < 0 or position >= len(source_pane._entries):
-            logger.debug(f"Drop rejected: invalid position {position}, entries count: {len(source_pane._entries)}")
+
+        def _normalise_path(path: Optional[str]) -> Optional[str]:
+            if not isinstance(path, str):
+                return None
+            if path == "":
+                return ""
+            return os.path.normpath(path)
+
+        expected_source_path = source_path
+        if expected_source_path is None and stored_entry_path:
+            expected_source_path = os.path.dirname(stored_entry_path)
+
+        current_source_path = getattr(source_pane, "_current_path", None)
+        expected_source_path_norm = _normalise_path(expected_source_path)
+        current_source_path_norm = _normalise_path(current_source_path)
+
+        if (
+            expected_source_path_norm is not None
+            and current_source_path_norm is not None
+            and expected_source_path_norm != current_source_path_norm
+        ):
+            logger.debug(
+                "Drop rejected: source path changed (expected=%s, current=%s)",
+                expected_source_path_norm,
+                current_source_path_norm,
+            )
+            self.show_toast("Dragged item is no longer available")
             return False
-            
-        entry = source_pane._entries[position]
-        source_file_path = os.path.join(source_path, entry.name)
-        
+
+        entry = next(
+            (item for item in getattr(source_pane, "_entries", []) if item.name == entry_name),
+            None,
+        )
+        if entry is None:
+            logger.debug("Drop rejected: entry %s not found in source pane", entry_name)
+            self.show_toast("Dragged item is no longer available")
+            return False
+
+        current_entry_path = os.path.join(current_source_path or "", entry.name)
+        stored_entry_path_norm = _normalise_path(stored_entry_path)
+        current_entry_path_norm = _normalise_path(current_entry_path)
+        if (
+            stored_entry_path_norm is not None
+            and current_entry_path_norm is not None
+            and stored_entry_path_norm != current_entry_path_norm
+        ):
+            logger.debug(
+                "Drop rejected: entry path changed (expected=%s, current=%s)",
+                stored_entry_path_norm,
+                current_entry_path_norm,
+            )
+            self.show_toast("Dragged item is no longer available")
+            return False
+
+        if stored_entry_path is not None:
+            source_file_path = stored_entry_path
+        elif expected_source_path is not None:
+            source_file_path = os.path.join(expected_source_path, entry.name)
+        else:
+            source_file_path = current_entry_path
+
         logger.debug(f"Drop operation: {entry.name} from {source_file_path}")
         
         # Determine operation type based on source and target panes
