@@ -35,11 +35,13 @@
 
   <releases>
 
-    <release version="4.1.2" date="2025-09-25">
+    <release version="4.1.3" date="2025-10-01">
 
       <description>
-        <p>SSH Pilot can now manage your ~/.ssh/config file</p>
-        <p>Improvements to builtin file managers</p>
+        <p>Added shortcut passthrough mode (keyboard shortcuts master switch)</p>
+        <p>Revamped broadcast command experience</p>
+        <p>Fixed local terminal not getting focus on startup</p>
+        <p>Improved drag and drop behavior in file manager</p>
       </description>
     </release>
   </releases>

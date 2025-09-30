@@ -242,7 +242,20 @@ class TerminalWidget(Gtk.Box):
         
         # Set up the terminal
         self.vte = Vte.Terminal()
-        
+        self._shortcut_controller = None
+        self._scroll_controller = None
+        self._config_handler = None
+        try:
+            self._pass_through_mode = bool(self.config.get_setting('terminal.pass_through_mode', False))
+        except Exception:
+            self._pass_through_mode = False
+
+        if hasattr(self.config, 'connect'):
+            try:
+                self._config_handler = self.config.connect('setting-changed', self._on_config_setting_changed)
+            except Exception:
+                self._config_handler = None
+
         # Initialize terminal with basic settings and apply configured theme early
         self.setup_terminal()
         try:
@@ -380,13 +393,13 @@ class TerminalWidget(Gtk.Box):
         self.container_box.append(self.disconnected_banner)
 
         self.append(self.container_box)
-        
+
         # Set expansion properties
         self.scrolled_window.set_hexpand(True)
         self.scrolled_window.set_vexpand(True)
         self.vte.set_hexpand(True)
         self.vte.set_vexpand(True)
-        
+
         # Connect terminal signals and store handler IDs for cleanup
         self._child_exited_handler = self.vte.connect('child-exited', self.on_child_exited)
         self._title_changed_handler = self.vte.connect('window-title-changed', self.on_title_changed)
@@ -1423,7 +1436,7 @@ class TerminalWidget(Gtk.Box):
             raise
         
         # Install terminal shortcuts and custom context menu
-        self._install_shortcuts()
+        self._apply_pass_through_mode(self._pass_through_mode)
         self._setup_context_menu()
 
     def setup_local_shell(self):
@@ -1580,29 +1593,40 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Context menu setup failed: {e}")
 
     def _install_shortcuts(self):
-        """Install local shortcuts on the VTE widget for copy/paste/select-all"""
+        """Install local shortcuts on the VTE widget for copy/paste/select-all."""
+        if getattr(self, '_pass_through_mode', False):
+            logger.debug("Pass-through mode active; skipping custom terminal shortcuts")
+            return
+
+        if getattr(self, '_shortcut_controller', None) is not None:
+            return
+
         try:
             controller = Gtk.ShortcutController()
             controller.set_scope(Gtk.ShortcutScope.LOCAL)
-            
+            controller.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
+
+            def _schedule_vte_action(action, *action_args):
+                def _runner():
+                    try:
+                        action(*action_args)
+                    except Exception as exc:
+                        logger.debug("VTE shortcut action failed: %s", exc)
+                    return False
+
+                GLib.idle_add(_runner)
+                return True
+
             def _cb_copy(widget, *args):
-                try:
-                    self.copy_text()
-                except Exception:
-                    pass
-                return True
+                if not self.vte.get_has_selection():
+                    return False
+                return _schedule_vte_action(self.vte.copy_clipboard_format, Vte.Format.TEXT)
+
             def _cb_paste(widget, *args):
-                try:
-                    self.paste_text()
-                except Exception:
-                    pass
-                return True
+                return _schedule_vte_action(self.vte.paste_clipboard)
+
             def _cb_select_all(widget, *args):
-                try:
-                    self.select_all()
-                except Exception:
-                    pass
-                return True
+                return _schedule_vte_action(self.vte.select_all)
             
             if is_macos():
                 # macOS: Use standard Cmd+C/V for copy/paste, Cmd+Shift+C/V for terminal-specific operations
@@ -1646,23 +1670,23 @@ class TerminalWidget(Gtk.Box):
             def _cb_zoom_in(widget, *args):
                 try:
                     self.zoom_in()
-                except Exception:
-                    pass
-                return True
-            
+                except Exception as exc:
+                    logger.debug("Zoom in shortcut failed: %s", exc)
+                return False
+
             def _cb_zoom_out(widget, *args):
                 try:
                     self.zoom_out()
-                except Exception:
-                    pass
-                return True
-            
+                except Exception as exc:
+                    logger.debug("Zoom out shortcut failed: %s", exc)
+                return False
+
             def _cb_reset_zoom(widget, *args):
                 try:
                     self.reset_zoom()
-                except Exception:
-                    pass
-                return True
+                except Exception as exc:
+                    logger.debug("Zoom reset shortcut failed: %s", exc)
+                return False
             
             controller.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string(zoom_in_trigger),
@@ -1680,7 +1704,8 @@ class TerminalWidget(Gtk.Box):
             ))
             
             self.vte.add_controller(controller)
-            
+            self._shortcut_controller = controller
+
             # Add mouse wheel zoom functionality
             self._setup_mouse_wheel_zoom()
             
@@ -1688,7 +1713,10 @@ class TerminalWidget(Gtk.Box):
             logger.debug(f"Failed to install shortcuts: {e}")
     
     def _setup_mouse_wheel_zoom(self):
-        """Set up mouse wheel zoom functionality with Cmd+MouseWheel"""
+        """Set up mouse wheel zoom functionality with Cmd+MouseWheel."""
+        if getattr(self, '_scroll_controller', None) is not None:
+            return
+
         try:
             mac = is_macos()
 
@@ -1721,11 +1749,57 @@ class TerminalWidget(Gtk.Box):
             
             scroll_controller.connect('scroll', _on_scroll)
             self.vte.add_controller(scroll_controller)
+            self._scroll_controller = scroll_controller
             logger.debug("Mouse wheel zoom functionality installed")
-            
+
         except Exception as e:
             logger.debug(f"Failed to setup mouse wheel zoom: {e}")
-            
+
+    def _remove_custom_shortcut_controllers(self):
+        """Detach any custom shortcut or scroll controllers from the VTE widget."""
+        ctrl = getattr(self, '_shortcut_controller', None)
+        if ctrl is not None:
+            try:
+                if hasattr(self.vte, 'remove_controller'):
+                    self.vte.remove_controller(ctrl)
+            except Exception as exc:
+                logger.debug("Failed to remove shortcut controller: %s", exc)
+            finally:
+                self._shortcut_controller = None
+
+        scroll = getattr(self, '_scroll_controller', None)
+        if scroll is not None:
+            try:
+                if hasattr(self.vte, 'remove_controller'):
+                    self.vte.remove_controller(scroll)
+            except Exception as exc:
+                logger.debug("Failed to remove scroll controller: %s", exc)
+            finally:
+                self._scroll_controller = None
+
+    def _apply_pass_through_mode(self, enabled: bool):
+        """Enable or disable custom shortcut handling based on configuration."""
+        enabled = bool(enabled)
+        current = getattr(self, '_pass_through_mode', False)
+        if enabled == current:
+            if enabled:
+                self._remove_custom_shortcut_controllers()
+            else:
+                if self._shortcut_controller is None:
+                    self._install_shortcuts()
+            return False
+
+        self._pass_through_mode = enabled
+        if enabled:
+            self._remove_custom_shortcut_controllers()
+        else:
+            self._install_shortcuts()
+        return False
+
+    def _on_config_setting_changed(self, _config, key, value):
+        if key == 'terminal.pass_through_mode':
+            GLib.idle_add(self._apply_pass_through_mode, bool(value))
+
     # PTY forwarding is now handled automatically by VTE
     # No need for manual PTY management in this implementation
     
@@ -1883,7 +1957,21 @@ class TerminalWidget(Gtk.Box):
         
         # Disconnect the terminal
         self.disconnect()
-        
+
+        # Remove custom controllers and disconnect config listeners
+        try:
+            self._remove_custom_shortcut_controllers()
+        except Exception:
+            pass
+
+        if getattr(self, '_config_handler', None) is not None and hasattr(self.config, 'disconnect'):
+            try:
+                self.config.disconnect(self._config_handler)
+            except Exception as exc:
+                logger.debug("Failed to disconnect config handler: %s", exc)
+            finally:
+                self._config_handler = None
+
         # Remove from process manager terminals set (only if not already quitting)
         if not getattr(self, '_is_quitting', False):
             try:

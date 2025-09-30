@@ -339,6 +339,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
         self.set_modal(True)
         self.parent_window = parent_window
         self.config = config
+        self._shortcuts_row = None
+        self._shortcuts_button = None
         
         # Set window properties
         self.set_title("Preferences")
@@ -445,6 +447,27 @@ class PreferencesWindow(Adw.PreferencesWindow):
             preview_group.add(preview_box)
             appearance_group.add(preview_group)
             terminal_page.add(appearance_group)
+
+            keyboard_group = Adw.PreferencesGroup()
+            keyboard_group.set_title("Keyboard")
+
+            self.pass_through_switch = Adw.SwitchRow()
+            self.pass_through_switch.set_title("Terminal Shortcut Pass-through")
+            self.pass_through_switch.set_subtitle(
+                "Disable all keyboard shortcuts, pass all key events directly to terminal"
+            )
+            try:
+                pass_through_active = bool(
+                    self.config.get_setting('terminal.pass_through_mode', False)
+                )
+            except Exception:
+                pass_through_active = False
+            self._pass_through_enabled = pass_through_active
+            self.pass_through_switch.set_active(pass_through_active)
+            self.pass_through_switch.connect('notify::active', self.on_pass_through_mode_toggled)
+            keyboard_group.add(self.pass_through_switch)
+
+            terminal_page.add(keyboard_group)
             
             # Preferred Terminal group (shown when external terminals are available)
             if not should_hide_external_terminal_options():
@@ -639,8 +662,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
             reset_colors_row.add_suffix(reset_button)
             color_override_group.add(reset_colors_row)
 
-            interface_appearance_group.add(color_override_group)
             interface_page.add(interface_appearance_group)
+            interface_page.add(color_override_group)
 
             # Initialize color button states
             self.refresh_color_buttons()
@@ -687,6 +710,9 @@ class PreferencesWindow(Adw.PreferencesWindow):
             shortcuts_button_row.add_suffix(shortcuts_button)
             shortcuts_button_row.set_activatable_widget(shortcuts_button)
 
+            self._shortcuts_row = shortcuts_button_row
+            self._shortcuts_button = shortcuts_button
+
             shortcuts_intro_group.add(shortcuts_button_row)
             shortcuts_page.add(shortcuts_intro_group)
 
@@ -698,12 +724,58 @@ class PreferencesWindow(Adw.PreferencesWindow):
                     owner_window=self.parent_window,
                 )
 
-                groups_added = 0
+                groups_added = len(list(self.shortcuts_editor_page.iter_groups()))
+                self.shortcuts_editor_page.create_editor_widget()
+
+                notice_widget = getattr(
+                    self.shortcuts_editor_page, 'get_pass_through_notice_widget', None
+                )
+                if callable(notice_widget):
+                    notice_widget = notice_widget()
+                if notice_widget is not None:
+                    parent = notice_widget.get_parent()
+                    if parent is not None:
+                        remove_method = getattr(parent, 'remove', None)
+                        if callable(remove_method):
+                            remove_method(notice_widget)
+                        else:
+                            remove_child = getattr(parent, 'remove_child', None)
+                            if callable(remove_child):
+                                remove_child(notice_widget)
+
+                    notice_row = Gtk.ListBoxRow()
+                    if hasattr(notice_row, 'set_selectable'):
+                        notice_row.set_selectable(False)
+                    if hasattr(notice_row, 'set_activatable'):
+                        notice_row.set_activatable(False)
+                    notice_row.set_child(notice_widget)
+
+                    notice_group = Adw.PreferencesGroup()
+                    notice_group.add(notice_row)
+                    shortcuts_page.add(notice_group)
+
                 for group in self.shortcuts_editor_page.iter_groups():
+                    parent = group.get_parent()
+                    if parent is not None:
+                        remove_method = getattr(parent, 'remove', None)
+                        if callable(remove_method):
+                            remove_method(group)
+                        else:
+                            remove_child = getattr(parent, 'remove_child', None)
+                            if callable(remove_child):
+                                remove_child(group)
                     shortcuts_page.add(group)
-                    groups_added += 1
-                    logger.debug(f"Added shortcut group: {group.get_title()}")
-                
+                logger.debug(
+                    "Added shortcut editor widget with %d groups", groups_added
+                )
+
+                try:
+                    self.shortcuts_editor_page.set_pass_through_enabled(
+                        getattr(self, '_pass_through_enabled', False)
+                    )
+                except Exception:
+                    pass
+
                 logger.info(f"Shortcut editor successfully added to preferences with {groups_added} groups")
             except Exception as e:
                 logger.error(f"Failed to create shortcut editor: {e}", exc_info=True)
@@ -952,6 +1024,9 @@ class PreferencesWindow(Adw.PreferencesWindow):
             advanced_page.add(native_connect_group)
             advanced_page.add(advanced_group)
 
+            # Ensure shortcut overview controls reflect current state
+            self._set_shortcut_controls_enabled(not self._pass_through_enabled)
+
             # Add pages to the preferences window
             self.add(interface_page)
             self.add(terminal_page)
@@ -983,7 +1058,32 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 self.parent_window.show_shortcuts_window()
             except Exception as exc:
                 logger.error("Failed to open shortcuts window: %s", exc)
-    
+
+    def on_pass_through_mode_toggled(self, switch, _pspec):
+        """Persist changes to the terminal pass-through preference."""
+        active = bool(switch.get_active())
+        self._pass_through_enabled = active
+        self._set_shortcut_controls_enabled(not active)
+        try:
+            self.config.set_setting('terminal.pass_through_mode', active)
+        except Exception as exc:
+            logger.error("Failed to update pass-through mode: %s", exc)
+
+        if hasattr(self, 'shortcuts_editor_page') and self.shortcuts_editor_page is not None:
+            try:
+                self.shortcuts_editor_page.set_pass_through_enabled(active)
+            except Exception as exc:
+                logger.debug("Failed to propagate pass-through state to shortcut editor: %s", exc)
+
+    def _set_shortcut_controls_enabled(self, enabled: bool):
+        for widget in (getattr(self, '_shortcuts_row', None), getattr(self, '_shortcuts_button', None)):
+            if widget is None:
+                continue
+            try:
+                widget.set_sensitive(bool(enabled))
+            except Exception:
+                logger.debug("Failed to update shortcut control sensitivity", exc_info=True)
+
     def on_font_button_clicked(self, button):
         """Handle font button click"""
         logger.info("Font button clicked")

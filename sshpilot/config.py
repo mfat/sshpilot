@@ -161,6 +161,8 @@ class Config(GObject.Object):
                 'scrollback_lines': 10000,
                 'cursor_blink': True,
                 'audible_bell': False,
+                'term': None,
+                'pass_through_mode': False,
             },
             'ui': {
                 'show_hostname': True,
@@ -678,6 +680,31 @@ class Config(GObject.Object):
         if not isinstance(shortcuts, dict):
             config['shortcuts'] = {}
             updated = True
+
+        terminal_cfg = config.get('terminal')
+        if not isinstance(terminal_cfg, dict):
+            config['terminal'] = self.get_default_config().get('terminal', {}).copy()
+            terminal_cfg = config['terminal']
+            updated = True
+        if 'pass_through_mode' not in terminal_cfg:
+            terminal_cfg['pass_through_mode'] = False
+            updated = True
+        elif not isinstance(terminal_cfg['pass_through_mode'], bool):
+            terminal_cfg['pass_through_mode'] = bool(terminal_cfg['pass_through_mode'])
+            updated = True
+        if 'term' not in terminal_cfg:
+            terminal_cfg['term'] = None
+            updated = True
+        else:
+            term_value = terminal_cfg['term']
+            normalized_term = None
+            if isinstance(term_value, str):
+                normalized_term = term_value.strip() or None
+            elif term_value is None:
+                normalized_term = None
+            if normalized_term != term_value:
+                terminal_cfg['term'] = normalized_term
+                updated = True
 
         file_manager_cfg = config.get('file_manager')
         if not isinstance(file_manager_cfg, dict):

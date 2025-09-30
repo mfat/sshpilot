@@ -118,6 +118,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 setattr(app, 'config', self.config)
         self._config_changed_handler = None
         self._startup_tasks_scheduled = False
+        self._startup_complete = False
+        self._pending_focus_operations = []
         if hasattr(self.config, 'connect'):
             try:
                 self._config_changed_handler = self.config.connect('setting-changed', self._on_config_setting_changed)
@@ -187,6 +189,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _on_config_setting_changed(self, _config, key, value):
         """Synchronize runtime state when configuration values change."""
+        if key == 'terminal.pass_through_mode':
+            try:
+                self._update_sidebar_accelerators()
+            except Exception:
+                pass
+            return
+
         if key != 'ssh.native_connect':
             return
 
@@ -228,25 +237,73 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to install sidebar CSS: {e}")
 
-        # On startup, focus the first item in the connection list (not the toolbar buttons)
-        # Delay this to ensure the UI is fully set up
-        try:
-            GLib.timeout_add(100, self._focus_connection_list_first_row)
-        except Exception:
-            pass
-
         # Check startup behavior setting and show appropriate view
         try:
             startup_behavior = self.config.get_setting('app-startup-behavior', 'terminal')
-            if startup_behavior == 'terminal':
-                # Show local terminal on startup
-                GLib.idle_add(self.terminal_manager.show_local_terminal)
-            # If startup_behavior == 'welcome', the welcome view is already shown by default
         except Exception as e:
             logger.error(f"Error handling startup behavior: {e}")
+            startup_behavior = 'terminal'
+
+        # On startup, focus the appropriate widget based on preference
+        if startup_behavior == 'welcome':
+            # Delay focus to ensure the UI is fully set up
+            try:
+                GLib.timeout_add(100, self._focus_connection_list_first_row)
+            except Exception:
+                pass
+        else:
+            # Default to terminal behavior for unknown preferences
+            try:
+                GLib.idle_add(self.terminal_manager.show_local_terminal)
+            except Exception as e:
+                logger.error(f"Failed to show local terminal on startup: {e}")
+
+            def _focus_terminal_when_ready():
+                try:
+                    page = self.tab_view.get_selected_page() if hasattr(self, 'tab_view') else None
+                    if page is None:
+                        return
+                    terminal_widget = page.get_child()
+                    if terminal_widget is None:
+                        return
+                    if hasattr(terminal_widget, 'vte') and hasattr(terminal_widget.vte, 'grab_focus'):
+                        terminal_widget.vte.grab_focus()
+                    elif hasattr(terminal_widget, 'grab_focus'):
+                        terminal_widget.grab_focus()
+                except Exception as focus_error:
+                    logger.debug(f"Failed to focus startup terminal: {focus_error}")
+
+            # Queue terminal focus operation to avoid race conditions
+            self._queue_focus_operation(_focus_terminal_when_ready)
 
         # Mark startup as complete after a short delay to allow all initialization to finish
-        GLib.timeout_add(500, lambda: setattr(self, '_startup_complete', True) or False)
+        GLib.timeout_add(500, self._on_startup_complete)
+    
+    def _on_startup_complete(self):
+        """Called when startup is complete - process any pending focus operations"""
+        self._startup_complete = True
+        
+        # Process any pending focus operations
+        for focus_op in self._pending_focus_operations:
+            try:
+                focus_op()
+            except Exception as e:
+                logger.debug(f"Failed to execute pending focus operation: {e}")
+        
+        self._pending_focus_operations.clear()
+        return False  # Don't repeat
+    
+    def _queue_focus_operation(self, focus_func):
+        """Queue a focus operation to be executed after startup is complete"""
+        if self._startup_complete:
+            # Startup is complete, execute immediately
+            try:
+                focus_func()
+            except Exception as e:
+                logger.debug(f"Failed to execute focus operation: {e}")
+        else:
+            # Queue for later execution
+            self._pending_focus_operations.append(focus_func)
 
     def _install_sidebar_css(self):
         """Install sidebar focus CSS"""
@@ -712,39 +769,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
 
-        # Global shortcuts for tab navigation: Alt+Right / Alt+Left
-        try:
-            nav = Gtk.ShortcutController()
-            nav.set_scope(Gtk.ShortcutScope.GLOBAL)
-            if hasattr(nav, 'set_propagation_phase'):
-                nav.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
-
-            def _cb_next(widget, *args):
-                try:
-                    self._select_tab_relative(1)
-                except Exception:
-                    pass
-                return True
-
-            def _cb_prev(widget, *args):
-                try:
-                    self._select_tab_relative(-1)
-                except Exception:
-                    pass
-                return True
-
-            nav.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string('<Alt>Right'),
-                Gtk.CallbackAction.new(_cb_next)
-            ))
-            nav.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string('<Alt>Left'),
-                Gtk.CallbackAction.new(_cb_prev)
-            ))
-            
-            self.add_controller(nav)
-        except Exception:
-            pass
+        # Tab navigation shortcuts are handled by application actions (see sshpilot/main.py)
         
     def on_window_size_changed(self, window, param):
         """Handle window size changes and save the new dimensions"""
@@ -1281,7 +1306,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_list.set_activate_on_single_click(False)  # Require double-click to activate
         
         # Set connection list as the default focus widget for the sidebar
-        sidebar_box.set_focus_child(self.connection_list)
+        # Queue this operation to avoid race conditions during startup
+        def _set_sidebar_focus():
+            if self.connection_list.get_parent() == sidebar_box:
+                sidebar_box.set_focus_child(self.connection_list)
+        
+        self._queue_focus_operation(_set_sidebar_focus)
         
         # Set up drag and drop for reordering
         build_sidebar(self)
@@ -1904,6 +1934,34 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tab_view.set_hexpand(True)
         self.tab_view.set_vexpand(True)
 
+        # Provide widget-scoped Alt+Arrow navigation helpers for tab-specific focus
+        try:
+            tab_nav = Gtk.ShortcutController()
+            tab_nav.set_scope(Gtk.ShortcutScope.LOCAL)
+
+            def _on_tab_step(step: int):
+                def _handler(widget, *args):
+                    try:
+                        self._select_tab_relative(step)
+                    except Exception:
+                        pass
+                    return True
+
+                return _handler
+
+            tab_nav.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string('<Alt>Right'),
+                Gtk.CallbackAction.new(_on_tab_step(1))
+            ))
+            tab_nav.add_shortcut(Gtk.Shortcut.new(
+                Gtk.ShortcutTrigger.parse_string('<Alt>Left'),
+                Gtk.CallbackAction.new(_on_tab_step(-1))
+            ))
+
+            self.tab_view.add_controller(tab_nav)
+        except Exception:
+            pass
+
         # Connect tab signals
         self.tab_view.connect('close-page', self.on_tab_close)
         self.tab_view.connect('page-attached', self.on_tab_attached)
@@ -2004,20 +2062,109 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Start with welcome view visible
         self.content_stack.set_visible_child_name("welcome")
 
+        # Create broadcast command banner (custom banner-like widget)
+        self.broadcast_banner = Gtk.Revealer()
+        self.broadcast_banner.set_reveal_child(False)
+        self.broadcast_banner.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.broadcast_hide_timeout_id: Optional[int] = None
+        self.broadcast_entry_dirty = False
+        self._suppress_broadcast_entry_changed = False
+        
+        # Create banner content box
+        banner_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        banner_box.add_css_class('banner')
+        banner_box.set_can_focus(True)
+        banner_box.set_focusable(True)
+        
+        # Create banner header with title and send button
+        banner_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        banner_header.set_margin_start(12)
+        banner_header.set_margin_end(12)
+        banner_header.set_margin_top(8)
+        banner_header.set_margin_bottom(4)
+        
+        # Banner title
+        banner_title = Gtk.Label(label=_("Broadcast Command"))
+        banner_title.set_xalign(0)
+        banner_title.add_css_class('title-4')
+        banner_header.append(banner_title)
+        
+        # Send button
+        self.broadcast_send_button = Gtk.Button()
+        self.broadcast_send_button.set_label(_("Send"))
+        self.broadcast_send_button.add_css_class('suggested-action')
+        self.broadcast_send_button.connect('clicked', self.on_broadcast_send_clicked)
+        banner_header.append(self.broadcast_send_button)
+        
+        banner_box.append(banner_header)
+        
+        # Create banner content with entry and cancel button
+        banner_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        banner_content.set_margin_start(12)
+        banner_content.set_margin_end(12)
+        banner_content.set_margin_bottom(8)
+        
+        # Create command entry
+        self.broadcast_entry = Gtk.Entry()
+        self.broadcast_entry.set_placeholder_text(_("e.g., ls -la"))
+        self.broadcast_entry.set_hexpand(True)
+        self.broadcast_entry.connect('activate', self.on_broadcast_entry_activate)
+        self.broadcast_entry.connect('changed', self.on_broadcast_entry_changed)
+
+        # Add ESC key handling to the entry
+        entry_controller = Gtk.EventControllerKey()
+        entry_controller.connect('key-pressed', self.on_broadcast_entry_key_pressed)
+        self.broadcast_entry.add_controller(entry_controller)
+
+        focus_controller = Gtk.EventControllerFocus()
+        focus_controller.connect('enter', self.on_broadcast_entry_focus_enter)
+        focus_controller.connect('leave', self.on_broadcast_entry_focus_leave)
+        self.broadcast_entry.add_controller(focus_controller)
+
+        banner_content.append(self.broadcast_entry)
+        
+        # Create cancel button
+        self.broadcast_cancel_button = Gtk.Button()
+        self.broadcast_cancel_button.set_label(_("Cancel"))
+        self.broadcast_cancel_button.connect('clicked', self.on_broadcast_cancel_clicked)
+        banner_content.append(self.broadcast_cancel_button)
+        
+        banner_box.append(banner_content)
+        
+        # Set the banner box as the revealer's child
+        self.broadcast_banner.set_child(banner_box)
+        
+        # Add global ESC key handling to the entire banner
+        banner_controller = Gtk.EventControllerKey()
+        banner_controller.connect('key-pressed', self.on_broadcast_banner_key_pressed)
+        banner_box.add_controller(banner_controller)
+
         if HAS_OVERLAY_SPLIT:
             content_box = Adw.ToolbarView()
             content_box.add_top_bar(self.header_bar)
             content_box.set_content(self.content_stack)
-            self._set_content_widget(content_box)
+            # Add banner to the main content area instead of toolbar view
+            main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            main_box.append(self.broadcast_banner)
+            main_box.append(content_box)
+            self._set_content_widget(main_box)
             logger.debug("Set content widget for OverlaySplitView")
         elif HAS_NAV_SPLIT:
             content_box = Adw.ToolbarView()
             content_box.add_top_bar(self.header_bar)
             content_box.set_content(self.content_stack)
-            self._set_content_widget(content_box)
+            # Add banner to the main content area instead of toolbar view
+            main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            main_box.append(self.broadcast_banner)
+            main_box.append(content_box)
+            self._set_content_widget(main_box)
             logger.debug("Set content widget for NavigationSplitView")
         else:
-            self._set_content_widget(self.content_stack)
+            # For non-split views, create a vertical box to contain banner and content
+            main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            main_box.append(self.broadcast_banner)
+            main_box.append(self.content_stack)
+            self._set_content_widget(main_box)
             logger.debug("Set content widget for other split view types")
 
 
@@ -5626,8 +5773,133 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to open in system terminal: {e}")
 
+    def on_broadcast_send_clicked(self, button):
+        """Handle broadcast banner send button click"""
+        command = self.broadcast_entry.get_text().strip()
+        if command:
+            sent_count, failed_count = self.terminal_manager.broadcast_command(command)
+
+            # Update banner message with result (we'll need to find the title label)
+            # For now, just hide the banner after sending
+            self.broadcast_entry_dirty = False
+            self._schedule_broadcast_hide_timeout()
+        else:
+            # Show error for empty command - could add error styling here
+            self.broadcast_entry_dirty = False
+            self._schedule_broadcast_hide_timeout()
+
+    def on_broadcast_cancel_clicked(self, button):
+        """Handle broadcast banner cancel button click"""
+        self.hide_broadcast_banner()
+    
+    def on_broadcast_entry_activate(self, entry):
+        """Handle Enter key press in broadcast entry"""
+        self.on_broadcast_send_clicked(self.broadcast_send_button)
+    
+    def on_broadcast_entry_key_pressed(self, controller, keyval, keycode, state):
+        """Handle key presses in broadcast entry"""
+        if keyval == Gdk.KEY_Escape:
+            self.hide_broadcast_banner()
+            return True  # Consume the key event
+        self._cancel_broadcast_hide_timeout()
+        return False  # Let other keys pass through
+
+    def on_broadcast_banner_key_pressed(self, controller, keyval, keycode, state):
+        """Handle key presses on the entire broadcast banner"""
+        if keyval == Gdk.KEY_Escape:
+            self.hide_broadcast_banner()
+            return True  # Consume the key event
+        return False  # Let other keys pass through
+    
+    def hide_broadcast_banner(self):
+        """Hide the broadcast banner"""
+        self._cancel_broadcast_hide_timeout()
+        self.broadcast_banner.set_reveal_child(False)
+        self.broadcast_entry_dirty = False
+        self._suppress_broadcast_entry_changed = True
+        try:
+            self.broadcast_entry.set_text("")
+        finally:
+            self._suppress_broadcast_entry_changed = False
+
+        # Focus the active terminal tab after hiding the banner
+        self._focus_active_terminal_tab()
+
+    def _focus_active_terminal_tab(self):
+        """Focus the currently active terminal tab"""
+        try:
+            if hasattr(self, 'tab_view') and self.tab_view:
+                selected_page = self.tab_view.get_selected_page()
+                if selected_page:
+                    terminal_widget = selected_page.get_child()
+                    if terminal_widget:
+                        if hasattr(terminal_widget, 'vte') and hasattr(terminal_widget.vte, 'grab_focus'):
+                            terminal_widget.vte.grab_focus()
+                        elif hasattr(terminal_widget, 'grab_focus'):
+                            terminal_widget.grab_focus()
+        except Exception as e:
+            logger.debug(f"Failed to focus active terminal tab: {e}")
+    
+    def show_broadcast_banner(self):
+        """Show the broadcast banner"""
+        self._cancel_broadcast_hide_timeout()
+        self.broadcast_banner.set_reveal_child(True)
+        self.broadcast_entry_dirty = bool(self.broadcast_entry.get_text())
+        # Focus the entry after a short delay to ensure banner is visible
+        def focus_entry():
+            self.broadcast_entry.grab_focus()
+            return False
+        GLib.idle_add(focus_entry)
+
+    def on_broadcast_entry_changed(self, entry):
+        """Track user edits to the broadcast entry"""
+        if self._suppress_broadcast_entry_changed:
+            return
+        self.broadcast_entry_dirty = True
+        self._cancel_broadcast_hide_timeout()
+
+    def on_broadcast_entry_focus_enter(self, controller, *args):
+        """Cancel hide timeout when the entry gains focus"""
+        self._cancel_broadcast_hide_timeout()
+
+    def on_broadcast_entry_focus_leave(self, controller, *args):
+        """Schedule hiding when the entry loses focus"""
+        if not self.broadcast_banner.get_reveal_child():
+            return
+        self._schedule_broadcast_hide_timeout()
+
+    def _cancel_broadcast_hide_timeout(self):
+        """Cancel any pending hide timeout for the broadcast banner"""
+        if self.broadcast_hide_timeout_id is not None:
+            try:
+                GLib.source_remove(self.broadcast_hide_timeout_id)
+            except Exception:
+                pass
+            finally:
+                self.broadcast_hide_timeout_id = None
+
+    def _schedule_broadcast_hide_timeout(self, timeout_ms: int = 5000):
+        """Schedule hiding the broadcast banner after a delay"""
+        self._cancel_broadcast_hide_timeout()
+
+        def maybe_hide_banner():
+            self.broadcast_hide_timeout_id = None
+            entry_has_focus = False
+            try:
+                entry_has_focus = self.broadcast_entry.has_focus()
+            except Exception:
+                entry_has_focus = False
+
+            if entry_has_focus and self.broadcast_entry_dirty:
+                return False
+
+            self.hide_broadcast_banner()
+            return False
+
+        self.broadcast_hide_timeout_id = GLib.timeout_add(timeout_ms, maybe_hide_banner)
+
     def on_broadcast_command_action(self, action, param=None):
-        """Handle broadcast command action - shows dialog to input command"""
+        """Handle broadcast command action - shows banner to input command"""
         try:
             # Check if there are any SSH terminals open
             ssh_terminals_count = 0
@@ -5660,86 +5932,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     logger.error(f"Failed to show error dialog: {e}")
                 return
             
-            # Create a custom dialog window instead of using Adw.MessageDialog
-            dialog = Gtk.Dialog(
-                title=_("Broadcast Command"),
-                transient_for=self,
-                modal=True,
-                destroy_with_parent=True
-            )
-            
-            # Set dialog properties
-            dialog.set_default_size(400, 150)
-            dialog.set_resizable(False)
-            
-            # Get the content area
-            content_area = dialog.get_content_area()
-            content_area.set_margin_start(20)
-            content_area.set_margin_end(20)
-            content_area.set_margin_top(20)
-            content_area.set_margin_bottom(20)
-            content_area.set_spacing(12)
-            
-            # Add label
-            label = Gtk.Label(label=_("Enter a command to send to all open SSH terminals:"))
-            label.set_wrap(True)
-            label.set_xalign(0)
-            content_area.append(label)
-            
-            # Add text entry
-            entry = Gtk.Entry()
-            entry.set_placeholder_text(_("e.g., ls -la"))
-            entry.set_activates_default(True)
-            entry.set_hexpand(True)
-            content_area.append(entry)
-            
-            # Add buttons
-            dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
-            send_button = dialog.add_button(_('Send'), Gtk.ResponseType.OK)
-            send_button.get_style_context().add_class('suggested-action')
-            
-            # Set default button
-            dialog.set_default_response(Gtk.ResponseType.OK)
-            
-            # Connect to response signal
-            def on_response(dialog, response):
-                if response == Gtk.ResponseType.OK:
-                    command = entry.get_text().strip()
-                    if command:
-                        sent_count, failed_count = self.terminal_manager.broadcast_command(command)
-                        
-                        # Show result dialog
-                        result_dialog = Adw.MessageDialog(
-                            transient_for=self,
-                            modal=True,
-                            heading=_("Command Sent"),
-                            body=_("Command sent to {} SSH terminals. {} failed.").format(sent_count, failed_count)
-                        )
-                        result_dialog.add_response('ok', _('OK'))
-                        result_dialog.present()
-                    else:
-                        # Show error for empty command
-                        error_dialog = Adw.MessageDialog(
-                            transient_for=self,
-                            modal=True,
-                            heading=_("Error"),
-                            body=_("Please enter a command to send.")
-                        )
-                        error_dialog.add_response('ok', _('OK'))
-                        error_dialog.present()
-                dialog.destroy()
-            
-            dialog.connect('response', on_response)
-            
-            # Show the dialog
-            dialog.present()
-            
-            # Focus the entry after the dialog is shown
-            def focus_entry():
-                entry.grab_focus()
-                return False
-            
-            GLib.idle_add(focus_entry)
+            # Show the broadcast banner instead of a dialog
+            self.show_broadcast_banner()
             
         except Exception as e:
             logger.error(f"Failed to show broadcast command dialog: {e}")
