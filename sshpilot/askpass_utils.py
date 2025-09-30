@@ -436,10 +436,17 @@ def get_ssh_env_with_forced_askpass() -> dict:
 
 def ensure_key_in_agent(key_path: str) -> bool:
     """Ensure SSH key is loaded in ssh-agent with passphrase"""
-    if not os.path.isfile(key_path):
-        logger.error(f"Key file not found: {key_path}")
+    expanded_path = os.path.expanduser(os.path.expandvars(key_path))
+    normalized_path = os.path.realpath(expanded_path)
+
+    if not os.path.isfile(normalized_path):
+        logger.error(
+            "Key file not found: %s (expanded to %s)",
+            key_path,
+            normalized_path,
+        )
         return False
-    
+
     # Check if key is already in ssh-agent
     try:
         result = subprocess.run(
@@ -448,33 +455,35 @@ def ensure_key_in_agent(key_path: str) -> bool:
             text=True,
             timeout=5
         )
-        if result.returncode == 0 and key_path in result.stdout:
-            logger.debug(f"Key already in ssh-agent: {key_path}")
-            return True
+        if result.returncode == 0:
+            known_tokens = {key_path, normalized_path}
+            if any(token and token in result.stdout for token in known_tokens):
+                logger.debug("Key already in ssh-agent: %s", normalized_path)
+                return True
     except Exception:
         pass
-    
+
     # Add key to ssh-agent using our askpass script
     env = get_ssh_env_with_askpass("force")
-    
+
     try:
         result = subprocess.run(
-            ['ssh-add', key_path],
+            ['ssh-add', normalized_path],
             env=env,
             capture_output=True,
             text=True,
             timeout=30
         )
-        
+
         if result.returncode == 0:
-            logger.debug(f"Successfully added key to ssh-agent: {key_path}")
+            logger.debug("Successfully added key to ssh-agent: %s", normalized_path)
             return True
         else:
             logger.error(f"Failed to add key to ssh-agent: {result.stderr}")
             return False
-            
+
     except subprocess.TimeoutExpired:
-        logger.error(f"Timeout adding key to ssh-agent: {key_path}")
+        logger.error(f"Timeout adding key to ssh-agent: {normalized_path}")
         return False
     except Exception as e:
         logger.error(f"Error adding key to ssh-agent: {e}")
