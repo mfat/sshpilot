@@ -591,6 +591,10 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             return
 
         row = row_data['row']
+        try:
+            row.set_sensitive(not self._pass_through_enabled)
+        except Exception:
+            logger.debug('Failed to update sensitivity for row %s', action_name)
         base = row_data.get('base_subtitle', row.get_subtitle() or '')
         if row.get_subtitle() != base:
             row.set_subtitle(base)
