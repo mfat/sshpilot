@@ -574,7 +574,13 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
                 notice_widget.set_visible(self._pass_through_enabled)
 
         if self._shortcuts_container is not None:
-            self._shortcuts_container.set_sensitive(not self._pass_through_enabled)
+            parent = None
+            try:
+                parent = self._shortcuts_container.get_parent()
+            except Exception:
+                parent = None
+            if parent is None:
+                self._shortcuts_container.set_sensitive(not self._pass_through_enabled)
 
         for name in self._rows:
             self._apply_pass_through_state_to_row(name)
@@ -591,11 +597,13 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
 
         notice = PASS_THROUGH_NOTICE
 
-        if self._shortcuts_container is None:
-            for key in ('switch', 'assign_button', 'reset_button'):
-                widget = row_data.get(key)
-                if widget is not None:
+        for key in ('switch', 'assign_button', 'reset_button'):
+            widget = row_data.get(key)
+            if widget is not None:
+                try:
                     widget.set_sensitive(not self._pass_through_enabled)
+                except Exception:
+                    logger.debug('Failed to update sensitivity for %s control', key)
 
         row.set_tooltip_text(notice if self._pass_through_enabled else None)
 
