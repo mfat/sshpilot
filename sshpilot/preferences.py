@@ -339,6 +339,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
         self.set_modal(True)
         self.parent_window = parent_window
         self.config = config
+        self._shortcuts_row = None
+        self._shortcuts_button = None
         
         # Set window properties
         self.set_title("Preferences")
@@ -708,6 +710,9 @@ class PreferencesWindow(Adw.PreferencesWindow):
             shortcuts_button_row.add_suffix(shortcuts_button)
             shortcuts_button_row.set_activatable_widget(shortcuts_button)
 
+            self._shortcuts_row = shortcuts_button_row
+            self._shortcuts_button = shortcuts_button
+
             shortcuts_intro_group.add(shortcuts_button_row)
             shortcuts_page.add(shortcuts_intro_group)
 
@@ -1019,6 +1024,9 @@ class PreferencesWindow(Adw.PreferencesWindow):
             advanced_page.add(native_connect_group)
             advanced_page.add(advanced_group)
 
+            # Ensure shortcut overview controls reflect current state
+            self._set_shortcut_controls_enabled(not self._pass_through_enabled)
+
             # Add pages to the preferences window
             self.add(interface_page)
             self.add(terminal_page)
@@ -1055,6 +1063,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
         """Persist changes to the terminal pass-through preference."""
         active = bool(switch.get_active())
         self._pass_through_enabled = active
+        self._set_shortcut_controls_enabled(not active)
         try:
             self.config.set_setting('terminal.pass_through_mode', active)
         except Exception as exc:
@@ -1065,6 +1074,15 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 self.shortcuts_editor_page.set_pass_through_enabled(active)
             except Exception as exc:
                 logger.debug("Failed to propagate pass-through state to shortcut editor: %s", exc)
+
+    def _set_shortcut_controls_enabled(self, enabled: bool):
+        for widget in (getattr(self, '_shortcuts_row', None), getattr(self, '_shortcuts_button', None)):
+            if widget is None:
+                continue
+            try:
+                widget.set_sensitive(bool(enabled))
+            except Exception:
+                logger.debug("Failed to update shortcut control sensitivity", exc_info=True)
 
     def on_font_button_clicked(self, button):
         """Handle font button click"""
