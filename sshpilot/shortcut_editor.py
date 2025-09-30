@@ -579,7 +579,7 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
                 parent = self._shortcuts_container.get_parent()
             except Exception:
                 parent = None
-            if parent is None:
+            if parent is not None:
                 self._shortcuts_container.set_sensitive(not self._pass_through_enabled)
 
         for name in self._rows:
