@@ -277,14 +277,12 @@ class GroupRow(Adw.ActionRow):
         self.drop_indicator_top.set_halign(Gtk.Align.FILL)
         self.drop_indicator_top.set_valign(Gtk.Align.START)
         self._drop_overlay.add_overlay(self.drop_indicator_top)
-        self._drop_overlay.set_overlay_pass_through(self.drop_indicator_top, True)
 
         self.drop_indicator_bottom = DragIndicator()
         self.drop_indicator_bottom.set_hexpand(True)
         self.drop_indicator_bottom.set_halign(Gtk.Align.FILL)
         self.drop_indicator_bottom.set_valign(Gtk.Align.END)
         self._drop_overlay.add_overlay(self.drop_indicator_bottom)
-        self._drop_overlay.set_overlay_pass_through(self.drop_indicator_bottom, True)
 
         # Drop target highlight indicator
         self.drop_target_indicator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -301,7 +299,6 @@ class GroupRow(Adw.ActionRow):
         self.drop_target_indicator.append(indicator_label)
 
         self._drop_overlay.add_overlay(self.drop_target_indicator)
-        self._drop_overlay.set_overlay_pass_through(self.drop_target_indicator, True)
 
         self.hide_drop_indicators()
 
@@ -520,14 +517,12 @@ class ConnectionRow(Adw.ActionRow):
         self.drop_indicator_top.set_halign(Gtk.Align.FILL)
         self.drop_indicator_top.set_valign(Gtk.Align.START)
         self._drop_overlay.add_overlay(self.drop_indicator_top)
-        self._drop_overlay.set_overlay_pass_through(self.drop_indicator_top, True)
 
         self.drop_indicator_bottom = DragIndicator()
         self.drop_indicator_bottom.set_hexpand(True)
         self.drop_indicator_bottom.set_halign(Gtk.Align.FILL)
         self.drop_indicator_bottom.set_valign(Gtk.Align.END)
         self._drop_overlay.add_overlay(self.drop_indicator_bottom)
-        self._drop_overlay.set_overlay_pass_through(self.drop_indicator_bottom, True)
 
         self.drop_target_indicator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.drop_target_indicator.add_css_class("drop-target-indicator")
@@ -543,7 +538,6 @@ class ConnectionRow(Adw.ActionRow):
         self.drop_target_indicator.append(connection_label)
 
         self._drop_overlay.add_overlay(self.drop_target_indicator)
-        self._drop_overlay.set_overlay_pass_through(self.drop_target_indicator, True)
 
         self.hide_drop_indicators()
 
