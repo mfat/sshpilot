@@ -18,6 +18,7 @@ import weakref
 import subprocess
 import pwd
 from datetime import datetime
+from typing import Optional
 from .port_utils import get_port_checker
 from .platform_utils import is_macos
 
@@ -201,15 +202,16 @@ class TerminalWidget(Gtk.Box):
         'title-changed': (GObject.SignalFlags.RUN_FIRST, None, (str,)),
     }
     
-    def __init__(self, connection, config, connection_manager):
+    def __init__(self, connection, config, connection_manager, group_color=None):
         # Initialize as a vertical Gtk.Box
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
-        
+
         # Store references
         self.connection = connection
         self.config = config
         self.connection_manager = connection_manager
-        
+        self.group_color = group_color
+
         # Process tracking
         self.process = None
         self.process_pid = None
@@ -1235,7 +1237,7 @@ class TerminalWidget(Gtk.Box):
         
     def apply_theme(self, theme_name=None):
         """Apply terminal theme and font settings
-        
+
         Args:
             theme_name (str, optional): Name of the theme to apply. If None, uses the saved theme.
         """
@@ -1267,19 +1269,35 @@ class TerminalWidget(Gtk.Box):
             # Set colors
             fg_color = Gdk.RGBA()
             fg_color.parse(profile['foreground'])
-            
+
             bg_color = Gdk.RGBA()
             bg_color.parse(profile['background'])
-            
+
             cursor_color = Gdk.RGBA()
             cursor_color.parse(profile.get('cursor_color', profile['foreground']))
-            
+
             highlight_bg = Gdk.RGBA()
             highlight_bg.parse(profile.get('highlight_background', '#4A90E2'))
-            
+
             highlight_fg = Gdk.RGBA()
             highlight_fg.parse(profile.get('highlight_foreground', profile['foreground']))
-            
+
+            override_rgba = self._get_group_color_rgba()
+            use_group_color = False
+            try:
+                use_group_color = bool(
+                    self.config.get_setting('ui.use_group_color_in_terminal', False)
+                )
+            except Exception:
+                use_group_color = False
+
+            if use_group_color and override_rgba is not None:
+                bg_color = self._mix_with_white(override_rgba, 0.35)
+                fg_color = self._get_contrast_color(bg_color)
+                highlight_bg = self._clone_rgba(override_rgba)
+                highlight_fg = self._get_contrast_color(highlight_bg)
+                cursor_color = self._clone_rgba(highlight_fg)
+
             # Prepare palette colors (16 ANSI colors)
             palette_colors = None
             if 'palette' in profile and profile['palette']:
@@ -1338,6 +1356,69 @@ class TerminalWidget(Gtk.Box):
             
         except Exception as e:
             logger.error(f"Failed to apply terminal theme: {e}")
+
+    def _clone_rgba(self, rgba: Gdk.RGBA) -> Gdk.RGBA:
+        clone = Gdk.RGBA()
+        clone.red = rgba.red
+        clone.green = rgba.green
+        clone.blue = rgba.blue
+        clone.alpha = rgba.alpha
+        return clone
+
+    def _get_group_color_rgba(self) -> Optional[Gdk.RGBA]:
+        color_value = getattr(self, 'group_color', None)
+        if not color_value:
+            return None
+
+        rgba = Gdk.RGBA()
+        try:
+            if rgba.parse(str(color_value)):
+                rgba.alpha = 1.0 if rgba.alpha == 0 else rgba.alpha
+                return rgba
+        except Exception:
+            logger.debug("Failed to parse group color '%s'", color_value, exc_info=True)
+        return None
+
+    def _mix_with_white(self, rgba: Gdk.RGBA, ratio: float = 0.35) -> Gdk.RGBA:
+        ratio = max(0.0, min(1.0, ratio))
+        mixed = Gdk.RGBA()
+        mixed.red = min(1.0, rgba.red * ratio + (1 - ratio))
+        mixed.green = min(1.0, rgba.green * ratio + (1 - ratio))
+        mixed.blue = min(1.0, rgba.blue * ratio + (1 - ratio))
+        mixed.alpha = 1.0
+        return mixed
+
+    def _relative_luminance(self, rgba: Gdk.RGBA) -> float:
+        def to_linear(channel: float) -> float:
+            if channel <= 0.03928:
+                return channel / 12.92
+            return ((channel + 0.055) / 1.055) ** 2.4
+
+        r_lin = to_linear(rgba.red)
+        g_lin = to_linear(rgba.green)
+        b_lin = to_linear(rgba.blue)
+        return 0.2126 * r_lin + 0.7152 * g_lin + 0.0722 * b_lin
+
+    def _get_contrast_color(self, background: Gdk.RGBA) -> Gdk.RGBA:
+        luminance = self._relative_luminance(background)
+        contrast = Gdk.RGBA()
+        if luminance > 0.5:
+            contrast.parse('#1B1B1D')
+        else:
+            contrast.parse('#FFFFFF')
+        contrast.alpha = 1.0
+        return contrast
+
+    def set_group_color(self, color_value, force: bool = False):
+        normalized = color_value or None
+        if not force and normalized == getattr(self, 'group_color', None):
+            return
+
+        self.group_color = normalized
+        try:
+            self.apply_theme()
+        except Exception:
+            logger.debug("Failed to reapply theme after group color update", exc_info=True)
             
     def force_style_refresh(self):
         """Force a style refresh of the terminal widget."""

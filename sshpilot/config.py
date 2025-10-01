@@ -173,6 +173,8 @@ class Config(GObject.Object):
                 'window_height': 800,
                 'sidebar_width': 250,
                 'group_color_display': 'fill',
+                'use_group_color_in_tab': False,
+                'use_group_color_in_terminal': False,
             },
             'welcome': {
                 'background_color': None,  # None for default, or CSS string for custom
@@ -741,6 +743,20 @@ class Config(GObject.Object):
             if ui_cfg.get('group_color_display') != normalized:
                 ui_cfg['group_color_display'] = normalized
                 updated = True
+
+        if 'use_group_color_in_tab' not in ui_cfg:
+            ui_cfg['use_group_color_in_tab'] = False
+            updated = True
+        elif not isinstance(ui_cfg['use_group_color_in_tab'], bool):
+            ui_cfg['use_group_color_in_tab'] = bool(ui_cfg['use_group_color_in_tab'])
+            updated = True
+
+        if 'use_group_color_in_terminal' not in ui_cfg:
+            ui_cfg['use_group_color_in_terminal'] = False
+            updated = True
+        elif not isinstance(ui_cfg['use_group_color_in_terminal'], bool):
+            ui_cfg['use_group_color_in_terminal'] = bool(ui_cfg['use_group_color_in_terminal'])
+            updated = True
 
         ssh_cfg = config.get('ssh')
         if not isinstance(ssh_cfg, dict):
