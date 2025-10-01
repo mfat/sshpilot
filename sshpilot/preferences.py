@@ -342,6 +342,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
         self._shortcuts_row = None
         self._shortcuts_button = None
         self._group_display_sync = False
+        self._group_tab_color_sync = False
+        self._group_terminal_color_sync = False
         self._config_signal_id = None
 
         if hasattr(self.config, 'connect'):
@@ -658,6 +660,58 @@ class PreferencesWindow(Adw.PreferencesWindow):
             )
 
             interface_appearance_group.add(self.group_color_display_row)
+
+            # Toggle for coloring tabs with group color
+            self.group_color_tab_switch = Adw.SwitchRow()
+            self.group_color_tab_switch.set_title("Color Tabs by Group")
+            self.group_color_tab_switch.set_subtitle(
+                "Use the group's color as a tab indicator"
+            )
+
+            use_tab_color = False
+            try:
+                use_tab_color = bool(
+                    self.config.get_setting('ui.use_group_color_in_tab', False)
+                )
+            except Exception:
+                use_tab_color = False
+
+            self._group_tab_color_sync = True
+            try:
+                self.group_color_tab_switch.set_active(use_tab_color)
+            finally:
+                self._group_tab_color_sync = False
+
+            self.group_color_tab_switch.connect(
+                'notify::active', self.on_group_tab_color_toggled
+            )
+            interface_appearance_group.add(self.group_color_tab_switch)
+
+            # Toggle for tinting terminal background/accent colors
+            self.group_color_terminal_switch = Adw.SwitchRow()
+            self.group_color_terminal_switch.set_title("Tint Terminal with Group Color")
+            self.group_color_terminal_switch.set_subtitle(
+                "Blend the group's color into the terminal background"
+            )
+
+            use_terminal_color = False
+            try:
+                use_terminal_color = bool(
+                    self.config.get_setting('ui.use_group_color_in_terminal', False)
+                )
+            except Exception:
+                use_terminal_color = False
+
+            self._group_terminal_color_sync = True
+            try:
+                self.group_color_terminal_switch.set_active(use_terminal_color)
+            finally:
+                self._group_terminal_color_sync = False
+
+            self.group_color_terminal_switch.connect(
+                'notify::active', self.on_group_terminal_color_toggled
+            )
+            interface_appearance_group.add(self.group_color_terminal_switch)
 
             # Color overrides section
             color_override_group = Adw.PreferencesGroup()
@@ -1236,6 +1290,42 @@ class PreferencesWindow(Adw.PreferencesWindow):
         if not getattr(self, '_config_signal_id', None):
             self._trigger_sidebar_refresh()
 
+    def on_group_tab_color_toggled(self, switch_row, _param):
+        if getattr(self, '_group_tab_color_sync', False):
+            return
+
+        new_value = bool(switch_row.get_active())
+        try:
+            self.config.set_setting('ui.use_group_color_in_tab', new_value)
+        except Exception as exc:
+            logger.error("Failed to update tab color preference: %s", exc)
+            current = False
+            try:
+                current = bool(
+                    self.config.get_setting('ui.use_group_color_in_tab', False)
+                )
+            except Exception:
+                current = False
+            self._sync_group_tab_color_switch(current)
+
+    def on_group_terminal_color_toggled(self, switch_row, _param):
+        if getattr(self, '_group_terminal_color_sync', False):
+            return
+
+        new_value = bool(switch_row.get_active())
+        try:
+            self.config.set_setting('ui.use_group_color_in_terminal', new_value)
+        except Exception as exc:
+            logger.error("Failed to update terminal color preference: %s", exc)
+            current = False
+            try:
+                current = bool(
+                    self.config.get_setting('ui.use_group_color_in_terminal', False)
+                )
+            except Exception:
+                current = False
+            self._sync_group_terminal_color_switch(current)
+
     def _trigger_sidebar_refresh(self):
         parent = self.get_transient_for() or self.parent_window
         if not parent:
@@ -1269,10 +1359,42 @@ class PreferencesWindow(Adw.PreferencesWindow):
         finally:
             self._group_display_sync = False
 
+    def _sync_group_tab_color_switch(self, value):
+        if not hasattr(self, 'group_color_tab_switch') or self.group_color_tab_switch is None:
+            return
+
+        desired_state = bool(value)
+        if self.group_color_tab_switch.get_active() == desired_state:
+            return
+
+        self._group_tab_color_sync = True
+        try:
+            self.group_color_tab_switch.set_active(desired_state)
+        finally:
+            self._group_tab_color_sync = False
+
+    def _sync_group_terminal_color_switch(self, value):
+        if not hasattr(self, 'group_color_terminal_switch') or self.group_color_terminal_switch is None:
+            return
+
+        desired_state = bool(value)
+        if self.group_color_terminal_switch.get_active() == desired_state:
+            return
+
+        self._group_terminal_color_sync = True
+        try:
+            self.group_color_terminal_switch.set_active(desired_state)
+        finally:
+            self._group_terminal_color_sync = False
+
     def _on_config_setting_changed(self, _config, key, value):
         if key == 'ui.group_color_display':
             self._sync_group_color_display_row(value)
             self._trigger_sidebar_refresh()
+        elif key == 'ui.use_group_color_in_tab':
+            self._sync_group_tab_color_switch(value)
+        elif key == 'ui.use_group_color_in_terminal':
+            self._sync_group_terminal_color_switch(value)
 
     def _on_destroy(self, *_args):
         if getattr(self, '_config_signal_id', None) and hasattr(self.config, 'disconnect'):
