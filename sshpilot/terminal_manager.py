@@ -6,7 +6,7 @@ import math
 import cairo
 
 
-from gi.repository import Gio, GLib, Adw, Gdk, GdkPixbuf
+from gi.repository import Gio, GLib, Adw, Gdk, GdkPixbuf, Gtk
 from gettext import gettext as _
 
 from .terminal import TerminalWidget
@@ -180,30 +180,9 @@ class TerminalManager:
         return None
 
     def _create_tab_color_icon(self, rgba: Gdk.RGBA):
-        try:
-            size = 12
-            surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
-            ctx = cairo.Context(surface)
-            ctx.set_source_rgba(0, 0, 0, 0)
-            ctx.paint()
-
-            ctx.set_source_rgba(rgba.red, rgba.green, rgba.blue, max(0.75, rgba.alpha))
-            radius = (size - 2) / 2.0
-            ctx.arc(size / 2.0, size / 2.0, radius, 0, math.tau if hasattr(math, 'tau') else 2 * math.pi)
-            ctx.fill()
-
-            pixbuf = Gdk.pixbuf_get_from_surface(surface, 0, 0, size, size)
-            if pixbuf is None:
-                return None
-
-            data, _ = pixbuf.save_to_bufferv('png', [], [])
-            if not data:
-                return None
-
-            return Gio.BytesIcon.new(GLib.Bytes.new(data))
-        except Exception as exc:
-            logger.debug("Failed to create tab color icon: %s", exc)
-            return None
+        # Use a simple themed icon instead of creating custom icons
+        # This avoids the pixbuf save issues and works reliably
+        return Gio.ThemedIcon.new("media-record-symbolic")
 
     def _apply_tab_group_color(self, page, color_value):
         use_pref = False
@@ -225,9 +204,9 @@ class TerminalManager:
                 return
         except Exception:
             self._clear_tab_group_color(page)
-
             return
 
+        # Create a themed icon and apply color via CSS
         icon = self._create_tab_color_icon(rgba)
         if icon is None:
             self._clear_tab_group_color(page)
@@ -238,7 +217,11 @@ class TerminalManager:
                 page.set_indicator_icon(icon)
                 if hasattr(page, 'set_indicator_tooltip'):
                     page.set_indicator_tooltip(_('Group color'))
+                
+                # Apply color to the icon using CSS
+                self._apply_tab_icon_color(page, rgba)
                 setattr(page, '_sshpilot_group_indicator_icon', icon)
+                setattr(page, '_sshpilot_group_color', rgba.to_string())
             except Exception as exc:
                 logger.debug("Failed to set tab indicator icon: %s", exc)
         elif hasattr(page, 'set_icon') and hasattr(page, 'get_icon'):
@@ -246,7 +229,11 @@ class TerminalManager:
                 if not hasattr(page, '_sshpilot_original_icon'):
                     setattr(page, '_sshpilot_original_icon', page.get_icon())
                 page.set_icon(icon)
+                
+                # Apply color to the icon using CSS
+                self._apply_tab_icon_color(page, rgba)
                 setattr(page, '_sshpilot_group_indicator_icon', icon)
+                setattr(page, '_sshpilot_group_color', rgba.to_string())
             except Exception as exc:
                 logger.debug("Failed to set tab icon for group color: %s", exc)
 
@@ -266,7 +253,94 @@ class TerminalManager:
             except Exception:
                 pass
 
+        # Clear the custom icon from the tab page
+        if hasattr(page, 'set_indicator_icon'):
+            try:
+                page.set_indicator_icon(None)
+                if hasattr(page, 'set_indicator_tooltip'):
+                    page.set_indicator_tooltip(None)
+            except Exception:
+                pass
+
+        # No CSS provider to remove since we're using direct colored icons
+
         setattr(page, '_sshpilot_group_indicator_icon', None)
+        if hasattr(page, '_sshpilot_group_color'):
+            delattr(page, '_sshpilot_group_color')
+
+    def _create_colored_tab_icon(self, rgba: Gdk.RGBA):
+        """Create a simple colored icon for the tab indicator"""
+        try:
+            # Use a simple approach - create a basic colored icon
+            # Convert RGBA to hex for CSS
+            hex_color = f"#{int(rgba.red * 255):02x}{int(rgba.green * 255):02x}{int(rgba.blue * 255):02x}"
+            
+            # Create a simple SVG icon with the color
+            svg_data = f"""<svg width="12" height="12" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="6" cy="6" r="5" fill="{hex_color}" stroke="none"/>
+            </svg>"""
+            
+            # Create a bytes icon from the SVG
+            svg_bytes = svg_data.encode('utf-8')
+            return Gio.BytesIcon.new(GLib.Bytes.new(svg_bytes))
+        except Exception as exc:
+            logger.debug(f"Failed to create colored tab icon: {exc}")
+            # Fallback to themed icon
+            return Gio.ThemedIcon.new("media-record-symbolic")
+
+    def _apply_tab_css_color(self, page, rgba: Gdk.RGBA):
+        """Apply CSS color to the tab view to color indicator icons"""
+        try:
+            # Get the tab view
+            tab_view = None
+            try:
+                if hasattr(self.window, 'tab_view'):
+                    tab_view = self.window.tab_view
+            except Exception:
+                pass
+            
+            if not tab_view:
+                return
+            
+            # Remove any existing CSS provider
+            if hasattr(tab_view, '_sshpilot_tab_css_provider'):
+                tab_view.get_style_context().remove_provider(tab_view._sshpilot_tab_css_provider)
+            
+            # Create new CSS provider with the group color
+            provider = Gtk.CssProvider()
+            color_value = rgba.to_string()
+            
+            # Use a simple CSS rule to color indicator icons
+            css_data = f"tab page indicator-icon {{ color: {color_value}; }}"
+            provider.load_from_data(css_data.encode())
+            tab_view.get_style_context().add_provider(
+                provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+            )
+            tab_view._sshpilot_tab_css_provider = provider
+            
+        except Exception as exc:
+            logger.debug(f"Failed to apply tab CSS color: {exc}")
+
+    def _apply_tab_icon_color(self, page, rgba: Gdk.RGBA):
+        """Apply color to tab icon by setting a colored icon"""
+        try:
+            # Create a colored icon
+            icon = self._create_colored_tab_icon(rgba)
+            if icon is None:
+                self._clear_tab_group_color(page)
+                return
+            
+            # Set the colored icon on the tab page
+            page.set_indicator_icon(icon)
+            page.set_indicator_activatable(True)
+            page.set_indicator_tooltip("Group color indicator")
+            
+            # Store reference to the icon and color for cleanup
+            setattr(page, '_sshpilot_group_indicator_icon', icon)
+            setattr(page, '_sshpilot_group_color', rgba)
+        except Exception as exc:
+            logger.debug("Failed to apply tab icon color: %s", exc)
+            self._clear_tab_group_color(page)
 
     def restyle_open_terminals(self):
         window = self.window
