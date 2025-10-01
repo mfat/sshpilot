@@ -245,8 +245,7 @@ class TerminalWidget(Gtk.Box):
         self.scrolled_window = Gtk.ScrolledWindow()
         self.scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         
-        # Set up the terminal
-        self.vte = Vte.Terminal()
+        # Create backend first before setup
         self._shortcut_controller = None
         self._scroll_controller = None
         self._config_handler = None
@@ -261,6 +260,11 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 self._config_handler = None
 
+        # Create the backend before calling setup_terminal
+        self.backend = self._create_backend()
+        self.vte = getattr(self.backend, 'vte', None)
+        self.terminal_widget = getattr(self.backend, 'widget', None)
+
         # Initialize terminal with basic settings and apply configured theme early
         self.setup_terminal()
         try:
@@ -269,10 +273,8 @@ class TerminalWidget(Gtk.Box):
             pass
 
         # Add terminal to scrolled window and to the box via an overlay with a connecting view
-        terminal_widget = getattr(self.backend, "widget", None)
-        self.terminal_widget = terminal_widget
-        if terminal_widget is not None:
-            self.scrolled_window.set_child(terminal_widget)
+        if self.terminal_widget is not None:
+            self.scrolled_window.set_child(self.terminal_widget)
         self.overlay = Gtk.Overlay()
         self.overlay.set_child(self.scrolled_window)
 
