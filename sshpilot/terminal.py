@@ -1349,7 +1349,7 @@ class TerminalWidget(Gtk.Box):
                 use_group_color = False
 
             if use_group_color and override_rgba is not None:
-                bg_color = self._mix_with_white(override_rgba, 0.35)
+                bg_color = self._clone_rgba(override_rgba)  # Use exact group color
                 fg_color = self._get_contrast_color(bg_color)
                 highlight_bg = self._clone_rgba(override_rgba)
                 highlight_fg = self._get_contrast_color(highlight_bg)
