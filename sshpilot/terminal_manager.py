@@ -253,7 +253,9 @@ class TerminalManager:
             window.active_terminals[local_connection] = terminal_widget
 
             GLib.idle_add(terminal_widget.show)
-            GLib.idle_add(terminal_widget.vte.show)
+            # Show the terminal widget (backend-agnostic)
+            if hasattr(terminal_widget, 'terminal_widget') and terminal_widget.terminal_widget:
+                GLib.idle_add(terminal_widget.terminal_widget.show)
 
             def _focus_local_terminal():
                 try:
