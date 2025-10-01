@@ -2321,6 +2321,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             vadj = self.connection_scrolled.get_vadjustment()
             if vadj:
                 GLib.idle_add(lambda: vadj.set_value(scroll_position))
+
+        if hasattr(self, 'terminal_manager'):
+            try:
+                self.terminal_manager.restyle_open_terminals()
+            except Exception as exc:
+                logger.debug(
+                    "Failed to restyle terminals after rebuilding connection list: %s",
+                    exc,
+                )
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list"""
         for group_info in hierarchy:
@@ -5262,6 +5271,25 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     "Failed to rebuild connection list for color display change: %s",
                     exc,
                 )
+            if hasattr(self, 'terminal_manager'):
+                try:
+                    self.terminal_manager.restyle_open_terminals()
+                except Exception as refresh_error:
+                    logger.debug(
+                        "Failed to restyle terminals after color display change: %s",
+                        refresh_error,
+                    )
+            return
+
+        if key in {'ui.use_group_color_in_tab', 'ui.use_group_color_in_terminal'}:
+            if hasattr(self, 'terminal_manager'):
+                try:
+                    self.terminal_manager.restyle_open_terminals()
+                except Exception as exc:
+                    logger.debug(
+                        "Failed to restyle terminals after preference update: %s",
+                        exc,
+                    )
             return
 
         if key in {'ui.use_group_color_in_tab', 'ui.use_group_color_in_terminal', 'connection_groups'}:

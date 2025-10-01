@@ -1,7 +1,10 @@
 import os
 import asyncio
 import logging
-from typing import Optional
+import math
+
+import cairo
+
 
 from gi.repository import Gio, GLib, Adw, Gdk, GdkPixbuf
 from gettext import gettext as _
@@ -48,6 +51,8 @@ class TerminalManager:
         if use_external and not should_hide_external_terminal_options():
             window._open_connection_in_external_terminal(connection)
             return
+        group_color = self._resolve_group_color(connection)
+
         else:
             terminal = TerminalWidget(
                 connection,
@@ -63,7 +68,8 @@ class TerminalManager:
             page = window.tab_view.append(terminal)
             page.set_title(connection.nickname)
             page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
-            self._apply_tab_color(page, group_color)
+            self._apply_tab_group_color(page, group_color)
+
 
             window.connection_to_terminals.setdefault(connection, []).append(terminal)
             window.terminal_to_connection[terminal] = connection
@@ -137,10 +143,10 @@ class TerminalManager:
 
         GLib.idle_add(_set_terminal_colors)
 
-    def _resolve_connection_group_color(self, connection) -> Optional[str]:
-        window = self.window
-        group_manager = getattr(window, 'group_manager', None)
-        if group_manager is None:
+    def _resolve_group_color(self, connection):
+        manager = getattr(self.window, 'group_manager', None)
+        if not manager:
+
             return None
 
         nickname = getattr(connection, 'nickname', None)
@@ -148,116 +154,146 @@ class TerminalManager:
             return None
 
         try:
-            group_id = group_manager.get_connection_group(nickname)
+            group_id = manager.get_connection_group(nickname)
         except Exception:
-            return None
+            group_id = None
 
-        if not group_id:
-            return None
+        visited = set()
+        while group_id:
+            if group_id in visited:
+                break
+            visited.add(group_id)
 
-        group_info = group_manager.groups.get(group_id)
-        if not isinstance(group_info, dict):
-            return None
+            try:
+                group_info = getattr(manager, 'groups', {}).get(group_id)
+            except Exception:
+                group_info = None
 
-        color_value = group_info.get('color')
-        rgba = self._parse_color(color_value)
-        if rgba is None:
-            return None
+            if not group_info:
+                break
+
+            color = group_info.get('color') if isinstance(group_info, dict) else None
+            if color:
+                return color
+
+            group_id = group_info.get('parent_id') if isinstance(group_info, dict) else None
+
+        return None
+
+    def _create_tab_color_icon(self, rgba: Gdk.RGBA):
         try:
-            return rgba.to_string()
-        except Exception:
-            return color_value
+            size = 12
+            surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
+            ctx = cairo.Context(surface)
+            ctx.set_source_rgba(0, 0, 0, 0)
+            ctx.paint()
 
-    @staticmethod
-    def _parse_color(value: Optional[str]) -> Optional[Gdk.RGBA]:
-        if not value:
-            return None
+            ctx.set_source_rgba(rgba.red, rgba.green, rgba.blue, max(0.75, rgba.alpha))
+            radius = (size - 2) / 2.0
+            ctx.arc(size / 2.0, size / 2.0, radius, 0, math.tau if hasattr(math, 'tau') else 2 * math.pi)
+            ctx.fill()
 
-        rgba = Gdk.RGBA()
-        try:
-            parsed = rgba.parse(str(value))
-        except Exception:
-            logger.debug("Failed to parse group color '%s'", value, exc_info=True)
-            return None
-
-        if not parsed:
-            return None
-        if rgba.alpha <= 0:
-            return None
-        return rgba
-
-    def _create_tab_color_icon(self, rgba: Gdk.RGBA) -> Optional[Gio.Icon]:
-        try:
-            width = height = 12
-            pixbuf = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, width, height)
-            red = max(0, min(255, int(round(rgba.red * 255))))
-            green = max(0, min(255, int(round(rgba.green * 255))))
-            blue = max(0, min(255, int(round(rgba.blue * 255))))
-            alpha = max(160, min(255, int(round(rgba.alpha * 255))))
-            pixel_value = (red << 24) | (green << 16) | (blue << 8) | alpha
-            pixbuf.fill(pixel_value)
-            success, buffer = pixbuf.save_to_bufferv('png', [], [])
-            if not success:
+            pixbuf = Gdk.pixbuf_get_from_surface(surface, 0, 0, size, size)
+            if pixbuf is None:
                 return None
-            return Gio.BytesIcon.new(GLib.Bytes.new(buffer))
-        except Exception:
-            logger.debug("Failed to create tab indicator icon", exc_info=True)
+
+            data, _ = pixbuf.save_to_bufferv('png', [], [])
+            if not data:
+                return None
+
+            return Gio.BytesIcon.new(GLib.Bytes.new(data))
+        except Exception as exc:
+            logger.debug("Failed to create tab color icon: %s", exc)
             return None
 
-    def _apply_tab_color(self, page: Adw.TabPage, color_value: Optional[str]):
+    def _apply_tab_group_color(self, page, color_value):
+        use_pref = False
         try:
-            use_tab_color = bool(
+            use_pref = bool(
                 self.window.config.get_setting('ui.use_group_color_in_tab', False)
             )
         except Exception:
-            use_tab_color = False
+            use_pref = False
 
-        rgba = self._parse_color(color_value) if use_tab_color else None
+        if not use_pref or not color_value:
+            self._clear_tab_group_color(page)
+            return
 
-        if rgba is None:
-            try:
-                page.set_indicator_icon(None)
-                page.set_indicator_tooltip(None)
-            except Exception:
-                logger.debug("Failed to clear tab indicator", exc_info=True)
+        rgba = Gdk.RGBA()
+        try:
+            if not rgba.parse(str(color_value)):
+                self._clear_tab_group_color(page)
+                return
+        except Exception:
+            self._clear_tab_group_color(page)
+
             return
 
         icon = self._create_tab_color_icon(rgba)
         if icon is None:
-            try:
-                page.set_indicator_icon(None)
-                page.set_indicator_tooltip(None)
-            except Exception:
-                logger.debug("Failed to reset tab indicator after icon creation failure", exc_info=True)
+            self._clear_tab_group_color(page)
             return
 
-        try:
-            page.set_indicator_icon(icon)
-            page.set_indicator_tooltip(rgba.to_string())
-            page.set_indicator_activatable(False)
-        except Exception:
-            logger.debug("Failed to apply tab indicator icon", exc_info=True)
+        if hasattr(page, 'set_indicator_icon'):
+            try:
+                page.set_indicator_icon(icon)
+                if hasattr(page, 'set_indicator_tooltip'):
+                    page.set_indicator_tooltip(_('Group color'))
+                setattr(page, '_sshpilot_group_indicator_icon', icon)
+            except Exception as exc:
+                logger.debug("Failed to set tab indicator icon: %s", exc)
+        elif hasattr(page, 'set_icon') and hasattr(page, 'get_icon'):
+            try:
+                if not hasattr(page, '_sshpilot_original_icon'):
+                    setattr(page, '_sshpilot_original_icon', page.get_icon())
+                page.set_icon(icon)
+                setattr(page, '_sshpilot_group_indicator_icon', icon)
+            except Exception as exc:
+                logger.debug("Failed to set tab icon for group color: %s", exc)
+
+    def _clear_tab_group_color(self, page):
+        if hasattr(page, 'set_indicator_icon'):
+            try:
+                page.set_indicator_icon(None)
+                if hasattr(page, 'set_indicator_tooltip'):
+                    page.set_indicator_tooltip(None)
+            except Exception:
+                pass
+        elif hasattr(page, 'set_icon') and hasattr(page, '_sshpilot_original_icon'):
+            try:
+                original = getattr(page, '_sshpilot_original_icon')
+                if original is not None:
+                    page.set_icon(original)
+            except Exception:
+                pass
+
+        setattr(page, '_sshpilot_group_indicator_icon', None)
 
     def restyle_open_terminals(self):
         window = self.window
-        tab_view = getattr(window, 'tab_view', None)
-        if tab_view is None:
-            return
-
-        try:
-            pages = list(tab_view.get_pages())
-        except Exception:
-            pages = []
-
-        for page in pages:
-            child = page.get_child()
-            if not isinstance(child, TerminalWidget):
+        n_pages = window.tab_view.get_n_pages() if hasattr(window.tab_view, 'get_n_pages') else 0
+        for index in range(n_pages):
+            try:
+                page = window.tab_view.get_nth_page(index)
+            except Exception:
+                continue
+            if not page:
                 continue
 
-            connection = window.terminal_to_connection.get(child)
-            color_value = self._resolve_connection_group_color(connection) if connection else None
-            child.set_group_color(color_value)
-            self._apply_tab_color(page, color_value)
+            terminal = page.get_child() if hasattr(page, 'get_child') else None
+            if terminal is None:
+                continue
+
+            connection = window.terminal_to_connection.get(terminal)
+            color_value = self._resolve_group_color(connection) if connection else None
+
+            if hasattr(terminal, 'set_group_color'):
+                try:
+                    terminal.set_group_color(color_value, force=True)
+                except Exception as exc:
+                    logger.debug("Failed to update terminal group color: %s", exc)
+
+            self._apply_tab_group_color(page, color_value)
 
 
     def _on_disconnect_confirmed(self, dialog, response_id, connection):
