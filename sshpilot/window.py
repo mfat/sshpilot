@@ -505,16 +505,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               min-height: 8px;
             }
 
-            /* Medium (default Libadwaita) */
+            /* Normal (default Libadwaita) */
             button.circular {
-              min-width: 32px;
-              min-height: 32px;
+              min-width: 12px;
+              min-height: 12px;
             }
 
             /* Large circle */
             button.circular.large {
-              min-width: 40px;
-              min-height: 40px;
+              min-width: 16px;
+              min-height: 16px;
             }
 
             """

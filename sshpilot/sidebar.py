@@ -258,7 +258,7 @@ class GroupRow(Adw.ActionRow):
         # Color badge for badge mode - use empty circular button
         self.color_badge = Gtk.Button()
         self.color_badge.add_css_class("circular")
-        self.color_badge.add_css_class("small")
+        self.color_badge.add_css_class("normal")
         self.color_badge.set_valign(Gtk.Align.CENTER)
         self.color_badge.set_margin_start(8)
         self.color_badge.set_visible(False)
@@ -407,13 +407,13 @@ class GroupRow(Adw.ActionRow):
         
         # Apply CSS color to the button with more specific selector
         css_data = f"""
-        button.circular.small.color-badge {{
+        button.circular.normal.color-badge {{
           background-color: {color_hex};
           color: white;
           border: none;
           box-shadow: none;
         }}
-        button.circular.small.color-badge:hover {{
+        button.circular.normal.color-badge:hover {{
           background-color: {hover_hex};
         }}
         """
@@ -544,15 +544,7 @@ class ConnectionRow(Adw.ActionRow):
         self.indicator_box.set_visible(False)
         self.add_suffix(self.indicator_box)
 
-        # Color badge for badge mode - use empty circular button
-        self.color_badge = Gtk.Button()
-        self.color_badge.add_css_class("circular")
-        self.color_badge.add_css_class("small")
-        self.color_badge.set_valign(Gtk.Align.CENTER)
-        self.color_badge.set_margin_start(8)
-        self.color_badge.set_visible(False)
-        
-        self.add_suffix(self.color_badge)
+        # Color badge removed - only show in GroupRow
 
         # Add status icon as suffix (far right)
         self.status_icon = Gtk.Image.new_from_icon_name("network-offline-symbolic")
@@ -692,16 +684,10 @@ class ConnectionRow(Adw.ActionRow):
         connection_name = getattr(self.connection, 'nickname', 'Unknown')
         logger.debug(f"ConnectionRow {connection_name}: mode={mode}, rgba={rgba}")
 
+        # Color badge removed - only show in GroupRow
         if mode == 'badge':
+            # No color badge in ConnectionRow
             _set_css_background(self._background_provider, None)
-            if rgba:
-                # Update the existing color badge with new color
-                self._update_color_badge(rgba)
-                self.color_badge.set_visible(True)
-                logger.debug(f"ConnectionRow {connection_name}: Showing tag icon with color {rgba.to_string()}")
-            else:
-                self.color_badge.set_visible(False)
-                logger.debug(f"ConnectionRow {connection_name}: Hiding badge (no color)")
         else:
             # Apply fill color using CSS provider
             if rgba:
@@ -712,50 +698,7 @@ class ConnectionRow(Adw.ActionRow):
                 _set_css_background(self._background_provider, None)
                 logger.debug(f"ConnectionRow {connection_name}: No rgba color to apply")
             
-            # Hide badge in fill mode
-            self.color_badge.set_visible(False)
-
-    def _update_color_badge(self, rgba: Gdk.RGBA):
-        """Update the color badge with a new color."""
-        # Convert RGBA to hex color
-        r = int(rgba.red * 255)
-        g = int(rgba.green * 255)
-        b = int(rgba.blue * 255)
-        color_hex = f"#{r:02x}{g:02x}{b:02x}"
-        
-        # Calculate a darker color for hover state
-        r_hover = max(0, r - 20)
-        g_hover = max(0, g - 20)
-        b_hover = max(0, b - 20)
-        hover_hex = f"#{r_hover:02x}{g_hover:02x}{b_hover:02x}"
-        
-        # Apply CSS color to the button with more specific selector
-        css_data = f"""
-        button.circular.small.color-badge {{
-          background-color: {color_hex};
-          color: white;
-          border: none;
-          box-shadow: none;
-        }}
-        button.circular.small.color-badge:hover {{
-          background-color: {hover_hex};
-        }}
-        """
-        
-        # Remove any existing CSS provider
-        if hasattr(self, '_color_badge_provider'):
-            self.color_badge.get_style_context().remove_provider(self._color_badge_provider)
-        
-        # Create new CSS provider for the color badge
-        self._color_badge_provider = Gtk.CssProvider()
-        self._color_badge_provider.load_from_data(css_data.encode('utf-8'))
-        self.color_badge.get_style_context().add_provider(
-            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
-        
-        # Add the color-badge CSS class
-        self.color_badge.add_css_class("color-badge")
-        self.color_badge.set_visible(True)
+            # Color badge removed - only show in GroupRow
 
     # -- drag source ------------------------------------------------------
 
@@ -844,7 +787,7 @@ class ConnectionRow(Adw.ActionRow):
             btn = Gtk.Button(label=letter)
             btn.add_css_class("flat")
             btn.set_can_focus(False)
-            btn.set_size_request(24, 24)  # Small button
+            btn.set_size_request(12, 12)  # Small button
             btn.set_tooltip_text({
                 "L": "Local port forwarding",
                 "R": "Remote port forwarding", 
