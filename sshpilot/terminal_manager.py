@@ -51,9 +51,9 @@ class TerminalManager:
         if use_external and not should_hide_external_terminal_options():
             window._open_connection_in_external_terminal(connection)
             return
-        group_color = self._resolve_group_color(connection)
-
         else:
+            group_color = self._resolve_group_color(connection)
+
             terminal = TerminalWidget(
                 connection,
                 window.config,
