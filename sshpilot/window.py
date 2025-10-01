@@ -359,12 +359,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               opacity: 1;
             }
             
-            /* Smooth transitions for connection rows during drag */
-            .navigation-sidebar {
+            /* Smooth transitions and comfortable spacing for sidebar rows */
+            row.sshpilot-sidebar {
+              padding: 6px 12px;
+              min-height: 36px;
               transition: transform 0.1s ease-out, opacity 0.1s ease-out;
             }
-            
-            .navigation-sidebar.dragging {
+
+            row.sshpilot-sidebar.dragging {
               opacity: 0.7;
               transform: scale(0.98);
             }
@@ -1285,7 +1287,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_scrolled.set_vexpand(True)
         
         self.connection_list = Gtk.ListBox()
-        self.connection_list.add_css_class("navigation-sidebar")
+        self.connection_list.add_css_class("sshpilot-sidebar")
         self.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
         try:
             self.connection_list.set_can_focus(True)
