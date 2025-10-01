@@ -33,6 +33,8 @@ _DEFAULT_ROW_MARGIN_START = 12
 _MIN_VALID_MARGIN = 2
 
 
+
+
 def _resolve_base_margin_start(widget: Optional[Gtk.Widget]) -> int:
     """Return a sane starting margin for sidebar rows."""
 
@@ -262,15 +264,12 @@ class GroupRow(Adw.ActionRow):
         self.expand_button.connect("clicked", self._on_expand_clicked)
         self.add_suffix(self.expand_button)
 
-        # Color badge for badge mode
-        self.color_badge = Gtk.Box()
-        self.color_badge.set_size_request(12, 12)
-        self.color_badge.add_css_class("sidebar-color-badge")
+        # Color badge for badge mode - use custom drawing for reliable coloring
+        self.color_badge = Gtk.DrawingArea()
+        self.color_badge.set_content_width(16)
+        self.color_badge.set_content_height(16)
+        self.color_badge.set_margin_start(8)
         self.color_badge.set_visible(False)
-        self._badge_provider = Gtk.CssProvider()
-        self.color_badge.get_style_context().add_provider(
-            self._badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
         self.add_suffix(self.color_badge)
 
         # Create CSS provider for background colors
@@ -370,11 +369,11 @@ class GroupRow(Adw.ActionRow):
         if mode == 'badge':
             _set_css_background(self._background_provider, None)
             if rgba:
-                _set_css_background(self._badge_provider, rgba)
+                # Update the existing color badge with new color
+                self._update_color_badge(rgba)
                 self.color_badge.set_visible(True)
-                logger.debug(f"GroupRow {group_name}: Showing badge with color {rgba.to_string()}")
+                logger.debug(f"GroupRow {group_name}: Showing tag icon with color {rgba.to_string()}")
             else:
-                _set_css_background(self._badge_provider, None)
                 self.color_badge.set_visible(False)
                 logger.debug(f"GroupRow {group_name}: Hiding badge (no color)")
         else:
@@ -387,10 +386,21 @@ class GroupRow(Adw.ActionRow):
                 _set_css_background(self._background_provider, None)
                 logger.debug(f"GroupRow {group_name}: No rgba color to apply")
             
-            _set_css_background(self._badge_provider, None)
+            # Hide badge in fill mode
             self.color_badge.set_visible(False)
         
+    def _update_color_badge(self, rgba: Gdk.RGBA):
+        """Update the color badge with a new color."""
+        def draw(area, cr, w, h, data=None):
+            radius = min(w, h) / 2.0
+            cx, cy = w / 2.0, h / 2.0
 
+            # Fill circle
+            cr.arc(cx, cy, radius, 0, 2*3.1415926535)
+            cr.set_source_rgba(rgba.red, rgba.green, rgba.blue, rgba.alpha)
+            cr.fill()
+
+        self.color_badge.set_draw_func(draw, None)
 
     def _on_expand_clicked(self, button):
         self._toggle_expand()
@@ -508,15 +518,12 @@ class ConnectionRow(Adw.ActionRow):
         self.indicator_box.set_visible(False)
         self.add_suffix(self.indicator_box)
 
-        # Color badge for badge mode
-        self.color_badge = Gtk.Box()
-        self.color_badge.set_size_request(12, 12)
-        self.color_badge.add_css_class("sidebar-color-badge")
+        # Color badge for badge mode - use custom drawing for reliable coloring
+        self.color_badge = Gtk.DrawingArea()
+        self.color_badge.set_content_width(16)
+        self.color_badge.set_content_height(16)
+        self.color_badge.set_margin_start(8)
         self.color_badge.set_visible(False)
-        self._badge_provider = Gtk.CssProvider()
-        self.color_badge.get_style_context().add_provider(
-            self._badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
         self.add_suffix(self.color_badge)
 
         # Create CSS provider for background colors
@@ -654,11 +661,11 @@ class ConnectionRow(Adw.ActionRow):
         if mode == 'badge':
             _set_css_background(self._background_provider, None)
             if rgba:
-                _set_css_background(self._badge_provider, rgba)
+                # Update the existing color badge with new color
+                self._update_color_badge(rgba)
                 self.color_badge.set_visible(True)
-                logger.debug(f"ConnectionRow {connection_name}: Showing badge with color {rgba.to_string()}")
+                logger.debug(f"ConnectionRow {connection_name}: Showing tag icon with color {rgba.to_string()}")
             else:
-                _set_css_background(self._badge_provider, None)
                 self.color_badge.set_visible(False)
                 logger.debug(f"ConnectionRow {connection_name}: Hiding badge (no color)")
         else:
@@ -671,8 +678,21 @@ class ConnectionRow(Adw.ActionRow):
                 _set_css_background(self._background_provider, None)
                 logger.debug(f"ConnectionRow {connection_name}: No rgba color to apply")
             
-            _set_css_background(self._badge_provider, None)
+            # Hide badge in fill mode
             self.color_badge.set_visible(False)
+
+    def _update_color_badge(self, rgba: Gdk.RGBA):
+        """Update the color badge with a new color."""
+        def draw(area, cr, w, h, data=None):
+            radius = min(w, h) / 2.0
+            cx, cy = w / 2.0, h / 2.0
+
+            # Fill circle
+            cr.arc(cx, cy, radius, 0, 2*3.1415926535)
+            cr.set_source_rgba(rgba.red, rgba.green, rgba.blue, rgba.alpha)
+            cr.fill()
+
+        self.color_badge.set_draw_func(draw, None)
 
     # -- drag source ------------------------------------------------------
 
