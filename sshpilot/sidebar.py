@@ -159,7 +159,12 @@ def _set_css_background(provider: Gtk.CssProvider, rgba: Optional[Gdk.RGBA]):
             color_value = 'transparent'
 
     try:
-        css_data = f"* {{ background-color: {color_value}; }}"
+        css_data = "\n".join(
+            [
+                f"*:not(:selected):not(:checked) {{ background-color: {color_value}; }}",
+                "*:selected, *:checked { background-color: transparent; }",
+            ]
+        )
         provider.load_from_data(css_data.encode('utf-8'))
         logger.debug(f"Applied CSS background: {css_data}")
     except Exception:
