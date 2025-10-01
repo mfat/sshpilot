@@ -46,6 +46,25 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _sftp_path_exists(sftp: paramiko.SFTPClient, path: str) -> bool:
+    """Return ``True`` if *path* exists on the remote SFTP server."""
+
+    try:
+        sftp.stat(path)
+    except FileNotFoundError:
+        return False
+    except IOError as exc:
+        error_code = getattr(exc, "errno", None)
+        if error_code is None and exc.args:
+            first_arg = exc.args[0]
+            if isinstance(first_arg, int):
+                error_code = first_arg
+        if error_code in {errno.ENOENT, errno.EINVAL}:
+            return False
+        raise
+    return True
+
+
 def _get_docs_json_path():
     """Get the path to the granted folders config file."""
     from .platform_utils import get_config_dir
@@ -359,14 +378,16 @@ class TransferCancelledException(Exception):
 
 class SFTPProgressDialog(Adw.MessageDialog):
     """Modern GNOME HIG-compliant SFTP file transfer progress dialog"""
-    
+
+    _LABEL_WIDTH_CHARS = 48
+
     def __init__(self, parent=None, operation_type="transfer"):
         # Set appropriate title based on operation
         title = "Downloading Files" if operation_type == "download" else "Uploading Files"
-        
+
         super().__init__(
             title=title,
-            body="Preparing transfer...",
+            body="Transferring files…",
             default_response="cancel"
         )
         
@@ -407,12 +428,23 @@ class SFTPProgressDialog(Adw.MessageDialog):
             margin_bottom=12
         )
         
+        def _configure_progress_label(label: Gtk.Label) -> None:
+            label.set_ellipsize(Pango.EllipsizeMode.END)
+            label.set_justify(Gtk.Justification.CENTER)
+            label.set_width_chars(self._LABEL_WIDTH_CHARS)
+            label.set_max_width_chars(self._LABEL_WIDTH_CHARS)
+
         # Current file label (primary info)
         self.file_label = Gtk.Label()
-        self.file_label.set_text("Preparing transfer...")
-        self.file_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.file_label.set_justify(Gtk.Justification.CENTER)
+        self.file_label.set_text("—")
+        _configure_progress_label(self.file_label)
         progress_box.append(self.file_label)
+
+        # Status label for detailed progress messages
+        self.status_label = Gtk.Label()
+        self.status_label.set_text("Preparing transfer…")
+        _configure_progress_label(self.status_label)
+        progress_box.append(self.status_label)
         
         # Main progress bar
         self.progress_bar = Gtk.ProgressBar()
@@ -491,9 +523,9 @@ class SFTPProgressDialog(Adw.MessageDialog):
         self.progress_bar.set_fraction(fraction)
         self.progress_bar.set_text(f"{percentage}%")
         
-        # Update dialog body with status message
+        # Update status label with status message
         if message:
-            self.set_body(message)
+            self.status_label.set_text(message)
         
         # Update current file
         if current_file:
@@ -587,13 +619,13 @@ class SFTPProgressDialog(Adw.MessageDialog):
         """Update UI to show completion state"""
         if success:
             self.set_title("Transfer Complete")
-            self.set_body("Transfer completed successfully")
+            self.status_label.set_text("Transfer completed successfully")
             self.file_label.set_text(f"Successfully transferred {self.files_completed} files")
             self.progress_bar.set_fraction(1.0)
             self.progress_bar.set_text("100%")
         else:
             self.set_title("Transfer Failed")
-            self.set_body("Transfer failed")
+            self.status_label.set_text("Transfer failed")
             if error_message:
                 self.file_label.set_text(f"Error: {error_message}")
             else:
@@ -1559,6 +1591,15 @@ class AsyncSFTPManager(GObject.GObject):
             lambda: self._sftp.mkdir(path),
             # Don't call listdir from callback - let the UI handle refresh
         )
+
+    def path_exists(self, path: str) -> Future:
+        """Return a future that resolves to whether *path* exists remotely."""
+
+        def _impl() -> bool:
+            assert self._sftp is not None
+            return _sftp_path_exists(self._sftp, path)
+
+        return self._submit(_impl)
 
     def remove(self, path: str) -> Future:
         def _impl() -> None:
@@ -4548,74 +4589,114 @@ class FileManagerWindow(Adw.Window):
         print(f"=== CHECKING FILE CONFLICTS ===")
         print(f"Operation type: {operation_type}")
         print(f"Files to transfer: {files_to_transfer}")
-        
-        conflicts = []
-        
-        # Check for conflicts
-        for source, dest in files_to_transfer:
-            print(f"Checking: {source} -> {dest}")
-            if operation_type == "download":
-                # For downloads, check if local file exists
+
+        def _finalize_conflicts(conflicts: List[Tuple[str, str]]) -> None:
+            print(f"Total conflicts found: {len(conflicts)}")
+
+            if not conflicts:
+                # No conflicts, proceed with all transfers
+                print("No conflicts, proceeding with transfers")
+                callback(files_to_transfer)
+                return
+
+            # Show conflict resolution dialog
+            conflict_count = len(conflicts)
+            total_count = len(files_to_transfer)
+
+            if conflict_count == 1:
+                filename = os.path.basename(conflicts[0][1])
+                title = "File Already Exists"
+                message = f"'{filename}' already exists in the destination folder."
+            else:
+                title = "Files Already Exist"
+                message = f"{conflict_count} of {total_count} files already exist in the destination folder."
+
+            dialog = Adw.AlertDialog.new(title, message)
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response("skip", "Skip Existing")
+            dialog.add_response("replace", "Replace All")
+            dialog.set_default_response("skip")
+            dialog.set_close_response("cancel")
+
+            def _on_conflict_response(_dialog, response: str) -> None:
+                dialog.close()
+
+                if response == "cancel":
+                    return
+                elif response == "skip":
+                    # Only transfer files that don't conflict
+                    non_conflicting = [item for item in files_to_transfer if item not in conflicts]
+                    if non_conflicting:
+                        callback(non_conflicting)
+                        # Show toast about skipped files
+                        if conflict_count == 1:
+                            filename = os.path.basename(conflicts[0][1])
+                            self._left_pane.show_toast(f"Skipped existing file: {filename}")
+                        else:
+                            self._left_pane.show_toast(f"Skipped {conflict_count} existing files")
+                elif response == "replace":
+                    # Transfer all files, replacing existing ones
+                    callback(files_to_transfer)
+
+            dialog.connect("response", _on_conflict_response)
+            dialog.present()
+
+        def _idle_finalize(conflicts: List[Tuple[str, str]]) -> bool:
+            _finalize_conflicts(conflicts)
+            return False
+
+        if operation_type == "download":
+            conflicts: List[Tuple[str, str]] = []
+            for source, dest in files_to_transfer:
+                print(f"Checking: {source} -> {dest}")
                 exists = os.path.exists(dest)
                 print(f"  Local file exists: {exists}")
                 if exists:
                     conflicts.append((source, dest))
                     print(f"  CONFLICT DETECTED: {dest}")
-            else:  # upload
-                # For uploads, we'd need to check remote files - this is more complex
-                # For now, let the upload proceed (remote conflict handling would require SFTP stat calls)
-                print(f"  Upload conflict checking not implemented yet")
-                pass
-        
-        print(f"Total conflicts found: {len(conflicts)}")
-        
-        if not conflicts:
-            # No conflicts, proceed with all transfers
-            print("No conflicts, proceeding with transfers")
-            callback(files_to_transfer)
+
+            _finalize_conflicts(conflicts)
             return
-            
-        # Show conflict resolution dialog
-        conflict_count = len(conflicts)
-        total_count = len(files_to_transfer)
-        
-        if conflict_count == 1:
-            filename = os.path.basename(conflicts[0][1])
-            title = "File Already Exists"
-            message = f"'{filename}' already exists in the destination folder."
-        else:
-            title = "Files Already Exist"
-            message = f"{conflict_count} of {total_count} files already exist in the destination folder."
-            
-        dialog = Adw.AlertDialog.new(title, message)
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("skip", "Skip Existing")
-        dialog.add_response("replace", "Replace All")
-        dialog.set_default_response("skip")
-        dialog.set_close_response("cancel")
-        
-        def _on_conflict_response(_dialog, response: str) -> None:
-            dialog.close()
-            
-            if response == "cancel":
+
+        if operation_type == "upload":
+            if not files_to_transfer:
+                _finalize_conflicts([])
                 return
-            elif response == "skip":
-                # Only transfer files that don't conflict
-                non_conflicting = [item for item in files_to_transfer if item not in conflicts]
-                if non_conflicting:
-                    callback(non_conflicting)
-                    # Show toast about skipped files
-                    if conflict_count == 1:
-                        filename = os.path.basename(conflicts[0][1])
-                        self._left_pane.show_toast(f"Skipped existing file: {filename}")
-                    else:
-                        self._left_pane.show_toast(f"Skipped {conflict_count} existing files")
-            elif response == "replace":
-                # Transfer all files, replacing existing ones
-                callback(files_to_transfer)
-                
-        dialog.connect("response", _on_conflict_response)
-        dialog.present()
+
+            if self._manager is None:
+                logger.warning("Upload conflict check requested without an active SFTP manager")
+                _finalize_conflicts([])
+                return
+
+            pending = {"remaining": len(files_to_transfer)}
+            conflicts: List[Tuple[str, str]] = []
+
+            for source, dest in files_to_transfer:
+                print(f"Checking: {source} -> {dest}")
+
+                def _on_result(fut: Future, pair: Tuple[str, str] = (source, dest)) -> None:
+                    try:
+                        exists = fut.result()
+                    except Exception as exc:
+                        logger.warning("Failed to check remote path %s: %s", pair[1], exc)
+                        exists = False
+
+                    print(f"  Remote file exists: {exists}")
+                    if exists:
+                        conflicts.append(pair)
+                        print(f"  CONFLICT DETECTED: {pair[1]}")
+
+                    pending["remaining"] -= 1
+                    if pending["remaining"] == 0:
+                        GLib.idle_add(_idle_finalize, list(conflicts))
+
+                future = self._manager.path_exists(dest)
+                future.add_done_callback(_on_result)
+
+            return
+
+        # Unknown operation type, default to proceeding
+        _finalize_conflicts([])
 
     def _on_request_operation(self, pane: FilePane, action: str, payload, user_data=None) -> None:
         if action in {"copy", "cut"} and isinstance(payload, dict):
@@ -5456,20 +5537,7 @@ class FileManagerWindow(Adw.Window):
 
     @staticmethod
     def _remote_path_exists(sftp: paramiko.SFTPClient, path: str) -> bool:
-        try:
-            sftp.stat(path)
-        except FileNotFoundError:
-            return False
-        except IOError as exc:
-            error_code = getattr(exc, "errno", None)
-            if error_code is None and exc.args:
-                first_arg = exc.args[0]
-                if isinstance(first_arg, int):
-                    error_code = first_arg
-            if error_code in {errno.ENOENT, errno.EINVAL}:
-                return False
-            raise
-        return True
+        return _sftp_path_exists(sftp, path)
 
     @staticmethod
     def _is_remote_descendant(source_path: str, destination_path: str) -> bool:
