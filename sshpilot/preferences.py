@@ -375,6 +375,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             
             font_button = Gtk.Button()
             font_button.set_label("Choose")
+            font_button.set_valign(Gtk.Align.CENTER)
             font_button.connect('clicked', self.on_font_button_clicked)
             self.font_row.add_suffix(font_button)
             
@@ -622,6 +623,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.app_color_button = Gtk.ColorButton()
             self.app_color_button.set_use_alpha(False)
             self.app_color_button.set_tooltip_text("Choose app color")
+            self.app_color_button.set_valign(Gtk.Align.CENTER)
+            self.app_color_button.set_size_request(60, 32)
             self.app_color_button.connect('color-set', self.on_app_color_changed)
             self.app_color_row.add_suffix(self.app_color_button)
             color_override_group.add(self.app_color_row)
@@ -634,6 +637,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.accent_color_button = Gtk.ColorButton()
             self.accent_color_button.set_use_alpha(False)
             self.accent_color_button.set_tooltip_text("Choose accent color")
+            self.accent_color_button.set_valign(Gtk.Align.CENTER)
+            self.accent_color_button.set_size_request(60, 32)
             self.accent_color_button.connect('color-set', self.on_accent_color_changed)
             self.accent_color_row.add_suffix(self.accent_color_button)
             color_override_group.add(self.accent_color_row)
@@ -646,6 +651,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.sidebar_color_button = Gtk.ColorButton()
             self.sidebar_color_button.set_use_alpha(False)
             self.sidebar_color_button.set_tooltip_text("Choose sidebar color")
+            self.sidebar_color_button.set_valign(Gtk.Align.CENTER)
+            self.sidebar_color_button.set_size_request(60, 32)
             self.sidebar_color_button.connect('color-set', self.on_sidebar_color_changed)
             self.sidebar_color_row.add_suffix(self.sidebar_color_button)
             color_override_group.add(self.sidebar_color_row)
@@ -658,6 +665,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             reset_button = Gtk.Button()
             reset_button.set_label("Reset")
             reset_button.add_css_class("destructive-action")
+            reset_button.set_valign(Gtk.Align.CENTER)
             reset_button.connect('clicked', self.on_reset_colors_clicked)
             reset_colors_row.add_suffix(reset_button)
             color_override_group.add(reset_colors_row)
@@ -989,6 +997,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             
             reset_btn = Gtk.Button.new_with_label("Reset")
             reset_btn.add_css_class('destructive-action')
+            reset_btn.set_valign(Gtk.Align.CENTER)
             reset_btn.connect('clicked', self.on_reset_advanced_ssh)
             reset_row.add_suffix(reset_btn)
             
