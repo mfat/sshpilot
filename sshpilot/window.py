@@ -5335,6 +5335,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 return True  # Prevent close, let dialog handle it
         
         # No active connections or all local terminals are idle, safe to close
+        self._cleanup_internal_file_manager_windows()
         return False  # Allow close
 
     def show_quit_confirmation_dialog(self):
@@ -5594,6 +5595,33 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 window.connect('close-request', _cleanup)
         except Exception:  # pragma: no cover - defensive
             logger.debug('Unable to attach close handler to internal file manager window')
+
+    def _cleanup_internal_file_manager_windows(self) -> None:
+        """Close any tracked embedded file manager windows/controllers."""
+
+        if not self._internal_file_manager_windows:
+            return
+
+        tracked_windows = list(self._internal_file_manager_windows)
+
+        for window in tracked_windows:
+            manager = getattr(window, "_manager", None)
+            if manager is not None:
+                close_fn = getattr(manager, "close", None)
+                if callable(close_fn):
+                    try:
+                        close_fn()
+                    except Exception:
+                        pass
+
+            destroy_fn = getattr(window, "destroy", None)
+            if callable(destroy_fn):
+                try:
+                    destroy_fn()
+                except Exception:
+                    pass
+
+        self._internal_file_manager_windows.clear()
 
     def _create_file_manager_placeholder_tab(self, nickname, host_value):
         """Create and show a placeholder tab while the embedded manager loads."""
@@ -6741,7 +6769,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Actually quit the application - FINAL STEP"""
         try:
             logger.info("Quitting application")
-            
+
+            self._cleanup_internal_file_manager_windows()
+
             # Save window geometry
             self._save_window_state()
             
