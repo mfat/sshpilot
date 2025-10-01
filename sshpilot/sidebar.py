@@ -930,15 +930,19 @@ def _update_connection_autoscroll(window, y):
     margin = max(1.0, min(getattr(window, "_connection_autoscroll_margin", 48.0), height / 2))
     max_velocity = max(1.0, getattr(window, "_connection_autoscroll_max_velocity", 28.0))
 
+    vadjustment = scrolled.get_vadjustment()
+    adjustment_value = vadjustment.get_value() if vadjustment else 0.0
+    viewport_y = max(0.0, min(height, y - adjustment_value))
+
     top_threshold = margin
     bottom_threshold = height - margin
 
     velocity = 0.0
-    if y < top_threshold:
-        distance = top_threshold - y
+    if viewport_y < top_threshold:
+        distance = top_threshold - viewport_y
         velocity = -_calculate_autoscroll_velocity(distance, margin, max_velocity)
-    elif y > bottom_threshold:
-        distance = y - bottom_threshold
+    elif viewport_y > bottom_threshold:
+        distance = viewport_y - bottom_threshold
         velocity = _calculate_autoscroll_velocity(distance, margin, max_velocity)
 
     if velocity:

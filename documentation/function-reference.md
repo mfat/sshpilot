@@ -528,7 +528,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`__init__(host, username, port=22, password=None, dispatcher=None, connection=None, connection_manager=None, ssh_config=None)`** — Handles init.
 
-- **`_connect_impl()`** — Connects impl.
+- **`_connect_impl()`** — Connects impl and configures optional SSH keepalive handling when advanced preferences enable it.
 
 - **`_create_proxy_jump_socket(jump_entries, config_override, policy, known_hosts_path, allow_agent, look_for_keys, key_filename, passphrase, resolved_host, resolved_port, base_username)`** — Create a socket by chaining SSH connections through jump hosts.
 
@@ -540,7 +540,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_submit(func, on_success=None, on_error=None)`** — Handles submit.
 
-- **`close()`** — Handles close.
+- **`close()`** — Handles close and shuts down the SFTP keepalive worker.
 
 - **`connect_to_server()`** — Connects to server.
 
@@ -1672,6 +1672,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_on_termprops_changed(terminal, ids, user_data=None)`** — Handle terminal properties changes for job detection (local terminals only)
 
+- **`_on_vte_focus_changed(widget, _param)`** — Track focus changes on the embedded VTE widget.
+
 - **`_set_connecting_overlay_visible(visible)`** — Sets connecting overlay visible.
 
 - **`_set_disconnected_banner_visible(visible, message=None)`** — Sets disconnected banner visible.
@@ -1686,11 +1688,13 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_show_forwarding_error_dialog(message)`** — Shows forwarding error dialog.
 
-- **`_teardown_context_menu()`** — Remove any previously installed context menu resources.
+- **`_register_focus_hooks()`** — Register focus tracking hooks so the application can suspend accelerators.
 
 - **`_terminate_process_tree(pid)`** — Terminate a process and all its children
 
-- **`apply_theme(theme_name=None)`** — Delegate theme application to the backend.
+- **`_teardown_focus_hooks()`** — Remove focus tracking hooks and release any suspended accelerators.
+
+- **`apply_theme(theme_name=None)`** — Apply terminal theme and font settings
 
 - **`copy_text()`** — Copy selected text to clipboard
 
@@ -1744,10 +1748,13 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`switch_backend(backend_name)`** — Handles switch backend.
 
+
 - **`zoom_in()`** — Zoom in the terminal font
 
 - **`zoom_out()`** — Zoom out the terminal font
 
+
+Application accelerators now remain available even while the terminal widget is focused unless the `terminal.pass_through_mode` preference is enabled, matching GNOME Terminal's pass-through behavior.
 
 
 ## Module: `sshpilot.terminal_backends`

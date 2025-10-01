@@ -1,5 +1,6 @@
 import importlib
 import sys
+import threading
 import types
 from typing import Optional
 
@@ -27,11 +28,15 @@ class DummyChannel:
 class DummyTransport:
     def __init__(self) -> None:
         self.open_channel_calls = []
+        self.keepalive_values = []
 
     def open_channel(self, kind: str, dest_addr: tuple, src_addr: tuple) -> DummyChannel:
         channel = DummyChannel(kind, dest_addr, src_addr)
         self.open_channel_calls.append((kind, dest_addr, src_addr, channel))
         return channel
+
+    def set_keepalive(self, value: int) -> None:
+        self.keepalive_values.append(value)
 
 
 class DummyClient:
@@ -46,6 +51,8 @@ class DummyClient:
         self.closed = False
         self.last_sftp = None
         self.transport = DummyTransport()
+        self.stat_event = threading.Event()
+        self.sftp_stat_calls = []
 
         DummyClient.instances.append(self)
 
@@ -63,7 +70,19 @@ class DummyClient:
 
     def open_sftp(self):
         self.open_sftp_called = True
-        sftp = types.SimpleNamespace(close=lambda: setattr(self, "_sftp_closed", True))
+        def _close() -> None:
+            self._sftp_closed = True
+
+        def _stat(path: str):
+            self.sftp_stat_calls.append(path)
+            self.stat_event.set()
+            return types.SimpleNamespace()
+
+        sftp = types.SimpleNamespace(
+            close=_close,
+            stat=_stat,
+            stat_calls=self.sftp_stat_calls,
+        )
         self.last_sftp = sftp
         self._sftp_closed = False
         return sftp
@@ -363,4 +382,76 @@ def test_async_sftp_manager_uses_effective_host_settings(monkeypatch):
     assert kwargs["hostname"] == "prod.internal"
     assert kwargs["username"] == "bob"
     assert kwargs["port"] == 2201
+
+
+def test_async_sftp_manager_configures_keepalive(monkeypatch):
+    module = _load_file_manager_module(monkeypatch)
+
+    class DummyEvent:
+        def __init__(self) -> None:
+            self.wait_calls = []
+            self._set = False
+            self._first_wait = True
+
+        def wait(self, timeout=None):
+            self.wait_calls.append(timeout)
+            if self._set:
+                return True
+            if self._first_wait:
+                self._first_wait = False
+                return False
+            return self._set
+
+        def set(self) -> None:
+            self._set = True
+
+        def is_set(self) -> bool:
+            return self._set
+
+    real_event_cls = threading.Event
+    monkeypatch.setattr(module.threading, "Event", DummyEvent)
+
+    connection = types.SimpleNamespace(
+        hostname="example.com",
+        host="example.com",
+        username="alice",
+        auth_method=0,
+        key_select_mode=0,
+    )
+
+    manager = module.AsyncSFTPManager(
+        "example.com",
+        "alice",
+        port=22,
+        connection=connection,
+        connection_manager=None,
+        ssh_config={
+            "auto_add_host_keys": True,
+            "apply_advanced": True,
+            "keepalive_interval": 5,
+            "keepalive_count_max": 2,
+        },
+    )
+
+    manager._connect_impl()
+
+    assert DummyClient.instances, "Expected AsyncSFTPManager to create a client"
+    client = DummyClient.instances[-1]
+    assert client.transport.keepalive_values == [5]
+
+    client.stat_event = real_event_cls()
+
+    assert client.stat_event.wait(1.0)
+
+    keepalive_event = manager._keepalive_stop_event
+    assert isinstance(keepalive_event, DummyEvent)
+    assert keepalive_event.wait_calls
+    assert keepalive_event.wait_calls[0] == 5
+
+    manager.close()
+
+    assert keepalive_event.is_set()
+    assert manager._keepalive_thread is None or not manager._keepalive_thread.is_alive()
+    assert manager._keepalive_stop_event is None
+    assert client._sftp_closed
 

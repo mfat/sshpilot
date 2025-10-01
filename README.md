@@ -80,6 +80,8 @@ OR in a terminal typ:
 flatpak install flathub io.github.mfat.sshpilot
 `
 
+Please see the relevant [wiki entry](https://github.com/mfat/sshpilot/wiki/Flatpak) for more information on the Flatpak. 
+
 - ### Arch linux
 Arch linux package via AUR: https://aur.archlinux.org/packages/sshpilot
 
