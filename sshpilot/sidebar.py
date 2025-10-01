@@ -251,6 +251,60 @@ class GroupRow(Adw.ActionRow):
         self.set_selectable(True)
         self.set_can_focus(True)
 
+        # Prepare overlay to host drag/drop indicators
+        self._drop_overlay = Gtk.Overlay()
+        self._drop_overlay.set_hexpand(True)
+        self._drop_overlay.set_vexpand(True)
+        self._drop_overlay.set_halign(Gtk.Align.FILL)
+        self._drop_overlay.set_valign(Gtk.Align.FILL)
+
+        content_box = self.get_child()
+        self._content_box = content_box
+        self._color_background = content_box
+        if content_box is not None:
+            try:
+                self._base_margin_start = content_box.get_margin_start()
+            except Exception:
+                self._base_margin_start = 0
+            self.set_child(self._drop_overlay)
+            self._drop_overlay.set_child(content_box)
+        else:
+            self.set_child(self._drop_overlay)
+
+        # Drag indicator widgets (top/bottom lines)
+        self.drop_indicator_top = DragIndicator()
+        self.drop_indicator_top.set_hexpand(True)
+        self.drop_indicator_top.set_halign(Gtk.Align.FILL)
+        self.drop_indicator_top.set_valign(Gtk.Align.START)
+        self._drop_overlay.add_overlay(self.drop_indicator_top)
+        self._drop_overlay.set_overlay_pass_through(self.drop_indicator_top, True)
+
+        self.drop_indicator_bottom = DragIndicator()
+        self.drop_indicator_bottom.set_hexpand(True)
+        self.drop_indicator_bottom.set_halign(Gtk.Align.FILL)
+        self.drop_indicator_bottom.set_valign(Gtk.Align.END)
+        self._drop_overlay.add_overlay(self.drop_indicator_bottom)
+        self._drop_overlay.set_overlay_pass_through(self.drop_indicator_bottom, True)
+
+        # Drop target highlight indicator
+        self.drop_target_indicator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.drop_target_indicator.add_css_class("drop-target-indicator")
+        self.drop_target_indicator.set_visible(False)
+        self.drop_target_indicator.set_hexpand(True)
+        self.drop_target_indicator.set_vexpand(True)
+        self.drop_target_indicator.set_halign(Gtk.Align.CENTER)
+        self.drop_target_indicator.set_valign(Gtk.Align.CENTER)
+
+        indicator_label = Gtk.Label(label=_("Add to group"))
+        indicator_label.set_halign(Gtk.Align.CENTER)
+        indicator_label.set_valign(Gtk.Align.CENTER)
+        self.drop_target_indicator.append(indicator_label)
+
+        self._drop_overlay.add_overlay(self.drop_target_indicator)
+        self._drop_overlay.set_overlay_pass_through(self.drop_target_indicator, True)
+
+        self.hide_drop_indicators()
+
         self._update_display()
         self._setup_drag_source()
         self._setup_double_click_gesture()
@@ -417,6 +471,13 @@ class ConnectionRow(Adw.ActionRow):
         self.status_icon.set_pixel_size(16)
         self.add_suffix(self.status_icon)
 
+        # Box to show forwarding indicators
+        self.indicator_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        self.indicator_box.add_css_class("pf-indicator")
+        self.indicator_box.set_valign(Gtk.Align.CENTER)
+        self.indicator_box.set_visible(False)
+        self.add_suffix(self.indicator_box)
+
         # Color badge for badge mode
         self.color_badge = Gtk.Box()
         self.color_badge.set_size_request(12, 12)
@@ -433,6 +494,58 @@ class ConnectionRow(Adw.ActionRow):
         self.get_style_context().add_provider(
             self._background_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
+
+        # Prepare overlay to host drag/drop indicators
+        self._drop_overlay = Gtk.Overlay()
+        self._drop_overlay.set_hexpand(True)
+        self._drop_overlay.set_vexpand(True)
+        self._drop_overlay.set_halign(Gtk.Align.FILL)
+        self._drop_overlay.set_valign(Gtk.Align.FILL)
+
+        content_box = self.get_child()
+        self._content_box = content_box
+        self._color_background = content_box
+        if content_box is not None:
+            try:
+                self._base_margin_start = content_box.get_margin_start()
+            except Exception:
+                self._base_margin_start = 12
+            self.set_child(self._drop_overlay)
+            self._drop_overlay.set_child(content_box)
+        else:
+            self.set_child(self._drop_overlay)
+
+        self.drop_indicator_top = DragIndicator()
+        self.drop_indicator_top.set_hexpand(True)
+        self.drop_indicator_top.set_halign(Gtk.Align.FILL)
+        self.drop_indicator_top.set_valign(Gtk.Align.START)
+        self._drop_overlay.add_overlay(self.drop_indicator_top)
+        self._drop_overlay.set_overlay_pass_through(self.drop_indicator_top, True)
+
+        self.drop_indicator_bottom = DragIndicator()
+        self.drop_indicator_bottom.set_hexpand(True)
+        self.drop_indicator_bottom.set_halign(Gtk.Align.FILL)
+        self.drop_indicator_bottom.set_valign(Gtk.Align.END)
+        self._drop_overlay.add_overlay(self.drop_indicator_bottom)
+        self._drop_overlay.set_overlay_pass_through(self.drop_indicator_bottom, True)
+
+        self.drop_target_indicator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.drop_target_indicator.add_css_class("drop-target-indicator")
+        self.drop_target_indicator.set_visible(False)
+        self.drop_target_indicator.set_hexpand(True)
+        self.drop_target_indicator.set_vexpand(True)
+        self.drop_target_indicator.set_halign(Gtk.Align.CENTER)
+        self.drop_target_indicator.set_valign(Gtk.Align.CENTER)
+
+        connection_label = Gtk.Label(label=_("Move here"))
+        connection_label.set_halign(Gtk.Align.CENTER)
+        connection_label.set_valign(Gtk.Align.CENTER)
+        self.drop_target_indicator.append(connection_label)
+
+        self._drop_overlay.add_overlay(self.drop_target_indicator)
+        self._drop_overlay.set_overlay_pass_through(self.drop_target_indicator, True)
+
+        self.hide_drop_indicators()
 
         # Apply group color styling
         self._apply_group_color_style()
@@ -604,11 +717,14 @@ class ConnectionRow(Adw.ActionRow):
 
     def _update_forwarding_indicators(self):
         self._install_pf_css()
-        try:
-            while self.indicator_box.get_first_child():
-                self.indicator_box.remove(self.indicator_box.get_first_child())
-        except Exception:
+        if not hasattr(self, "indicator_box") or self.indicator_box is None:
             return
+
+        child = self.indicator_box.get_first_child()
+        while child is not None:
+            next_child = child.get_next_sibling()
+            self.indicator_box.remove(child)
+            child = next_child
 
         rules = getattr(self.connection, "forwarding_rules", []) or []
         has_local = any(r.get("enabled", True) and r.get("type") == "local" for r in rules)
@@ -635,6 +751,8 @@ class ConnectionRow(Adw.ActionRow):
             self.indicator_box.append(make_badge("R", "pf-remote"))
         if has_dynamic:
             self.indicator_box.append(make_badge("D", "pf-dynamic"))
+
+        self.indicator_box.set_visible(has_local or has_remote or has_dynamic)
 
     def _apply_host_label_text(self, include_port: bool | None = None):
         try:
