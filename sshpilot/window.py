@@ -467,6 +467,56 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               color: @window_fg_color;
             }
 
+            /* Port forwarding indicator color overrides */
+            button.circular.accent {
+              background-color: #3584e4; /* Custom blue for local forwarding */
+              color: white;
+            }
+            
+            button.circular.success {
+              background-color: #2ec27e; /* Custom green for remote forwarding */
+              color: white;
+            }
+            
+            button.circular.warning {
+              background-color: #e66100; /* Custom orange for dynamic forwarding */
+              color: white;
+            }
+            
+            /* Hover states for port forwarding buttons */
+            button.circular.accent:hover {
+              background-color: #1c71d8;
+            }
+            
+            button.circular.success:hover {
+              background-color: #26a269;
+            }
+            
+            button.circular.warning:hover {
+              background-color: #d04a00;
+            }
+
+            /* Color tag button overrides */
+            /* Color tag button overrides - handled by individual CSS providers */
+
+            /* Circular button size classes */
+            button.circular.small {
+              min-width: 8px;
+              min-height: 8px;
+            }
+
+            /* Medium (default Libadwaita) */
+            button.circular {
+              min-width: 32px;
+              min-height: 32px;
+            }
+
+            /* Large circle */
+            button.circular.large {
+              min-width: 40px;
+              min-height: 40px;
+            }
+
             """
             provider.load_from_data(css.encode('utf-8'))
             Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)

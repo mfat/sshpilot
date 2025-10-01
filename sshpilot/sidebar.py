@@ -255,12 +255,14 @@ class GroupRow(Adw.ActionRow):
         icon.set_margin_end(8)
         self.add_prefix(icon)
 
-        # Color badge for badge mode - use custom drawn circle
-        self.color_badge = Gtk.DrawingArea()
-        self.color_badge.set_content_width(16)
-        self.color_badge.set_content_height(16)
+        # Color badge for badge mode - use empty circular button
+        self.color_badge = Gtk.Button()
+        self.color_badge.add_css_class("circular")
+        self.color_badge.add_css_class("small")
+        self.color_badge.set_valign(Gtk.Align.CENTER)
         self.color_badge.set_margin_start(8)
         self.color_badge.set_visible(False)
+        
         self.add_suffix(self.color_badge)
 
         # Add expand button as suffix (far right)
@@ -391,29 +393,44 @@ class GroupRow(Adw.ActionRow):
         
     def _update_color_badge(self, rgba: Gdk.RGBA):
         """Update the color badge with a new color."""
-        # Draw a custom circle with the group color
-        def draw_circle(area, cr, width, height, data=None):
-            # Clear the area
-            cr.set_source_rgba(0, 0, 0, 0)
-            cr.paint()
-            
-            # Draw a circle with the group color
-            radius = min(width, height) / 2.0 - 1
-            center_x = width / 2.0
-            center_y = height / 2.0
-            
-            # Fill the circle
-            cr.arc(center_x, center_y, radius, 0, 2 * 3.1415926535)
-            cr.set_source_rgba(rgba.red, rgba.green, rgba.blue, rgba.alpha)
-            cr.fill()
-            
-            # Add a subtle border for contrast
-            cr.arc(center_x, center_y, radius, 0, 2 * 3.1415926535)
-            cr.set_source_rgba(0, 0, 0, 0.2)
-            cr.set_line_width(0.5)
-            cr.stroke()
+        # Convert RGBA to hex color
+        r = int(rgba.red * 255)
+        g = int(rgba.green * 255)
+        b = int(rgba.blue * 255)
+        color_hex = f"#{r:02x}{g:02x}{b:02x}"
         
-        self.color_badge.set_draw_func(draw_circle, None)
+        # Calculate a darker color for hover state
+        r_hover = max(0, r - 20)
+        g_hover = max(0, g - 20)
+        b_hover = max(0, b - 20)
+        hover_hex = f"#{r_hover:02x}{g_hover:02x}{b_hover:02x}"
+        
+        # Apply CSS color to the button with more specific selector
+        css_data = f"""
+        button.circular.small.color-badge {{
+          background-color: {color_hex};
+          color: white;
+          border: none;
+          box-shadow: none;
+        }}
+        button.circular.small.color-badge:hover {{
+          background-color: {hover_hex};
+        }}
+        """
+        
+        # Remove any existing CSS provider
+        if hasattr(self, '_color_badge_provider'):
+            self.color_badge.get_style_context().remove_provider(self._color_badge_provider)
+        
+        # Create new CSS provider for the color badge
+        self._color_badge_provider = Gtk.CssProvider()
+        self._color_badge_provider.load_from_data(css_data.encode('utf-8'))
+        self.color_badge.get_style_context().add_provider(
+            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        
+        # Add the color-badge CSS class
+        self.color_badge.add_css_class("color-badge")
         self.color_badge.set_visible(True)
 
     def _on_expand_clicked(self, button):
@@ -527,12 +544,14 @@ class ConnectionRow(Adw.ActionRow):
         self.indicator_box.set_visible(False)
         self.add_suffix(self.indicator_box)
 
-        # Color badge for badge mode - use custom drawn circle
-        self.color_badge = Gtk.DrawingArea()
-        self.color_badge.set_content_width(16)
-        self.color_badge.set_content_height(16)
+        # Color badge for badge mode - use empty circular button
+        self.color_badge = Gtk.Button()
+        self.color_badge.add_css_class("circular")
+        self.color_badge.add_css_class("small")
+        self.color_badge.set_valign(Gtk.Align.CENTER)
         self.color_badge.set_margin_start(8)
         self.color_badge.set_visible(False)
+        
         self.add_suffix(self.color_badge)
 
         # Add status icon as suffix (far right)
@@ -698,29 +717,44 @@ class ConnectionRow(Adw.ActionRow):
 
     def _update_color_badge(self, rgba: Gdk.RGBA):
         """Update the color badge with a new color."""
-        # Draw a custom circle with the group color
-        def draw_circle(area, cr, width, height, data=None):
-            # Clear the area
-            cr.set_source_rgba(0, 0, 0, 0)
-            cr.paint()
-            
-            # Draw a circle with the group color
-            radius = min(width, height) / 2.0 - 1
-            center_x = width / 2.0
-            center_y = height / 2.0
-            
-            # Fill the circle
-            cr.arc(center_x, center_y, radius, 0, 2 * 3.1415926535)
-            cr.set_source_rgba(rgba.red, rgba.green, rgba.blue, rgba.alpha)
-            cr.fill()
-            
-            # Add a subtle border for contrast
-            cr.arc(center_x, center_y, radius, 0, 2 * 3.1415926535)
-            cr.set_source_rgba(0, 0, 0, 0.2)
-            cr.set_line_width(0.5)
-            cr.stroke()
+        # Convert RGBA to hex color
+        r = int(rgba.red * 255)
+        g = int(rgba.green * 255)
+        b = int(rgba.blue * 255)
+        color_hex = f"#{r:02x}{g:02x}{b:02x}"
         
-        self.color_badge.set_draw_func(draw_circle, None)
+        # Calculate a darker color for hover state
+        r_hover = max(0, r - 20)
+        g_hover = max(0, g - 20)
+        b_hover = max(0, b - 20)
+        hover_hex = f"#{r_hover:02x}{g_hover:02x}{b_hover:02x}"
+        
+        # Apply CSS color to the button with more specific selector
+        css_data = f"""
+        button.circular.small.color-badge {{
+          background-color: {color_hex};
+          color: white;
+          border: none;
+          box-shadow: none;
+        }}
+        button.circular.small.color-badge:hover {{
+          background-color: {hover_hex};
+        }}
+        """
+        
+        # Remove any existing CSS provider
+        if hasattr(self, '_color_badge_provider'):
+            self.color_badge.get_style_context().remove_provider(self._color_badge_provider)
+        
+        # Create new CSS provider for the color badge
+        self._color_badge_provider = Gtk.CssProvider()
+        self._color_badge_provider.load_from_data(css_data.encode('utf-8'))
+        self.color_badge.get_style_context().add_provider(
+            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        
+        # Add the color-badge CSS class
+        self.color_badge.add_css_class("color-badge")
         self.color_badge.set_visible(True)
 
     # -- drag source ------------------------------------------------------
@@ -806,18 +840,26 @@ class ConnectionRow(Adw.ActionRow):
         has_dynamic = any(r.get("enabled", True) and r.get("type") == "dynamic" for r in rules)
 
         def make_badge(letter: str, cls: str):
-            circled_map = {"L": "\u24C1", "R": "\u24C7", "D": "\u24B9"}
-            glyph = circled_map.get(letter, letter)
-            lbl = Gtk.Label(label=glyph)
-            lbl.add_css_class(cls)
-            lbl.set_halign(Gtk.Align.CENTER)
-            lbl.set_valign(Gtk.Align.CENTER)
-            try:
-                lbl.set_xalign(0.5)
-                lbl.set_yalign(0.5)
-            except Exception:
-                pass
-            return lbl
+            # Create a button with the letter
+            btn = Gtk.Button(label=letter)
+            btn.add_css_class("flat")
+            btn.set_can_focus(False)
+            btn.set_size_request(24, 24)  # Small button
+            btn.set_tooltip_text({
+                "L": "Local port forwarding",
+                "R": "Remote port forwarding", 
+                "D": "Dynamic port forwarding"
+            }.get(letter, f"{letter} forwarding"))
+            
+            # Apply Adwaita color classes based on forwarding type
+            if cls == "pf-local":
+                btn.add_css_class("accent")  # Use accent color for local forwarding
+            elif cls == "pf-remote":
+                btn.add_css_class("success")  # Use success color for remote forwarding
+            elif cls == "pf-dynamic":
+                btn.add_css_class("warning")  # Use warning color for dynamic forwarding
+                
+            return btn
 
         if has_local:
             self.indicator_box.append(make_badge("L", "pf-local"))
