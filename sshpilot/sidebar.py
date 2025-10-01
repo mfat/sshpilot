@@ -151,12 +151,23 @@ def _get_color_class(rgba: Optional[Gdk.RGBA]) -> Optional[str]:
 
 
 def _set_css_background(provider: Gtk.CssProvider, rgba: Optional[Gdk.RGBA]):
-    color_value = 'transparent'
-    if rgba is not None:
+    if rgba is None:
         try:
-            color_value = rgba.to_string()
+            provider.load_from_data(b"")
+            logger.debug("Cleared CSS background provider")
         except Exception:
-            color_value = 'transparent'
+            logger.debug("Failed to clear CSS background", exc_info=True)
+        return
+
+    try:
+        color_value = rgba.to_string()
+    except Exception:
+        try:
+            provider.load_from_data(b"")
+            logger.debug("Cleared CSS background provider after RGBA conversion failure")
+        except Exception:
+            logger.debug("Failed to clear CSS background after RGBA conversion failure", exc_info=True)
+        return
 
     try:
         css_data = f"* {{ background-color: {color_value}; }}"
