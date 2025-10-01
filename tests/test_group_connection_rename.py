@@ -59,3 +59,44 @@ def test_rename_connection_cleans_stale_root_entries():
     assert gm2.root_connections == []
     assert gm2.groups[gid]['connections'] == ["new"]
 
+
+def test_group_color_defaults_and_updates():
+    cfg = DummyConfig()
+    gm = GroupManager(cfg)
+
+    gid = gm.create_group("Colorful", color="#ff0000ff")
+    assert gm.groups[gid]['color'] == "#ff0000ff"
+
+    gm.set_group_color(gid, None)
+    assert gm.groups[gid]['color'] is None
+
+    gm.set_group_color(gid, "#123456ff")
+    hierarchy = gm.get_group_hierarchy()
+    assert hierarchy[0]['color'] == "#123456ff"
+
+    all_groups = gm.get_all_groups()
+    assert any(group['color'] == "#123456ff" for group in all_groups)
+
+
+def test_load_groups_backfills_missing_color():
+    legacy_group_id = "legacy"
+    cfg = DummyConfig()
+    cfg.set_setting('connection_groups', {
+        'groups': {
+            legacy_group_id: {
+                'id': legacy_group_id,
+                'name': 'Legacy',
+                'parent_id': None,
+                'children': [],
+                'connections': [],
+                'expanded': True,
+                'order': 0,
+            }
+        },
+        'connections': {},
+        'root_connections': [],
+    })
+
+    gm = GroupManager(cfg)
+    assert gm.groups[legacy_group_id]['color'] is None
+
