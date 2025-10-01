@@ -192,7 +192,7 @@ def _set_css_background(provider: Gtk.CssProvider, rgba: Optional[Gdk.RGBA]):
         return
 
     try:
-        css_data = f"* {{ background-color: {color_value}; }}"
+        css_data = f"*:not(:selected) {{ background-color: {color_value}; border-radius: 8px; }}"
         provider.load_from_data(css_data.encode('utf-8'))
         logger.debug(f"Applied CSS background: {css_data}")
     except Exception:
@@ -276,7 +276,7 @@ class GroupRow(Adw.ActionRow):
         # Create CSS provider for background colors
         self._background_provider = Gtk.CssProvider()
         self.get_style_context().add_provider(
-            self._background_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            self._background_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
         )
 
         # Apply group color styling
@@ -522,8 +522,13 @@ class ConnectionRow(Adw.ActionRow):
         # Create CSS provider for background colors
         self._background_provider = Gtk.CssProvider()
         self.get_style_context().add_provider(
-            self._background_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            self._background_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
         )
+
+        # Apply group color styling
+        self._apply_group_color_style()
+        self.set_selectable(True)
+        self.set_can_focus(True)
 
         # Prepare overlay to host drag/drop indicators
         self._drop_overlay = Gtk.Overlay()
@@ -571,11 +576,6 @@ class ConnectionRow(Adw.ActionRow):
         self._drop_overlay.add_overlay(self.drop_target_indicator)
 
         self.hide_drop_indicators()
-
-        # Apply group color styling
-        self._apply_group_color_style()
-        self.set_selectable(True)
-        self.set_can_focus(True)
 
         self._apply_host_label_text()
         self.update_status()

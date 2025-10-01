@@ -359,22 +359,50 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               opacity: 1;
             }
             
-            /* Smooth transitions and comfortable spacing for sidebar rows */
-            row.sshpilot-sidebar {
+            /* Smooth transitions for connection rows during drag */
+            .sshpilot-sidebar {
               padding: 6px 12px;
-              min-height: 36px;
               transition: transform 0.1s ease-out, opacity 0.1s ease-out;
             }
-
-            row.sshpilot-sidebar .prefixes {
-              margin-right: 10px;
+            
+            /* Add vertical spacing between rows */
+            .sshpilot-sidebar row {
+              margin: 2px 0;
             }
-
-            row.sshpilot-sidebar .suffixes {
-              margin-left: 10px;
+            
+            /* Ensure selection highlighting works with group colors */
+            .sshpilot-sidebar row:selected {
+              background-color: @theme_selected_bg_color !important;
+              color: @theme_selected_fg_color !important;
+              border: 1px solid @theme_selected_bg_color !important;
             }
-
-            row.sshpilot-sidebar.dragging {
+            
+            .sshpilot-sidebar row:selected:focus {
+              background-color: @theme_selected_bg_color !important;
+              color: @theme_selected_fg_color !important;
+              border: 1px solid @theme_selected_bg_color !important;
+            }
+            
+            .sshpilot-sidebar row:selected:focus-within {
+              background-color: @theme_selected_bg_color !important;
+              color: @theme_selected_fg_color !important;
+              border: 1px solid @theme_selected_bg_color !important;
+            }
+            
+            /* Additional selectors for mouse selection */
+            .sshpilot-sidebar list row:selected {
+              background-color: @theme_selected_bg_color !important;
+              color: @theme_selected_fg_color !important;
+              border: 1px solid @theme_selected_bg_color !important;
+            }
+            
+            .sshpilot-sidebar list row:selected:focus {
+              background-color: @theme_selected_bg_color !important;
+              color: @theme_selected_fg_color !important;
+              border: 1px solid @theme_selected_bg_color !important;
+            }
+            
+            .sshpilot-sidebar.dragging {
               opacity: 0.7;
               transform: scale(0.98);
             }
