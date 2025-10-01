@@ -315,6 +315,8 @@ class GroupRow(Adw.ActionRow):
     def _setup_drag_source(self):
         drag_source = Gtk.DragSource()
         drag_source.set_actions(Gdk.DragAction.MOVE)
+        drag_source.set_exclusive(False)
+        drag_source.set_button(getattr(Gdk, "BUTTON_PRIMARY", 1))
         drag_source.connect("prepare", self._on_drag_prepare)
         drag_source.connect("drag-begin", self._on_drag_begin)
         drag_source.connect("drag-end", self._on_drag_end)
@@ -539,6 +541,8 @@ class ConnectionRow(Adw.ActionRow):
     def _setup_drag_source(self):
         drag_source = Gtk.DragSource()
         drag_source.set_actions(Gdk.DragAction.MOVE)
+        drag_source.set_exclusive(False)
+        drag_source.set_button(getattr(Gdk, "BUTTON_PRIMARY", 1))
         drag_source.connect("prepare", self._on_drag_prepare)
         drag_source.connect("drag-begin", self._on_drag_begin)
         drag_source.connect("drag-end", self._on_drag_end)
