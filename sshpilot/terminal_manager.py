@@ -5,7 +5,8 @@ import math
 
 import cairo
 
-from gi.repository import Gio, GLib, Adw, Gdk
+
+from gi.repository import Gio, GLib, Adw, Gdk, GdkPixbuf
 from gettext import gettext as _
 
 from .terminal import TerminalWidget
@@ -23,6 +24,7 @@ class TerminalManager:
     # Connecting/disconnecting hosts
     def connect_to_host(self, connection, force_new: bool = False):
         window = self.window
+        group_color = self._resolve_connection_group_color(connection)
         if not force_new:
             if connection in window.active_terminals:
                 terminal = window.active_terminals[connection]
@@ -67,6 +69,7 @@ class TerminalManager:
             page.set_title(connection.nickname)
             page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
             self._apply_tab_group_color(page, group_color)
+
 
             window.connection_to_terminals.setdefault(connection, []).append(terminal)
             window.terminal_to_connection[terminal] = connection
@@ -143,6 +146,7 @@ class TerminalManager:
     def _resolve_group_color(self, connection):
         manager = getattr(self.window, 'group_manager', None)
         if not manager:
+
             return None
 
         nickname = getattr(connection, 'nickname', None)
@@ -222,6 +226,7 @@ class TerminalManager:
                 return
         except Exception:
             self._clear_tab_group_color(page)
+
             return
 
         icon = self._create_tab_color_icon(rgba)
@@ -289,6 +294,7 @@ class TerminalManager:
                     logger.debug("Failed to update terminal group color: %s", exc)
 
             self._apply_tab_group_color(page, color_value)
+
 
     def _on_disconnect_confirmed(self, dialog, response_id, connection):
         dialog.destroy()

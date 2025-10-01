@@ -5292,6 +5292,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     )
             return
 
+        if key in {'ui.use_group_color_in_tab', 'ui.use_group_color_in_terminal', 'connection_groups'}:
+            manager = getattr(self, 'terminal_manager', None)
+            if manager is not None:
+                try:
+                    manager.restyle_open_terminals()
+                except Exception as exc:
+                    logger.debug("Failed to restyle terminals after preference change: %s", exc)
+            return
+
     def on_window_size_changed(self, window, param):
         """Handle window size change"""
         width = self.get_default_size()[0]

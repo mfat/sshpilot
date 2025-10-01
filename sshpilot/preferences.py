@@ -344,6 +344,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
         self._group_display_sync = False
         self._tab_color_sync = False
         self._terminal_color_sync = False
+
         self._config_signal_id = None
 
         if hasattr(self.config, 'connect'):
@@ -696,6 +697,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 'notify::active', self.on_use_group_color_in_terminal_toggled
             )
             interface_appearance_group.add(self.terminal_group_color_row)
+
 
             # Color overrides section
             color_override_group = Adw.PreferencesGroup()
@@ -1332,6 +1334,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
         if not getattr(self, '_config_signal_id', None):
             self._trigger_terminal_style_refresh()
 
+
     def _trigger_sidebar_refresh(self):
         parent = self.get_transient_for() or self.parent_window
         if not parent:
@@ -1381,6 +1384,34 @@ class PreferencesWindow(Adw.PreferencesWindow):
         finally:
             self._group_display_sync = False
 
+    def _sync_group_tab_color_switch(self, value):
+        if not hasattr(self, 'group_color_tab_switch') or self.group_color_tab_switch is None:
+            return
+
+        desired_state = bool(value)
+        if self.group_color_tab_switch.get_active() == desired_state:
+            return
+
+        self._group_tab_color_sync = True
+        try:
+            self.group_color_tab_switch.set_active(desired_state)
+        finally:
+            self._group_tab_color_sync = False
+
+    def _sync_group_terminal_color_switch(self, value):
+        if not hasattr(self, 'group_color_terminal_switch') or self.group_color_terminal_switch is None:
+            return
+
+        desired_state = bool(value)
+        if self.group_color_terminal_switch.get_active() == desired_state:
+            return
+
+        self._group_terminal_color_sync = True
+        try:
+            self.group_color_terminal_switch.set_active(desired_state)
+        finally:
+            self._group_terminal_color_sync = False
+
     def _on_config_setting_changed(self, _config, key, value):
         if key == 'ui.group_color_display':
             self._sync_group_color_display_row(value)
@@ -1419,6 +1450,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.terminal_group_color_row.set_active(target_state)
         finally:
             self._terminal_color_sync = False
+
 
     def _on_destroy(self, *_args):
         if getattr(self, '_config_signal_id', None) and hasattr(self.config, 'disconnect'):
