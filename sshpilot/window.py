@@ -715,7 +715,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Mouse click controller
         click_ctl = Gtk.GestureClick()
         click_ctl.connect("pressed", self._stop_pulse_on_interaction)
+        click_ctl.connect("pressed", self.on_connection_click)
         self.connection_list.add_controller(click_ctl)
+        logger.debug("GestureClick controller added to connection_list")
         
         # Key controller
         key_ctl = Gtk.EventControllerKey()
@@ -732,10 +734,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Stop pulse effect on any key press
         self._stop_pulse_on_interaction(controller)
         
-        # Handle Enter key specifically
+        # Handle Enter key for both group and connection rows
         if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
             selected_row = self.connection_list.get_selected_row()
-            if selected_row and hasattr(selected_row, 'connection'):
+            if selected_row and hasattr(selected_row, 'group_id'):
+                logger.debug(f"_on_connection_list_key_pressed: Enter key pressed on group row {selected_row.group_id}")
+                selected_row._toggle_expand()
+                return True  # Claim the event
+            elif selected_row and hasattr(selected_row, 'connection'):
                 connection = selected_row.connection
                 self._focus_most_recent_tab_or_open_new(connection)
                 return True  # Consume the event to prevent row-activated
@@ -1336,6 +1342,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Connect signals
         self.connection_list.connect('row-selected', self.on_connection_selected)  # For button sensitivity
         self.connection_list.connect('row-activated', self.on_connection_activated)  # For Enter key/double-click
+        logger.debug("Connected row-selected and row-activated signals to connection_list")
         
         # Make sure the connection list is focusable and can receive key events
         self.connection_list.set_focusable(True)
@@ -3407,7 +3414,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Get the row that was clicked
         row, _, _ = self._resolve_connection_list_event(x, y)
         if row is None:
+            logger.debug(f"on_connection_click: No row found at ({x}, {y})")
             return
+
+        row_type = "connection" if hasattr(row, 'connection') else "group" if hasattr(row, 'group_id') else "unknown"
+        logger.debug(f"on_connection_click: n_press={n_press}, row_type={row_type}, row={row}")
 
         if n_press == 1:  # Single click - just select
             try:
@@ -3423,24 +3434,36 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             if state & multi_mask:
                 # Allow default multi-selection behavior
+                logger.debug("on_connection_click: Multi-selection modifier detected, allowing default behavior")
                 return
 
+            logger.debug(f"on_connection_click: Single click - selecting row {row_type}")
             self._select_only_row(row)
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-        elif n_press == 2:  # Double click - connect
+        elif n_press == 2:  # Double click - handle it directly
+            logger.debug(f"on_connection_click: Double click detected on {row_type} row - handling directly")
             if hasattr(row, 'connection'):
+                logger.debug(f"on_connection_click: Connecting to {row.connection.nickname}")
                 self._cycle_connection_tabs_or_open(row.connection)
-            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            elif hasattr(row, 'group_id'):
+                logger.debug(f"on_connection_click: Toggling group {row.group_id}")
+                row._toggle_expand()
+            # Don't claim the event to avoid interfering with selection
 
     def on_connection_activated(self, list_box, row):
-        """Handle connection activation (Enter key)"""
-        logger.debug(f"Connection activated - row: {row}, has connection: {hasattr(row, 'connection') if row else False}")
+        """Handle connection activation (Enter key or double-click)"""
+        row_type = "connection" if hasattr(row, 'connection') else "group" if hasattr(row, 'group_id') else "unknown"
+        logger.debug(f"on_connection_activated: row_type={row_type}, row={row}")
+        
         if row and hasattr(row, 'connection'):
+            logger.debug(f"on_connection_activated: Connecting to {row.connection.nickname}")
             self._cycle_connection_tabs_or_open(row.connection)
         elif row and hasattr(row, 'group_id'):
             # Handle group row activation - toggle expand/collapse
-            logger.debug(f"Group row activated - toggling expand/collapse for group: {row.group_id}")
+            logger.debug(f"on_connection_activated: Group row activated - toggling expand/collapse for group: {row.group_id}")
             row._toggle_expand()
+        else:
+            logger.debug(f"on_connection_activated: Unknown row type or no row provided")
             
 
         
