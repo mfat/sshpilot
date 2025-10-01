@@ -341,7 +341,19 @@ class PreferencesWindow(Adw.PreferencesWindow):
         self.config = config
         self._shortcuts_row = None
         self._shortcuts_button = None
-        
+        self._group_display_sync = False
+        self._config_signal_id = None
+
+        if hasattr(self.config, 'connect'):
+            try:
+                self._config_signal_id = self.config.connect(
+                    'setting-changed', self._on_config_setting_changed
+                )
+            except Exception:
+                self._config_signal_id = None
+
+        self.connect('destroy', self._on_destroy)
+
         # Set window properties
         self.set_title("Preferences")
         self.set_default_size(600, 500)
@@ -605,11 +617,48 @@ class PreferencesWindow(Adw.PreferencesWindow):
             saved_theme = self.config.get_setting('app-theme', 'default')
             theme_mapping = {'default': 0, 'light': 1, 'dark': 2}
             self.theme_row.set_selected(theme_mapping.get(saved_theme, 0))
-            
+
             self.theme_row.connect('notify::selected', self.on_theme_changed)
-            
+
             interface_appearance_group.add(self.theme_row)
-            
+
+            # Sidebar group color display mode
+            self._group_color_display_values = ['fill', 'badge']
+            self.group_color_display_row = Adw.ComboRow()
+            self.group_color_display_row.set_title("Sidebar Group Colors")
+            self.group_color_display_row.set_subtitle(
+                "Choose how group colors are shown in the sidebar"
+            )
+
+            color_display_options = Gtk.StringList()
+            color_display_options.append("Colored Background")
+            color_display_options.append("Color Badge")
+            self.group_color_display_row.set_model(color_display_options)
+
+            current_mode = 'fill'
+            try:
+                current_mode = str(
+                    self.config.get_setting('ui.group_color_display', 'fill')
+                ).lower()
+            except Exception:
+                current_mode = 'fill'
+            if current_mode not in self._group_color_display_values:
+                current_mode = 'fill'
+
+            self._group_display_sync = True
+            try:
+                self.group_color_display_row.set_selected(
+                    self._group_color_display_values.index(current_mode)
+                )
+            finally:
+                self._group_display_sync = False
+
+            self.group_color_display_row.connect(
+                'notify::selected', self.on_group_color_display_changed
+            )
+
+            interface_appearance_group.add(self.group_color_display_row)
+
             # Color overrides section
             color_override_group = Adw.PreferencesGroup()
             color_override_group.set_title("Color Overrides")
@@ -1137,12 +1186,12 @@ class PreferencesWindow(Adw.PreferencesWindow):
         selected = combo_row.get_selected()
         theme_names = ["Follow System", "Light", "Dark"]
         selected_theme = theme_names[selected] if selected < len(theme_names) else "Follow System"
-        
+
         logger.info(f"Theme changed to: {selected_theme}")
-        
+
         # Apply theme immediately
         style_manager = Adw.StyleManager.get_default()
-        
+
         if selected == 0:  # Follow System
             style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
             self.config.set_setting('app-theme', 'default')
@@ -1152,6 +1201,86 @@ class PreferencesWindow(Adw.PreferencesWindow):
         elif selected == 2:  # Dark
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
             self.config.set_setting('app-theme', 'dark')
+
+    def on_group_color_display_changed(self, combo_row, _param):
+        """Persist sidebar group color display preference changes."""
+        if getattr(self, '_group_display_sync', False):
+            return
+
+        try:
+            selected_index = combo_row.get_selected()
+        except Exception:
+            selected_index = 0
+
+        try:
+            mode = self._group_color_display_values[selected_index]
+        except Exception:
+            mode = 'fill'
+
+        try:
+            current_mode = str(
+                self.config.get_setting('ui.group_color_display', 'fill')
+            ).lower()
+        except Exception:
+            current_mode = 'fill'
+
+        if current_mode == mode:
+            return
+
+        try:
+            self.config.set_setting('ui.group_color_display', mode)
+        except Exception as exc:
+            logger.error("Failed to update group color display preference: %s", exc)
+            return
+
+        if not getattr(self, '_config_signal_id', None):
+            self._trigger_sidebar_refresh()
+
+    def _trigger_sidebar_refresh(self):
+        parent = self.get_transient_for() or self.parent_window
+        if not parent:
+            return
+
+        if hasattr(parent, 'rebuild_connection_list'):
+            try:
+                parent.rebuild_connection_list()
+            except Exception as exc:
+                logger.debug("Failed to rebuild connection list after preference change: %s", exc)
+
+    def _sync_group_color_display_row(self, value):
+        if not hasattr(self, 'group_color_display_row') or self.group_color_display_row is None:
+            return
+
+        try:
+            normalized = str(value).lower()
+        except Exception:
+            normalized = 'fill'
+
+        if normalized not in getattr(self, '_group_color_display_values', ['fill', 'badge']):
+            normalized = 'fill'
+
+        target_index = self._group_color_display_values.index(normalized)
+        if self.group_color_display_row.get_selected() == target_index:
+            return
+
+        self._group_display_sync = True
+        try:
+            self.group_color_display_row.set_selected(target_index)
+        finally:
+            self._group_display_sync = False
+
+    def _on_config_setting_changed(self, _config, key, value):
+        if key == 'ui.group_color_display':
+            self._sync_group_color_display_row(value)
+            self._trigger_sidebar_refresh()
+
+    def _on_destroy(self, *_args):
+        if getattr(self, '_config_signal_id', None) and hasattr(self.config, 'disconnect'):
+            try:
+                self.config.disconnect(self._config_signal_id)
+            except Exception:
+                pass
+            self._config_signal_id = None
 
     def on_app_color_changed(self, color_button):
         """Handle app color change"""

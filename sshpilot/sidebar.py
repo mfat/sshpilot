@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict
+from typing import Dict, Optional
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -21,6 +21,95 @@ from .connection_display import (
 from .groups import GroupManager
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Styling helpers
+# ---------------------------------------------------------------------------
+
+
+_COLOR_CSS_INSTALLED = False
+
+
+def _install_sidebar_color_css():
+    global _COLOR_CSS_INSTALLED
+    if _COLOR_CSS_INSTALLED:
+        return
+
+    try:
+        display = Gdk.Display.get_default()
+        if not display:
+            return
+
+        provider = Gtk.CssProvider()
+        css = """
+        .sidebar-color-fill {
+            border-radius: 12px;
+        }
+
+        .sidebar-color-badge {
+            border-radius: 999px;
+            min-width: 12px;
+            min-height: 12px;
+        }
+        """
+        provider.load_from_data(css.encode("utf-8"))
+        Gtk.StyleContext.add_provider_for_display(
+            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        _COLOR_CSS_INSTALLED = True
+    except Exception:
+        logger.debug("Failed to install sidebar color CSS", exc_info=True)
+
+
+def _parse_color(value: Optional[str]) -> Optional[Gdk.RGBA]:
+    if not value:
+        return None
+
+    rgba = Gdk.RGBA()
+    try:
+        if rgba.parse(str(value)):
+            return rgba
+    except Exception:
+        logger.debug("Failed to parse color value '%s'", value, exc_info=True)
+    return None
+
+
+def _get_color_display_mode(config) -> str:
+    try:
+        mode = str(config.get_setting('ui.group_color_display', 'fill')).lower()
+    except Exception:
+        return 'fill'
+
+    if mode not in {'fill', 'badge'}:
+        return 'fill'
+    return mode
+
+
+def _fill_rgba(rgba: Optional[Gdk.RGBA]) -> Optional[Gdk.RGBA]:
+    if rgba is None:
+        return None
+
+    fill = Gdk.RGBA()
+    fill.red = rgba.red
+    fill.green = rgba.green
+    fill.blue = rgba.blue
+    fill.alpha = 0.22 if rgba.alpha >= 1.0 else max(0.12, min(rgba.alpha, 0.3))
+    return fill
+
+
+def _set_css_background(provider: Gtk.CssProvider, rgba: Optional[Gdk.RGBA]):
+    color_value = 'transparent'
+    if rgba is not None:
+        try:
+            color_value = rgba.to_string()
+        except Exception:
+            color_value = 'transparent'
+
+    try:
+        provider.load_from_data(f"* {{ background-color: {color_value}; }}".encode('utf-8'))
+    except Exception:
+        logger.debug("Failed to update CSS background", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -75,11 +164,29 @@ class GroupRow(Gtk.ListBoxRow):
         main_box.append(self.drop_indicator_top)
 
         # Main content
+        _install_sidebar_color_css()
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         content.set_margin_start(12)
         content.set_margin_end(12)
         content.set_margin_top(6)
         content.set_margin_bottom(6)
+        self._content_box = content
+        self._base_margin_start = 12
+
+        self.color_badge = Gtk.Box()
+        self.color_badge.set_size_request(12, 12)
+        self.color_badge.add_css_class("sidebar-color-badge")
+        self.color_badge.set_margin_top(6)
+        self.color_badge.set_margin_bottom(6)
+        self.color_badge.set_margin_start(0)
+        self.color_badge.set_margin_end(0)
+        self.color_badge.set_can_target(False)
+        self.color_badge.set_visible(False)
+        self._badge_provider = Gtk.CssProvider()
+        self.color_badge.get_style_context().add_provider(
+            self._badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        content.append(self.color_badge)
 
         icon = Gtk.Image.new_from_icon_name("folder-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
@@ -107,6 +214,27 @@ class GroupRow(Gtk.ListBoxRow):
         self.expand_button.connect("clicked", self._on_expand_clicked)
         content.append(self.expand_button)
 
+        self._color_background = Gtk.Box()
+        self._color_background.set_can_target(False)
+        self._color_background.set_hexpand(True)
+        self._color_background.set_vexpand(False)
+        self._color_background.set_margin_start(self._base_margin_start)
+        self._color_background.set_margin_end(12)
+        self._color_background.set_margin_top(6)
+        self._color_background.set_margin_bottom(6)
+        self._color_background.add_css_class("sidebar-color-fill")
+        self._color_background.set_visible(False)
+        self._background_provider = Gtk.CssProvider()
+        self._color_background.get_style_context().add_provider(
+            self._background_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+        content_overlay = Gtk.Overlay()
+        content_overlay.set_child(self._color_background)
+        content_overlay.add_overlay(content)
+        content_overlay.set_hexpand(True)
+        self._content_overlay = content_overlay
+
         # Add drop target indicator (initially hidden)
         self.drop_target_indicator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.drop_target_indicator.set_halign(Gtk.Align.CENTER)
@@ -126,7 +254,7 @@ class GroupRow(Gtk.ListBoxRow):
         self.drop_target_indicator.set_visible(False)
 
         # Add content to main_box
-        main_box.append(content)
+        main_box.append(content_overlay)
         main_box.append(self.drop_target_indicator)
         
         # Drop indicator (bottom)
@@ -158,6 +286,34 @@ class GroupRow(Gtk.ListBoxRow):
         group_name = self.group_info['name']
         self.name_label.set_markup(f"<b>{group_name}</b>")
         self.count_label.set_text(f"{count} connections")
+
+        self._apply_group_color_style()
+
+    def _apply_group_color_style(self):
+        if not hasattr(self, '_color_background'):
+            return
+
+        config = getattr(self.group_manager, 'config', None)
+        mode = _get_color_display_mode(config) if config else 'fill'
+        rgba = _parse_color(self.group_info.get('color'))
+
+        if mode == 'badge':
+            _set_css_background(self._background_provider, None)
+            self._color_background.set_visible(False)
+
+            if rgba:
+                _set_css_background(self._badge_provider, rgba)
+                self.color_badge.set_visible(True)
+            else:
+                _set_css_background(self._badge_provider, None)
+                self.color_badge.set_visible(False)
+        else:
+            fill_color = _fill_rgba(rgba)
+            _set_css_background(self._background_provider, fill_color)
+            self._color_background.set_visible(bool(fill_color))
+
+            _set_css_background(self._badge_provider, None)
+            self.color_badge.set_visible(False)
         
 
 
@@ -246,10 +402,12 @@ class GroupRow(Gtk.ListBoxRow):
 class ConnectionRow(Gtk.ListBoxRow):
     """Row widget for connection list."""
 
-    def __init__(self, connection: Connection):
+    def __init__(self, connection: Connection, group_manager: GroupManager, config):
         super().__init__()
         self.add_css_class("navigation-sidebar")
         self.connection = connection
+        self.group_manager = group_manager
+        self.config = config
 
         # Main container with drop indicators
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -259,11 +417,29 @@ class ConnectionRow(Gtk.ListBoxRow):
         main_box.append(self.drop_indicator_top)
         
         # Content container
+        _install_sidebar_color_css()
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         content.set_margin_start(12)
         content.set_margin_end(12)
         content.set_margin_top(6)
         content.set_margin_bottom(6)
+        self._content_box = content
+        self._base_margin_start = 12
+
+        self.color_badge = Gtk.Box()
+        self.color_badge.set_size_request(12, 12)
+        self.color_badge.add_css_class("sidebar-color-badge")
+        self.color_badge.set_margin_top(6)
+        self.color_badge.set_margin_bottom(6)
+        self.color_badge.set_margin_start(0)
+        self.color_badge.set_margin_end(0)
+        self.color_badge.set_can_target(False)
+        self.color_badge.set_visible(False)
+        self._badge_provider = Gtk.CssProvider()
+        self.color_badge.get_style_context().add_provider(
+            self._badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        content.append(self.color_badge)
 
         icon = Gtk.Image.new_from_icon_name("computer-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
@@ -293,9 +469,29 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.status_icon = Gtk.Image.new_from_icon_name("network-offline-symbolic")
         self.status_icon.set_pixel_size(16)
         content.append(self.status_icon)
-        
+
+        self._color_background = Gtk.Box()
+        self._color_background.set_can_target(False)
+        self._color_background.set_hexpand(True)
+        self._color_background.set_vexpand(False)
+        self._color_background.set_margin_start(self._base_margin_start)
+        self._color_background.set_margin_end(12)
+        self._color_background.set_margin_top(6)
+        self._color_background.set_margin_bottom(6)
+        self._color_background.add_css_class("sidebar-color-fill")
+        self._color_background.set_visible(False)
+        self._background_provider = Gtk.CssProvider()
+        self._color_background.get_style_context().add_provider(
+            self._background_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+        content_overlay = Gtk.Overlay()
+        content_overlay.set_child(self._color_background)
+        content_overlay.add_overlay(content)
+        content_overlay.set_hexpand(True)
+
         # Now add the content to main_box
-        main_box.append(content)
+        main_box.append(content_overlay)
         
         # Drop indicator (bottom)
         self.drop_indicator_bottom = DragIndicator()
@@ -318,6 +514,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         self.update_status()
         self._update_forwarding_indicators()
+        self._apply_group_color_style()
         self._setup_drag_source()
     
     def show_drop_indicator(self, top: bool):
@@ -336,18 +533,76 @@ class ConnectionRow(Gtk.ListBoxRow):
     
     def set_indentation(self, level: int):
         """Set indentation level for grouped connections"""
-        if level > 0:
-            # Find the content box and set its margin
-            overlay = self.get_child()
-            if overlay and hasattr(overlay, 'get_child'):
-                main_box = overlay.get_child()
-                if main_box and hasattr(main_box, 'get_first_child'):
-                    # Skip the first child (top drop indicator) and get the content box
-                    top_indicator = main_box.get_first_child()
-                    if top_indicator and hasattr(top_indicator, 'get_next_sibling'):
-                        content = top_indicator.get_next_sibling()
-                        if content:
-                            content.set_margin_start(12 + (level * 20))
+        margin = getattr(self, '_base_margin_start', 12) + max(0, level) * 20
+        if hasattr(self, '_content_box') and self._content_box is not None:
+            try:
+                self._content_box.set_margin_start(margin)
+            except Exception:
+                pass
+        if hasattr(self, '_color_background') and self._color_background is not None:
+            try:
+                self._color_background.set_margin_start(margin)
+            except Exception:
+                pass
+
+    def _resolve_group_color(self) -> Optional[Gdk.RGBA]:
+        manager = getattr(self, 'group_manager', None)
+        if not manager:
+            return None
+
+        try:
+            group_id = manager.get_connection_group(self.connection.nickname)
+        except Exception:
+            group_id = None
+
+        visited = set()
+        while group_id:
+            if group_id in visited:
+                break
+            visited.add(group_id)
+
+            group_info = None
+            try:
+                if hasattr(manager, 'groups'):
+                    group_info = manager.groups.get(group_id)
+            except Exception:
+                group_info = None
+
+            if not group_info:
+                break
+
+            color = _parse_color(group_info.get('color'))
+            if color:
+                return color
+
+            group_id = group_info.get('parent_id')
+
+        return None
+
+    def _apply_group_color_style(self):
+        if not hasattr(self, '_color_background'):
+            return
+
+        mode = _get_color_display_mode(getattr(self, 'config', None))
+        rgba = self._resolve_group_color()
+
+        if mode == 'badge':
+            _set_css_background(self._background_provider, None)
+            self._color_background.set_visible(False)
+
+            if rgba:
+                _set_css_background(self._badge_provider, rgba)
+                self.color_badge.set_visible(True)
+            else:
+                _set_css_background(self._badge_provider, None)
+                self.color_badge.set_visible(False)
+        else:
+            fill_color = _fill_rgba(rgba)
+            _set_css_background(self._background_provider, fill_color)
+            self._color_background.set_visible(bool(fill_color))
+
+            _set_css_background(self._badge_provider, None)
+            self.color_badge.set_visible(False)
 
     # -- drag source ------------------------------------------------------
 
@@ -509,6 +764,7 @@ class ConnectionRow(Gtk.ListBoxRow):
             self._apply_host_label_text(include_port=True)
         self._update_forwarding_indicators()
         self.update_status()
+        self._apply_group_color_style()
 
 
 # ---------------------------------------------------------------------------

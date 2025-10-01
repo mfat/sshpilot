@@ -2358,7 +2358,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     def add_connection_row(self, connection: Connection, indent_level: int = 0):
         """Add a connection row to the list with optional indentation"""
-        row = ConnectionRow(connection)
+        row = ConnectionRow(connection, self.group_manager, self.config)
         
         # Apply indentation for grouped connections
         if indent_level > 0:
@@ -5252,6 +5252,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             for terms in self.connection_to_terminals.values():
                 for terminal in terms:
                     terminal.apply_theme()
+            return
+
+        if key == 'ui.group_color_display':
+            try:
+                self.rebuild_connection_list()
+            except Exception as exc:
+                logger.debug(
+                    "Failed to rebuild connection list for color display change: %s",
+                    exc,
+                )
+            return
 
     def on_window_size_changed(self, window, param):
         """Handle window size change"""

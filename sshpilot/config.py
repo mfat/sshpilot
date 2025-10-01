@@ -172,6 +172,7 @@ class Config(GObject.Object):
                 'window_width': 1200,
                 'window_height': 800,
                 'sidebar_width': 250,
+                'group_color_display': 'fill',
             },
             'welcome': {
                 'background_color': None,  # None for default, or CSS string for custom
@@ -719,6 +720,26 @@ class Config(GObject.Object):
                 updated = True
             if 'open_externally' not in file_manager_cfg:
                 file_manager_cfg['open_externally'] = False
+                updated = True
+
+        ui_cfg = config.get('ui')
+        if not isinstance(ui_cfg, dict):
+            default_ui = self.get_default_config().get('ui', {}).copy()
+            config['ui'] = default_ui
+            ui_cfg = default_ui
+            updated = True
+        display_value = ui_cfg.get('group_color_display') if isinstance(ui_cfg, dict) else None
+        if display_value is None:
+            ui_cfg['group_color_display'] = 'fill'
+            updated = True
+        else:
+            if not isinstance(display_value, str):
+                display_value = str(display_value)
+            normalized = display_value.lower()
+            if normalized not in {'fill', 'badge'}:
+                normalized = 'fill'
+            if ui_cfg.get('group_color_display') != normalized:
+                ui_cfg['group_color_display'] = normalized
                 updated = True
 
         ssh_cfg = config.get('ssh')
