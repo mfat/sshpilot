@@ -407,8 +407,9 @@ class TerminalWidget(Gtk.Box):
         # Set expansion properties
         self.scrolled_window.set_hexpand(True)
         self.scrolled_window.set_vexpand(True)
-        self.vte.set_hexpand(True)
-        self.vte.set_vexpand(True)
+        if self.terminal_widget is not None:
+            self.terminal_widget.set_hexpand(True)
+            self.terminal_widget.set_vexpand(True)
 
         # Connect terminal signals and store handler IDs for cleanup
         self._child_exited_handler = None
@@ -1656,6 +1657,11 @@ class TerminalWidget(Gtk.Box):
             return
 
         if getattr(self, '_shortcut_controller', None) is not None:
+            return
+        
+        # Only install shortcuts for VTE backend
+        if getattr(self, 'vte', None) is None:
+            logger.debug("Non-VTE backend; skipping VTE-specific shortcuts")
             return
 
         try:
