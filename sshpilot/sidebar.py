@@ -29,6 +29,28 @@ logger = logging.getLogger(__name__)
 
 
 _COLOR_CSS_INSTALLED = False
+_DEFAULT_ROW_MARGIN_START = 12
+_MIN_VALID_MARGIN = 2
+
+
+def _resolve_base_margin_start(widget: Optional[Gtk.Widget]) -> int:
+    """Return a sane starting margin for sidebar rows."""
+
+    if widget is None:
+        return _DEFAULT_ROW_MARGIN_START
+
+    try:
+        margin = widget.get_margin_start()
+    except Exception:
+        return _DEFAULT_ROW_MARGIN_START
+
+    try:
+        if margin is None or margin <= _MIN_VALID_MARGIN:
+            return _DEFAULT_ROW_MARGIN_START
+    except TypeError:
+        return _DEFAULT_ROW_MARGIN_START
+
+    return margin
 
 
 def _install_sidebar_color_css():
@@ -274,13 +296,11 @@ class GroupRow(Adw.ActionRow):
         self._content_box = content_box
         self._color_background = content_box
         if content_box is not None:
-            try:
-                self._base_margin_start = content_box.get_margin_start()
-            except Exception:
-                self._base_margin_start = 0
+            self._base_margin_start = _resolve_base_margin_start(content_box)
             self.set_child(self._drop_overlay)
             self._drop_overlay.set_child(content_box)
         else:
+            self._base_margin_start = _DEFAULT_ROW_MARGIN_START
             self.set_child(self._drop_overlay)
 
         # Drag indicator widgets (top/bottom lines)
@@ -516,13 +536,11 @@ class ConnectionRow(Adw.ActionRow):
         self._content_box = content_box
         self._color_background = content_box
         if content_box is not None:
-            try:
-                self._base_margin_start = content_box.get_margin_start()
-            except Exception:
-                self._base_margin_start = 12
+            self._base_margin_start = _resolve_base_margin_start(content_box)
             self.set_child(self._drop_overlay)
             self._drop_overlay.set_child(content_box)
         else:
+            self._base_margin_start = _DEFAULT_ROW_MARGIN_START
             self.set_child(self._drop_overlay)
 
         self.drop_indicator_top = DragIndicator()
@@ -580,7 +598,7 @@ class ConnectionRow(Adw.ActionRow):
     
     def set_indentation(self, level: int):
         """Set indentation level for grouped connections"""
-        margin = getattr(self, '_base_margin_start', 12) + max(0, level) * 20
+        margin = getattr(self, '_base_margin_start', _DEFAULT_ROW_MARGIN_START) + max(0, level) * 20
         if hasattr(self, '_content_box') and self._content_box is not None:
             try:
                 self._content_box.set_margin_start(margin)
