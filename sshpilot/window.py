@@ -456,6 +456,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               }
             }
 
+            /* Tag accent styling for symbolic icons */
+            .tag-accent {
+              color: @accent_color;
+            }
+            
+            /* Keep good contrast when the row is selected/active */
+            .adw-action-row:selected .tag-accent,
+            .adw-action-row:active .tag-accent {
+              color: @window_fg_color;
+            }
+
             """
             provider.load_from_data(css.encode('utf-8'))
             Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)

@@ -255,7 +255,15 @@ class GroupRow(Adw.ActionRow):
         icon.set_margin_end(8)
         self.add_prefix(icon)
 
-        # Add expand button as suffix
+        # Color badge for badge mode - use custom drawn circle
+        self.color_badge = Gtk.DrawingArea()
+        self.color_badge.set_content_width(16)
+        self.color_badge.set_content_height(16)
+        self.color_badge.set_margin_start(8)
+        self.color_badge.set_visible(False)
+        self.add_suffix(self.color_badge)
+
+        # Add expand button as suffix (far right)
         self.expand_button = Gtk.Button()
         self.expand_button.set_icon_name("pan-end-symbolic")
         self.expand_button.add_css_class("flat")
@@ -263,14 +271,6 @@ class GroupRow(Adw.ActionRow):
         self.expand_button.set_can_focus(False)
         self.expand_button.connect("clicked", self._on_expand_clicked)
         self.add_suffix(self.expand_button)
-
-        # Color badge for badge mode - use custom drawing for reliable coloring
-        self.color_badge = Gtk.DrawingArea()
-        self.color_badge.set_content_width(16)
-        self.color_badge.set_content_height(16)
-        self.color_badge.set_margin_start(8)
-        self.color_badge.set_visible(False)
-        self.add_suffix(self.color_badge)
 
         # Create CSS provider for background colors
         self._background_provider = Gtk.CssProvider()
@@ -391,16 +391,30 @@ class GroupRow(Adw.ActionRow):
         
     def _update_color_badge(self, rgba: Gdk.RGBA):
         """Update the color badge with a new color."""
-        def draw(area, cr, w, h, data=None):
-            radius = min(w, h) / 2.0
-            cx, cy = w / 2.0, h / 2.0
-
-            # Fill circle
-            cr.arc(cx, cy, radius, 0, 2*3.1415926535)
+        # Draw a custom circle with the group color
+        def draw_circle(area, cr, width, height, data=None):
+            # Clear the area
+            cr.set_source_rgba(0, 0, 0, 0)
+            cr.paint()
+            
+            # Draw a circle with the group color
+            radius = min(width, height) / 2.0 - 1
+            center_x = width / 2.0
+            center_y = height / 2.0
+            
+            # Fill the circle
+            cr.arc(center_x, center_y, radius, 0, 2 * 3.1415926535)
             cr.set_source_rgba(rgba.red, rgba.green, rgba.blue, rgba.alpha)
             cr.fill()
-
-        self.color_badge.set_draw_func(draw, None)
+            
+            # Add a subtle border for contrast
+            cr.arc(center_x, center_y, radius, 0, 2 * 3.1415926535)
+            cr.set_source_rgba(0, 0, 0, 0.2)
+            cr.set_line_width(0.5)
+            cr.stroke()
+        
+        self.color_badge.set_draw_func(draw_circle, None)
+        self.color_badge.set_visible(True)
 
     def _on_expand_clicked(self, button):
         self._toggle_expand()
@@ -506,11 +520,6 @@ class ConnectionRow(Adw.ActionRow):
         icon.set_margin_end(8)
         self.add_prefix(icon)
 
-        # Add status icon as suffix
-        self.status_icon = Gtk.Image.new_from_icon_name("network-offline-symbolic")
-        self.status_icon.set_pixel_size(16)
-        self.add_suffix(self.status_icon)
-
         # Box to show forwarding indicators
         self.indicator_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         self.indicator_box.add_css_class("pf-indicator")
@@ -518,13 +527,19 @@ class ConnectionRow(Adw.ActionRow):
         self.indicator_box.set_visible(False)
         self.add_suffix(self.indicator_box)
 
-        # Color badge for badge mode - use custom drawing for reliable coloring
+        # Color badge for badge mode - use custom drawn circle
         self.color_badge = Gtk.DrawingArea()
         self.color_badge.set_content_width(16)
         self.color_badge.set_content_height(16)
         self.color_badge.set_margin_start(8)
         self.color_badge.set_visible(False)
         self.add_suffix(self.color_badge)
+
+        # Add status icon as suffix (far right)
+        self.status_icon = Gtk.Image.new_from_icon_name("network-offline-symbolic")
+        self.status_icon.set_pixel_size(16)
+        self.status_icon.set_margin_start(8)
+        self.add_suffix(self.status_icon)
 
         # Create CSS provider for background colors
         self._background_provider = Gtk.CssProvider()
@@ -683,16 +698,30 @@ class ConnectionRow(Adw.ActionRow):
 
     def _update_color_badge(self, rgba: Gdk.RGBA):
         """Update the color badge with a new color."""
-        def draw(area, cr, w, h, data=None):
-            radius = min(w, h) / 2.0
-            cx, cy = w / 2.0, h / 2.0
-
-            # Fill circle
-            cr.arc(cx, cy, radius, 0, 2*3.1415926535)
+        # Draw a custom circle with the group color
+        def draw_circle(area, cr, width, height, data=None):
+            # Clear the area
+            cr.set_source_rgba(0, 0, 0, 0)
+            cr.paint()
+            
+            # Draw a circle with the group color
+            radius = min(width, height) / 2.0 - 1
+            center_x = width / 2.0
+            center_y = height / 2.0
+            
+            # Fill the circle
+            cr.arc(center_x, center_y, radius, 0, 2 * 3.1415926535)
             cr.set_source_rgba(rgba.red, rgba.green, rgba.blue, rgba.alpha)
             cr.fill()
-
-        self.color_badge.set_draw_func(draw, None)
+            
+            # Add a subtle border for contrast
+            cr.arc(center_x, center_y, radius, 0, 2 * 3.1415926535)
+            cr.set_source_rgba(0, 0, 0, 0.2)
+            cr.set_line_width(0.5)
+            cr.stroke()
+        
+        self.color_badge.set_draw_func(draw_circle, None)
+        self.color_badge.set_visible(True)
 
     # -- drag source ------------------------------------------------------
 
