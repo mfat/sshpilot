@@ -215,7 +215,7 @@ class GroupRow(Adw.ActionRow):
 
     def __init__(self, group_info: Dict, group_manager: GroupManager, connections_dict: Dict | None = None):
         super().__init__()
-        self.add_css_class("navigation-sidebar")
+        self.add_css_class("sshpilot-sidebar")
         self.group_info = group_info
         self.group_manager = group_manager
         self.group_id = group_info["id"]
@@ -460,7 +460,7 @@ class ConnectionRow(Adw.ActionRow):
 
     def __init__(self, connection: Connection, group_manager: GroupManager, config):
         super().__init__()
-        self.add_css_class("navigation-sidebar")
+        self.add_css_class("sshpilot-sidebar")
         self.connection = connection
         self.group_manager = group_manager
         self.config = config
