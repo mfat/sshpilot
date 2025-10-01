@@ -429,6 +429,9 @@ class PreferencesWindow(Adw.PreferencesWindow):
     def setup_preferences(self):
         """Set up preferences UI with current values"""
         try:
+            # Build backend choices data
+            self._backend_choice_data = self._build_backend_choices()
+            
             # Create Terminal preferences page
             terminal_page = Adw.PreferencesPage()
             terminal_page.set_title("Terminal")
