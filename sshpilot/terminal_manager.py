@@ -24,7 +24,7 @@ class TerminalManager:
     # Connecting/disconnecting hosts
     def connect_to_host(self, connection, force_new: bool = False):
         window = self.window
-        group_color = self._resolve_connection_group_color(connection)
+        group_color = self._resolve_group_color(connection)
         if not force_new:
             if connection in window.active_terminals:
                 terminal = window.active_terminals[connection]
@@ -146,7 +146,6 @@ class TerminalManager:
     def _resolve_group_color(self, connection):
         manager = getattr(self.window, 'group_manager', None)
         if not manager:
-
             return None
 
         nickname = getattr(connection, 'nickname', None)
