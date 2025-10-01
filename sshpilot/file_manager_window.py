@@ -378,14 +378,16 @@ class TransferCancelledException(Exception):
 
 class SFTPProgressDialog(Adw.MessageDialog):
     """Modern GNOME HIG-compliant SFTP file transfer progress dialog"""
-    
+
+    _LABEL_WIDTH_CHARS = 48
+
     def __init__(self, parent=None, operation_type="transfer"):
         # Set appropriate title based on operation
         title = "Downloading Files" if operation_type == "download" else "Uploading Files"
-        
+
         super().__init__(
             title=title,
-            body="Preparing transfer...",
+            body="Transferring files…",
             default_response="cancel"
         )
         
@@ -426,12 +428,23 @@ class SFTPProgressDialog(Adw.MessageDialog):
             margin_bottom=12
         )
         
+        def _configure_progress_label(label: Gtk.Label) -> None:
+            label.set_ellipsize(Pango.EllipsizeMode.END)
+            label.set_justify(Gtk.Justification.CENTER)
+            label.set_width_chars(self._LABEL_WIDTH_CHARS)
+            label.set_max_width_chars(self._LABEL_WIDTH_CHARS)
+
         # Current file label (primary info)
         self.file_label = Gtk.Label()
-        self.file_label.set_text("Preparing transfer...")
-        self.file_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.file_label.set_justify(Gtk.Justification.CENTER)
+        self.file_label.set_text("—")
+        _configure_progress_label(self.file_label)
         progress_box.append(self.file_label)
+
+        # Status label for detailed progress messages
+        self.status_label = Gtk.Label()
+        self.status_label.set_text("Preparing transfer…")
+        _configure_progress_label(self.status_label)
+        progress_box.append(self.status_label)
         
         # Main progress bar
         self.progress_bar = Gtk.ProgressBar()
@@ -510,9 +523,9 @@ class SFTPProgressDialog(Adw.MessageDialog):
         self.progress_bar.set_fraction(fraction)
         self.progress_bar.set_text(f"{percentage}%")
         
-        # Update dialog body with status message
+        # Update status label with status message
         if message:
-            self.set_body(message)
+            self.status_label.set_text(message)
         
         # Update current file
         if current_file:
@@ -606,13 +619,13 @@ class SFTPProgressDialog(Adw.MessageDialog):
         """Update UI to show completion state"""
         if success:
             self.set_title("Transfer Complete")
-            self.set_body("Transfer completed successfully")
+            self.status_label.set_text("Transfer completed successfully")
             self.file_label.set_text(f"Successfully transferred {self.files_completed} files")
             self.progress_bar.set_fraction(1.0)
             self.progress_bar.set_text("100%")
         else:
             self.set_title("Transfer Failed")
-            self.set_body("Transfer failed")
+            self.status_label.set_text("Transfer failed")
             if error_message:
                 self.file_label.set_text(f"Error: {error_message}")
             else:
