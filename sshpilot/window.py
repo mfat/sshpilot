@@ -366,6 +366,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               transition: transform 0.1s ease-out, opacity 0.1s ease-out;
             }
 
+            row.sshpilot-sidebar .prefixes {
+              margin-right: 10px;
+            }
+
+            row.sshpilot-sidebar .suffixes {
+              margin-left: 10px;
+            }
+
             row.sshpilot-sidebar.dragging {
               opacity: 0.7;
               transform: scale(0.98);

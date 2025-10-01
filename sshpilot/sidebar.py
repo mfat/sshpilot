@@ -228,6 +228,7 @@ class GroupRow(Adw.ActionRow):
         # Add folder icon as prefix
         icon = Gtk.Image.new_from_icon_name("folder-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
+        icon.set_margin_end(8)
         self.add_prefix(icon)
 
         # Add expand button as suffix
@@ -472,6 +473,7 @@ class ConnectionRow(Adw.ActionRow):
         # Add computer icon as prefix
         icon = Gtk.Image.new_from_icon_name("computer-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
+        icon.set_margin_end(8)
         self.add_prefix(icon)
 
         # Add status icon as suffix
