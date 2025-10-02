@@ -344,35 +344,57 @@ class GroupRow(Adw.ActionRow):
         self.set_selectable(True)
         self.set_can_focus(True)
 
-        # Drop indicators are now handled via CSS classes
+        # Wrap existing row content in an overlay so we can stack drag indicators on top
+        self._overlay = Gtk.Overlay()
+        existing_child = _extract_row_content_widget(self)
+        if existing_child is not None:
+            existing_child.unparent()
+            self._overlay.set_child(existing_child)
+        else:
+            logger.debug(
+                "GroupRow %s: Unable to locate existing content widget for overlay",
+                group_info.get("name", "Unknown"),
+            )
+        self._overlay.set_halign(Gtk.Align.FILL)
+        self._overlay.set_valign(Gtk.Align.FILL)
+        self._overlay.set_hexpand(True)
+        self._overlay.set_vexpand(True)
+        self.set_child(self._overlay)
+
+        # Simplified drop indicators - now overlay children
+        self.drop_indicator_top = DragIndicator()
+        self.drop_indicator_top.set_halign(Gtk.Align.FILL)
+        self.drop_indicator_top.set_valign(Gtk.Align.START)
+        self.drop_indicator_top.set_hexpand(True)
+
+        self.drop_indicator_bottom = DragIndicator()
+        self.drop_indicator_bottom.set_halign(Gtk.Align.FILL)
+        self.drop_indicator_bottom.set_valign(Gtk.Align.END)
+        self.drop_indicator_bottom.set_hexpand(True)
+
+        self._overlay.add_overlay(self.drop_indicator_top)
+        self._overlay.add_overlay(self.drop_indicator_bottom)
+
+        # Drop target highlight indicator
+        self.drop_target_indicator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.drop_target_indicator.add_css_class("drop-target-indicator")
+        self.drop_target_indicator.set_visible(False)
+        self.drop_target_indicator.set_halign(Gtk.Align.CENTER)
+        self.drop_target_indicator.set_valign(Gtk.Align.CENTER)
+        self.drop_target_indicator.set_hexpand(False)
+        self.drop_target_indicator.set_vexpand(False)
+
+        indicator_label = Gtk.Label(label=_("Add to group"))
+        indicator_label.set_halign(Gtk.Align.CENTER)
+        indicator_label.set_valign(Gtk.Align.CENTER)
+        self.drop_target_indicator.append(indicator_label)
+
+        self._overlay.add_overlay(self.drop_target_indicator)
 
         self.hide_drop_indicators()
 
         self._update_display()
         self._setup_drag_source()
-        self._setup_drop_target()
-    
-    def _set_custom_drag_icon(self, drag):
-        """Set a custom drag icon to prevent default sidebar highlighting"""
-        try:
-            # Create a simple icon for the drag operation
-            icon = Gtk.Image.new_from_icon_name("folder-symbolic")
-            icon.set_icon_size(Gtk.IconSize.LARGE)
-            
-            # Create a paintable from the icon
-            paintable = Gtk.WidgetPaintable.new(icon)
-            
-            # Try different methods to set the drag icon
-            if hasattr(drag, 'set_icon'):
-                drag.set_icon(paintable, 0, 0)
-            elif hasattr(self._drag_source, 'set_icon'):
-                self._drag_source.set_icon(paintable, 0, 0)
-            else:
-                # If we can't set a custom icon, at least try to disable default feedback
-                logger.debug("Could not set custom drag icon, drag feedback may still be visible")
-        except Exception as e:
-            logger.debug(f"Could not set custom drag icon: {e}")
-        
         self._setup_double_click_gesture()
 
     # -- internal helpers -------------------------------------------------
@@ -485,49 +507,12 @@ class GroupRow(Adw.ActionRow):
         drag_source.set_actions(Gdk.DragAction.MOVE)
         drag_source.set_exclusive(False)
         drag_source.set_button(getattr(Gdk, "BUTTON_PRIMARY", 1))
-        # Disable default drag feedback
-        try:
-            drag_source.set_drag_threshold(0)
-        except Exception:
-            pass
         drag_source.connect("prepare", self._on_drag_prepare)
         drag_source.connect("drag-begin", self._on_drag_begin)
         drag_source.connect("drag-end", self._on_drag_end)
         self.add_controller(drag_source)
         # Store reference for cleanup
         self._drag_source = drag_source
-
-    def _setup_drop_target(self):
-        """Set up drop target for this group row"""
-        drop_target = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
-        drop_target.connect("drop", self._on_drop)
-        drop_target.connect("enter", self._on_drop_enter)
-        drop_target.connect("leave", self._on_drop_leave)
-        drop_target.connect("motion", self._on_drop_motion)
-        self.add_controller(drop_target)
-        # Store reference for cleanup
-        self._drop_target = drop_target
-
-    def _on_drop(self, target, value, x, y):
-        """Handle drop on this group row"""
-        window = self.get_root()
-        if window and hasattr(window, '_dragged_connections'):
-            # Handle dropping connections into this group
-            return _handle_connection_drop_to_group(window, self.group_id, window._dragged_connections)
-        return False
-
-    def _on_drop_enter(self, target, x, y):
-        """Handle drag enter on this group row"""
-        self.add_css_class("drop-target-group")
-        return Gdk.DragAction.MOVE
-
-    def _on_drop_leave(self, target):
-        """Handle drag leave on this group row"""
-        self.remove_css_class("drop-target-group")
-
-    def _on_drop_motion(self, target, x, y):
-        """Handle drag motion over this group row"""
-        return Gdk.DragAction.MOVE
 
     def _on_drag_prepare(self, source, x, y):
         data = {"type": "group", "group_id": self.group_id}
@@ -547,9 +532,6 @@ class GroupRow(Adw.ActionRow):
                 # Don't disable selection mode - keep it for visual feedback
                 
                 _show_ungrouped_area(window)
-                
-                # Set custom drag icon to prevent default sidebar highlighting
-                self._set_custom_drag_icon(drag)
         except Exception as e:
             logger.error(f"Error in group drag begin: {e}")
 
@@ -582,27 +564,28 @@ class GroupRow(Adw.ActionRow):
         self.emit("group-toggled", self.group_id, expanded)
 
     def show_drop_indicator(self, top: bool):
-        """Show drop indicator line using CSS classes"""
+        """Show drop indicator line"""
         self.hide_drop_indicators()
 
         if top:
-            self.add_css_class("drop-indicator-top")
+            self.drop_indicator_top.set_visible(True)
         else:
-            self.add_css_class("drop-indicator-bottom")
+            self.drop_indicator_bottom.set_visible(True)
 
     def hide_drop_indicators(self):
         """Hide all drop indicator lines"""
-        self.remove_css_class("drop-indicator-top")
-        self.remove_css_class("drop-indicator-bottom")
-        self.remove_css_class("drop-indicator-on-group")
+        self.drop_indicator_top.set_visible(False)
+        self.drop_indicator_bottom.set_visible(False)
         self.show_group_highlight(False)
 
     def show_group_highlight(self, show: bool):
         """Show/hide group highlight for 'add to group' drop indication"""
         if show:
             self.add_css_class("drop-target-group")
+            self.drop_target_indicator.set_visible(True)
         else:
             self.remove_css_class("drop-target-group")
+            self.drop_target_indicator.set_visible(False)
 
 
 class ConnectionRow(Adw.ActionRow):
@@ -648,7 +631,52 @@ class ConnectionRow(Adw.ActionRow):
         self.set_selectable(True)
         self.set_can_focus(True)
 
-        # Drop indicators are now handled via CSS classes
+        # Wrap existing row content in an overlay so we can stack drag indicators on top
+        self._overlay = Gtk.Overlay()
+        existing_child = _extract_row_content_widget(self)
+        if existing_child is not None:
+            existing_child.unparent()
+            self._overlay.set_child(existing_child)
+        else:
+            logger.debug(
+                "ConnectionRow %s: Unable to locate existing content widget for overlay",
+                getattr(connection, "nickname", "Unknown"),
+            )
+        self._overlay.set_halign(Gtk.Align.FILL)
+        self._overlay.set_valign(Gtk.Align.FILL)
+        self._overlay.set_hexpand(True)
+        self._overlay.set_vexpand(True)
+        self.set_child(self._overlay)
+
+        # Simplified drop indicators - now overlay children
+        self.drop_indicator_top = DragIndicator()
+        self.drop_indicator_top.set_halign(Gtk.Align.FILL)
+        self.drop_indicator_top.set_valign(Gtk.Align.START)
+        self.drop_indicator_top.set_hexpand(True)
+
+        self.drop_indicator_bottom = DragIndicator()
+        self.drop_indicator_bottom.set_halign(Gtk.Align.FILL)
+        self.drop_indicator_bottom.set_valign(Gtk.Align.END)
+        self.drop_indicator_bottom.set_hexpand(True)
+
+        self._overlay.add_overlay(self.drop_indicator_top)
+        self._overlay.add_overlay(self.drop_indicator_bottom)
+
+        # Drop target highlight indicator
+        self.drop_target_indicator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.drop_target_indicator.add_css_class("drop-target-indicator")
+        self.drop_target_indicator.set_visible(False)
+        self.drop_target_indicator.set_halign(Gtk.Align.CENTER)
+        self.drop_target_indicator.set_valign(Gtk.Align.CENTER)
+        self.drop_target_indicator.set_hexpand(False)
+        self.drop_target_indicator.set_vexpand(False)
+
+        connection_label = Gtk.Label(label=_("Move here"))
+        connection_label.set_halign(Gtk.Align.CENTER)
+        connection_label.set_valign(Gtk.Align.CENTER)
+        self.drop_target_indicator.append(connection_label)
+
+        self._overlay.add_overlay(self.drop_target_indicator)
 
         self.hide_drop_indicators()
 
@@ -656,44 +684,22 @@ class ConnectionRow(Adw.ActionRow):
         self.update_status()
         self._update_forwarding_indicators()
         self._setup_drag_source()
-        self._setup_drop_target()
         # Double-click is handled at the connection list level
     
-    def _set_custom_drag_icon(self, drag):
-        """Set a custom drag icon to prevent default sidebar highlighting"""
-        try:
-            # Create a simple icon for the drag operation
-            icon = Gtk.Image.new_from_icon_name("computer-symbolic")
-            icon.set_icon_size(Gtk.IconSize.LARGE)
-            
-            # Create a paintable from the icon
-            paintable = Gtk.WidgetPaintable.new(icon)
-            
-            # Try different methods to set the drag icon
-            if hasattr(drag, 'set_icon'):
-                drag.set_icon(paintable, 0, 0)
-            elif hasattr(self._drag_source, 'set_icon'):
-                self._drag_source.set_icon(paintable, 0, 0)
-            else:
-                # If we can't set a custom icon, at least try to disable default feedback
-                logger.debug("Could not set custom drag icon, drag feedback may still be visible")
-        except Exception as e:
-            logger.debug(f"Could not set custom drag icon: {e}")
-    
     def show_drop_indicator(self, top: bool):
-        """Show drop indicator line using CSS classes"""
+        """Show drop indicator line"""
         self.hide_drop_indicators()
         
         if top:
-            self.add_css_class("drop-indicator-top")
+            self.drop_indicator_top.set_visible(True)
         else:
-            self.add_css_class("drop-indicator-bottom")
+            self.drop_indicator_bottom.set_visible(True)
     
     def hide_drop_indicators(self):
         """Hide all drop indicator lines"""
-        self.remove_css_class("drop-indicator-top")
-        self.remove_css_class("drop-indicator-bottom")
-        self.remove_css_class("drop-indicator-on-group")
+        self.drop_indicator_top.set_visible(False)
+        self.drop_indicator_bottom.set_visible(False)
+        self.drop_target_indicator.set_visible(False)
     
     def set_indentation(self, level: int):
         """Set indentation level for grouped connections"""
@@ -769,11 +775,6 @@ class ConnectionRow(Adw.ActionRow):
         drag_source.set_actions(Gdk.DragAction.MOVE)
         drag_source.set_exclusive(False)
         drag_source.set_button(getattr(Gdk, "BUTTON_PRIMARY", 1))
-        # Disable default drag feedback
-        try:
-            drag_source.set_drag_threshold(0)
-        except Exception:
-            pass
         drag_source.connect("prepare", self._on_drag_prepare)
         drag_source.connect("drag-begin", self._on_drag_begin)
         drag_source.connect("drag-end", self._on_drag_end)
@@ -781,46 +782,6 @@ class ConnectionRow(Adw.ActionRow):
         # Store reference for cleanup
         self._drag_source = drag_source
 
-    def _setup_drop_target(self):
-        """Set up drop target for this connection row"""
-        drop_target = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
-        drop_target.connect("drop", self._on_drop)
-        drop_target.connect("enter", self._on_drop_enter)
-        drop_target.connect("leave", self._on_drop_leave)
-        drop_target.connect("motion", self._on_drop_motion)
-        self.add_controller(drop_target)
-        # Store reference for cleanup
-        self._drop_target = drop_target
-
-    def _on_drop(self, target, value, x, y):
-        """Handle drop on this connection row"""
-        window = self.get_root()
-        if window and hasattr(window, '_dragged_connections'):
-            # Handle reordering connections
-            return _handle_connection_reorder(window, self.connection.nickname, window._dragged_connections, x, y)
-        return False
-
-    def _on_drop_enter(self, target, x, y):
-        """Handle drag enter on this connection row"""
-        # Show drop indicator based on position
-        if y < self.get_allocated_height() / 2:
-            self.show_drop_indicator(True)  # Top
-        else:
-            self.show_drop_indicator(False)  # Bottom
-        return Gdk.DragAction.MOVE
-
-    def _on_drop_leave(self, target):
-        """Handle drag leave on this connection row"""
-        self.hide_drop_indicators()
-
-    def _on_drop_motion(self, target, x, y):
-        """Handle drag motion over this connection row"""
-        # Update drop indicator based on position
-        if y < self.get_allocated_height() / 2:
-            self.show_drop_indicator(True)  # Top
-        else:
-            self.show_drop_indicator(False)  # Bottom
-        return Gdk.DragAction.MOVE
 
     def _on_drag_prepare(self, source, x, y):
         window = self.get_root()
@@ -928,9 +889,6 @@ class ConnectionRow(Adw.ActionRow):
                 # Mark drag as in progress
                 window._drag_in_progress = True
                 _show_ungrouped_area(window)
-                
-                # Set custom drag icon to prevent default sidebar highlighting
-                self._set_custom_drag_icon(drag)
         except Exception as e:
             logger.error(f"Error in drag begin: {e}")
 
@@ -1091,56 +1049,15 @@ class ConnectionRow(Adw.ActionRow):
 # ---------------------------------------------------------------------------
 
 
-def _handle_connection_drop_to_group(window, group_id, dragged_connections):
-    """Handle dropping connections into a group"""
-    try:
-        for connection_nickname in dragged_connections:
-            window.move_connection_to_group(connection_nickname, group_id)
-        
-        return True
-    except Exception as e:
-        logger.error(f"Error moving connections to group: {e}")
-        return False
-
-def _handle_connection_reorder(window, target_connection, dragged_connections, x, y):
-    """Handle reordering connections"""
-    try:
-        # Find the target row by iterating through the listbox
-        target_row = None
-        child = window.connection_list.get_first_child()
-        while child:
-            if hasattr(child, 'connection') and child.connection.nickname == target_connection:
-                target_row = child
-                break
-            child = child.get_next_sibling()
-        
-        if not target_row:
-            return False
-        
-        # Move each dragged connection
-        for connection_nickname in dragged_connections:
-            if connection_nickname != target_connection:  # Don't move to itself
-                # Determine if we're dropping above or below the target
-                drop_above = y < target_row.get_allocated_height() / 2
-                position = 'above' if drop_above else 'below'
-                
-                # Use the group manager's reorder method
-                window.group_manager.reorder_connection_in_group(
-                    connection_nickname, target_connection, position
-                )
-        
-        # Rebuild the connection list to reflect changes
-        window.rebuild_connection_list()
-        return True
-    except Exception as e:
-        logger.error(f"Error reordering connections: {e}")
-        return False
-
 def setup_connection_list_dnd(window):
     """Set up drag and drop for the window's connection list."""
-    # Note: Drop targets are now attached to individual rows instead of the entire listbox
-    # This prevents the entire sidebar from being highlighted during drag operations
-    
+
+    drop_target = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
+    drop_target.connect("drop", lambda t, v, x, y: _on_connection_list_drop(window, t, v, x, y))
+    drop_target.connect("motion", lambda t, x, y: _on_connection_list_motion(window, t, x, y))
+    drop_target.connect("leave", lambda t: _on_connection_list_leave(window, t))
+    window.connection_list.add_controller(drop_target)
+
     window._drop_indicator_row = None
     window._drop_indicator_position = None
     window._ungrouped_area_row = None
