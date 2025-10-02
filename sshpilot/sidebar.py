@@ -461,6 +461,11 @@ class GroupRow(Adw.ActionRow):
             if window:
                 # Track which group is being dragged
                 window._dragged_group_id = self.group_id
+                
+                # Mark drag as in progress but keep selection mode for visual feedback
+                window._drag_in_progress = True
+                # Don't disable selection mode - keep it for visual feedback
+                
                 _show_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in group drag begin: {e}")
@@ -705,6 +710,12 @@ class ConnectionRow(Adw.ActionRow):
     # -- drag source ------------------------------------------------------
 
     def _setup_drag_source(self):
+        # Add a gesture controller to capture selection before drag starts
+        gesture = Gtk.GestureDrag()
+        gesture.set_button(getattr(Gdk, "BUTTON_PRIMARY", 1))
+        gesture.connect("drag-begin", self._on_gesture_drag_begin)
+        self.add_controller(gesture)
+        
         drag_source = Gtk.DragSource()
         drag_source.set_actions(Gdk.DragAction.MOVE)
         drag_source.set_exclusive(False)
@@ -716,19 +727,63 @@ class ConnectionRow(Adw.ActionRow):
         # Store reference for cleanup
         self._drag_source = drag_source
 
+    def _on_gesture_drag_begin(self, gesture, start_x, start_y):
+        """Capture selection before drag starts"""
+        window = self.get_root()
+        if window and hasattr(window, "connection_list"):
+            try:
+                selected_rows = list(window.connection_list.get_selected_rows())
+                logger.debug(f"Gesture drag begin: Captured {len(selected_rows)} selected rows")
+                
+                # Store the selected rows for use in drag prepare
+                selected_nicknames = []
+                for row in selected_rows:
+                    connection_obj = getattr(row, "connection", None)
+                    nickname = getattr(connection_obj, "nickname", None)
+                    if nickname:
+                        selected_nicknames.append(nickname)
+                
+                # Store in window for drag prepare to use
+                window._captured_selection = selected_nicknames
+                logger.debug(f"Gesture drag begin: Stored {len(selected_nicknames)} nicknames: {selected_nicknames}")
+            except Exception as e:
+                logger.debug(f"Gesture drag begin: Error capturing selection: {e}")
+                window._captured_selection = []
+
     def _on_drag_prepare(self, source, x, y):
         window = self.get_root()
 
         connections_payload: List[Dict[str, Optional[int | str]]] = []
         selection_order = 0
 
+        # Use captured selection from gesture drag begin
+        captured_nicknames = getattr(window, "_captured_selection", []) if window else []
+        logger.debug(f"Drag prepare: Using captured selection with {len(captured_nicknames)} nicknames: {captured_nicknames}")
+        
         if window and hasattr(window, "connection_list"):
+            # Get all rows to find the ones that match our captured selection
+            all_rows = []
             try:
-                selected_rows = list(window.connection_list.get_selected_rows())
-            except Exception:
-                selected_rows = []
+                # Get all rows from the connection list
+                child = window.connection_list.get_first_child()
+                while child is not None:
+                    all_rows.append(child)
+                    child = child.get_next_sibling()
+            except Exception as e:
+                logger.debug(f"Drag prepare: Error getting all rows: {e}")
+                all_rows = []
 
-            if not selected_rows or self not in selected_rows:
+            # Find rows that match our captured selection
+            selected_rows = []
+            for row in all_rows:
+                connection_obj = getattr(row, "connection", None)
+                nickname = getattr(connection_obj, "nickname", None)
+                if nickname in captured_nicknames:
+                    selected_rows.append(row)
+
+            # If no captured selection or self not in selection, add self
+            if not captured_nicknames or self.connection.nickname not in captured_nicknames:
+                logger.debug(f"Drag prepare: Adding self to selection (self not in captured selection)")
                 selected_rows.append(self)
 
             seen_nicknames = set()
@@ -795,6 +850,8 @@ class ConnectionRow(Adw.ActionRow):
             "connections": connections_payload,
         }
 
+        logger.debug(f"Drag prepare: Final payload has {len(ordered_nicknames)} nicknames: {ordered_nicknames}")
+
         if window:
             try:
                 window._pending_drag_connections = ordered_nicknames
@@ -821,6 +878,10 @@ class ConnectionRow(Adw.ActionRow):
                     except Exception:
                         window._pending_drag_connections = []
 
+                # Mark drag as in progress but keep selection mode for visual feedback
+                window._drag_in_progress = True
+                # Don't disable selection mode - keep it for visual feedback
+
                 _show_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag begin: {e}")
@@ -840,6 +901,11 @@ class ConnectionRow(Adw.ActionRow):
                         delattr(window, "_pending_drag_connections")
                     except Exception:
                         window._pending_drag_connections = []
+                if hasattr(window, "_captured_selection"):
+                    try:
+                        delattr(window, "_captured_selection")
+                    except Exception:
+                        window._captured_selection = []
                 _hide_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag end: {e}")
@@ -1011,10 +1077,9 @@ def setup_connection_list_dnd(window):
 
 def _on_connection_list_motion(window, target, x, y):
     try:
-        # Prevent row selection during drag by temporarily disabling selection
+        # Ensure drag is marked as in progress
         if not hasattr(window, '_drag_in_progress'):
             window._drag_in_progress = True
-            window.connection_list.set_selection_mode(Gtk.SelectionMode.NONE)
 
         # Throttle motion events to improve performance
         current_time = GLib.get_monotonic_time()
@@ -1091,10 +1156,9 @@ def _on_connection_list_leave(window, target):
     _hide_ungrouped_area(window)
     _stop_connection_autoscroll(window)
 
-    # Restore selection mode after drag
+    # Mark drag as no longer in progress
     if hasattr(window, '_drag_in_progress'):
         window._drag_in_progress = False
-        window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
     
     return True
 
@@ -1218,10 +1282,9 @@ def _on_connection_list_drop(window, target, value, x, y):
         _hide_ungrouped_area(window)
         _stop_connection_autoscroll(window)
 
-        # Restore selection mode after drag
+        # Mark drag as no longer in progress
         if hasattr(window, '_drag_in_progress'):
             window._drag_in_progress = False
-            window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
 
         # Extract Python object from GObject.Value drops
         if isinstance(value, GObject.Value):

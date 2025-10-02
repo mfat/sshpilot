@@ -3472,6 +3472,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     # Signal handlers
     def on_connection_click(self, gesture, n_press, x, y):
         """Handle clicks on the connection list"""
+        # Prevent selection changes during drag
+        if hasattr(self, '_drag_in_progress') and self._drag_in_progress:
+            logger.debug("on_connection_click: Drag in progress, ignoring click")
+            return
+            
         # Get the row that was clicked
         row, _, _ = self._resolve_connection_list_event(x, y)
         if row is None:
