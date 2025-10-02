@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Optional
 from .port_utils import get_port_checker
 from .platform_utils import is_macos
+from .terminal_backends import BaseTerminalBackend, PyXtermTerminalBackend, VTETerminalBackend
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
@@ -225,6 +226,9 @@ class TerminalWidget(Gtk.Box):
         self._is_quitting = False  # Flag to suppress signal handlers during quit
         self.last_error_message = None  # Store last SSH error for reporting
         self._fallback_timer_id = None  # GLib timeout ID for spawn fallback
+        self._backend_name = "vte"
+        self.vte = None
+        self._is_local_shell = False
         
         # Job detection state
         self._job_status = "UNKNOWN"  # IDLE, RUNNING, PROMPT, UNKNOWN
@@ -244,8 +248,7 @@ class TerminalWidget(Gtk.Box):
         self.scrolled_window = Gtk.ScrolledWindow()
         self.scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         
-        # Set up the terminal
-        self.vte = Vte.Terminal()
+        # Create backend first before setup
         self._shortcut_controller = None
         self._scroll_controller = None
         self._config_handler = None
@@ -260,15 +263,21 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 self._config_handler = None
 
+        # Create the backend before calling setup_terminal
+        self.backend = self._create_backend()
+        self.vte = getattr(self.backend, 'vte', None)
+        self.terminal_widget = getattr(self.backend, 'widget', None)
+
         # Initialize terminal with basic settings and apply configured theme early
         self.setup_terminal()
         try:
             self.apply_theme()
         except Exception:
             pass
-        
+
         # Add terminal to scrolled window and to the box via an overlay with a connecting view
-        self.scrolled_window.set_child(self.vte)
+        if self.terminal_widget is not None:
+            self.scrolled_window.set_child(self.terminal_widget)
         self.overlay = Gtk.Overlay()
         self.overlay.set_child(self.scrolled_window)
 
@@ -401,33 +410,55 @@ class TerminalWidget(Gtk.Box):
         # Set expansion properties
         self.scrolled_window.set_hexpand(True)
         self.scrolled_window.set_vexpand(True)
-        self.vte.set_hexpand(True)
-        self.vte.set_vexpand(True)
+        if self.terminal_widget is not None:
+            self.terminal_widget.set_hexpand(True)
+            self.terminal_widget.set_vexpand(True)
 
         # Connect terminal signals and store handler IDs for cleanup
-        self._child_exited_handler = self.vte.connect('child-exited', self.on_child_exited)
-        self._title_changed_handler = self.vte.connect('window-title-changed', self.on_title_changed)
-        
-        # Connect termprops-changed signal if available (VTE 0.78+)
-        # This signal is used for job detection in local terminals
+        self._child_exited_handler = None
+        self._title_changed_handler = None
         self._termprops_changed_handler = None
-        try:
-            self._termprops_changed_handler = self.vte.connect('termprops-changed', self._on_termprops_changed)
-            logger.debug("Connected termprops-changed signal (VTE 0.78+ feature)")
-        except Exception as e:
-            logger.debug(f"termprops-changed signal not available (older VTE version): {e}")
-            # Job detection will be disabled for local terminals on older VTE versions
-        
+        self._connect_backend_signals()
+
         # Apply theme
         self.force_style_refresh()
-        
+
         # Set visibility of child widgets (GTK4 style)
         self.scrolled_window.set_visible(True)
-        self.vte.set_visible(True)
+        if self.terminal_widget is not None:
+            self.terminal_widget.set_visible(True)
         
         # Show overlay initially
         self._set_connecting_overlay_visible(True)
         logger.debug("Terminal widget initialized")
+
+    def _create_backend(self, preferred: Optional[str] = None) -> BaseTerminalBackend:
+        """Create the terminal backend based on configuration."""
+
+        backend_name = preferred or "vte"
+        if preferred is None and self.config:
+            try:
+                backend_name = self.config.get_setting("terminal.backend", backend_name)
+            except Exception:
+                backend_name = "vte"
+
+        backend_name = (backend_name or "vte").lower()
+
+        if backend_name == "pyxterm":
+            try:
+                backend = PyXtermTerminalBackend(self)
+                if getattr(backend, "available", False):
+                    logger.info("Using PyXterm terminal backend")
+                    self._backend_name = "pyxterm"
+                    return backend
+                logger.warning("PyXterm backend unavailable, falling back to VTE")
+            except Exception as e:
+                logger.error(f"Failed to create PyXterm backend: {e}")
+                logger.warning("PyXterm backend creation failed, falling back to VTE")
+
+        logger.debug("Using VTE terminal backend")
+        self._backend_name = "vte"
+        return VTETerminalBackend(self)
 
     def _set_disconnected_banner_visible(self, visible: bool, message: str = None):
         try:
@@ -470,12 +501,13 @@ class TerminalWidget(Gtk.Box):
         if not self.connection:
             logger.error("No connection configured")
             return False
-            
-        # Ensure VTE terminal is properly initialized
-        if not hasattr(self, 'vte') or self.vte is None:
-            logger.error("VTE terminal not initialized")
+
+        # Ensure terminal backend is properly initialized
+        if not getattr(self, 'backend', None) or getattr(self, 'terminal_widget', None) is None:
+            logger.error("Terminal backend not initialized")
             return False
-        
+
+        self._is_local_shell = False
         try:
             # Connect in a separate thread to avoid blocking UI
             thread = threading.Thread(target=self._connect_ssh_thread)
@@ -992,31 +1024,17 @@ class TerminalWidget(Gtk.Box):
                 if '/app/bin' not in current_path:
                     env['PATH'] = f"/app/bin:{current_path}"
             
-            # Convert environment dict to list format expected by VTE
-            env_list = []
-            for key, value in env.items():
-                env_list.append(f"{key}={value}")
-            
             # Log the command being executed for debugging
             logger.debug(f"Spawning SSH command: {ssh_cmd}")
             logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
-            
-            # Create a new PTY for the terminal
-            pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
-            
+
             try:
-                self.vte.spawn_async(
-                    Vte.PtyFlags.DEFAULT,
-                    os.path.expanduser('~') or '/',
+                self.backend.spawn_async(
                     ssh_cmd,
-                    env_list,  # Use environment list for Flatpak
-                    GLib.SpawnFlags.DEFAULT,
-                    None,  # Child setup function
-                    None,  # Child setup data
-                    -1,    # Timeout (-1 = default)
-                    None,  # Cancellable
-                    self._on_spawn_complete,
-                    ()     # User data - empty tuple for Flatpak VTE compatibility
+                    env=env,
+                    cwd=os.path.expanduser('~') or '/',
+                    callback=self._on_spawn_complete,
+                    user_data=(),
                 )
             except GLib.Error as e:
                 logger.error(f"VTE spawn failed with GLib error: {e}")
@@ -1024,7 +1042,7 @@ class TerminalWidget(Gtk.Box):
                 if "sshpass" in str(e) and "No such file or directory" in str(e):
                     logger.error("sshpass binary not found, falling back to askpass")
                     # Fall back to askpass method
-                    self._fallback_to_askpass(ssh_cmd, env_list)
+                    self._fallback_to_askpass(ssh_cmd, [f"{k}={v}" for k, v in env.items()])
                 else:
                     self._on_connection_failed(str(e))
                 return
@@ -1032,9 +1050,9 @@ class TerminalWidget(Gtk.Box):
                 logger.error(f"VTE spawn failed with exception: {e}")
                 self._on_connection_failed(str(e))
                 return
-            
+
             # Store the PTY for later cleanup
-            self.pty = pty
+            self.pty = self.backend.get_pty()
             try:
                 import time
                 self._spawn_start_time = time.time()
@@ -1049,9 +1067,9 @@ class TerminalWidget(Gtk.Box):
             
             # Apply theme after connection is established
             self.apply_theme()
-            
+
             # Focus the terminal
-            self.vte.grab_focus()
+            self.backend.grab_focus()
 
             # Add fallback timer to hide spinner if spawn completion doesn't fire
             self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
@@ -1077,19 +1095,19 @@ class TerminalWidget(Gtk.Box):
 
             logger.debug(f"Fallback SSH command: {ssh_cmd}")
 
+            env_dict = {}
+            for entry in env_list:
+                if '=' in entry:
+                    key, value = entry.split('=', 1)
+                    env_dict[key] = value
+
             # Try spawning again without askpass
-            self.vte.spawn_async(
-                Vte.PtyFlags.DEFAULT,
-                os.path.expanduser('~') or '/',
+            self.backend.spawn_async(
                 ssh_cmd,
-                env_list,
-                GLib.SpawnFlags.DEFAULT,
-                None,
-                None,
-                -1,
-                None,
-                self._on_spawn_complete,
-                ()
+                env=env_dict,
+                cwd=os.path.expanduser('~') or '/',
+                callback=self._on_spawn_complete,
+                user_data=(),
             )
         except Exception as e:
             logger.error(f"Fallback to interactive prompt failed: {e}")
@@ -1150,7 +1168,7 @@ class TerminalWidget(Gtk.Box):
                 }
             
             # Grab focus and apply theme
-            self.vte.grab_focus()
+            self.backend.grab_focus()
             self.apply_theme()
 
             # Spawn succeeded; mark as connected and hide overlay
@@ -1478,113 +1496,82 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             logger.debug("Failed to reapply theme after group color update", exc_info=True)
             
+
     def force_style_refresh(self):
         """Force a style refresh of the terminal widget."""
         self.apply_theme()
-    
+
     def setup_terminal(self):
-        """Initialize the VTE terminal with appropriate settings."""
+        """Initialize the terminal backend with appropriate settings."""
         logger.info("Setting up terminal...")
-        
+
         try:
-            # Set terminal font
-            font_desc = Pango.FontDescription()
-            font_desc.set_family("Monospace")
-            font_desc.set_size(12 * Pango.SCALE)  # Slightly larger default font
-            self.vte.set_font(font_desc)
-            
-            # Do not force a light default; theme will define colors
-            self.apply_theme()
-            
-            # Set cursor properties
-            self.vte.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)
-            self.vte.set_cursor_shape(Vte.CursorShape.BLOCK)
-            
-            # Set scrollback lines
-            self.vte.set_scrollback_lines(10000)
-            
-            # Set word char exceptions (for double-click selection)
-            try:
-                # Try the newer API first (VTE 0.60+)
-                if hasattr(self.vte, 'set_word_char_exceptions'):
-                    self.vte.set_word_char_exceptions("@-./_~")
-                    logger.debug("Set word char exceptions using VTE 0.60+ API")
-                # Fall back to the older API if needed
-                elif hasattr(self.vte, 'set_word_char_options'):
-                    self.vte.set_word_char_options("@-./_~")
-                    logger.debug("Set word char exceptions using older VTE API")
-            except Exception as e:
-                logger.warning(f"Could not set word char options: {e}")
-            
-            # Set cursor and selection colors
-            try:
-                cursor_color = Gdk.RGBA()
-                cursor_color.parse('black')  # Black cursor
-                
-                if hasattr(self.vte, 'set_color_cursor'):
-                    self.vte.set_color_cursor(cursor_color)
-                    logger.debug("Set cursor color")
-                
-                # Set selection colors
-                if hasattr(self.vte, 'set_color_highlight'):
-                    highlight_bg = Gdk.RGBA()
-                    highlight_bg.parse('#4A90E2')  # Light blue highlight
-                    self.vte.set_color_highlight(highlight_bg)
-                    logger.debug("Set highlight color")
-                    
-                    highlight_fg = Gdk.RGBA()
-                    highlight_fg.parse('white')
-                    if hasattr(self.vte, 'set_color_highlight_foreground'):
-                        self.vte.set_color_highlight_foreground(highlight_fg)
-                        logger.debug("Set highlight foreground color")
-                        
-            except Exception as e:
-                logger.warning(f"Could not set terminal colors: {e}")
-            
-            # Enable mouse reporting if available
-            if hasattr(self.vte, 'set_mouse_autohide'):
-                self.vte.set_mouse_autohide(True)
-                logger.debug("Enabled mouse autohide")
-                
-            # Set terminal encoding
-            try:
-                self.vte.set_encoding('UTF-8')
-                logger.debug("Set terminal encoding to UTF-8")
-            except Exception as e:
-                logger.warning(f"Could not set terminal encoding: {e}")
-                
-            # Enable bold text
-            try:
-                if hasattr(self.vte, 'set_allow_bold'):
-                    self.vte.set_allow_bold(True)
-                    logger.debug("Enabled bold text")
-            except Exception as e:
-                logger.warning(f"Could not enable bold text: {e}")
-                
-            logger.info("Terminal setup complete")
-            
-            # Enable bold text
-            self.vte.set_allow_bold(True)
-            
-            # Show the terminal
-            self.vte.show()
-            logger.info("Terminal setup complete")
-            
-        except Exception as e:
-            logger.error(f"Error in setup_terminal: {e}", exc_info=True)
-            raise
-        
+            self.backend.apply_theme()
+        except Exception:
+            logger.debug("Backend failed to apply theme during setup", exc_info=True)
+
+        try:
+            self.backend.initialize()
+        except Exception:
+            logger.debug("Backend initialize failed", exc_info=True)
+
         # Install terminal shortcuts and custom context menu
         self._apply_pass_through_mode(self._pass_through_mode)
         self._setup_context_menu()
+
+    def _connect_backend_signals(self):
+        """Connect to backend signals and store handler IDs."""
+        backend = getattr(self, 'backend', None)
+        if backend is None:
+            return
+        try:
+            self._child_exited_handler = backend.connect_child_exited(self.on_child_exited)
+        except Exception:
+            self._child_exited_handler = None
+        try:
+            self._title_changed_handler = backend.connect_title_changed(self.on_title_changed)
+        except Exception:
+            self._title_changed_handler = None
+        try:
+            self._termprops_changed_handler = backend.connect_termprops_changed(self._on_termprops_changed)
+        except Exception:
+            self._termprops_changed_handler = None
+
+    def _disconnect_backend_signals(self, backend: Optional[BaseTerminalBackend] = None):
+        """Disconnect previously connected backend signals."""
+        backend = backend or getattr(self, 'backend', None)
+        if backend is None:
+            return
+        if getattr(self, '_child_exited_handler', None):
+            try:
+                backend.disconnect(self._child_exited_handler)
+            except Exception:
+                logger.debug("Failed to disconnect child-exited handler", exc_info=True)
+            finally:
+                self._child_exited_handler = None
+        if getattr(self, '_title_changed_handler', None):
+            try:
+                backend.disconnect(self._title_changed_handler)
+            except Exception:
+                logger.debug("Failed to disconnect title-changed handler", exc_info=True)
+            finally:
+                self._title_changed_handler = None
+        if getattr(self, '_termprops_changed_handler', None):
+            try:
+                backend.disconnect(self._termprops_changed_handler)
+            except Exception:
+                logger.debug("Failed to disconnect termprops handler", exc_info=True)
+            finally:
+                self._termprops_changed_handler = None
 
     def setup_local_shell(self):
         """Set up the terminal for local shell (not SSH)"""
         logger.info("Setting up local shell terminal")
         try:
+            self._is_local_shell = True
             # Hide connecting overlay immediately for local shell
             self._set_connecting_overlay_visible(False)
-            
+
             # Set up the terminal for local shell
             self.setup_terminal()
             
@@ -1602,25 +1589,15 @@ class TerminalWidget(Gtk.Box):
             # Set initial title for local terminal
             self.emit('title-changed', 'Local Terminal')
 
-            # Convert environment dict to list for VTE compatibility
-            env_list = []
-            for key, value in env.items():
-                env_list.append(f"{key}={value}")
-
             # Start the user's shell as a login shell
-            self.vte.spawn_async(
-                Vte.PtyFlags.DEFAULT,
-                os.path.expanduser('~') or '/',
+            self.backend.spawn_async(
                 [shell, '-l'],
-                env_list,
-                GLib.SpawnFlags.DEFAULT,
-                None,
-                None,
-                -1,
-                None,
-                self._on_spawn_complete,
-                ()
+                env=env,
+                cwd=os.path.expanduser('~') or '/',
+                callback=self._on_spawn_complete,
+                user_data=(),
             )
+            self.pty = self.backend.get_pty()
 
             # Add fallback timer to hide spinner if spawn completion doesn't fire
             self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
@@ -1631,9 +1608,162 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Failed to setup local shell: {e}")
             self.emit('connection-failed', str(e))
 
+    # ------------------------------------------------------------------
+    # Backend utilities
+    # ------------------------------------------------------------------
+    def get_backend_name(self) -> str:
+        return getattr(self, '_backend_name', 'vte')
+
+    def set_font(self, font_desc: Pango.FontDescription) -> None:
+        backend = getattr(self, 'backend', None)
+        applied = False
+        if backend and hasattr(backend, 'set_font'):
+            try:
+                backend.set_font(font_desc)
+                applied = True
+            except Exception:
+                logger.debug("Backend-specific font application failed", exc_info=True)
+        if not applied and getattr(self, 'vte', None) is not None:
+            try:
+                self.vte.set_font(font_desc)
+            except Exception:
+                logger.debug("Legacy VTE font application failed", exc_info=True)
+
+    def queue_draw_terminal(self) -> None:
+        backend = getattr(self, 'backend', None)
+        if backend and hasattr(backend, 'queue_draw'):
+            try:
+                backend.queue_draw()
+                return
+            except Exception:
+                logger.debug("Backend queue_draw failed", exc_info=True)
+        widget = getattr(self, 'terminal_widget', None)
+        if widget and hasattr(widget, 'queue_draw'):
+            widget.queue_draw()
+        elif getattr(self, 'vte', None) is not None:
+            try:
+                self.vte.queue_draw()
+            except Exception:
+                logger.debug("Legacy VTE queue_draw failed", exc_info=True)
+
+    def show_terminal_widget(self) -> None:
+        widget = getattr(self, 'terminal_widget', None)
+        if widget is None:
+            widget = getattr(self, 'backend', None)
+            widget = getattr(widget, 'widget', None) if widget else None
+        if widget is None:
+            return
+        try:
+            if hasattr(widget, 'set_visible'):
+                widget.set_visible(True)
+            if hasattr(widget, 'show'):
+                widget.show()
+        except Exception:
+            logger.debug("Failed to show terminal widget", exc_info=True)
+
+    def feed_child(self, data: bytes) -> bool:
+        backend = getattr(self, 'backend', None)
+        if backend and hasattr(backend, 'feed_child'):
+            try:
+                backend.feed_child(data)
+                return True
+            except Exception:
+                logger.debug("Backend feed_child failed", exc_info=True)
+        if getattr(self, 'vte', None) is not None:
+            try:
+                self.vte.feed_child(data)
+                return True
+            except Exception:
+                logger.debug("Legacy VTE feed_child failed", exc_info=True)
+        return False
+
+    def switch_backend(self, backend_name: str) -> bool:
+        desired = (backend_name or 'vte').lower()
+        current = self.get_backend_name().lower()
+        if desired == current:
+            return False
+
+        was_connected = bool(self.is_connected)
+        was_local = bool(getattr(self, '_is_local_shell', False))
+        old_backend = getattr(self, 'backend', None)
+
+        # Clean up UI elements tied to the old backend
+        self._teardown_context_menu()
+        self._disconnect_backend_signals(old_backend)
+
+        if was_connected:
+            try:
+                self.disconnect()
+            except Exception:
+                logger.debug("Failed to disconnect before backend switch", exc_info=True)
+
+        # Remove existing widget
+        old_widget = getattr(self, 'terminal_widget', None)
+        if old_widget is not None:
+            try:
+                if self.scrolled_window.get_child() is old_widget:
+                    self.scrolled_window.set_child(None)
+            except Exception:
+                logger.debug("Failed to detach old backend widget", exc_info=True)
+
+        if old_backend and hasattr(old_backend, 'destroy'):
+            try:
+                old_backend.destroy()
+            except Exception:
+                logger.debug("Backend destroy failed", exc_info=True)
+
+        # Create and initialize the new backend
+        self.backend = self._create_backend(desired)
+        self.vte = getattr(self.backend, 'vte', None)
+        self.terminal_widget = getattr(self.backend, 'widget', None)
+
+        if self.terminal_widget is not None:
+            try:
+                self.terminal_widget.set_hexpand(True)
+                self.terminal_widget.set_vexpand(True)
+                if hasattr(self.terminal_widget, 'set_visible'):
+                    self.terminal_widget.set_visible(True)
+                self.scrolled_window.set_child(self.terminal_widget)
+            except Exception:
+                logger.debug("Failed to attach new backend widget", exc_info=True)
+
+        # Reinitialize state and listeners
+        self._child_exited_handler = None
+        self._title_changed_handler = None
+        self._termprops_changed_handler = None
+        self.setup_terminal()
+        self.force_style_refresh()
+        self._connect_backend_signals()
+        self._set_disconnected_banner_visible(False)
+
+        if was_connected:
+            if was_local:
+                try:
+                    self.setup_local_shell()
+                except Exception:
+                    logger.error("Failed to restart local shell after backend switch", exc_info=True)
+            else:
+                self._set_connecting_overlay_visible(True)
+                if not self._connect_ssh():
+                    logger.error("Failed to reconnect after backend switch")
+                    self._set_connecting_overlay_visible(False)
+        return True
+
+    def ensure_backend(self, backend_name: str) -> bool:
+        try:
+            return self.switch_backend(backend_name)
+        except Exception:
+            logger.error("Failed to ensure backend %s", backend_name, exc_info=True)
+            return False
+
     def _setup_context_menu(self):
         """Set up a robust per-terminal context menu and actions."""
         try:
+            # Skip context menu setup for PyXterm backend as it has its own WebView context menu
+            if self._backend_name == "pyxterm":
+                logger.debug("Skipping context menu setup for PyXterm backend (uses WebView context menu)")
+                return
+                
             logger.debug("Setting up terminal context menu...")
             # Per-widget action group
             self._menu_actions = Gio.SimpleActionGroup()
@@ -1690,7 +1820,8 @@ class TerminalWidget(Gtk.Box):
             self._menu_popover = Gtk.PopoverMenu.new_from_model(self._menu_model)
             self._menu_popover.set_has_arrow(True)
             # Set parent to the terminal widget
-            self._menu_popover.set_parent(self.vte)
+            if self.terminal_widget is not None:
+                self._menu_popover.set_parent(self.terminal_widget)
 
             # Right-click gesture to open popover
             gesture = Gtk.GestureClick()
@@ -1708,7 +1839,7 @@ class TerminalWidget(Gtk.Box):
                         return
                     # Focus terminal first for reliable copy/paste
                     try:
-                        self.vte.grab_focus()
+                        self.backend.grab_focus()
                     except Exception:
                         pass
                     # Position popover near click
@@ -1726,10 +1857,35 @@ class TerminalWidget(Gtk.Box):
                 except Exception as e:
                     logger.error(f"Context menu popup failed: {e}")
             gesture.connect('pressed', _on_pressed)
-            self.vte.add_controller(gesture)
+            if self.terminal_widget is not None:
+                self.terminal_widget.add_controller(gesture)
             logger.debug("Terminal context menu setup completed successfully")
         except Exception as e:
             logger.error(f"Context menu setup failed: {e}")
+
+    def _teardown_context_menu(self):
+        """Remove any previously installed context menu resources."""
+        try:
+            # Skip teardown for PyXterm backend as no custom context menu was set up
+            if self._backend_name == "pyxterm":
+                return
+                
+            if getattr(self, '_menu_popover', None) is not None:
+                try:
+                    self._menu_popover.unparent()
+                except Exception:
+                    pass
+            if getattr(self, '_menu_actions', None) is not None:
+                try:
+                    self.remove_action_group('term')
+                except Exception:
+                    pass
+        except Exception:
+            logger.debug("Failed to tear down context menu", exc_info=True)
+        finally:
+            self._menu_actions = None
+            self._menu_popover = None
+            self._menu_model = None
 
     def _install_shortcuts(self):
         """Install local shortcuts on the VTE widget for copy/paste/select-all."""
@@ -1738,6 +1894,11 @@ class TerminalWidget(Gtk.Box):
             return
 
         if getattr(self, '_shortcut_controller', None) is not None:
+            return
+        
+        # Only install shortcuts for VTE backend
+        if getattr(self, 'vte', None) is None:
+            logger.debug("Non-VTE backend; skipping VTE-specific shortcuts")
             return
 
         try:
@@ -1811,21 +1972,21 @@ class TerminalWidget(Gtk.Box):
                     self.zoom_in()
                 except Exception as exc:
                     logger.debug("Zoom in shortcut failed: %s", exc)
-                return True
+                return False
 
             def _cb_zoom_out(widget, *args):
                 try:
                     self.zoom_out()
                 except Exception as exc:
                     logger.debug("Zoom out shortcut failed: %s", exc)
-                return True
+                return False
 
             def _cb_reset_zoom(widget, *args):
                 try:
                     self.reset_zoom()
                 except Exception as exc:
                     logger.debug("Zoom reset shortcut failed: %s", exc)
-                return True
+                return False
             
             controller.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string(zoom_in_trigger),
@@ -2056,7 +2217,7 @@ class TerminalWidget(Gtk.Box):
             # Prefer PID recorded at spawn complete
             if getattr(self, 'process_pid', None):
                 return self.process_pid
-            pty = self.vte.get_pty()
+            pty = self.backend.get_pty() if getattr(self, 'backend', None) else None
             if pty and hasattr(pty, 'get_pid'):
                 pid = pty.get_pid()
                 if pid:
@@ -2071,20 +2232,11 @@ class TerminalWidget(Gtk.Box):
         """Handle widget destruction"""
         logger.debug(f"Terminal widget {self.session_id} being destroyed")
         
-        # Disconnect VTE signal handlers first to prevent callbacks on destroyed objects
-        if hasattr(self, 'vte') and self.vte:
-            try:
-                if hasattr(self, '_child_exited_handler'):
-                    self.vte.disconnect(self._child_exited_handler)
-                    logger.debug("Disconnected child-exited signal handler")
-                if hasattr(self, '_title_changed_handler'):
-                    self.vte.disconnect(self._title_changed_handler)
-                    logger.debug("Disconnected title-changed signal handler")
-                if hasattr(self, '_termprops_changed_handler') and self._termprops_changed_handler is not None:
-                    self.vte.disconnect(self._termprops_changed_handler)
-                    logger.debug("Disconnected termprops-changed signal handler")
-            except Exception as e:
-                logger.error(f"Error disconnecting VTE signals: {e}")
+        # Disconnect backend signal handlers first to prevent callbacks on destroyed objects
+        try:
+            self._disconnect_backend_signals(getattr(self, 'backend', None))
+        except Exception as e:
+            logger.error(f"Error disconnecting backend signals: {e}")
         
         # Disconnect from connection manager signals
         if hasattr(self, '_connection_updated_handler') and hasattr(self.connection_manager, 'disconnect'):
@@ -2344,7 +2496,7 @@ class TerminalWidget(Gtk.Box):
         try:
             # Show raw error in terminal
             error_msg = f"\r\n\x1b[31m{error_message}\x1b[0m\r\n"
-            self.vte.feed(error_msg.encode('utf-8'))
+            self.backend.feed(error_msg.encode('utf-8'))
 
             self.is_connected = False
 
@@ -2527,23 +2679,31 @@ class TerminalWidget(Gtk.Box):
 
     def copy_text(self):
         """Copy selected text to clipboard"""
-        if self.vte.get_has_selection():
-            self.vte.copy_clipboard_format(Vte.Format.TEXT)
+        try:
+            self.backend.copy_clipboard()
+        except Exception as e:
+            logger.error(f"Failed to copy text: {e}")
 
     def paste_text(self):
         """Paste text from clipboard"""
-        self.vte.paste_clipboard()
+        try:
+            self.backend.paste_clipboard()
+        except Exception as e:
+            logger.error(f"Failed to paste text: {e}")
 
     def select_all(self):
         """Select all text in terminal"""
-        self.vte.select_all()
+        try:
+            self.backend.select_all()
+        except Exception as e:
+            logger.error(f"Failed to select all text: {e}")
 
     def zoom_in(self):
         """Zoom in the terminal font"""
         try:
-            current_scale = self.vte.get_font_scale()
+            current_scale = self.backend.get_font_scale()
             new_scale = min(current_scale + 0.1, 5.0)  # Max zoom 5x
-            self.vte.set_font_scale(new_scale)
+            self.backend.set_font_scale(new_scale)
             logger.debug(f"Terminal zoomed in to {new_scale:.1f}x")
         except Exception as e:
             logger.error(f"Failed to zoom in terminal: {e}")
@@ -2551,9 +2711,9 @@ class TerminalWidget(Gtk.Box):
     def zoom_out(self):
         """Zoom out the terminal font"""
         try:
-            current_scale = self.vte.get_font_scale()
+            current_scale = self.backend.get_font_scale()
             new_scale = max(current_scale - 0.1, 0.5)  # Min zoom 0.5x
-            self.vte.set_font_scale(new_scale)
+            self.backend.set_font_scale(new_scale)
             logger.debug(f"Terminal zoomed out to {new_scale:.1f}x")
         except Exception as e:
             logger.error(f"Failed to zoom out terminal: {e}")
@@ -2561,18 +2721,18 @@ class TerminalWidget(Gtk.Box):
     def reset_zoom(self):
         """Reset terminal zoom to default (1.0x)"""
         try:
-            self.vte.set_font_scale(1.0)
+            self.backend.set_font_scale(1.0)
             logger.debug("Terminal zoom reset to 1.0x")
         except Exception as e:
             logger.error(f"Failed to reset terminal zoom: {e}")
 
     def reset_terminal(self):
         """Reset terminal"""
-        self.vte.reset(True, True)
+        self.backend.reset(True, True)
 
     def reset_and_clear(self):
         """Reset and clear terminal"""
-        self.vte.reset(True, False)
+        self.backend.reset(True, False)
 
     def search_text(self, text, case_sensitive=False, regex=False):
         """Search for text in terminal"""
@@ -2585,10 +2745,10 @@ class TerminalWidget(Gtk.Box):
                 search_regex = GLib.Regex.new(escaped_text, 0 if case_sensitive else GLib.RegexCompileFlags.CASELESS, 0)
             
             # Set search regex
-            self.vte.search_set_regex(search_regex, 0)
-            
+            self.backend.search_set_regex(search_regex)
+
             # Find next match
-            return self.vte.search_find_next()
+            return self.backend.search_find_next()
             
         except Exception as e:
             logger.error(f"Search failed: {e}")
@@ -2704,10 +2864,10 @@ class TerminalWidget(Gtk.Box):
             return False
             
         try:
-            if not hasattr(self, 'vte') or not self.vte:
+            if not getattr(self, 'backend', None):
                 return False
-                
-            pty = self.vte.get_pty()
+
+            pty = self.backend.get_pty()
             if not pty:
                 return False
                 
