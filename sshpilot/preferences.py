@@ -573,64 +573,13 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 
                 terminal_page.add(terminal_choice_group)
             
-            # Create Interface preferences page
-            interface_page = Adw.PreferencesPage()
-            interface_page.set_title("Interface")
-            interface_page.set_icon_name("applications-graphics-symbolic")
-            
-            # App startup behavior
-            startup_group = Adw.PreferencesGroup()
-            startup_group.set_title("App Startup")
-            
-            # Radio buttons for startup behavior
-            self.terminal_startup_radio = Gtk.CheckButton(label="Show Terminal")
-            self.terminal_startup_radio.set_can_focus(True)
-            self.welcome_startup_radio = Gtk.CheckButton(label="Show Start Page")
-            self.welcome_startup_radio.set_can_focus(True)
-            
-            # Make them behave like radio buttons
-            self.welcome_startup_radio.set_group(self.terminal_startup_radio)
-            
-            # Set current preference (default to terminal)
-            startup_behavior = self.config.get_setting('app-startup-behavior', 'terminal')
-            if startup_behavior == 'welcome':
-                self.welcome_startup_radio.set_active(True)
-            else:
-                self.terminal_startup_radio.set_active(True)
-            
-            # Connect radio button changes
-            self.terminal_startup_radio.connect('toggled', self.on_startup_behavior_changed)
-            self.welcome_startup_radio.connect('toggled', self.on_startup_behavior_changed)
-            
-            # Add radio buttons to group
-            startup_group.add(self.terminal_startup_radio)
-            startup_group.add(self.welcome_startup_radio)
-            
-            interface_page.add(startup_group)
-            
-            # Appearance group
-            interface_appearance_group = Adw.PreferencesGroup()
-            interface_appearance_group.set_title("Appearance")
-            
-            # Theme selection
-            self.theme_row = Adw.ComboRow()
-            self.theme_row.set_title("Application Theme")
-            self.theme_row.set_subtitle("Choose light, dark, or follow system theme")
-            
-            themes = Gtk.StringList()
-            themes.append("Follow System")
-            themes.append("Light")
-            themes.append("Dark")
-            self.theme_row.set_model(themes)
-            
-            # Load saved theme preference
-            saved_theme = self.config.get_setting('app-theme', 'default')
-            theme_mapping = {'default': 0, 'light': 1, 'dark': 2}
-            self.theme_row.set_selected(theme_mapping.get(saved_theme, 0))
+            # Create Groups preferences page
+            groups_page = Adw.PreferencesPage()
+            groups_page.set_title("Groups")
+            groups_page.set_icon_name("user-group-symbolic")
 
-            self.theme_row.connect('notify::selected', self.on_theme_changed)
-
-            interface_appearance_group.add(self.theme_row)
+            group_appearance_group = Adw.PreferencesGroup()
+            group_appearance_group.set_title("Group Appearance")
 
             # Sidebar group color display mode
             self._group_color_display_values = ['fill', 'badge']
@@ -667,7 +616,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 'notify::selected', self.on_group_color_display_changed
             )
 
-            interface_appearance_group.add(self.group_color_display_row)
+            group_appearance_group.add(self.group_color_display_row)
 
             # Toggle for coloring tabs using group colors
             self.tab_group_color_row = Adw.SwitchRow()
@@ -685,7 +634,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.tab_group_color_row.connect(
                 'notify::active', self.on_use_group_color_in_tab_toggled
             )
-            interface_appearance_group.add(self.tab_group_color_row)
+            group_appearance_group.add(self.tab_group_color_row)
 
             # Toggle for applying group colors inside terminals
             self.terminal_group_color_row = Adw.SwitchRow()
@@ -703,7 +652,100 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.terminal_group_color_row.connect(
                 'notify::active', self.on_use_group_color_in_terminal_toggled
             )
-            interface_appearance_group.add(self.terminal_group_color_row)
+            group_appearance_group.add(self.terminal_group_color_row)
+
+            groups_page.add(group_appearance_group)
+
+            quick_actions_added = False
+            quick_actions_group = Adw.PreferencesGroup()
+            quick_actions_group.set_title("Quick Actions")
+            quick_actions_group.set_description(
+                "Manage groups without leaving preferences"
+            )
+
+            quick_actions_added |= self._try_add_group_action_row(
+                quick_actions_group,
+                "Create Group",
+                "Add a new group for organizing connections",
+                'on_create_group_action',
+                button_label="Create",
+                suggested=True,
+            )
+            quick_actions_added |= self._try_add_group_action_row(
+                quick_actions_group,
+                "Edit Selected Group",
+                "Modify the currently selected group from the main window",
+                'on_edit_group_action',
+            )
+            quick_actions_added |= self._try_add_group_action_row(
+                quick_actions_group,
+                "Delete Selected Group",
+                "Remove the selected group after confirmation",
+                'on_delete_group_action',
+                destructive=True,
+            )
+
+            if quick_actions_added:
+                groups_page.add(quick_actions_group)
+
+            # Create Interface preferences page
+            interface_page = Adw.PreferencesPage()
+            interface_page.set_title("Interface")
+            interface_page.set_icon_name("applications-graphics-symbolic")
+
+            # App startup behavior
+            startup_group = Adw.PreferencesGroup()
+            startup_group.set_title("App Startup")
+
+            # Radio buttons for startup behavior
+            self.terminal_startup_radio = Gtk.CheckButton(label="Show Terminal")
+            self.terminal_startup_radio.set_can_focus(True)
+            self.welcome_startup_radio = Gtk.CheckButton(label="Show Start Page")
+            self.welcome_startup_radio.set_can_focus(True)
+
+            # Make them behave like radio buttons
+            self.welcome_startup_radio.set_group(self.terminal_startup_radio)
+
+            # Set current preference (default to terminal)
+            startup_behavior = self.config.get_setting('app-startup-behavior', 'terminal')
+            if startup_behavior == 'welcome':
+                self.welcome_startup_radio.set_active(True)
+            else:
+                self.terminal_startup_radio.set_active(True)
+
+            # Connect radio button changes
+            self.terminal_startup_radio.connect('toggled', self.on_startup_behavior_changed)
+            self.welcome_startup_radio.connect('toggled', self.on_startup_behavior_changed)
+
+            # Add radio buttons to group
+            startup_group.add(self.terminal_startup_radio)
+            startup_group.add(self.welcome_startup_radio)
+
+            interface_page.add(startup_group)
+
+            # Appearance group
+            interface_appearance_group = Adw.PreferencesGroup()
+            interface_appearance_group.set_title("Appearance")
+
+            # Theme selection
+            self.theme_row = Adw.ComboRow()
+            self.theme_row.set_title("Application Theme")
+            self.theme_row.set_subtitle("Choose light, dark, or follow system theme")
+
+            themes = Gtk.StringList()
+            themes.append("Follow System")
+            themes.append("Light")
+            themes.append("Dark")
+            self.theme_row.set_model(themes)
+            
+            # Load saved theme preference
+            saved_theme = self.config.get_setting('app-theme', 'default')
+            theme_mapping = {'default': 0, 'light': 1, 'dark': 2}
+            self.theme_row.set_selected(theme_mapping.get(saved_theme, 0))
+
+            self.theme_row.connect('notify::selected', self.on_theme_changed)
+
+            interface_appearance_group.add(self.theme_row)
 
 
             # Color overrides section
@@ -1133,6 +1175,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self._set_shortcut_controls_enabled(not self._pass_through_enabled)
 
             # Add pages to the preferences window
+            self.add(groups_page)
             self.add(interface_page)
             self.add(terminal_page)
             self.add(shortcuts_page)
@@ -1340,6 +1383,50 @@ class PreferencesWindow(Adw.PreferencesWindow):
 
         if not getattr(self, '_config_signal_id', None):
             self._trigger_terminal_style_refresh()
+
+
+    def _try_add_group_action_row(
+        self,
+        preferences_group,
+        title,
+        subtitle,
+        handler_name,
+        *,
+        button_label="Open",
+        suggested=False,
+        destructive=False,
+    ) -> bool:
+        """Add a quick group action row when the handler exists on the parent window."""
+
+        parent = self.parent_window
+        handler = getattr(parent, handler_name, None) if parent else None
+        if not callable(handler):
+            return False
+
+        action_row = Adw.ActionRow()
+        action_row.set_title(title)
+        if subtitle:
+            action_row.set_subtitle(subtitle)
+
+        button = Gtk.Button(label=button_label)
+        button.set_valign(Gtk.Align.CENTER)
+        if suggested:
+            button.add_css_class('suggested-action')
+        if destructive:
+            button.add_css_class('destructive-action')
+
+        def on_clicked(_button):
+            try:
+                handler(None, None)
+            except TypeError:
+                handler(None)
+
+        button.connect('clicked', on_clicked)
+        action_row.add_suffix(button)
+        action_row.set_activatable_widget(button)
+
+        preferences_group.add(action_row)
+        return True
 
 
     def _trigger_sidebar_refresh(self):
