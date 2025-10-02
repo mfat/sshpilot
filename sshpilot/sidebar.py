@@ -1113,24 +1113,35 @@ def _handle_connection_reorder(window, target_connection, dragged_connections, x
                 target_row = child
                 break
             child = child.get_next_sibling()
-        
-        if not target_row:
+
+        if not target_row or not hasattr(target_row, "connection"):
             return False
-        
+
+        target_group_id = window.group_manager.get_connection_group(target_connection)
+
+        drop_above = y < target_row.get_allocated_height() / 2
+        position = "above" if drop_above else "below"
+
+        changes_made = False
+
         # Move each dragged connection
         for connection_nickname in dragged_connections:
-            if connection_nickname != target_connection:  # Don't move to itself
-                # Determine if we're dropping above or below the target
-                drop_above = y < target_row.get_allocated_height() / 2
-                position = 'above' if drop_above else 'below'
-                
-                # Use the group manager's reorder method
-                window.group_manager.reorder_connection_in_group(
-                    connection_nickname, target_connection, position
-                )
-        
-        # Rebuild the connection list to reflect changes
-        window.rebuild_connection_list()
+            if connection_nickname == target_connection:
+                continue
+
+            current_group_id = window.group_manager.get_connection_group(connection_nickname)
+            if current_group_id != target_group_id:
+                window.group_manager.move_connection(connection_nickname, target_group_id)
+                changes_made = True
+
+            window.group_manager.reorder_connection_in_group(
+                connection_nickname, target_connection, position
+            )
+            changes_made = True
+
+        if changes_made:
+            window.rebuild_connection_list()
+
         return True
     except Exception as e:
         logger.error(f"Error reordering connections: {e}")
