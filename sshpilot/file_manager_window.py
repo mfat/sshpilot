@@ -1896,6 +1896,7 @@ class PaneControls(Gtk.Box):
 class PaneToolbar(Gtk.Box):
     __gsignals__ = {
         "view-changed": (GObject.SignalFlags.RUN_LAST, None, (str,)),
+        "show-hidden-toggled": (GObject.SignalFlags.RUN_LAST, None, (bool,)),
     }
 
     def __init__(self):
@@ -1927,6 +1928,19 @@ class PaneToolbar(Gtk.Box):
         # Right side (compact, flush-right)
         right = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self._current_view = "list"
+
+        # Toggle for showing hidden files within this pane
+        self._show_hidden_button = Gtk.ToggleButton()
+        self._show_hidden_button.set_valign(Gtk.Align.CENTER)
+        self._show_hidden_button.add_css_class("flat")
+        self._show_hidden_image = Gtk.Image.new_from_icon_name("view-conceal-symbolic")
+        self._show_hidden_button.set_child(self._show_hidden_image)
+        self._show_hidden_handler_id = self._show_hidden_button.connect(
+            "toggled", self._on_show_hidden_toggled
+        )
+        self._update_show_hidden_icon(False)
+        right.append(self._show_hidden_button)
+
         self.sort_split_button = self._create_sort_split_button()
         right.append(self.sort_split_button)
         bar.append(right)
@@ -1962,7 +1976,34 @@ class PaneToolbar(Gtk.Box):
         self._current_view = "grid" if self._current_view == "list" else "list"
         self.sort_split_button.set_icon_name("view-grid-symbolic" if self._current_view == "grid" else "view-list-symbolic")
         self.emit("view-changed", self._current_view)
-    
+
+    def _on_show_hidden_toggled(self, button: Gtk.ToggleButton) -> None:
+        state = button.get_active()
+        self._update_show_hidden_icon(state)
+        self.emit("show-hidden-toggled", state)
+
+    def set_show_hidden_state(self, show_hidden: bool) -> None:
+        if not hasattr(self, "_show_hidden_button"):
+            return
+        current = self._show_hidden_button.get_active()
+        if current == show_hidden:
+            self._update_show_hidden_icon(show_hidden)
+            return
+        if self._show_hidden_handler_id is not None:
+            self._show_hidden_button.handler_block(self._show_hidden_handler_id)
+        try:
+            self._show_hidden_button.set_active(show_hidden)
+        finally:
+            if self._show_hidden_handler_id is not None:
+                self._show_hidden_button.handler_unblock(self._show_hidden_handler_id)
+        self._update_show_hidden_icon(show_hidden)
+
+    def _update_show_hidden_icon(self, show_hidden: bool) -> None:
+        icon_name = "view-reveal-symbolic" if show_hidden else "view-conceal-symbolic"
+        tooltip = "Hide Hidden Files" if show_hidden else "Show Hidden Files"
+        self._show_hidden_image.set_from_icon_name(icon_name)
+        self._show_hidden_button.set_tooltip_text(tooltip)
+
     def get_header_bar(self):
         """Get the actual header bar for toolbar view."""
         return None  # No longer using Adw.HeaderBar
@@ -2502,6 +2543,7 @@ class FilePane(Gtk.Box):
 
         # Connect to view-changed signal from toolbar
         self.toolbar.connect("view-changed", self._on_view_toggle)
+        self.toolbar.connect("show-hidden-toggled", self._on_toolbar_show_hidden_toggled)
         self.toolbar.path_entry.connect("activate", self._on_path_entry)
         # Wire navigation buttons
         self.toolbar.controls.up_button.connect("clicked", self._on_up_clicked)
@@ -2518,6 +2560,7 @@ class FilePane(Gtk.Box):
         self._cached_entries: List[FileEntry] = []
         self._raw_entries: List[FileEntry] = []
         self._show_hidden = False
+        self.toolbar.set_show_hidden_state(self._show_hidden)
         self._sort_key = "name"  # Default sort by name
         self._sort_descending = False  # Default ascending order
 
@@ -2621,6 +2664,9 @@ class FilePane(Gtk.Box):
         self._stack.set_visible_child_name(view_name)
         # Update the split button icon to reflect current view
         self._update_view_button_icon()
+
+    def _on_toolbar_show_hidden_toggled(self, _toolbar, show_hidden: bool) -> None:
+        self.set_show_hidden(show_hidden)
 
     def _on_path_entry(self, entry: Gtk.Entry) -> None:
         self.emit("path-changed", entry.get_text() or "/")
@@ -3090,6 +3136,16 @@ class FilePane(Gtk.Box):
             return
         self._can_paste = can_paste
         self._update_menu_state()
+
+    def set_show_hidden(self, show_hidden: bool, *, preserve_selection: bool = True) -> None:
+        """Update the hidden file visibility state and refresh entries."""
+
+        self.toolbar.set_show_hidden_state(show_hidden)
+        if self._show_hidden == show_hidden:
+            return
+
+        self._show_hidden = show_hidden
+        self._apply_entry_filter(preserve_selection=preserve_selection)
 
     def _on_menu_download(self) -> None:
         if not self._is_remote:
@@ -4062,9 +4118,6 @@ class FileManagerWindow(Adw.Window):
         self._local_pane_toggle.connect("toggled", self._on_local_pane_toggle)
         header_bar.pack_start(self._local_pane_toggle)
         
-        # Create menu button for headerbar
-        self._create_headerbar_menu(header_bar)
-        
         # Create toast overlay first and set it as toolbar content
         self._toast_overlay = Adw.ToastOverlay()
         self._progress_dialog: Optional[SFTPProgressDialog] = None
@@ -4182,6 +4235,11 @@ class FileManagerWindow(Adw.Window):
             self._left_pane: None,
             self._right_pane: None,
         }
+
+        for pane in (self._left_pane, self._right_pane):
+            initial_show_hidden = getattr(pane, "_show_hidden", False)
+            if hasattr(pane, "set_show_hidden"):
+                pane.set_show_hidden(initial_show_hidden, preserve_selection=True)
 
 
         self._clipboard_entries: List[FileEntry] = []
@@ -4337,51 +4395,6 @@ class FileManagerWindow(Adw.Window):
             except (AttributeError, RuntimeError, GLib.GError):
                 # Dialog might be destroyed or invalid, ignore
                 pass
-
-    def _create_headerbar_menu(self, header_bar: Adw.HeaderBar) -> None:
-        """Create and add menu button to headerbar."""
-        # Create menu model
-        menu_model = Gio.Menu()
-        
-        # Add "Show Hidden Files" toggle action
-        menu_model.append("Show Hidden Files", "win.show-hidden")
-        
-        # Create action group for window actions
-        self._window_action_group = Gio.SimpleActionGroup()
-        self.insert_action_group("win", self._window_action_group)
-        
-        # Create action for show hidden files
-        self._show_hidden_action = Gio.SimpleAction.new_stateful(
-            "show-hidden", 
-            None, 
-            GLib.Variant.new_boolean(False)
-        )
-        self._show_hidden_action.connect("activate", self._on_show_hidden_action)
-        self._window_action_group.add_action(self._show_hidden_action)
-        
-        # Create menu button
-        menu_button = Gtk.MenuButton()
-        menu_button.set_icon_name("open-menu-symbolic")
-        menu_button.set_menu_model(menu_model)
-        menu_button.set_tooltip_text("Main menu")
-        
-        # Add to headerbar
-        header_bar.pack_end(menu_button)
-
-    def _on_show_hidden_action(self, action: Gio.SimpleAction, _parameter: Optional[GLib.Variant]) -> None:
-        """Handle show hidden files action from menu."""
-        # Toggle the state
-        current_state = action.get_state().get_boolean()
-        new_state = not current_state
-        action.set_state(GLib.Variant.new_boolean(new_state))
-        
-        # Apply to both panes
-        self._left_pane._show_hidden = new_state
-        self._right_pane._show_hidden = new_state
-        
-        # Refresh both panes
-        self._left_pane._apply_entry_filter(preserve_selection=True)
-        self._right_pane._apply_entry_filter(preserve_selection=True)
 
     def _on_local_pane_toggle(self, toggle_button: Gtk.ToggleButton) -> None:
         """Handle local pane toggle button."""

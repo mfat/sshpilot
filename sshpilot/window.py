@@ -360,11 +360,49 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             }
             
             /* Smooth transitions for connection rows during drag */
-            .navigation-sidebar {
+            .sshpilot-sidebar {
+              padding: 6px 12px;
               transition: transform 0.1s ease-out, opacity 0.1s ease-out;
             }
             
-            .navigation-sidebar.dragging {
+            /* Add vertical spacing between rows */
+            .sshpilot-sidebar row {
+              margin: 2px 0;
+            }
+            
+            /* Ensure selection highlighting works with group colors */
+            .sshpilot-sidebar row:selected {
+              background-color: @theme_selected_bg_color !important;
+              color: @theme_selected_fg_color !important;
+              border: 1px solid @theme_selected_bg_color !important;
+            }
+            
+            .sshpilot-sidebar row:selected:focus {
+              background-color: @theme_selected_bg_color !important;
+              color: @theme_selected_fg_color !important;
+              border: 1px solid @theme_selected_bg_color !important;
+            }
+            
+            .sshpilot-sidebar row:selected:focus-within {
+              background-color: @theme_selected_bg_color !important;
+              color: @theme_selected_fg_color !important;
+              border: 1px solid @theme_selected_bg_color !important;
+            }
+            
+            /* Additional selectors for mouse selection */
+            .sshpilot-sidebar list row:selected {
+              background-color: @theme_selected_bg_color !important;
+              color: @theme_selected_fg_color !important;
+              border: 1px solid @theme_selected_bg_color !important;
+            }
+            
+            .sshpilot-sidebar list row:selected:focus {
+              background-color: @theme_selected_bg_color !important;
+              color: @theme_selected_fg_color !important;
+              border: 1px solid @theme_selected_bg_color !important;
+            }
+            
+            .sshpilot-sidebar.dragging {
               opacity: 0.7;
               transform: scale(0.98);
             }
@@ -416,6 +454,67 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 transform: translateY(0) scale(1);
                 opacity: 1;
               }
+            }
+
+            /* Tag accent styling for symbolic icons */
+            .tag-accent {
+              color: @accent_color;
+            }
+            
+            /* Keep good contrast when the row is selected/active */
+            .adw-action-row:selected .tag-accent,
+            .adw-action-row:active .tag-accent {
+              color: @window_fg_color;
+            }
+
+            /* Port forwarding indicator color overrides */
+            button.circular.accent {
+              background-color: #3584e4; /* Custom blue for local forwarding */
+              color: white;
+            }
+            
+            button.circular.success {
+              background-color: #2ec27e; /* Custom green for remote forwarding */
+              color: white;
+            }
+            
+            button.circular.warning {
+              background-color: #e66100; /* Custom orange for dynamic forwarding */
+              color: white;
+            }
+            
+            /* Hover states for port forwarding buttons */
+            button.circular.accent:hover {
+              background-color: #1c71d8;
+            }
+            
+            button.circular.success:hover {
+              background-color: #26a269;
+            }
+            
+            button.circular.warning:hover {
+              background-color: #d04a00;
+            }
+
+            /* Color tag button overrides */
+            /* Color tag button overrides - handled by individual CSS providers */
+
+            /* Circular button size classes */
+            button.circular.small {
+              min-width: 8px;
+              min-height: 8px;
+            }
+
+            /* Normal (default Libadwaita) */
+            button.circular {
+              min-width: 12px;
+              min-height: 12px;
+            }
+
+            /* Large circle */
+            button.circular.large {
+              min-width: 16px;
+              min-height: 16px;
             }
 
             """
@@ -677,7 +776,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Mouse click controller
         click_ctl = Gtk.GestureClick()
         click_ctl.connect("pressed", self._stop_pulse_on_interaction)
+        click_ctl.connect("pressed", self.on_connection_click)
         self.connection_list.add_controller(click_ctl)
+        logger.debug("GestureClick controller added to connection_list")
         
         # Key controller
         key_ctl = Gtk.EventControllerKey()
@@ -694,10 +795,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Stop pulse effect on any key press
         self._stop_pulse_on_interaction(controller)
         
-        # Handle Enter key specifically
+        # Handle Enter key for both group and connection rows
         if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
             selected_row = self.connection_list.get_selected_row()
-            if selected_row and hasattr(selected_row, 'connection'):
+            if selected_row and hasattr(selected_row, 'group_id'):
+                logger.debug(f"_on_connection_list_key_pressed: Enter key pressed on group row {selected_row.group_id}")
+                selected_row._toggle_expand()
+                return True  # Claim the event
+            elif selected_row and hasattr(selected_row, 'connection'):
                 connection = selected_row.connection
                 self._focus_most_recent_tab_or_open_new(connection)
                 return True  # Consume the event to prevent row-activated
@@ -1285,7 +1390,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_scrolled.set_vexpand(True)
         
         self.connection_list = Gtk.ListBox()
-        self.connection_list.add_css_class("navigation-sidebar")
+        self.connection_list.add_css_class("sshpilot-sidebar")
         self.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
         try:
             self.connection_list.set_can_focus(True)
@@ -1298,6 +1403,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Connect signals
         self.connection_list.connect('row-selected', self.on_connection_selected)  # For button sensitivity
         self.connection_list.connect('row-activated', self.on_connection_activated)  # For Enter key/double-click
+        logger.debug("Connected row-selected and row-activated signals to connection_list")
         
         # Make sure the connection list is focusable and can receive key events
         self.connection_list.set_focusable(True)
@@ -2321,6 +2427,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             vadj = self.connection_scrolled.get_vadjustment()
             if vadj:
                 GLib.idle_add(lambda: vadj.set_value(scroll_position))
+
+        if hasattr(self, 'terminal_manager'):
+            try:
+                self.terminal_manager.restyle_open_terminals()
+            except Exception as exc:
+                logger.debug(
+                    "Failed to restyle terminals after rebuilding connection list: %s",
+                    exc,
+                )
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list"""
         for group_info in hierarchy:
@@ -2358,7 +2473,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     def add_connection_row(self, connection: Connection, indent_level: int = 0):
         """Add a connection row to the list with optional indentation"""
-        row = ConnectionRow(connection)
+        row = ConnectionRow(connection, self.group_manager, self.config)
         
         # Apply indentation for grouped connections
         if indent_level > 0:
@@ -3359,7 +3474,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Get the row that was clicked
         row, _, _ = self._resolve_connection_list_event(x, y)
         if row is None:
+            logger.debug(f"on_connection_click: No row found at ({x}, {y})")
             return
+
+        row_type = "connection" if hasattr(row, 'connection') else "group" if hasattr(row, 'group_id') else "unknown"
+        logger.debug(f"on_connection_click: n_press={n_press}, row_type={row_type}, row={row}")
 
         if n_press == 1:  # Single click - just select
             try:
@@ -3375,24 +3494,36 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             if state & multi_mask:
                 # Allow default multi-selection behavior
+                logger.debug("on_connection_click: Multi-selection modifier detected, allowing default behavior")
                 return
 
+            logger.debug(f"on_connection_click: Single click - selecting row {row_type}")
             self._select_only_row(row)
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-        elif n_press == 2:  # Double click - connect
+        elif n_press == 2:  # Double click - handle it directly
+            logger.debug(f"on_connection_click: Double click detected on {row_type} row - handling directly")
             if hasattr(row, 'connection'):
+                logger.debug(f"on_connection_click: Connecting to {row.connection.nickname}")
                 self._cycle_connection_tabs_or_open(row.connection)
-            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            elif hasattr(row, 'group_id'):
+                logger.debug(f"on_connection_click: Toggling group {row.group_id}")
+                row._toggle_expand()
+            # Don't claim the event to avoid interfering with selection
 
     def on_connection_activated(self, list_box, row):
-        """Handle connection activation (Enter key)"""
-        logger.debug(f"Connection activated - row: {row}, has connection: {hasattr(row, 'connection') if row else False}")
+        """Handle connection activation (Enter key or double-click)"""
+        row_type = "connection" if hasattr(row, 'connection') else "group" if hasattr(row, 'group_id') else "unknown"
+        logger.debug(f"on_connection_activated: row_type={row_type}, row={row}")
+        
         if row and hasattr(row, 'connection'):
+            logger.debug(f"on_connection_activated: Connecting to {row.connection.nickname}")
             self._cycle_connection_tabs_or_open(row.connection)
         elif row and hasattr(row, 'group_id'):
             # Handle group row activation - toggle expand/collapse
-            logger.debug(f"Group row activated - toggling expand/collapse for group: {row.group_id}")
+            logger.debug(f"on_connection_activated: Group row activated - toggling expand/collapse for group: {row.group_id}")
             row._toggle_expand()
+        else:
+            logger.debug(f"on_connection_activated: Unknown row type or no row provided")
             
 
         
@@ -5278,6 +5409,45 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             for terms in self.connection_to_terminals.values():
                 for terminal in terms:
                     terminal.apply_theme()
+            return
+
+        if key == 'ui.group_color_display':
+            try:
+                self.rebuild_connection_list()
+            except Exception as exc:
+                logger.debug(
+                    "Failed to rebuild connection list for color display change: %s",
+                    exc,
+                )
+            if hasattr(self, 'terminal_manager'):
+                try:
+                    self.terminal_manager.restyle_open_terminals()
+                except Exception as refresh_error:
+                    logger.debug(
+                        "Failed to restyle terminals after color display change: %s",
+                        refresh_error,
+                    )
+            return
+
+        if key in {'ui.use_group_color_in_tab', 'ui.use_group_color_in_terminal'}:
+            if hasattr(self, 'terminal_manager'):
+                try:
+                    self.terminal_manager.restyle_open_terminals()
+                except Exception as exc:
+                    logger.debug(
+                        "Failed to restyle terminals after preference update: %s",
+                        exc,
+                    )
+            return
+
+        if key in {'ui.use_group_color_in_tab', 'ui.use_group_color_in_terminal', 'connection_groups'}:
+            manager = getattr(self, 'terminal_manager', None)
+            if manager is not None:
+                try:
+                    manager.restyle_open_terminals()
+                except Exception as exc:
+                    logger.debug("Failed to restyle terminals after preference change: %s", exc)
+            return
 
     def on_window_size_changed(self, window, param):
         """Handle window size change"""
@@ -6083,7 +6253,50 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             entry.set_activates_default(True)
             entry.set_hexpand(True)
             content_area.append(entry)
-            
+
+            # Color selector
+            color_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            color_row.set_hexpand(True)
+            color_label = Gtk.Label(label=_("Group color"))
+            color_label.set_xalign(0)
+            color_label.set_hexpand(True)
+            color_row.append(color_label)
+
+            color_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            color_button = Gtk.ColorButton()
+            color_button.set_use_alpha(True)
+            color_button.set_title(_("Select group color"))
+            rgba = Gdk.RGBA()
+            rgba.red = rgba.green = rgba.blue = 0
+            rgba.alpha = 0
+            color_button.set_rgba(rgba)
+            color_controls.append(color_button)
+
+            color_selected = False
+
+            def on_color_set(_button):
+                nonlocal color_selected
+                color_selected = True
+
+            color_button.connect('color-set', on_color_set)
+
+            clear_color_button = Gtk.Button(label=_("Clear"))
+            clear_color_button.add_css_class('flat')
+
+            def on_clear_color(_button):
+                nonlocal color_selected
+                color_selected = False
+                cleared = Gdk.RGBA()
+                cleared.red = cleared.green = cleared.blue = 0
+                cleared.alpha = 0
+                color_button.set_rgba(cleared)
+
+            clear_color_button.connect('clicked', on_clear_color)
+            color_controls.append(clear_color_button)
+
+            color_row.append(color_controls)
+            content_area.append(color_row)
+
             # Add buttons
             dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
             create_button = dialog.add_button(_('Create'), Gtk.ResponseType.OK)
@@ -6095,7 +6308,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if response == Gtk.ResponseType.OK:
                     group_name = entry.get_text().strip()
                     if group_name:
-                        self.group_manager.create_group(group_name)
+                        selected_color = None
+                        rgba_value = color_button.get_rgba()
+                        if color_selected and rgba_value.alpha > 0:
+                            selected_color = rgba_value.to_string()
+                        self.group_manager.create_group(group_name, color=selected_color)
                         self.rebuild_connection_list()
                     else:
                         # Show error for empty name
@@ -6174,7 +6391,66 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             entry.set_activates_default(True)
             entry.set_hexpand(True)
             content_area.append(entry)
-            
+
+            # Color selector
+            color_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            color_row.set_hexpand(True)
+            color_label = Gtk.Label(label=_("Group color"))
+            color_label.set_xalign(0)
+            color_label.set_hexpand(True)
+            color_row.append(color_label)
+
+            color_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            color_button = Gtk.ColorButton()
+            color_button.set_use_alpha(True)
+            color_button.set_title(_("Select group color"))
+
+            color_selected = False
+            rgba = Gdk.RGBA()
+            existing_color = group_info.get('color')
+            if existing_color:
+                try:
+                    if rgba.parse(existing_color):
+                        color_button.set_rgba(rgba)
+                        color_selected = True
+                    else:
+                        rgba.red = rgba.green = rgba.blue = 0
+                        rgba.alpha = 0
+                        color_button.set_rgba(rgba)
+                except Exception:
+                    rgba.red = rgba.green = rgba.blue = 0
+                    rgba.alpha = 0
+                    color_button.set_rgba(rgba)
+                    color_selected = False
+            else:
+                rgba.red = rgba.green = rgba.blue = 0
+                rgba.alpha = 0
+                color_button.set_rgba(rgba)
+
+            def on_color_set(_button):
+                nonlocal color_selected
+                color_selected = True
+
+            color_button.connect('color-set', on_color_set)
+            color_controls.append(color_button)
+
+            clear_color_button = Gtk.Button(label=_("Clear"))
+            clear_color_button.add_css_class('flat')
+
+            def on_clear_color(_button):
+                nonlocal color_selected
+                color_selected = False
+                cleared = Gdk.RGBA()
+                cleared.red = cleared.green = cleared.blue = 0
+                cleared.alpha = 0
+                color_button.set_rgba(cleared)
+
+            clear_color_button.connect('clicked', on_clear_color)
+            color_controls.append(clear_color_button)
+
+            color_row.append(color_controls)
+            content_area.append(color_row)
+
             # Add buttons
             dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
             save_button = dialog.add_button(_('Save'), Gtk.ResponseType.OK)
@@ -6187,7 +6463,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     new_name = entry.get_text().strip()
                     if new_name:
                         group_info['name'] = new_name
-                        self.group_manager._save_groups()
+                        rgba_value = color_button.get_rgba()
+                        selected_color = None
+                        if color_selected and rgba_value.alpha > 0:
+                            selected_color = rgba_value.to_string()
+                        self.group_manager.set_group_color(group_id, selected_color)
                         self.rebuild_connection_list()
                     else:
                         # Show error for empty name

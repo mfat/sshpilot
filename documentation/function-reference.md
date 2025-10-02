@@ -902,7 +902,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_update_group_orders(groups_list, parent_id)`** — Update the order field for groups at a given level
 
-- **`create_group(name, parent_id=None)`** — Create a new group and return its ID
+- **`create_group(name, parent_id=None, color=None)`** — Create a new group and return its ID
+- **`set_group_color(group_id, color)`** — Update a group's color and persist the change.
 
 - **`delete_group(group_id)`** — Delete a group and move its contents to parent or root
 

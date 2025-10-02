@@ -53,7 +53,11 @@ if 'gi' not in sys.modules:
     # Provide concrete stubs for modules referenced in tests
     gobject_module = _DummyGIModule('gi.repository.GObject')
     setattr(gobject_module, 'Object', _make_dummy_gi_type('Object'))
-    setattr(gobject_module, 'SignalFlags', types.SimpleNamespace(RUN_FIRST=None))
+    setattr(
+        gobject_module,
+        'SignalFlags',
+        types.SimpleNamespace(RUN_FIRST=None, RUN_LAST=None),
+    )
     setattr(repository, 'GObject', gobject_module)
     sys.modules['gi.repository.GObject'] = gobject_module
 

@@ -172,6 +172,9 @@ class Config(GObject.Object):
                 'window_width': 1200,
                 'window_height': 800,
                 'sidebar_width': 250,
+                'group_color_display': 'fill',
+                'use_group_color_in_tab': False,
+                'use_group_color_in_terminal': False,
             },
             'welcome': {
                 'background_color': None,  # None for default, or CSS string for custom
@@ -720,6 +723,40 @@ class Config(GObject.Object):
             if 'open_externally' not in file_manager_cfg:
                 file_manager_cfg['open_externally'] = False
                 updated = True
+
+        ui_cfg = config.get('ui')
+        if not isinstance(ui_cfg, dict):
+            default_ui = self.get_default_config().get('ui', {}).copy()
+            config['ui'] = default_ui
+            ui_cfg = default_ui
+            updated = True
+        display_value = ui_cfg.get('group_color_display') if isinstance(ui_cfg, dict) else None
+        if display_value is None:
+            ui_cfg['group_color_display'] = 'fill'
+            updated = True
+        else:
+            if not isinstance(display_value, str):
+                display_value = str(display_value)
+            normalized = display_value.lower()
+            if normalized not in {'fill', 'badge'}:
+                normalized = 'fill'
+            if ui_cfg.get('group_color_display') != normalized:
+                ui_cfg['group_color_display'] = normalized
+                updated = True
+
+        if 'use_group_color_in_tab' not in ui_cfg:
+            ui_cfg['use_group_color_in_tab'] = False
+            updated = True
+        elif not isinstance(ui_cfg['use_group_color_in_tab'], bool):
+            ui_cfg['use_group_color_in_tab'] = bool(ui_cfg['use_group_color_in_tab'])
+            updated = True
+
+        if 'use_group_color_in_terminal' not in ui_cfg:
+            ui_cfg['use_group_color_in_terminal'] = False
+            updated = True
+        elif not isinstance(ui_cfg['use_group_color_in_terminal'], bool):
+            ui_cfg['use_group_color_in_terminal'] = bool(ui_cfg['use_group_color_in_terminal'])
+            updated = True
 
         ssh_cfg = config.get('ssh')
         if not isinstance(ssh_cfg, dict):

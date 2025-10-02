@@ -342,7 +342,22 @@ class PreferencesWindow(Adw.PreferencesWindow):
         self.config = config
         self._shortcuts_row = None
         self._shortcuts_button = None
-        
+        self._group_display_sync = False
+        self._tab_color_sync = False
+        self._terminal_color_sync = False
+
+        self._config_signal_id = None
+
+        if hasattr(self.config, 'connect'):
+            try:
+                self._config_signal_id = self.config.connect(
+                    'setting-changed', self._on_config_setting_changed
+                )
+            except Exception:
+                self._config_signal_id = None
+
+        self.connect('destroy', self._on_destroy)
+
         # Set window properties
         self.set_title("Preferences")
         self.set_default_size(600, 500)
@@ -710,11 +725,85 @@ class PreferencesWindow(Adw.PreferencesWindow):
             saved_theme = self.config.get_setting('app-theme', 'default')
             theme_mapping = {'default': 0, 'light': 1, 'dark': 2}
             self.theme_row.set_selected(theme_mapping.get(saved_theme, 0))
-            
+
             self.theme_row.connect('notify::selected', self.on_theme_changed)
-            
+
             interface_appearance_group.add(self.theme_row)
-            
+
+            # Sidebar group color display mode
+            self._group_color_display_values = ['fill', 'badge']
+            self.group_color_display_row = Adw.ComboRow()
+            self.group_color_display_row.set_title("Sidebar Group Colors")
+            self.group_color_display_row.set_subtitle(
+                "Choose how group colors are shown in the sidebar"
+            )
+
+            color_display_options = Gtk.StringList()
+            color_display_options.append("Colored Background")
+            color_display_options.append("Color Badge")
+            self.group_color_display_row.set_model(color_display_options)
+
+            current_mode = 'fill'
+            try:
+                current_mode = str(
+                    self.config.get_setting('ui.group_color_display', 'fill')
+                ).lower()
+            except Exception:
+                current_mode = 'fill'
+            if current_mode not in self._group_color_display_values:
+                current_mode = 'fill'
+
+            self._group_display_sync = True
+            try:
+                self.group_color_display_row.set_selected(
+                    self._group_color_display_values.index(current_mode)
+                )
+            finally:
+                self._group_display_sync = False
+
+            self.group_color_display_row.connect(
+                'notify::selected', self.on_group_color_display_changed
+            )
+
+            interface_appearance_group.add(self.group_color_display_row)
+
+            # Toggle for coloring tabs using group colors
+            self.tab_group_color_row = Adw.SwitchRow()
+            self.tab_group_color_row.set_title("Color Tabs by Group")
+            self.tab_group_color_row.set_subtitle(
+                "Tint terminal tabs using the selected group's color"
+            )
+            try:
+                tab_pref = bool(
+                    self.config.get_setting('ui.use_group_color_in_tab', False)
+                )
+            except Exception:
+                tab_pref = False
+            self.tab_group_color_row.set_active(tab_pref)
+            self.tab_group_color_row.connect(
+                'notify::active', self.on_use_group_color_in_tab_toggled
+            )
+            interface_appearance_group.add(self.tab_group_color_row)
+
+            # Toggle for applying group colors inside terminals
+            self.terminal_group_color_row = Adw.SwitchRow()
+            self.terminal_group_color_row.set_title("Color Terminals by Group")
+            self.terminal_group_color_row.set_subtitle(
+                "Adjust terminal background and highlights using group colors"
+            )
+            try:
+                terminal_pref = bool(
+                    self.config.get_setting('ui.use_group_color_in_terminal', False)
+                )
+            except Exception:
+                terminal_pref = False
+            self.terminal_group_color_row.set_active(terminal_pref)
+            self.terminal_group_color_row.connect(
+                'notify::active', self.on_use_group_color_in_terminal_toggled
+            )
+            interface_appearance_group.add(self.terminal_group_color_row)
+
+
             # Color overrides section
             color_override_group = Adw.PreferencesGroup()
             color_override_group.set_title("Color Overrides")
@@ -1246,12 +1335,12 @@ class PreferencesWindow(Adw.PreferencesWindow):
         selected = combo_row.get_selected()
         theme_names = ["Follow System", "Light", "Dark"]
         selected_theme = theme_names[selected] if selected < len(theme_names) else "Follow System"
-        
+
         logger.info(f"Theme changed to: {selected_theme}")
-        
+
         # Apply theme immediately
         style_manager = Adw.StyleManager.get_default()
-        
+
         if selected == 0:  # Follow System
             style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
             self.config.set_setting('app-theme', 'default')
@@ -1261,6 +1350,224 @@ class PreferencesWindow(Adw.PreferencesWindow):
         elif selected == 2:  # Dark
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
             self.config.set_setting('app-theme', 'dark')
+
+    def on_group_color_display_changed(self, combo_row, _param):
+        """Persist sidebar group color display preference changes."""
+        if getattr(self, '_group_display_sync', False):
+            return
+
+        try:
+            selected_index = combo_row.get_selected()
+        except Exception:
+            selected_index = 0
+
+        try:
+            mode = self._group_color_display_values[selected_index]
+        except Exception:
+            mode = 'fill'
+
+        try:
+            current_mode = str(
+                self.config.get_setting('ui.group_color_display', 'fill')
+            ).lower()
+        except Exception:
+            current_mode = 'fill'
+
+        if current_mode == mode:
+            return
+
+        try:
+            self.config.set_setting('ui.group_color_display', mode)
+        except Exception as exc:
+            logger.error("Failed to update group color display preference: %s", exc)
+            return
+
+        if not getattr(self, '_config_signal_id', None):
+            self._trigger_sidebar_refresh()
+
+    def on_use_group_color_in_tab_toggled(self, switch_row, _param):
+        if getattr(self, '_tab_color_sync', False):
+            return
+
+        new_value = bool(switch_row.get_active())
+
+        try:
+            current_value = bool(
+                self.config.get_setting('ui.use_group_color_in_tab', False)
+            )
+        except Exception:
+            current_value = False
+
+        if new_value == current_value:
+            self._trigger_terminal_style_refresh()
+            return
+
+        try:
+            self.config.set_setting('ui.use_group_color_in_tab', new_value)
+        except Exception as exc:
+            logger.error(
+                "Failed to update tab group color preference: %s", exc,
+            )
+            self._sync_use_group_color_in_tab(current_value)
+            return
+
+        if not getattr(self, '_config_signal_id', None):
+            self._trigger_terminal_style_refresh()
+
+    def on_use_group_color_in_terminal_toggled(self, switch_row, _param):
+        if getattr(self, '_terminal_color_sync', False):
+            return
+
+        new_value = bool(switch_row.get_active())
+
+        try:
+            current_value = bool(
+                self.config.get_setting('ui.use_group_color_in_terminal', False)
+            )
+        except Exception:
+            current_value = False
+
+        if new_value == current_value:
+            self._trigger_terminal_style_refresh()
+            return
+
+        try:
+            self.config.set_setting('ui.use_group_color_in_terminal', new_value)
+        except Exception as exc:
+            logger.error(
+                "Failed to update terminal group color preference: %s", exc,
+            )
+            self._sync_use_group_color_in_terminal(current_value)
+            return
+
+        if not getattr(self, '_config_signal_id', None):
+            self._trigger_terminal_style_refresh()
+
+
+    def _trigger_sidebar_refresh(self):
+        parent = self.get_transient_for() or self.parent_window
+        if not parent:
+            return
+
+        if hasattr(parent, 'rebuild_connection_list'):
+            try:
+                parent.rebuild_connection_list()
+            except Exception as exc:
+                logger.debug("Failed to rebuild connection list after preference change: %s", exc)
+
+    def _trigger_terminal_style_refresh(self):
+        parent = self.get_transient_for() or self.parent_window
+        if not parent:
+            return
+
+        manager = getattr(parent, 'terminal_manager', None)
+        if not manager or not hasattr(manager, 'restyle_open_terminals'):
+            return
+
+        try:
+            manager.restyle_open_terminals()
+        except Exception as exc:
+            logger.debug(
+                "Failed to restyle terminals after preference change: %s", exc
+            )
+
+    def _sync_group_color_display_row(self, value):
+        if not hasattr(self, 'group_color_display_row') or self.group_color_display_row is None:
+            return
+
+        try:
+            normalized = str(value).lower()
+        except Exception:
+            normalized = 'fill'
+
+        if normalized not in getattr(self, '_group_color_display_values', ['fill', 'badge']):
+            normalized = 'fill'
+
+        target_index = self._group_color_display_values.index(normalized)
+        if self.group_color_display_row.get_selected() == target_index:
+            return
+
+        self._group_display_sync = True
+        try:
+            self.group_color_display_row.set_selected(target_index)
+        finally:
+            self._group_display_sync = False
+
+    def _sync_group_tab_color_switch(self, value):
+        if not hasattr(self, 'group_color_tab_switch') or self.group_color_tab_switch is None:
+            return
+
+        desired_state = bool(value)
+        if self.group_color_tab_switch.get_active() == desired_state:
+            return
+
+        self._group_tab_color_sync = True
+        try:
+            self.group_color_tab_switch.set_active(desired_state)
+        finally:
+            self._group_tab_color_sync = False
+
+    def _sync_group_terminal_color_switch(self, value):
+        if not hasattr(self, 'group_color_terminal_switch') or self.group_color_terminal_switch is None:
+            return
+
+        desired_state = bool(value)
+        if self.group_color_terminal_switch.get_active() == desired_state:
+            return
+
+        self._group_terminal_color_sync = True
+        try:
+            self.group_color_terminal_switch.set_active(desired_state)
+        finally:
+            self._group_terminal_color_sync = False
+
+    def _on_config_setting_changed(self, _config, key, value):
+        if key == 'ui.group_color_display':
+            self._sync_group_color_display_row(value)
+            self._trigger_sidebar_refresh()
+        elif key == 'ui.use_group_color_in_tab':
+            self._sync_use_group_color_in_tab(value)
+            self._trigger_terminal_style_refresh()
+        elif key == 'ui.use_group_color_in_terminal':
+            self._sync_use_group_color_in_terminal(value)
+            self._trigger_terminal_style_refresh()
+
+    def _sync_use_group_color_in_tab(self, value):
+        if not hasattr(self, 'tab_group_color_row') or self.tab_group_color_row is None:
+            return
+
+        target_state = bool(value)
+        if self.tab_group_color_row.get_active() == target_state:
+            return
+
+        self._tab_color_sync = True
+        try:
+            self.tab_group_color_row.set_active(target_state)
+        finally:
+            self._tab_color_sync = False
+
+    def _sync_use_group_color_in_terminal(self, value):
+        if not hasattr(self, 'terminal_group_color_row') or self.terminal_group_color_row is None:
+            return
+
+        target_state = bool(value)
+        if self.terminal_group_color_row.get_active() == target_state:
+            return
+
+        self._terminal_color_sync = True
+        try:
+            self.terminal_group_color_row.set_active(target_state)
+        finally:
+            self._terminal_color_sync = False
+
+
+    def _on_destroy(self, *_args):
+        if getattr(self, '_config_signal_id', None) and hasattr(self.config, 'disconnect'):
+            try:
+                self.config.disconnect(self._config_signal_id)
+            except Exception:
+                pass
+            self._config_signal_id = None
 
     def on_app_color_changed(self, color_button):
         """Handle app color change"""

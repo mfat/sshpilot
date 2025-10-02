@@ -4,7 +4,7 @@ This module provides the :class:`GroupManager`, which handles creation,
 deletion and organisation of hierarchical connection groups.
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 import logging
 
 from .config import Config
@@ -26,9 +26,38 @@ class GroupManager:
         """Load groups from configuration"""
         try:
             groups_data = self.config.get_setting('connection_groups', {})
-            self.groups = groups_data.get('groups', {})
-            self.connections = groups_data.get('connections', {})
-            self.root_connections = groups_data.get('root_connections', [])
+            if not isinstance(groups_data, dict):
+                groups_data = {}
+
+            raw_groups = groups_data.get('groups', {})
+            if not isinstance(raw_groups, dict):
+                raw_groups = {}
+
+            migration_needed = False
+            normalised_groups: Dict[str, Dict] = {}
+            for group_id, group_info in raw_groups.items():
+                if not isinstance(group_info, dict):
+                    migration_needed = True
+                    continue
+
+                normalised = group_info.copy()
+                if 'color' not in normalised:
+                    normalised['color'] = None
+                    migration_needed = True
+
+                normalised_groups[group_id] = normalised
+
+            self.groups = normalised_groups
+
+            raw_connections = groups_data.get('connections', {})
+            self.connections = raw_connections if isinstance(raw_connections, dict) else {}
+
+            raw_root_connections = groups_data.get('root_connections', [])
+            self.root_connections = raw_root_connections if isinstance(raw_root_connections, list) else []
+
+            if migration_needed:
+                # Persist any normalised structure so future loads use the updated format
+                self._save_groups()
         except Exception as e:
             logger.error(f"Failed to load groups: {e}")
             self.groups = {}
@@ -66,12 +95,12 @@ class GroupManager:
                 return True
         return False
 
-    def create_group(self, name: str, parent_id: str = None) -> str:
+    def create_group(self, name: str, parent_id: str = None, color: Optional[str] = None) -> str:
         """Create a new group and return its ID"""
         # Check for duplicate names (case-insensitive)
         if self.group_name_exists(name):
             raise ValueError(f"Group name '{name}' already exists")
-        
+
         import uuid
         group_id = str(uuid.uuid4())
 
@@ -82,7 +111,8 @@ class GroupManager:
             'children': [],
             'connections': [],
             'expanded': True,
-            'order': len(self.groups)
+            'order': len(self.groups),
+            'color': color,
         }
 
         if parent_id and parent_id in self.groups:
@@ -90,6 +120,15 @@ class GroupManager:
 
         self._save_groups()
         return group_id
+
+    def set_group_color(self, group_id: str, color: Optional[str]):
+        """Update a group's color and persist the change."""
+        if group_id not in self.groups:
+            return
+
+        # Normalise empty strings to None for consistency
+        self.groups[group_id]['color'] = color or None
+        self._save_groups()
 
     def delete_group(self, group_id: str):
         """Delete a group and move its contents to parent or root"""
