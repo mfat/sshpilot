@@ -3500,7 +3500,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             logger.debug(f"on_connection_click: Single click - selecting row {row_type}")
             self._select_only_row(row)
-            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
         elif n_press == 2:  # Double click - handle it directly
             logger.debug(f"on_connection_click: Double click detected on {row_type} row - handling directly")
             if hasattr(row, 'connection'):
