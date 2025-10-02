@@ -1,3 +1,4 @@
+import importlib
 import types
 
 
@@ -12,6 +13,25 @@ def test_backend_choices_missing_dependency(monkeypatch):
     pyxterm_choice = next(choice for choice in choices if choice['id'] == 'pyxterm')
     assert not pyxterm_choice['available']
     assert 'requires' in pyxterm_choice['label']
+
+
+def test_detect_pyxterm_backend_uses_vendored(monkeypatch):
+    from sshpilot.preferences import PreferencesWindow
+
+    window = PreferencesWindow.__new__(PreferencesWindow)
+    original_find_spec = importlib.util.find_spec
+
+    def fake_find_spec(name, *args, **kwargs):
+        if name == 'pyxtermjs':
+            return None
+        return original_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+
+    available, error = PreferencesWindow._detect_pyxterm_backend(window)
+
+    assert available
+    assert error is None
 
 
 def test_backend_row_updates_config(monkeypatch):

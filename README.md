@@ -151,18 +151,10 @@ python3 run.py --verbose
 Optional terminal backends
 --------------------------
 
-The default terminal uses the native VTE widget. To enable the optional
-PyXterm.js backend install the extra dependency bundle:
-
-```
-pip install "sshpilot[pyxterm]"
-```
-
-or install `pyxtermjs` manually if you prefer:
-
-```
-pip install pyxtermjs
-```
+The default terminal uses the native VTE widget. sshPilot also ships with a
+vendored copy of `pyxtermjs` (version 0.5.0.2), so the optional PyXterm.js
+backend works out of the box without requiring any additional Python
+packages.
 
 ### Telegram channel
 https://t.me/sshpilot
