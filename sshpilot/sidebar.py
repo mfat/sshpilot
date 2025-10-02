@@ -318,21 +318,47 @@ class GroupRow(Adw.ActionRow):
         self.set_selectable(True)
         self.set_can_focus(True)
 
-        # Simplified drop indicators - no complex overlay
+        # Wrap existing row content in an overlay so we can stack drag indicators on top
+        self._overlay = Gtk.Overlay()
+        existing_child = self.get_child()
+        if existing_child is not None:
+            existing_child.unparent()
+            self._overlay.set_child(existing_child)
+        self._overlay.set_halign(Gtk.Align.FILL)
+        self._overlay.set_valign(Gtk.Align.FILL)
+        self._overlay.set_hexpand(True)
+        self._overlay.set_vexpand(True)
+        self.set_child(self._overlay)
+
+        # Simplified drop indicators - now overlay children
         self.drop_indicator_top = DragIndicator()
+        self.drop_indicator_top.set_halign(Gtk.Align.FILL)
+        self.drop_indicator_top.set_valign(Gtk.Align.START)
+        self.drop_indicator_top.set_hexpand(True)
+
         self.drop_indicator_bottom = DragIndicator()
-        
+        self.drop_indicator_bottom.set_halign(Gtk.Align.FILL)
+        self.drop_indicator_bottom.set_valign(Gtk.Align.END)
+        self.drop_indicator_bottom.set_hexpand(True)
+
+        self._overlay.add_overlay(self.drop_indicator_top)
+        self._overlay.add_overlay(self.drop_indicator_bottom)
+
         # Drop target highlight indicator
         self.drop_target_indicator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.drop_target_indicator.add_css_class("drop-target-indicator")
         self.drop_target_indicator.set_visible(False)
-        self.drop_target_indicator.set_halign(Gtk.Align.CENTER)
-        self.drop_target_indicator.set_valign(Gtk.Align.CENTER)
+        self.drop_target_indicator.set_halign(Gtk.Align.FILL)
+        self.drop_target_indicator.set_valign(Gtk.Align.FILL)
+        self.drop_target_indicator.set_hexpand(True)
+        self.drop_target_indicator.set_vexpand(True)
 
         indicator_label = Gtk.Label(label=_("Add to group"))
         indicator_label.set_halign(Gtk.Align.CENTER)
         indicator_label.set_valign(Gtk.Align.CENTER)
         self.drop_target_indicator.append(indicator_label)
+
+        self._overlay.add_overlay(self.drop_target_indicator)
 
         self.hide_drop_indicators()
 
@@ -509,12 +535,12 @@ class GroupRow(Adw.ActionRow):
     def show_drop_indicator(self, top: bool):
         """Show drop indicator line"""
         self.hide_drop_indicators()
-        
+
         if top:
             self.drop_indicator_top.set_visible(True)
         else:
             self.drop_indicator_bottom.set_visible(True)
-    
+
     def hide_drop_indicators(self):
         """Hide all drop indicator lines"""
         self.drop_indicator_top.set_visible(False)
@@ -574,21 +600,47 @@ class ConnectionRow(Adw.ActionRow):
         self.set_selectable(True)
         self.set_can_focus(True)
 
-        # Simplified drop indicators - no complex overlay
+        # Wrap existing row content in an overlay so we can stack drag indicators on top
+        self._overlay = Gtk.Overlay()
+        existing_child = self.get_child()
+        if existing_child is not None:
+            existing_child.unparent()
+            self._overlay.set_child(existing_child)
+        self._overlay.set_halign(Gtk.Align.FILL)
+        self._overlay.set_valign(Gtk.Align.FILL)
+        self._overlay.set_hexpand(True)
+        self._overlay.set_vexpand(True)
+        self.set_child(self._overlay)
+
+        # Simplified drop indicators - now overlay children
         self.drop_indicator_top = DragIndicator()
+        self.drop_indicator_top.set_halign(Gtk.Align.FILL)
+        self.drop_indicator_top.set_valign(Gtk.Align.START)
+        self.drop_indicator_top.set_hexpand(True)
+
         self.drop_indicator_bottom = DragIndicator()
-        
+        self.drop_indicator_bottom.set_halign(Gtk.Align.FILL)
+        self.drop_indicator_bottom.set_valign(Gtk.Align.END)
+        self.drop_indicator_bottom.set_hexpand(True)
+
+        self._overlay.add_overlay(self.drop_indicator_top)
+        self._overlay.add_overlay(self.drop_indicator_bottom)
+
         # Drop target highlight indicator
         self.drop_target_indicator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.drop_target_indicator.add_css_class("drop-target-indicator")
         self.drop_target_indicator.set_visible(False)
-        self.drop_target_indicator.set_halign(Gtk.Align.CENTER)
-        self.drop_target_indicator.set_valign(Gtk.Align.CENTER)
+        self.drop_target_indicator.set_halign(Gtk.Align.FILL)
+        self.drop_target_indicator.set_valign(Gtk.Align.FILL)
+        self.drop_target_indicator.set_hexpand(True)
+        self.drop_target_indicator.set_vexpand(True)
 
         connection_label = Gtk.Label(label=_("Move here"))
         connection_label.set_halign(Gtk.Align.CENTER)
         connection_label.set_valign(Gtk.Align.CENTER)
         self.drop_target_indicator.append(connection_label)
+
+        self._overlay.add_overlay(self.drop_target_indicator)
 
         self.hide_drop_indicators()
 
@@ -611,6 +663,7 @@ class ConnectionRow(Adw.ActionRow):
         """Hide all drop indicator lines"""
         self.drop_indicator_top.set_visible(False)
         self.drop_indicator_bottom.set_visible(False)
+        self.drop_target_indicator.set_visible(False)
     
     def set_indentation(self, level: int):
         """Set indentation level for grouped connections"""
