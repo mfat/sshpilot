@@ -675,20 +675,37 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _setup_connection_list_interactions(self):
         """Set up event controllers for connection list interaction"""
-        # Mouse click controller
+        # Double-click controller (only for double-clicks, not single clicks)
         click_ctl = Gtk.GestureClick()
-        click_ctl.connect("pressed", self._on_connection_list_pressed)
+        click_ctl.set_button(1)  # Left mouse button
+        click_ctl.connect("pressed", self._on_connection_list_double_click)
         self.connection_list.add_controller(click_ctl)
-        logger.debug("GestureClick controller added to connection_list")
+        logger.debug("GestureClick controller added to connection_list for double-clicks")
 
         # Key controller
         key_ctl = Gtk.EventControllerKey()
         key_ctl.connect("key-pressed", self._on_connection_list_key_pressed)
         self.connection_list.add_controller(key_ctl)
+        logger.debug("EventControllerKey added to connection_list")
 
-    def _on_connection_list_pressed(self, gesture, n_press, x, y):
-        """Handle button presses on the connection list"""
-        self.on_connection_click(gesture, n_press, x, y)
+    def _on_connection_list_double_click(self, gesture, n_press, x, y):
+        """Handle double-clicks on the connection list"""
+        if n_press == 2:  # Only handle double-clicks
+            # Get the row that was clicked
+            row, _, _ = self._resolve_connection_list_event(x, y)
+            if row is None:
+                logger.debug(f"_on_connection_list_double_click: No row found at ({x}, {y})")
+                return
+
+            row_type = "connection" if hasattr(row, 'connection') else "group" if hasattr(row, 'group_id') else "unknown"
+            logger.debug(f"_on_connection_list_double_click: Double-click on {row_type} row")
+
+            if hasattr(row, 'connection'):
+                logger.debug(f"_on_connection_list_double_click: Connecting to {row.connection.nickname}")
+                self._cycle_connection_tabs_or_open(row.connection)
+            elif hasattr(row, 'group_id'):
+                logger.debug(f"_on_connection_list_double_click: Toggling group {row.group_id}")
+                row._toggle_expand()
 
     def _on_connection_list_key_pressed(self, controller, keyval, keycode, state):
         """Handle key presses in the connection list"""
@@ -3327,50 +3344,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
 
     # Signal handlers
-    def on_connection_click(self, gesture, n_press, x, y):
-        """Handle clicks on the connection list"""
-        # Prevent selection changes during drag
-        if hasattr(self, '_drag_in_progress') and self._drag_in_progress:
-            logger.debug("on_connection_click: Drag in progress, ignoring click")
-            return
-            
-        # Get the row that was clicked
-        row, _, _ = self._resolve_connection_list_event(x, y)
-        if row is None:
-            logger.debug(f"on_connection_click: No row found at ({x}, {y})")
-            return
-
-        row_type = "connection" if hasattr(row, 'connection') else "group" if hasattr(row, 'group_id') else "unknown"
-        logger.debug(f"on_connection_click: n_press={n_press}, row_type={row_type}, row={row}")
-
-        if n_press == 1:  # Single click - just select
-            try:
-                state = gesture.get_current_event_state()
-            except Exception:
-                state = 0
-
-            multi_mask = (
-                Gdk.ModifierType.CONTROL_MASK
-                | Gdk.ModifierType.SHIFT_MASK
-                | getattr(Gdk.ModifierType, 'PRIMARY_ACCELERATOR_MASK', 0)
-            )
-
-            if state & multi_mask:
-                # Allow default multi-selection behavior
-                logger.debug("on_connection_click: Multi-selection modifier detected, allowing default behavior")
-                return
-
-            logger.debug(f"on_connection_click: Single click - selecting row {row_type}")
-            self._select_only_row(row)
-        elif n_press == 2:  # Double click - handle it directly
-            logger.debug(f"on_connection_click: Double click detected on {row_type} row - handling directly")
-            if hasattr(row, 'connection'):
-                logger.debug(f"on_connection_click: Connecting to {row.connection.nickname}")
-                self._cycle_connection_tabs_or_open(row.connection)
-            elif hasattr(row, 'group_id'):
-                logger.debug(f"on_connection_click: Toggling group {row.group_id}")
-                row._toggle_expand()
-            # Don't claim the event to avoid interfering with selection
 
     def on_connection_activated(self, list_box, row):
         """Handle connection activation (Enter key or double-click)"""

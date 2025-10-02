@@ -646,7 +646,7 @@ class ConnectionRow(Adw.ActionRow):
         self.update_status()
         self._update_forwarding_indicators()
         self._setup_drag_source()
-        self._setup_double_click_gesture()
+        # Double-click is handled at the connection list level
     
     def show_drop_indicator(self, top: bool):
         """Show drop indicator line"""
@@ -737,12 +737,6 @@ class ConnectionRow(Adw.ActionRow):
     # -- drag source ------------------------------------------------------
 
     def _setup_drag_source(self):
-        # Add a gesture controller to capture selection before drag starts
-        gesture = Gtk.GestureDrag()
-        gesture.set_button(getattr(Gdk, "BUTTON_PRIMARY", 1))
-        gesture.connect("drag-begin", self._on_gesture_drag_begin)
-        self.add_controller(gesture)
-        
         drag_source = Gtk.DragSource()
         drag_source.set_actions(Gdk.DragAction.MOVE)
         drag_source.set_exclusive(False)
@@ -754,31 +748,6 @@ class ConnectionRow(Adw.ActionRow):
         # Store reference for cleanup
         self._drag_source = drag_source
 
-    def _on_gesture_drag_begin(self, gesture, start_x, start_y):
-        """Capture selection before drag starts"""
-        window = self.get_root()
-        if window and hasattr(window, "connection_list"):
-            try:
-                selected_rows = list(window.connection_list.get_selected_rows())
-                logger.debug(f"Gesture drag begin: Captured {len(selected_rows)} selected rows")
-                
-                # Store the selected rows for use in drag prepare
-                selected_nicknames = []
-                for i, row in enumerate(selected_rows):
-                    logger.debug(f"Gesture drag begin: Processing row {i}: {row}")
-                    connection_obj = getattr(row, "connection", None)
-                    logger.debug(f"Gesture drag begin: Row {i} connection object: {connection_obj}")
-                    nickname = getattr(connection_obj, "nickname", None)
-                    logger.debug(f"Gesture drag begin: Row {i} nickname: {nickname}")
-                    if nickname:
-                        selected_nicknames.append(nickname)
-                
-                # Store in window for drag prepare to use
-                window._captured_selection = selected_nicknames
-                logger.debug(f"Gesture drag begin: Stored {len(selected_nicknames)} nicknames: {selected_nicknames}")
-            except Exception as e:
-                logger.debug(f"Gesture drag begin: Error capturing selection: {e}")
-                window._captured_selection = []
 
     def _on_drag_prepare(self, source, x, y):
         window = self.get_root()
@@ -788,39 +757,18 @@ class ConnectionRow(Adw.ActionRow):
         selection_order = 0
 
         if window and hasattr(window, "connection_list"):
-            # Use captured selection from gesture drag begin
-            captured_nicknames = getattr(window, "_captured_selection", []) if window else []
-            logger.debug(f"Drag prepare: Using captured selection with {len(captured_nicknames)} nicknames: {captured_nicknames}")
-            
-            if captured_nicknames:
-                # Get all rows to find the ones that match our captured selection
-                all_rows = []
-                try:
-                    # Get all rows from the connection list
-                    child = window.connection_list.get_first_child()
-                    while child is not None:
-                        all_rows.append(child)
-                        child = child.get_next_sibling()
-                except Exception as e:
-                    logger.debug(f"Drag prepare: Error getting all rows: {e}")
-                    all_rows = []
-
-                # Find rows that match our captured selection
+            # Capture current selection at drag time
+            try:
+                selected_rows = list(window.connection_list.get_selected_rows())
+                logger.debug(f"Drag prepare: Captured {len(selected_rows)} selected rows")
+            except Exception as e:
+                logger.debug(f"Drag prepare: Error getting selected rows: {e}")
                 selected_rows = []
-                for row in all_rows:
-                    connection_obj = getattr(row, "connection", None)
-                    nickname = getattr(connection_obj, "nickname", None)
-                    if nickname in captured_nicknames:
-                        selected_rows.append(row)
 
-                # If no captured selection or self not in selection, add self
-                if not captured_nicknames or self.connection.nickname not in captured_nicknames:
-                    logger.debug(f"Drag prepare: Adding self to selection (self not in captured selection)")
-                    selected_rows.append(self)
-            else:
-                # Fallback: just use self
-                logger.debug(f"Drag prepare: No captured selection, using self only")
-                selected_rows = [self]
+            # If no selection or self not in selection, add self
+            if not selected_rows or self not in selected_rows:
+                logger.debug(f"Drag prepare: Adding self to selection")
+                selected_rows.append(self)
 
             seen_nicknames = set()
             for row in selected_rows:
@@ -888,11 +836,9 @@ class ConnectionRow(Adw.ActionRow):
 
         logger.debug(f"Drag prepare: Final payload has {len(ordered_nicknames)} nicknames: {ordered_nicknames}")
 
+        # Store dragged connections for drop target indicators
         if window:
-            try:
-                window._pending_drag_connections = ordered_nicknames
-            except Exception:
-                pass
+            window._dragged_connections = ordered_nicknames
 
         return Gdk.ContentProvider.new_for_value(
             GObject.Value(GObject.TYPE_PYOBJECT, data)
@@ -902,43 +848,12 @@ class ConnectionRow(Adw.ActionRow):
         try:
             window = self.get_root()
             if window:
-                pending = getattr(window, "_pending_drag_connections", None)
-                if isinstance(pending, list) and pending:
-                    window._dragged_connections = list(pending)
-                else:
+                # Ensure dragged connections are set (should be set by _on_drag_prepare)
+                if not hasattr(window, "_dragged_connections"):
                     window._dragged_connections = [self.connection.nickname]
-
-                if hasattr(window, "_pending_drag_connections"):
-                    try:
-                        delattr(window, "_pending_drag_connections")
-                    except Exception:
-                        window._pending_drag_connections = []
-
-                # Mark drag as in progress but keep selection mode for visual feedback
+                
+                # Mark drag as in progress
                 window._drag_in_progress = True
-                # Don't disable selection mode - keep it for visual feedback
-
-                # Restore visual selection for dragged rows
-                if hasattr(window, "_captured_selection") and window._captured_selection:
-                    try:
-                        # Get all rows and restore selection for the captured nicknames
-                        all_rows = []
-                        child = window.connection_list.get_first_child()
-                        while child is not None:
-                            all_rows.append(child)
-                            child = child.get_next_sibling()
-                        
-                        # Select the rows that match our captured selection
-                        for row in all_rows:
-                            connection_obj = getattr(row, "connection", None)
-                            nickname = getattr(connection_obj, "nickname", None)
-                            if nickname in window._captured_selection:
-                                window.connection_list.select_row(row)
-                        
-                        logger.debug(f"Drag begin: Restored visual selection for {len(window._captured_selection)} rows")
-                    except Exception as e:
-                        logger.debug(f"Drag begin: Error restoring visual selection: {e}")
-
                 _show_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag begin: {e}")
@@ -947,40 +862,16 @@ class ConnectionRow(Adw.ActionRow):
         try:
             window = self.get_root()
             if window:
-                # Clear the dragged connection tracking
+                # Clear dragged connections tracking
                 if hasattr(window, "_dragged_connections"):
-                    try:
-                        delattr(window, "_dragged_connections")
-                    except Exception:
-                        window._dragged_connections = []
-                if hasattr(window, "_pending_drag_connections"):
-                    try:
-                        delattr(window, "_pending_drag_connections")
-                    except Exception:
-                        window._pending_drag_connections = []
-                if hasattr(window, "_captured_selection"):
-                    try:
-                        delattr(window, "_captured_selection")
-                    except Exception:
-                        window._captured_selection = []
+                    delattr(window, "_dragged_connections")
+                
+                # Clear drag state
+                window._drag_in_progress = False
                 _hide_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag end: {e}")
 
-    def _setup_double_click_gesture(self):
-        """Set up double-click gesture for connection rows"""
-        gesture = Gtk.GestureClick()
-        gesture.set_button(1)
-        gesture.connect("pressed", self._on_double_click)
-        self.add_controller(gesture)
-
-    def _on_double_click(self, gesture, n_press, x, y):
-        """Handle double-click on connection row"""
-        if n_press == 2:
-            window = self.get_root()
-            if window and hasattr(window, '_cycle_connection_tabs_or_open'):
-                logger.debug(f"ConnectionRow double-click: Connecting to {self.connection.nickname}")
-                window._cycle_connection_tabs_or_open(self.connection)
 
     # -- display updates --------------------------------------------------
 
