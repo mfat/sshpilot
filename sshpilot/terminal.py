@@ -1972,21 +1972,21 @@ class TerminalWidget(Gtk.Box):
                     self.zoom_in()
                 except Exception as exc:
                     logger.debug("Zoom in shortcut failed: %s", exc)
-                return False
+                return True
 
             def _cb_zoom_out(widget, *args):
                 try:
                     self.zoom_out()
                 except Exception as exc:
                     logger.debug("Zoom out shortcut failed: %s", exc)
-                return False
+                return True
 
             def _cb_reset_zoom(widget, *args):
                 try:
                     self.reset_zoom()
                 except Exception as exc:
                     logger.debug("Zoom reset shortcut failed: %s", exc)
-                return False
+                return True
             
             controller.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string(zoom_in_trigger),
