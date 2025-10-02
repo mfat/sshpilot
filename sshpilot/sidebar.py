@@ -265,6 +265,7 @@ class GroupRow(Adw.ActionRow):
         self.color_badge.add_css_class("normal")
         self.color_badge.set_valign(Gtk.Align.CENTER)
         self.color_badge.set_margin_start(12)
+        self.color_badge.set_margin_end(10)  # Add right margin to space from chevron
         self.color_badge.set_visible(False)
         
         self.add_suffix(self.color_badge)
