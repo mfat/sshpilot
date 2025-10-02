@@ -511,6 +511,7 @@ class PreferencesWindow(Gtk.Window):
 
             # Color scheme preview
             preview_group = Adw.PreferencesGroup(title="Preview")
+            preview_group.set_margin_top(18)  # Add more spacing above "Preview" label
             
             # Create preview terminal widget
             self.color_preview_terminal = Gtk.DrawingArea()
@@ -518,15 +519,21 @@ class PreferencesWindow(Gtk.Window):
             self.color_preview_terminal.set_size_request(400, 120)
             self.color_preview_terminal.add_css_class("terminal-preview")
             
+            # Create a standard Adwaita container with rounded corners
+            preview_container = Adw.Bin()
+            preview_container.add_css_class("card")
+            preview_container.set_margin_top(6)  # Reduce spacing between label and preview
+            
             # Add some margin around the preview
             preview_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            preview_box.set_margin_top(6)
-            preview_box.set_margin_bottom(6)
+            preview_box.set_margin_top(12)
+            preview_box.set_margin_bottom(12)
             preview_box.set_margin_start(12)
             preview_box.set_margin_end(12)
             preview_box.append(self.color_preview_terminal)
             
-            preview_group.add(preview_box)
+            preview_container.set_child(preview_box)
+            preview_group.add(preview_container)
             appearance_group.add(preview_group)
             terminal_page.add(appearance_group)
 
@@ -711,37 +718,6 @@ class PreferencesWindow(Gtk.Window):
             group_appearance_group.add(self.terminal_group_color_row)
 
             groups_page.add(group_appearance_group)
-
-            quick_actions_added = False
-            quick_actions_group = Adw.PreferencesGroup(title="Quick Actions")
-            quick_actions_group.set_description(
-                "Manage groups without leaving preferences"
-            )
-
-            quick_actions_added |= self._try_add_group_action_row(
-                quick_actions_group,
-                "Create Group",
-                "Add a new group for organizing connections",
-                'on_create_group_action',
-                button_label="Create",
-                suggested=True,
-            )
-            quick_actions_added |= self._try_add_group_action_row(
-                quick_actions_group,
-                "Edit Selected Group",
-                "Modify the currently selected group from the main window",
-                'on_edit_group_action',
-            )
-            quick_actions_added |= self._try_add_group_action_row(
-                quick_actions_group,
-                "Delete Selected Group",
-                "Remove the selected group after confirmation",
-                'on_delete_group_action',
-                destructive=True,
-            )
-
-            if quick_actions_added:
-                groups_page.add(quick_actions_group)
 
             # Create Interface preferences page
             interface_page = Adw.PreferencesPage()
@@ -995,7 +971,7 @@ class PreferencesWindow(Gtk.Window):
             # Default mode row
             self.default_mode_row = Adw.ActionRow()
             self.default_mode_row.set_title("Default Mode")
-            self.default_mode_row.set_subtitle("sshPilot loads and modifies ~/.ssh/config")
+            self.default_mode_row.set_subtitle("SSH Pilot loads and modifies ~/.ssh/config")
             self.default_mode_radio = Gtk.CheckButton()
 
 
@@ -1004,7 +980,7 @@ class PreferencesWindow(Gtk.Window):
             self.isolated_mode_row.set_title("Isolated Mode")
             config_path = get_config_dir()
             self.isolated_mode_row.set_subtitle(
-                f"sshPilot stores its configuration file in {config_path}/"
+                f"SSH Pilot stores its configuration file in {config_path}/"
             )
             self.isolated_mode_radio = Gtk.CheckButton()
 
@@ -1430,48 +1406,6 @@ class PreferencesWindow(Gtk.Window):
             self._trigger_terminal_style_refresh()
 
 
-    def _try_add_group_action_row(
-        self,
-        preferences_group,
-        title,
-        subtitle,
-        handler_name,
-        *,
-        button_label="Open",
-        suggested=False,
-        destructive=False,
-    ) -> bool:
-        """Add a quick group action row when the handler exists on the parent window."""
-
-        parent = self.parent_window
-        handler = getattr(parent, handler_name, None) if parent else None
-        if not callable(handler):
-            return False
-
-        action_row = Adw.ActionRow()
-        action_row.set_title(title)
-        if subtitle:
-            action_row.set_subtitle(subtitle)
-
-        button = Gtk.Button(label=button_label)
-        button.set_valign(Gtk.Align.CENTER)
-        if suggested:
-            button.add_css_class('suggested-action')
-        if destructive:
-            button.add_css_class('destructive-action')
-
-        def on_clicked(_button):
-            try:
-                handler(None, None)
-            except TypeError:
-                handler(None)
-
-        button.connect('clicked', on_clicked)
-        action_row.add_suffix(button)
-        action_row.set_activatable_widget(button)
-
-        preferences_group.add(action_row)
-        return True
 
 
     def _trigger_sidebar_refresh(self):
