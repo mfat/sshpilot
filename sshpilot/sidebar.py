@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 
 
 _COLOR_CSS_INSTALLED = False
-_DEFAULT_ROW_MARGIN_START = 12
-_MIN_VALID_MARGIN = 2
+_DEFAULT_ROW_MARGIN_START = 0  # Use libadwaita default
+_MIN_VALID_MARGIN = 0
 
 
 
@@ -241,6 +241,8 @@ class GroupRow(Adw.ActionRow):
         super().__init__()
         self.add_css_class("sshpilot-sidebar")
         self.add_css_class("opaque")
+        self.add_css_class("tall-row")
+        self.set_size_request(-1, 60)  # -1 for width (natural), 60 for height in pixels
         self.group_info = group_info
         self.group_manager = group_manager
         self.group_id = group_info["id"]
@@ -253,7 +255,8 @@ class GroupRow(Adw.ActionRow):
         # Add folder icon as prefix
         icon = Gtk.Image.new_from_icon_name("folder-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
-        icon.set_margin_end(8)
+        icon.set_margin_start(12)  # Add left margin
+        icon.set_margin_end(12)
         self.add_prefix(icon)
 
         # Color badge for badge mode - use empty circular button
@@ -261,7 +264,7 @@ class GroupRow(Adw.ActionRow):
         self.color_badge.add_css_class("circular")
         self.color_badge.add_css_class("normal")
         self.color_badge.set_valign(Gtk.Align.CENTER)
-        self.color_badge.set_margin_start(8)
+        self.color_badge.set_margin_start(12)
         self.color_badge.set_visible(False)
         
         self.add_suffix(self.color_badge)
@@ -272,6 +275,7 @@ class GroupRow(Adw.ActionRow):
         self.expand_button.add_css_class("flat")
         self.expand_button.add_css_class("group-expand-button")
         self.expand_button.set_can_focus(False)
+        self.expand_button.set_margin_end(12)  # Add right margin
         self.expand_button.connect("clicked", self._on_expand_clicked)
         self.add_suffix(self.expand_button)
 
@@ -530,6 +534,8 @@ class ConnectionRow(Adw.ActionRow):
         super().__init__()
         self.add_css_class("sshpilot-sidebar")
         self.add_css_class("opaque")
+        self.add_css_class("tall-row")
+        self.set_size_request(-1, 60)  # -1 for width (natural), 60 for height in pixels
         self.connection = connection
         self.group_manager = group_manager
         self.config = config
@@ -541,7 +547,8 @@ class ConnectionRow(Adw.ActionRow):
         # Add computer icon as prefix
         icon = Gtk.Image.new_from_icon_name("computer-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
-        icon.set_margin_end(8)
+        icon.set_margin_start(12)  # Add left margin
+        icon.set_margin_end(12)
         self.add_prefix(icon)
 
         # Box to show forwarding indicators
@@ -556,7 +563,8 @@ class ConnectionRow(Adw.ActionRow):
         # Add status icon as suffix (far right)
         self.status_icon = Gtk.Image.new_from_icon_name("network-offline-symbolic")
         self.status_icon.set_pixel_size(16)
-        self.status_icon.set_margin_start(8)
+        self.status_icon.set_margin_start(12)
+        self.status_icon.set_margin_end(12)  # Add right margin
         self.add_suffix(self.status_icon)
 
         # Create CSS provider for background colors
@@ -737,9 +745,12 @@ class ConnectionRow(Adw.ActionRow):
                 
                 # Store the selected rows for use in drag prepare
                 selected_nicknames = []
-                for row in selected_rows:
+                for i, row in enumerate(selected_rows):
+                    logger.debug(f"Gesture drag begin: Processing row {i}: {row}")
                     connection_obj = getattr(row, "connection", None)
+                    logger.debug(f"Gesture drag begin: Row {i} connection object: {connection_obj}")
                     nickname = getattr(connection_obj, "nickname", None)
+                    logger.debug(f"Gesture drag begin: Row {i} nickname: {nickname}")
                     if nickname:
                         selected_nicknames.append(nickname)
                 
@@ -752,39 +763,45 @@ class ConnectionRow(Adw.ActionRow):
 
     def _on_drag_prepare(self, source, x, y):
         window = self.get_root()
+        logger.debug(f"Drag prepare: Starting drag prepare for {self.connection.nickname}")
 
         connections_payload: List[Dict[str, Optional[int | str]]] = []
         selection_order = 0
 
-        # Use captured selection from gesture drag begin
-        captured_nicknames = getattr(window, "_captured_selection", []) if window else []
-        logger.debug(f"Drag prepare: Using captured selection with {len(captured_nicknames)} nicknames: {captured_nicknames}")
-        
         if window and hasattr(window, "connection_list"):
-            # Get all rows to find the ones that match our captured selection
-            all_rows = []
-            try:
-                # Get all rows from the connection list
-                child = window.connection_list.get_first_child()
-                while child is not None:
-                    all_rows.append(child)
-                    child = child.get_next_sibling()
-            except Exception as e:
-                logger.debug(f"Drag prepare: Error getting all rows: {e}")
+            # Use captured selection from gesture drag begin
+            captured_nicknames = getattr(window, "_captured_selection", []) if window else []
+            logger.debug(f"Drag prepare: Using captured selection with {len(captured_nicknames)} nicknames: {captured_nicknames}")
+            
+            if captured_nicknames:
+                # Get all rows to find the ones that match our captured selection
                 all_rows = []
+                try:
+                    # Get all rows from the connection list
+                    child = window.connection_list.get_first_child()
+                    while child is not None:
+                        all_rows.append(child)
+                        child = child.get_next_sibling()
+                except Exception as e:
+                    logger.debug(f"Drag prepare: Error getting all rows: {e}")
+                    all_rows = []
 
-            # Find rows that match our captured selection
-            selected_rows = []
-            for row in all_rows:
-                connection_obj = getattr(row, "connection", None)
-                nickname = getattr(connection_obj, "nickname", None)
-                if nickname in captured_nicknames:
-                    selected_rows.append(row)
+                # Find rows that match our captured selection
+                selected_rows = []
+                for row in all_rows:
+                    connection_obj = getattr(row, "connection", None)
+                    nickname = getattr(connection_obj, "nickname", None)
+                    if nickname in captured_nicknames:
+                        selected_rows.append(row)
 
-            # If no captured selection or self not in selection, add self
-            if not captured_nicknames or self.connection.nickname not in captured_nicknames:
-                logger.debug(f"Drag prepare: Adding self to selection (self not in captured selection)")
-                selected_rows.append(self)
+                # If no captured selection or self not in selection, add self
+                if not captured_nicknames or self.connection.nickname not in captured_nicknames:
+                    logger.debug(f"Drag prepare: Adding self to selection (self not in captured selection)")
+                    selected_rows.append(self)
+            else:
+                # Fallback: just use self
+                logger.debug(f"Drag prepare: No captured selection, using self only")
+                selected_rows = [self]
 
             seen_nicknames = set()
             for row in selected_rows:

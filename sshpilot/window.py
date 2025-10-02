@@ -320,9 +320,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             css = """
             /* Pulse highlight for selected rows */
             .pulse-highlight {
-              background: alpha(@accent_bg_color, 0.5);
+              background: rgba(53, 132, 228, 0.5);
               border-radius: 8px;
-              box-shadow: 0 0 0 0.5px alpha(@accent_bg_color, 0.28) inset;
+              box-shadow: 0 0 0 0.5px rgba(53, 132, 228, 0.28) inset;
               opacity: 0;
               transition: opacity 0.3s ease-in-out;
             }
@@ -346,7 +346,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             }
             
             .group-expand-button:hover {
-              background: alpha(@accent_bg_color, 0.1);
+              background: rgba(53, 132, 228, 0.1);
             }
             
             /* Smooth drag indicator transitions */
@@ -361,45 +361,45 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             /* Smooth transitions for connection rows during drag */
             .sshpilot-sidebar {
-              padding: 6px 12px;
               transition: transform 0.1s ease-out, opacity 0.1s ease-out;
             }
             
-            /* Add vertical spacing between rows */
-            .sshpilot-sidebar row {
-              margin: 2px 0;
+            /* Ensure rows have proper spacing and background */
+            .sshpilot-sidebar > row {
+              background-color: #fafafa;
+              border-radius: 12px;
+              margin: 1px 8px;  /* 1px vertical, 8px horizontal margin */
+              padding: 0;
             }
             
-            /* Ensure selection highlighting works with group colors */
-            .sshpilot-sidebar row:selected {
-              background-color: @theme_selected_bg_color !important;
-              color: @theme_selected_fg_color !important;
-              border: 1px solid @theme_selected_bg_color !important;
+            /* Hover state */
+            .sshpilot-sidebar > row:hover {
+              background-color: #f0f0f0;
             }
             
-            .sshpilot-sidebar row:selected:focus {
-              background-color: @theme_selected_bg_color !important;
-              color: @theme_selected_fg_color !important;
-              border: 1px solid @theme_selected_bg_color !important;
+            /* Active/pressed state */
+            .sshpilot-sidebar > row:active {
+              background-color: #e8e8e8;
             }
             
-            .sshpilot-sidebar row:selected:focus-within {
-              background-color: @theme_selected_bg_color !important;
-              color: @theme_selected_fg_color !important;
-              border: 1px solid @theme_selected_bg_color !important;
+            /* Selected state */
+            .sshpilot-sidebar > row:selected {
+              background-color: #3584e4;
+              color: white;
             }
             
-            /* Additional selectors for mouse selection */
-            .sshpilot-sidebar list row:selected {
-              background-color: @theme_selected_bg_color !important;
-              color: @theme_selected_fg_color !important;
-              border: 1px solid @theme_selected_bg_color !important;
+            /* Ensure proper spacing is maintained */
+            .sshpilot-sidebar {
+              background: none;
+              border: none;
             }
             
-            .sshpilot-sidebar list row:selected:focus {
-              background-color: @theme_selected_bg_color !important;
-              color: @theme_selected_fg_color !important;
-              border: 1px solid @theme_selected_bg_color !important;
+            /* Add internal vertical and horizontal padding to rows */
+            .tall-row {
+              padding-top: 18px;
+              padding-bottom: 18px;
+              padding-left: 18px;   /* Internal left padding */
+              padding-right: 18px;  /* Internal right padding */
             }
             
             .sshpilot-sidebar.dragging {
@@ -409,10 +409,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             /* Group drop target highlight */
             .drop-target-group {
-              background: alpha(@accent_bg_color, 0.25);
+              background: rgba(53, 132, 228, 0.25);
               border-radius: 8px;
-              box-shadow: 0 0 0 2px @accent_bg_color inset,
-                          0 2px 8px alpha(@accent_bg_color, 0.4);
+              box-shadow: 0 0 0 2px #3584e4 inset,
+                          0 2px 8px rgba(53, 132, 228, 0.4);
               transform: scale(1.02);
               transition: all 0.2s ease-in-out;
               animation: group-drop-pulse 1.5s ease-in-out infinite;
@@ -420,18 +420,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             @keyframes group-drop-pulse {
               0%, 100% { 
-                box-shadow: 0 0 0 2px @accent_bg_color inset,
-                           0 2px 8px alpha(@accent_bg_color, 0.4);
+                box-shadow: 0 0 0 2px #3584e4 inset,
+                           0 2px 8px rgba(53, 132, 228, 0.4);
               }
               50% { 
-                box-shadow: 0 0 0 3px @accent_bg_color inset,
-                           0 4px 12px alpha(@accent_bg_color, 0.6);
+                box-shadow: 0 0 0 3px #3584e4 inset,
+                           0 4px 12px rgba(53, 132, 228, 0.6);
               }
             }
             
             /* Drop target indicator styling */
             .drop-target-indicator {
-              background: alpha(@accent_bg_color, 0.9);
+              background: rgba(53, 132, 228, 0.9);
               color: white;
               border-radius: 12px;
               padding: 4px 12px;
@@ -1391,6 +1391,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         self.connection_list = Gtk.ListBox()
         self.connection_list.add_css_class("sshpilot-sidebar")
+        self.connection_list.add_css_class("rich-list")
         self.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
         try:
             self.connection_list.set_can_focus(True)
