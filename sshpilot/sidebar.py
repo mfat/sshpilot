@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -717,7 +717,90 @@ class ConnectionRow(Adw.ActionRow):
         self._drag_source = drag_source
 
     def _on_drag_prepare(self, source, x, y):
-        data = {"type": "connection", "connection_nickname": self.connection.nickname}
+        window = self.get_root()
+
+        connections_payload: List[Dict[str, Optional[int | str]]] = []
+        selection_order = 0
+
+        if window and hasattr(window, "connection_list"):
+            try:
+                selected_rows = list(window.connection_list.get_selected_rows())
+            except Exception:
+                selected_rows = []
+
+            if not selected_rows or self not in selected_rows:
+                selected_rows.append(self)
+
+            seen_nicknames = set()
+            for row in selected_rows:
+                connection_obj = getattr(row, "connection", None)
+                nickname = getattr(connection_obj, "nickname", None)
+                if not nickname or nickname in seen_nicknames:
+                    continue
+
+                seen_nicknames.add(nickname)
+
+                row_index = None
+                try:
+                    idx = row.get_index()
+                    if isinstance(idx, int) and idx >= 0:
+                        row_index = idx
+                except Exception:
+                    row_index = None
+
+                connections_payload.append(
+                    {
+                        "nickname": nickname,
+                        "index": row_index,
+                        "order": selection_order,
+                    }
+                )
+                selection_order += 1
+
+        if not connections_payload:
+            row_index = None
+            try:
+                idx = self.get_index()
+                if isinstance(idx, int) and idx >= 0:
+                    row_index = idx
+            except Exception:
+                row_index = None
+
+            connections_payload.append(
+                {
+                    "nickname": self.connection.nickname,
+                    "index": row_index,
+                    "order": 0,
+                }
+            )
+
+        connections_payload.sort(
+            key=lambda item: (
+                item.get("index") is None,
+                item.get("index") if isinstance(item.get("index"), int) else item.get("order", 0),
+            )
+        )
+
+        ordered_nicknames: List[str] = []
+        for item in connections_payload:
+            nickname = item.get("nickname")
+            if isinstance(nickname, str) and nickname not in ordered_nicknames:
+                ordered_nicknames.append(nickname)
+            item.pop("order", None)
+
+        data = {
+            "type": "connection",
+            "connection_nickname": ordered_nicknames[0] if ordered_nicknames else self.connection.nickname,
+            "connection_nicknames": ordered_nicknames,
+            "connections": connections_payload,
+        }
+
+        if window:
+            try:
+                window._pending_drag_connections = ordered_nicknames
+            except Exception:
+                pass
+
         return Gdk.ContentProvider.new_for_value(
             GObject.Value(GObject.TYPE_PYOBJECT, data)
         )
@@ -726,8 +809,18 @@ class ConnectionRow(Adw.ActionRow):
         try:
             window = self.get_root()
             if window:
-                # Track which connection is being dragged
-                window._dragged_connection = self.connection
+                pending = getattr(window, "_pending_drag_connections", None)
+                if isinstance(pending, list) and pending:
+                    window._dragged_connections = list(pending)
+                else:
+                    window._dragged_connections = [self.connection.nickname]
+
+                if hasattr(window, "_pending_drag_connections"):
+                    try:
+                        delattr(window, "_pending_drag_connections")
+                    except Exception:
+                        window._pending_drag_connections = []
+
                 _show_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag begin: {e}")
@@ -737,8 +830,16 @@ class ConnectionRow(Adw.ActionRow):
             window = self.get_root()
             if window:
                 # Clear the dragged connection tracking
-                if hasattr(window, "_dragged_connection"):
-                    delattr(window, "_dragged_connection")
+                if hasattr(window, "_dragged_connections"):
+                    try:
+                        delattr(window, "_dragged_connections")
+                    except Exception:
+                        window._dragged_connections = []
+                if hasattr(window, "_pending_drag_connections"):
+                    try:
+                        delattr(window, "_pending_drag_connections")
+                    except Exception:
+                        window._pending_drag_connections = []
                 _hide_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag end: {e}")
@@ -943,17 +1044,19 @@ def _on_connection_list_motion(window, target, x, y):
             row_height = row.get_allocation().height
             relative_y = y - row_y
             position = "above" if relative_y < row_height / 2 else "below"
-            
+
             # Handle connection rows
-            if (hasattr(row, "connection") and hasattr(window, "_dragged_connection")):
+            dragged_connections = set(getattr(window, "_dragged_connections", []) or [])
+            if hasattr(row, "connection") and dragged_connections:
                 # Don't show indicators on the row being dragged
-                if row.connection == window._dragged_connection:
+                nickname = getattr(getattr(row, "connection", None), "nickname", None)
+                if nickname in dragged_connections:
                     _clear_drop_indicator(window)
                     return Gdk.DragAction.MOVE
-                
+
                 # Only show indicator if this is a different connection
                 _show_drop_indicator(window, row, position)
-            
+
             # Handle group rows
             elif (hasattr(row, "group_id") and hasattr(window, "_dragged_group_id")):
                 # Don't show indicators on the group being dragged
@@ -968,7 +1071,7 @@ def _on_connection_list_motion(window, target, x, y):
             elif (hasattr(row, "connection") and hasattr(window, "_dragged_group_id")):
                 # Dragging group over connection - show indicator
                 _show_drop_indicator(window, row, position)
-            elif (hasattr(row, "group_id") and hasattr(window, "_dragged_connection")):
+            elif hasattr(row, "group_id") and dragged_connections:
                 # Dragging connection over group - only show indicator on the group itself (not above/below)
                 # This indicates the connection will be added to the group
                 _show_drop_indicator_on_group(window, row)
@@ -1140,51 +1243,108 @@ def _on_connection_list_drop(window, target, value, x, y):
         changes_made = False
 
         if drop_type == "connection":
-            connection_nickname = value.get("connection_nickname")
-            if connection_nickname:
-                current_group_id = window.group_manager.get_connection_group(connection_nickname)
+            connections_payload = value.get("connections")
+            ordered_pairs: List[tuple[int, str]] = []
 
-                target_row = window.connection_list.get_row_at_y(int(y))
-                if not target_row:
-                    # Drop on empty space - ungroup the connection
-                    window.group_manager.move_connection(connection_nickname, None)
-                    changes_made = True
-                elif getattr(target_row, "ungrouped_area", False):
-                    # Drop on ungrouped area
-                    window.group_manager.move_connection(connection_nickname, None)
-                    changes_made = True
-                else:
-                    row_y = target_row.get_allocation().y
-                    row_height = target_row.get_allocation().height
-                    relative_y = y - row_y
-                    position = "above" if relative_y < row_height / 2 else "below"
+            if isinstance(connections_payload, list):
+                for order, entry in enumerate(connections_payload):
+                    if not isinstance(entry, dict):
+                        continue
+                    nickname = entry.get("nickname") or entry.get("connection_nickname")
+                    if not isinstance(nickname, str):
+                        continue
+                    idx = entry.get("index")
+                    sort_key = order
+                    if isinstance(idx, int) and idx >= 0:
+                        sort_key = idx
+                    ordered_pairs.append((sort_key, nickname))
 
-                    if hasattr(target_row, "group_id"):
-                        # Drop on group row - add to the group
-                        target_group_id = target_row.group_id
+            if not ordered_pairs:
+                nicknames = value.get("connection_nicknames")
+                if isinstance(nicknames, list):
+                    for order, nickname in enumerate(n for n in nicknames if isinstance(n, str)):
+                        ordered_pairs.append((order, nickname))
+
+            if not ordered_pairs:
+                nickname = value.get("connection_nickname")
+                if isinstance(nickname, str):
+                    ordered_pairs.append((0, nickname))
+
+            if not ordered_pairs:
+                return False
+
+            ordered_pairs.sort(key=lambda item: item[0])
+
+            seen = set()
+            connection_nicknames: List[str] = []
+            for _, nickname in ordered_pairs:
+                if nickname not in seen:
+                    seen.add(nickname)
+                    connection_nicknames.append(nickname)
+
+            if not connection_nicknames:
+                return False
+
+            target_row = window.connection_list.get_row_at_y(int(y))
+
+            if not target_row:
+                for nickname in connection_nicknames:
+                    current_group_id = window.group_manager.get_connection_group(nickname)
+                    if current_group_id is not None:
+                        window.group_manager.move_connection(nickname, None)
+                        changes_made = True
+                # Dropping on empty area when already ungrouped leaves ordering unchanged
+            elif getattr(target_row, "ungrouped_area", False):
+                for nickname in connection_nicknames:
+                    current_group_id = window.group_manager.get_connection_group(nickname)
+                    if current_group_id is not None:
+                        window.group_manager.move_connection(nickname, None)
+                        changes_made = True
+            else:
+                row_allocation = target_row.get_allocation()
+                row_y = row_allocation.y
+                row_height = row_allocation.height
+                relative_y = y - row_y
+                position = "above" if relative_y < row_height / 2 else "below"
+
+                if hasattr(target_row, "group_id"):
+                    target_group_id = target_row.group_id
+                    for nickname in connection_nicknames:
+                        current_group_id = window.group_manager.get_connection_group(nickname)
                         if target_group_id != current_group_id:
-                            window.group_manager.move_connection(connection_nickname, target_group_id)
+                            window.group_manager.move_connection(nickname, target_group_id)
                             changes_made = True
-                    else:
-                        # Drop on connection row
-                        target_connection = getattr(target_row, "connection", None)
-                        if target_connection:
-                            target_group_id = window.group_manager.get_connection_group(
-                                target_connection.nickname
-                            )
+                else:
+                    target_connection = getattr(target_row, "connection", None)
+                    if target_connection:
+                        reference_nickname = target_connection.nickname
+                        target_group_id = window.group_manager.get_connection_group(reference_nickname)
+
+                        for nickname in connection_nicknames:
+                            current_group_id = window.group_manager.get_connection_group(nickname)
                             if target_group_id != current_group_id:
-                                # Moving to a different group - move first, then reorder
-                                window.group_manager.move_connection(connection_nickname, target_group_id)
-                                # Now reorder within the new group
-                                window.group_manager.reorder_connection_in_group(
-                                    connection_nickname, target_connection.nickname, position
-                                )
+                                window.group_manager.move_connection(nickname, target_group_id)
                                 changes_made = True
-                            else:
-                                # Same group - just reorder
+
+                        if position == "above":
+                            reference = reference_nickname
+                            for nickname in reversed(connection_nicknames):
+                                if nickname == reference:
+                                    continue
                                 window.group_manager.reorder_connection_in_group(
-                                    connection_nickname, target_connection.nickname, position
+                                    nickname, reference, "above"
                                 )
+                                reference = nickname
+                                changes_made = True
+                        else:
+                            reference = reference_nickname
+                            for nickname in connection_nicknames:
+                                if nickname == reference:
+                                    continue
+                                window.group_manager.reorder_connection_in_group(
+                                    nickname, reference, "below"
+                                )
+                                reference = nickname
                                 changes_made = True
 
         elif drop_type == "group":

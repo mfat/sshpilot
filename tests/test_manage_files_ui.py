@@ -16,6 +16,7 @@ def setup_gi(monkeypatch):
         module = types.ModuleType(name)
         setattr(repository, name, module)
         monkeypatch.setitem(sys.modules, f"gi.repository.{name}", module)
+    repository.Gtk.Window = type("Window", (), {})
     repository.Adw.Toast = types.SimpleNamespace(new=lambda *_args, **_kwargs: object())
     repository.Adw.Window = type("Window", (), {})
     repository.Adw.PreferencesWindow = type("PreferencesWindow", (), {})
