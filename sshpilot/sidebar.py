@@ -701,8 +701,9 @@ class ConnectionRow(Adw.ActionRow):
 
         # Color badge removed - only show in GroupRow
         if mode == 'badge':
-            # No color badge in ConnectionRow
-            _set_css_background(self._background_provider, None)
+            # No color badge in ConnectionRow - keep default background
+            # Don't call _set_css_background with None to preserve default CSS background
+            pass
         else:
             # Apply fill color using CSS provider
             if rgba:

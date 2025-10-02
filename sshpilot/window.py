@@ -359,39 +359,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               opacity: 1;
             }
             
-            /* Smooth transitions for connection rows during drag */
-            .sshpilot-sidebar {
+            /* Ensure rows have proper spacing */
+            .sshpilot-sidebar,
+            row.sshpilot-sidebar,
+            .adw-action-row.sshpilot-sidebar {
+              margin: 1px 8px;  /* 6px vertical, 8px horizontal margin */
+              padding: 0;
               transition: transform 0.1s ease-out, opacity 0.1s ease-out;
             }
             
-            /* Ensure rows have proper spacing and background */
-            .sshpilot-sidebar > row {
-              background-color: #fafafa;
-              border-radius: 12px;
-              margin: 1px 8px;  /* 1px vertical, 8px horizontal margin */
-              padding: 0;
-            }
-            
-            /* Hover state */
-            .sshpilot-sidebar > row:hover {
-              background-color: #f0f0f0;
-            }
-            
-            /* Active/pressed state */
-            .sshpilot-sidebar > row:active {
-              background-color: #e8e8e8;
-            }
-            
-            /* Selected state */
-            .sshpilot-sidebar > row:selected {
-              background-color: #3584e4;
+            /* Selected state - only override text color */
+            .sshpilot-sidebar:selected,
+            row.sshpilot-sidebar:selected,
+            .adw-action-row.sshpilot-sidebar:selected {
               color: white;
-            }
-            
-            /* Ensure proper spacing is maintained */
-            .sshpilot-sidebar {
-              background: none;
-              border: none;
             }
             
             /* Add internal vertical and horizontal padding to rows */
@@ -415,18 +396,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                           0 2px 8px rgba(53, 132, 228, 0.4);
               transform: scale(1.02);
               transition: all 0.2s ease-in-out;
-              animation: group-drop-pulse 1.5s ease-in-out infinite;
-            }
-            
-            @keyframes group-drop-pulse {
-              0%, 100% { 
-                box-shadow: 0 0 0 2px #3584e4 inset,
-                           0 2px 8px rgba(53, 132, 228, 0.4);
-              }
-              50% { 
-                box-shadow: 0 0 0 3px #3584e4 inset,
-                           0 4px 12px rgba(53, 132, 228, 0.6);
-              }
             }
             
             /* Drop target indicator styling */
@@ -438,33 +407,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               margin: 4px 8px;
               font-weight: bold;
               font-size: 0.9em;
-              animation: drop-indicator-bounce 0.6s ease-in-out;
-            }
-            
-            @keyframes drop-indicator-bounce {
-              0% { 
-                transform: translateY(-10px) scale(0.8);
-                opacity: 0;
-              }
-              60% {
-                transform: translateY(2px) scale(1.05);
-                opacity: 1;
-              }
-              100% {
-                transform: translateY(0) scale(1);
-                opacity: 1;
-              }
             }
 
             /* Tag accent styling for symbolic icons */
             .tag-accent {
-              color: @accent_color;
+              color: #3584e4;
             }
             
             /* Keep good contrast when the row is selected/active */
             .adw-action-row:selected .tag-accent,
             .adw-action-row:active .tag-accent {
-              color: @window_fg_color;
+              color: white;
             }
 
             /* Port forwarding indicator color overrides */
