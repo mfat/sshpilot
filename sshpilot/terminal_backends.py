@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 import os
+import sys
+from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
 
 import gi
@@ -470,23 +473,30 @@ class PyXtermTerminalBackend:
         self.available = False
         self.import_error: Optional[Exception] = None
         self._pyxterm = None
+        self._vendored_pyxterm = None
+        self._pyxterm_cli_module = "sshpilot.vendor.pyxtermjs"
         self._webview = None
         self._server = None
         self._terminal_id: Optional[str] = None
         self._child_pid: Optional[int] = None
         self._child_exited_callback: Optional[Callable] = None
-        
+        self._template_backed_up = False
+        self._temp_script_path: Optional[str] = None
+
         # Initialize with a fallback widget
         self.widget: Gtk.Widget = Gtk.Box()
 
         try:
-            import pyxtermjs  # type: ignore
-            import subprocess
-            import shutil
+            vendored_module = importlib.import_module("sshpilot.vendor.pyxtermjs")
+            self._vendored_pyxterm = vendored_module
 
-            # Check if pyxtermjs command is available
-            if not shutil.which('pyxtermjs'):
-                raise ImportError("pyxtermjs command not found in PATH. Please install pyxtermjs package.")
+            try:
+                external_module = importlib.import_module("pyxtermjs")
+            except Exception:
+                logger.debug("External pyxtermjs package not found; using vendored copy")
+                pyxterm_module = vendored_module
+            else:
+                pyxterm_module = external_module
 
             # Use WebKit 6.0 (GTK4 compatible) - this is the preferred approach
             try:
@@ -514,7 +524,7 @@ class PyXtermTerminalBackend:
             logger.debug("PyXterm backend unavailable", exc_info=True)
             return
 
-        self._pyxterm = pyxtermjs
+        self._pyxterm = pyxterm_module
         self.widget = self._webview
         self.available = True
 
@@ -567,15 +577,17 @@ class PyXtermTerminalBackend:
     def _backup_pyxtermjs_template(self) -> None:
         """Backup the original pyxtermjs template"""
         try:
-            import pyxtermjs
-            import os
             import shutil
-            
-            pyxtermjs_path = os.path.dirname(pyxtermjs.__file__)
-            original_template = os.path.join(pyxtermjs_path, 'index.html')
-            backup_template = os.path.join(pyxtermjs_path, 'index.html.backup')
-            
-            if os.path.exists(original_template) and not os.path.exists(backup_template):
+
+            module = self._vendored_pyxterm or self._pyxterm
+            if not module:
+                return
+
+            pyxtermjs_path = Path(module.__file__).resolve().parent
+            original_template = pyxtermjs_path / "index.html"
+            backup_template = pyxtermjs_path / "index.html.backup"
+
+            if original_template.exists() and not backup_template.exists():
                 shutil.copy2(original_template, backup_template)
                 self._template_backed_up = True
                 logger.debug("Backed up original pyxtermjs template")
@@ -586,15 +598,17 @@ class PyXtermTerminalBackend:
     def _replace_pyxtermjs_template(self) -> None:
         """Replace the pyxtermjs template with our clean version"""
         try:
-            import pyxtermjs
-            import os
             import shutil
-            
-            pyxtermjs_path = os.path.dirname(pyxtermjs.__file__)
-            original_template = os.path.join(pyxtermjs_path, 'index.html')
-            clean_template = os.path.join(os.path.dirname(__file__), 'resources', 'pyxtermjs_clean.html')
-            
-            if os.path.exists(clean_template):
+
+            module = self._vendored_pyxterm or self._pyxterm
+            if not module:
+                return
+
+            pyxtermjs_path = Path(module.__file__).resolve().parent
+            original_template = pyxtermjs_path / "index.html"
+            clean_template = Path(__file__).resolve().parent / "resources" / "pyxtermjs_clean.html"
+
+            if clean_template.exists():
                 shutil.copy2(clean_template, original_template)
                 logger.debug("Replaced pyxtermjs template with clean version")
         except Exception as e:
@@ -603,17 +617,19 @@ class PyXtermTerminalBackend:
     def _restore_pyxtermjs_template(self) -> None:
         """Restore the original pyxtermjs template"""
         try:
-            import pyxtermjs
-            import os
             import shutil
-            
-            pyxtermjs_path = os.path.dirname(pyxtermjs.__file__)
-            original_template = os.path.join(pyxtermjs_path, 'index.html')
-            backup_template = os.path.join(pyxtermjs_path, 'index.html.backup')
-            
-            if hasattr(self, '_template_backed_up') and self._template_backed_up and os.path.exists(backup_template):
+
+            module = self._vendored_pyxterm or self._pyxterm
+            if not module:
+                return
+
+            pyxtermjs_path = Path(module.__file__).resolve().parent
+            original_template = pyxtermjs_path / "index.html"
+            backup_template = pyxtermjs_path / "index.html.backup"
+
+            if self._template_backed_up and backup_template.exists():
                 shutil.copy2(backup_template, original_template)
-                os.unlink(backup_template)
+                backup_template.unlink()
                 logger.debug("Restored original pyxtermjs template")
         except Exception as e:
             logger.debug(f"Failed to restore pyxtermjs template: {e}")
@@ -701,7 +717,9 @@ class PyXtermTerminalBackend:
         
         # Build pyxtermjs command
         pyxterm_cmd = [
-            'pyxtermjs',
+            sys.executable,
+            '-m',
+            self._pyxterm_cli_module,
             '--port', str(port),
             '--host', '127.0.0.1'
         ]

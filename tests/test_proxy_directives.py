@@ -225,10 +225,26 @@ def test_terminal_manager_prepares_connection_before_spawn(monkeypatch):
 
     gdk_module = types.ModuleType("gi.repository.Gdk")
 
+    class DummyRGBA:
+        def __init__(self):
+            self._value = None
+
+        def parse(self, value):
+            self._value = value
+            return True
+
+        def to_string(self):
+            return str(self._value) if self._value is not None else ""
+
+    gdk_module.RGBA = DummyRGBA
+
     repository_module.Gio = gio_module
     repository_module.GLib = glib_module
     repository_module.Adw = adw_module
     repository_module.Gdk = gdk_module
+    gdkpixbuf_module = types.ModuleType("gi.repository.GdkPixbuf")
+    gdkpixbuf_module.Pixbuf = object
+    repository_module.GdkPixbuf = gdkpixbuf_module
     gi_module.repository = repository_module
 
     monkeypatch.setitem(sys.modules, "gi", gi_module)
@@ -237,6 +253,7 @@ def test_terminal_manager_prepares_connection_before_spawn(monkeypatch):
     monkeypatch.setitem(sys.modules, "gi.repository.GLib", glib_module)
     monkeypatch.setitem(sys.modules, "gi.repository.Adw", adw_module)
     monkeypatch.setitem(sys.modules, "gi.repository.Gdk", gdk_module)
+    monkeypatch.setitem(sys.modules, "gi.repository.GdkPixbuf", gdkpixbuf_module)
 
     sys.modules.pop("sshpilot.terminal_manager", None)
     terminal_manager_mod = importlib.import_module("sshpilot.terminal_manager")
@@ -253,7 +270,7 @@ def test_terminal_manager_prepares_connection_before_spawn(monkeypatch):
     recorded_cmd = {}
 
     class DummyTerminalWidget:
-        def __init__(self, connection, config, connection_manager):
+        def __init__(self, connection, config, connection_manager, **kwargs):
             self.connection = connection
             self.config = config
             self.connection_manager = connection_manager

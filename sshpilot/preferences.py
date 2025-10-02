@@ -5,6 +5,7 @@ import os
 import logging
 import subprocess
 import shutil
+from typing import Optional
 
 from .platform_utils import get_config_dir, is_flatpak, is_macos
 from .file_manager_integration import (
@@ -372,14 +373,33 @@ class PreferencesWindow(Adw.PreferencesWindow):
         self.connect('close-request', self.on_close_request)
 
     def _detect_pyxterm_backend(self):
+        external_error: Optional[str] = None
+
         try:
             spec = importlib.util.find_spec('pyxtermjs')
             if spec is None:
-                raise ImportError('pyxtermjs module not found')
-            __import__('pyxtermjs')
-            return True, None
+                external_error = 'pyxtermjs module not found'
+            else:
+                __import__('pyxtermjs')
+                return True, None
         except Exception as exc:
-            return False, str(exc)
+            external_error = str(exc)
+
+        vendored_error: Optional[str] = None
+
+        try:
+            vendored_spec = importlib.util.find_spec('sshpilot.vendor.pyxtermjs')
+            if vendored_spec is not None:
+                return True, None
+            vendored_error = 'vendored pyxtermjs module not found'
+        except Exception as vendored_exc:
+            vendored_error = str(vendored_exc)
+
+        message_parts = [part for part in (external_error, vendored_error) if part]
+        if not message_parts:
+            message_parts.append('pyxtermjs backend unavailable')
+
+        return False, '; '.join(message_parts)
 
     def _build_backend_choices(self):
         choices = [
