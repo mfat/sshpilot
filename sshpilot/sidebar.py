@@ -646,6 +646,7 @@ class ConnectionRow(Adw.ActionRow):
         self.update_status()
         self._update_forwarding_indicators()
         self._setup_drag_source()
+        self._setup_double_click_gesture()
     
     def show_drop_indicator(self, top: bool):
         """Show drop indicator line"""
@@ -965,6 +966,21 @@ class ConnectionRow(Adw.ActionRow):
                 _hide_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag end: {e}")
+
+    def _setup_double_click_gesture(self):
+        """Set up double-click gesture for connection rows"""
+        gesture = Gtk.GestureClick()
+        gesture.set_button(1)
+        gesture.connect("pressed", self._on_double_click)
+        self.add_controller(gesture)
+
+    def _on_double_click(self, gesture, n_press, x, y):
+        """Handle double-click on connection row"""
+        if n_press == 2:
+            window = self.get_root()
+            if window and hasattr(window, '_cycle_connection_tabs_or_open'):
+                logger.debug(f"ConnectionRow double-click: Connecting to {self.connection.nickname}")
+                window._cycle_connection_tabs_or_open(self.connection)
 
     # -- display updates --------------------------------------------------
 
