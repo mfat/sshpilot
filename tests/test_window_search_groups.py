@@ -1,4 +1,6 @@
 import importlib
+import sys
+import types
 
 from sshpilot.connection_manager import Connection
 
@@ -108,6 +110,7 @@ class StubConnectionRow(DummyRowBase):
 
 
 def test_search_results_include_matching_groups(monkeypatch):
+    monkeypatch.setitem(sys.modules, "cairo", types.SimpleNamespace())
     window_module = importlib.import_module("sshpilot.window")
     window_module = importlib.reload(window_module)
 

@@ -1,6 +1,26 @@
 """Regression tests for terminal pass-through shortcut handling."""
 
+import sys
 import types
+
+gi = types.ModuleType("gi")
+gi.require_version = lambda *args, **kwargs: None
+repository = types.SimpleNamespace()
+repository.Gtk = types.SimpleNamespace(Box=type("Box", (), {}))
+repository.GObject = types.SimpleNamespace(
+    SignalFlags=types.SimpleNamespace(RUN_FIRST=0)
+)
+repository.GLib = types.SimpleNamespace(idle_add=lambda *a, **k: None)
+repository.Vte = types.SimpleNamespace()
+repository.Pango = types.SimpleNamespace()
+repository.Gdk = types.SimpleNamespace()
+repository.Gio = types.SimpleNamespace()
+repository.Adw = types.SimpleNamespace(Toast=types.SimpleNamespace(new=lambda *a, **k: None))
+gi.repository = repository
+sys.modules.setdefault("gi", gi)
+sys.modules.setdefault("gi.repository", repository)
+for name in ["Gtk", "GObject", "GLib", "Vte", "Pango", "Gdk", "Gio", "Adw"]:
+    sys.modules.setdefault(f"gi.repository.{name}", getattr(repository, name))
 
 from sshpilot import terminal as terminal_mod
 

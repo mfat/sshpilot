@@ -17,7 +17,8 @@ import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Gdk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Gdk, Adw, Pango, PangoFT2
+gi.require_version('Vte', '3.91')
+from gi.repository import Gtk, Gdk, Adw, Pango, PangoFT2, Vte, GLib
 
 logger = logging.getLogger(__name__)
 
@@ -344,6 +345,10 @@ class PreferencesWindow(Adw.PreferencesWindow):
         self._group_display_sync = False
         self._tab_color_sync = False
         self._terminal_color_sync = False
+        self._encoding_selection_sync = False
+        self._encoding_options = []
+        self._encoding_codes = []
+        self._suppress_encoding_config_handler = False
 
         self._config_signal_id = None
 
@@ -439,9 +444,11 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 self.config.set_setting('terminal.theme', 'default')
             
             self.color_scheme_row.connect('notify::selected', self.on_color_scheme_changed)
-            
+
             appearance_group.add(self.color_scheme_row)
-            
+
+            self._initialize_encoding_selector(appearance_group)
+
             # Color scheme preview
             preview_group = Adw.PreferencesGroup()
             preview_group.set_title("Preview")
@@ -1422,6 +1429,10 @@ class PreferencesWindow(Adw.PreferencesWindow):
         elif key == 'ui.use_group_color_in_terminal':
             self._sync_use_group_color_in_terminal(value)
             self._trigger_terminal_style_refresh()
+        elif key == 'terminal.encoding':
+            if self._suppress_encoding_config_handler:
+                return
+            GLib.idle_add(self._sync_encoding_row_selection, value or '', True)
 
     def _sync_use_group_color_in_tab(self, value):
         if not hasattr(self, 'tab_group_color_row') or self.tab_group_color_row is None:
@@ -1813,7 +1824,153 @@ class PreferencesWindow(Adw.PreferencesWindow):
         """Get mapping from config keys to display names"""
         mapping = self.get_theme_name_mapping()
         return {v: k for k, v in mapping.items()}
-    
+
+    def _initialize_encoding_selector(self, appearance_group):
+        self.encoding_row = Adw.ComboRow()
+        self.encoding_row.set_title("Encoding")
+        self.encoding_row.set_subtitle("Character encoding for the integrated terminal")
+
+        self._encoding_options = self._collect_supported_encodings()
+        self._encoding_codes = [code for code, _ in self._encoding_options]
+
+        encoding_list = Gtk.StringList()
+        for code, description in self._encoding_options:
+            display_label = description or code
+            if description and description != code:
+                display_label = f"{code} — {description}"
+            encoding_list.append(display_label)
+
+        self.encoding_row.set_model(encoding_list)
+        self.encoding_row.connect('notify::selected', self.on_encoding_selection_changed)
+        appearance_group.add(self.encoding_row)
+
+        current_encoding = self.config.get_setting('terminal.encoding', 'UTF-8')
+        self._sync_encoding_row_selection(current_encoding, notify_user=True)
+
+    def _collect_supported_encodings(self):
+        options = []
+        try:
+            terminal = Vte.Terminal()
+            encodings = terminal.get_encodings() or []
+            for item in encodings:
+                code = None
+                description = None
+                if isinstance(item, (list, tuple)):
+                    if len(item) >= 1:
+                        code = item[0]
+                    if len(item) >= 2:
+                        description = item[1]
+                elif isinstance(item, str):
+                    code = item
+                if code:
+                    options.append((code, description or code))
+        except Exception as exc:  # pragma: no cover - depends on VTE runtime
+            logger.debug("Unable to retrieve VTE encodings: %s", exc)
+
+        if not options:
+            options = [('UTF-8', 'Unicode (UTF-8)')]
+        else:
+            codes = [code for code, _ in options]
+            if 'UTF-8' in codes:
+                utf_index = codes.index('UTF-8')
+                if utf_index != 0:
+                    options.insert(0, options.pop(utf_index))
+            else:
+                options.insert(0, ('UTF-8', 'Unicode (UTF-8)'))
+
+        return options
+
+    def _sync_encoding_row_selection(self, encoding, notify_user=False):
+        if not hasattr(self, 'encoding_row') or self.encoding_row is None:
+            return
+
+        requested = encoding.strip() if isinstance(encoding, str) else ''
+        fallback_code = self._encoding_codes[0] if self._encoding_codes else 'UTF-8'
+        fallback_required = False
+        index = 0
+
+        canonical_index = None
+        if requested:
+            if requested in self._encoding_codes:
+                canonical_index = self._encoding_codes.index(requested)
+            else:
+                lower_requested = requested.lower()
+                for idx, code in enumerate(self._encoding_codes):
+                    if code.lower() == lower_requested:
+                        canonical_index = idx
+                        break
+            if canonical_index is not None:
+                index = canonical_index
+            else:
+                fallback_required = True
+        else:
+            canonical_index = 0 if self._encoding_codes else None
+
+        if canonical_index is None:
+            try:
+                index = self._encoding_codes.index(fallback_code)
+            except ValueError:
+                index = 0
+            target_code = fallback_code
+        else:
+            target_code = self._encoding_codes[index]
+            if fallback_required:
+                target_code = fallback_code
+                index = self._encoding_codes.index(target_code) if target_code in self._encoding_codes else 0
+        if fallback_required and canonical_index is None:
+            target_code = fallback_code
+            index = self._encoding_codes.index(target_code) if target_code in self._encoding_codes else 0
+
+        if self.encoding_row.get_selected() != index:
+            self._encoding_selection_sync = True
+            try:
+                self.encoding_row.set_selected(index)
+            finally:
+                self._encoding_selection_sync = False
+
+        if not requested:
+            self._update_encoding_config_if_needed(target_code)
+        elif fallback_required:
+            if notify_user:
+                self._handle_invalid_encoding_selection(requested or encoding, target_code)
+            self._update_encoding_config_if_needed(target_code)
+        elif target_code != requested:
+            self._update_encoding_config_if_needed(target_code)
+
+    def _handle_invalid_encoding_selection(self, requested, fallback):
+        message = f"Encoding '{requested}' is not available. Using {fallback} instead."
+        logger.warning(message)
+        self._show_toast(message)
+
+    def _show_toast(self, message):
+        try:
+            toast = Adw.Toast.new(message)
+            self.add_toast(toast)
+        except Exception:
+            # Fallback to logging when toast overlay isn't available
+            logger.info(message)
+
+    def _update_encoding_config_if_needed(self, target_code):
+        current_value = self.config.get_setting('terminal.encoding', 'UTF-8')
+        if current_value == target_code:
+            return
+        self._suppress_encoding_config_handler = True
+        try:
+            self.config.set_setting('terminal.encoding', target_code)
+        finally:
+            self._suppress_encoding_config_handler = False
+
+    def on_encoding_selection_changed(self, combo_row, _param):
+        if self._encoding_selection_sync:
+            return
+
+        index = combo_row.get_selected()
+        if index < 0 or index >= len(self._encoding_codes):
+            return
+
+        target_code = self._encoding_codes[index]
+        self._update_encoding_config_if_needed(target_code)
+
     def on_color_scheme_changed(self, combo_row, param):
         """Handle terminal color scheme change"""
         selected = combo_row.get_selected()

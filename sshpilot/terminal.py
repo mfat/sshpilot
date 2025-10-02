@@ -249,6 +249,8 @@ class TerminalWidget(Gtk.Box):
         self._shortcut_controller = None
         self._scroll_controller = None
         self._config_handler = None
+        self._supported_encodings = None
+        self._updating_encoding_config = False
         try:
             self._pass_through_mode = bool(self.config.get_setting('terminal.pass_through_mode', False))
         except Exception:
@@ -1546,12 +1548,12 @@ class TerminalWidget(Gtk.Box):
                 self.vte.set_mouse_autohide(True)
                 logger.debug("Enabled mouse autohide")
                 
-            # Set terminal encoding
+            encoding_value = 'UTF-8'
             try:
-                self.vte.set_encoding('UTF-8')
-                logger.debug("Set terminal encoding to UTF-8")
-            except Exception as e:
-                logger.warning(f"Could not set terminal encoding: {e}")
+                encoding_value = self.config.get_setting('terminal.encoding', 'UTF-8')
+            except Exception:
+                encoding_value = 'UTF-8'
+            self._apply_terminal_encoding(encoding_value, update_config_on_fallback=True)
                 
             # Enable bold text
             try:
@@ -1577,6 +1579,100 @@ class TerminalWidget(Gtk.Box):
         # Install terminal shortcuts and custom context menu
         self._apply_pass_through_mode(self._pass_through_mode)
         self._setup_context_menu()
+
+    def _get_supported_encodings(self):
+        if self._supported_encodings is not None:
+            return self._supported_encodings
+
+        encodings = []
+        try:
+            for item in self.vte.get_encodings() or []:
+                code = None
+                if isinstance(item, (list, tuple)):
+                    if item:
+                        code = item[0]
+                elif isinstance(item, str):
+                    code = item
+                if code and code not in encodings:
+                    encodings.append(code)
+        except Exception as exc:  # pragma: no cover - depends on VTE runtime
+            logger.debug("Unable to query VTE encodings: %s", exc)
+
+        if 'UTF-8' in encodings:
+            encodings.insert(0, encodings.pop(encodings.index('UTF-8')))
+        else:
+            encodings.insert(0, 'UTF-8')
+
+        self._supported_encodings = encodings
+        return self._supported_encodings
+
+    def _apply_terminal_encoding_idle(self, encoding_value):
+        self._apply_terminal_encoding(encoding_value, update_config_on_fallback=True)
+        return False
+
+    def _apply_terminal_encoding(self, encoding_value, update_config_on_fallback=True):
+        supported = self._get_supported_encodings()
+        fallback = supported[0] if supported else 'UTF-8'
+
+        requested = encoding_value.strip() if isinstance(encoding_value, str) else ''
+        canonical = None
+        if requested:
+            if requested in supported:
+                canonical = requested
+            else:
+                lower_requested = requested.lower()
+                for code in supported:
+                    if code.lower() == lower_requested:
+                        canonical = code
+                        break
+
+        if canonical:
+            target = canonical
+            fallback_triggered = False
+        else:
+            target = fallback
+            fallback_triggered = bool(requested)
+
+        update_needed = update_config_on_fallback and target != requested
+
+        try:
+            self.vte.set_encoding(target)
+            logger.debug("Set terminal encoding to %s", target)
+        except Exception as exc:
+            logger.warning("Could not set terminal encoding to %s: %s", target, exc)
+            return False
+
+        if fallback_triggered:
+            self._notify_invalid_encoding(requested, target)
+
+        if update_needed and hasattr(self.config, 'set_setting') and not self._updating_encoding_config:
+            self._updating_encoding_config = True
+            try:
+                self.config.set_setting('terminal.encoding', target)
+            finally:
+                self._updating_encoding_config = False
+
+        return False
+
+    def _notify_invalid_encoding(self, requested, fallback):
+        message = _(f"Encoding '{requested}' is not supported. Using {fallback} instead.")
+        logger.warning(message)
+        root = self.get_root()
+        try:
+            toast = Adw.Toast.new(message)
+        except Exception:
+            toast = None
+
+        if toast is None:
+            return
+
+        try:
+            if root and hasattr(root, 'toast_overlay') and root.toast_overlay is not None:
+                root.toast_overlay.add_toast(toast)
+            elif root and hasattr(root, 'add_toast'):
+                root.add_toast(toast)
+        except Exception:
+            pass
 
     def setup_local_shell(self):
         """Set up the terminal for local shell (not SSH)"""
@@ -1938,6 +2034,10 @@ class TerminalWidget(Gtk.Box):
     def _on_config_setting_changed(self, _config, key, value):
         if key == 'terminal.pass_through_mode':
             GLib.idle_add(self._apply_pass_through_mode, bool(value))
+        elif key == 'terminal.encoding':
+            if self._updating_encoding_config:
+                return
+            GLib.idle_add(self._apply_terminal_encoding_idle, value or '')
 
     # PTY forwarding is now handled automatically by VTE
     # No need for manual PTY management in this implementation
