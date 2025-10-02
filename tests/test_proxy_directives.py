@@ -78,50 +78,14 @@ def test_terminal_widget_uses_prepared_proxy_command(monkeypatch):
 
     from sshpilot import terminal as terminal_mod
 
-    class DummyBackend:
+    class DummyVte:
         def __init__(self):
             self.last_cmd = None
-            self.widget = None
 
-        def spawn_async(
-            self,
-            argv,
-            env=None,
-            cwd=None,
-            flags=0,
-            child_setup=None,
-            callback=None,
-            user_data=None,
-        ):
-            self.last_cmd = list(argv)
-            if callback:
-                try:
-                    callback(self.widget or object(), 0, None, user_data)
-                except TypeError:
-                    callback(self.widget or object(), None)
-
-        def get_pty(self):
-            return object()
+        def spawn_async(self, *args):
+            self.last_cmd = list(args[2])
 
         def grab_focus(self):
-            pass
-
-        def connect_child_exited(self, *args, **kwargs):
-            return 0
-
-        def connect_title_changed(self, *args, **kwargs):
-            return 0
-
-        def connect_termprops_changed(self, *args, **kwargs):
-            return 0
-
-        def disconnect(self, handler_id):
-            pass
-
-        def apply_theme(self, *args, **kwargs):
-            pass
-
-        def initialize(self, *args, **kwargs):
             pass
 
     widget = terminal_mod.TerminalWidget.__new__(terminal_mod.TerminalWidget)
@@ -132,13 +96,11 @@ def test_terminal_widget_uses_prepared_proxy_command(monkeypatch):
         prepare_key_for_connection=lambda *a, **k: True,
         known_hosts_path="",
     )
-    widget.backend = DummyBackend()
-    widget.vte = None
+    widget.vte = DummyVte()
     widget.apply_theme = lambda *a, **k: None
     widget._show_forwarding_error_dialog = lambda *a, **k: None
     widget._set_connecting_overlay_visible = lambda *a, **k: None
     widget._set_disconnected_banner_visible = lambda *a, **k: None
-
     def _fail(*_args, **_kwargs):
         raise AssertionError("unexpected failure")
 
@@ -179,7 +141,7 @@ def test_terminal_widget_uses_prepared_proxy_command(monkeypatch):
 
     widget._setup_ssh_terminal()
 
-    cmd = widget.backend.last_cmd
+    cmd = widget.vte.last_cmd
     assert cmd is not None
     assert any(arg == "ProxyCommand=ssh -W %h:%p bastion" for arg in cmd)
     assert any(arg == "ProxyJump=b1,b2" for arg in cmd)
@@ -257,23 +219,13 @@ def test_terminal_manager_prepares_connection_before_spawn(monkeypatch):
             self.connection = connection
             self.config = config
             self.connection_manager = connection_manager
-            self._backend_name = 'vte'
+            self.vte = types.SimpleNamespace(queue_draw=lambda: None)
 
         def connect(self, *args, **kwargs):
             return 0
 
         def apply_theme(self):
             pass
-
-        def queue_draw_terminal(self):
-            pass
-
-        def ensure_backend(self, backend):
-            self._backend_name = backend
-            return False
-
-        def get_backend_name(self):
-            return self._backend_name
 
         def _connect_ssh(self):
             recorded_cmd["value"] = list(self.connection.ssh_cmd)

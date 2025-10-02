@@ -117,8 +117,7 @@ def _perform_cleanup_and_quit(window, connections_to_disconnect):
             delattr(window, '_cleanup_connections')
             
             _hide_cleanup_progress(window)
-            # Add a small delay to ensure dialog cleanup is complete before quitting
-            GLib.timeout_add(100, window._do_quit)
+            GLib.idle_add(window._do_quit)
             return False
             
     except Exception as e:
@@ -131,21 +130,12 @@ def _perform_cleanup_and_quit(window, connections_to_disconnect):
         if hasattr(window, '_cleanup_connections'):
             delattr(window, '_cleanup_connections')
         _hide_cleanup_progress(window)
-        # Add a small delay to ensure dialog cleanup is complete before quitting
-        GLib.timeout_add(100, window._do_quit)
+        GLib.idle_add(window._do_quit)
         return False
 
 
 def _show_cleanup_progress(window, total_connections):
     """Show cleanup progress dialog."""
-    
-    # Ensure any existing progress dialog is cleaned up first
-    if getattr(window, "_progress_dialog", None):
-        try:
-            window._progress_dialog.destroy()
-        except Exception:
-            pass
-        window._progress_dialog = None
 
     window._progress_dialog = Adw.MessageDialog(
         transient_for=window,
@@ -191,17 +181,12 @@ def _hide_cleanup_progress(window):
 
     if getattr(window, "_progress_dialog", None):
         try:
-            # Use destroy() instead of close() to ensure proper cleanup
-            window._progress_dialog.destroy()
+            window._progress_dialog.close()
             window._progress_dialog = None
             window._progress_bar = None
             window._progress_label = None
         except Exception as e:
             logger.debug(f"Error closing progress dialog: {e}")
-            # Force cleanup even if destroy fails
-            window._progress_dialog = None
-            window._progress_bar = None
-            window._progress_label = None
 
 
 def show_reconnecting_message(window, connection):
@@ -250,17 +235,12 @@ def hide_reconnecting_message(window):
 
     try:
         if getattr(window, "_reconnect_dialog", None):
-            # Use destroy() instead of close() to ensure proper cleanup
-            window._reconnect_dialog.destroy()
-            window._reconnect_dialog = None
-            window._reconnect_spinner = None
-            window._reconnect_label = None
-    except Exception as e:
-        logger.debug(f"Failed to hide reconnecting message: {e}")
-        # Force cleanup even if destroy fails
+            window._reconnect_dialog.close()
         window._reconnect_dialog = None
         window._reconnect_spinner = None
         window._reconnect_label = None
+    except Exception as e:
+        logger.debug(f"Failed to hide reconnecting message: {e}")
 
 
 def _disconnect_terminal_safely(terminal):
