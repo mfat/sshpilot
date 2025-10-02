@@ -194,7 +194,15 @@ def _set_css_background(provider: Gtk.CssProvider, rgba: Optional[Gdk.RGBA]):
         return
 
     try:
-        css_data = f"*:not(:selected) {{ background-color: {color_value}; border-radius: 8px; }}"
+        css_data = (
+            "row .sshpilot-group-color-overlay {\n"
+            f"    background-color: {color_value};\n"
+            "}\n\n"
+            "row:selected .sshpilot-group-color-overlay,\n"
+            "row:active .sshpilot-group-color-overlay {\n"
+            "    background-color: transparent;\n"
+            "}\n"
+        )
         provider.load_from_data(css_data.encode('utf-8'))
         logger.debug(f"Applied CSS background: {css_data}")
     except Exception:
@@ -303,6 +311,10 @@ class GroupRow(Adw.ActionRow):
         self._content_box = content_box
         self._color_background = content_box
         if content_box is not None:
+            try:
+                content_box.add_css_class("sshpilot-group-color-overlay")
+            except Exception:
+                logger.debug("Failed to add overlay CSS class to group row content", exc_info=True)
             self._base_margin_start = _resolve_base_margin_start(content_box)
             self.set_child(self._drop_overlay)
             self._drop_overlay.set_child(content_box)
@@ -590,6 +602,10 @@ class ConnectionRow(Adw.ActionRow):
         self._content_box = content_box
         self._color_background = content_box
         if content_box is not None:
+            try:
+                content_box.add_css_class("sshpilot-group-color-overlay")
+            except Exception:
+                logger.debug("Failed to add overlay CSS class to connection row content", exc_info=True)
             self._base_margin_start = _resolve_base_margin_start(content_box)
             self.set_child(self._drop_overlay)
             self._drop_overlay.set_child(content_box)
