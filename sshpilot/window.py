@@ -120,6 +120,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._startup_tasks_scheduled = False
         self._startup_complete = False
         self._pending_focus_operations = []
+        self._suppress_focus_pulse = False
         if hasattr(self.config, 'connect'):
             try:
                 self._config_changed_handler = self.config.connect('setting-changed', self._on_config_setting_changed)
@@ -729,7 +730,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Mouse click controller
         click_ctl = Gtk.GestureClick()
         click_ctl.connect("pressed", self._stop_pulse_on_interaction)
-        click_ctl.connect("pressed", self.on_connection_click)
+        click_ctl.connect("pressed", self._on_connection_list_pressed)
         self.connection_list.add_controller(click_ctl)
         logger.debug("GestureClick controller added to connection_list")
         
@@ -742,6 +743,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         scroll_ctl = Gtk.EventControllerScroll()
         scroll_ctl.connect("scroll", self._stop_pulse_on_interaction)
         self.connection_list.add_controller(scroll_ctl)
+
+    def _on_connection_list_pressed(self, gesture, n_press, x, y):
+        """Handle primary button presses on the connection list"""
+        button = None
+        try:
+            button = gesture.get_current_button()
+        except Exception:
+            button = None
+        primary_button = getattr(Gdk, 'BUTTON_PRIMARY', 1)
+        if button == primary_button and not self.connection_list.has_focus():
+            self._suppress_focus_pulse = True
+        self.on_connection_click(gesture, n_press, x, y)
 
     def _on_connection_list_key_pressed(self, controller, keyval, keycode, state):
         """Handle key presses in the connection list"""
@@ -798,6 +811,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Don't pulse on initial startup focus
             if self._is_initial_focus:
                 self._is_initial_focus = False
+                return
+            if self._suppress_focus_pulse:
+                self._suppress_focus_pulse = False
                 return
             self.pulse_selected_row(self.connection_list, repeats=1, duration_ms=600)
         focus_ctl.connect("enter", on_focus_enter)
