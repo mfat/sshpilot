@@ -366,7 +366,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             .adw-action-row.sshpilot-sidebar {
               margin: 1px 8px;  /* 6px vertical, 8px horizontal margin */
               padding: 0;
-              transition: transform 0.1s ease-out, opacity 0.1s ease-out;
+              transition: transform 0.1s ease-out;
             }
             
             /* Selected state - only override text color */
