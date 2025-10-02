@@ -209,6 +209,39 @@ def _set_css_background(provider: Gtk.CssProvider, rgba: Optional[Gdk.RGBA]):
         logger.debug("Failed to update CSS background", exc_info=True)
 
 
+def _set_tint_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
+    """Apply color to a tinted row using CSS provider."""
+    try:
+        color_value = rgba.to_string()
+    except Exception:
+        logger.debug("Failed to convert RGBA to string", exc_info=True)
+        return
+
+    try:
+        # Create CSS provider for the tinted row with proper alpha
+        provider = Gtk.CssProvider()
+        css_data = f"""
+        .tinted:not(:selected):not(:hover):not(:active) {{
+            background-color: {color_value};
+        }}
+        """
+        provider.load_from_data(css_data.encode('utf-8'))
+        
+        # Remove any existing provider
+        if hasattr(row, '_tint_provider'):
+            row.get_style_context().remove_provider(row._tint_provider)
+        
+        # Add new provider
+        row._tint_provider = provider
+        row.get_style_context().add_provider(
+            provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+        )
+        
+        logger.debug(f"Applied tinted color: {color_value}")
+    except Exception:
+        logger.debug("Failed to apply tinted color", exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Row widgets
 # ---------------------------------------------------------------------------
@@ -247,10 +280,6 @@ class GroupRow(Adw.ActionRow):
 
     def __init__(self, group_info: Dict, group_manager: GroupManager, connections_dict: Dict | None = None):
         super().__init__()
-        self.add_css_class("sshpilot-sidebar")
-        self.add_css_class("opaque")
-        self.add_css_class("tall-row")
-        self.set_size_request(-1, 60)  # -1 for width (natural), 60 for height in pixels
         self.group_info = group_info
         self.group_manager = group_manager
         self.group_id = group_info["id"]
@@ -263,8 +292,6 @@ class GroupRow(Adw.ActionRow):
         # Add folder icon as prefix
         icon = Gtk.Image.new_from_icon_name("folder-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
-        icon.set_margin_start(12)  # Add left margin
-        icon.set_margin_end(12)
         self.add_prefix(icon)
 
         # Color badge for badge mode - use empty circular button
@@ -272,8 +299,6 @@ class GroupRow(Adw.ActionRow):
         self.color_badge.add_css_class("circular")
         self.color_badge.add_css_class("normal")
         self.color_badge.set_valign(Gtk.Align.CENTER)
-        self.color_badge.set_margin_start(12)
-        self.color_badge.set_margin_end(10)  # Add right margin to space from chevron
         self.color_badge.set_visible(False)
         
         self.add_suffix(self.color_badge)
@@ -284,15 +309,8 @@ class GroupRow(Adw.ActionRow):
         self.expand_button.add_css_class("flat")
         self.expand_button.add_css_class("group-expand-button")
         self.expand_button.set_can_focus(False)
-        self.expand_button.set_margin_end(12)  # Add right margin
         self.expand_button.connect("clicked", self._on_expand_clicked)
         self.add_suffix(self.expand_button)
-
-        # Create CSS provider for background colors
-        self._background_provider = Gtk.CssProvider()
-        self.get_style_context().add_provider(
-            self._background_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
-        )
 
         # Apply group color styling
         logger.debug(f"GroupRow {group_info['name']}: Constructor calling _apply_group_color_style")
@@ -300,47 +318,14 @@ class GroupRow(Adw.ActionRow):
         self.set_selectable(True)
         self.set_can_focus(True)
 
-        # Prepare overlay to host drag/drop indicators
-        self._drop_overlay = Gtk.Overlay()
-        self._drop_overlay.set_hexpand(True)
-        self._drop_overlay.set_vexpand(True)
-        self._drop_overlay.set_halign(Gtk.Align.FILL)
-        self._drop_overlay.set_valign(Gtk.Align.FILL)
-
-        content_box = self.get_child()
-        self._content_box = content_box
-        self._color_background = content_box
-        if content_box is not None:
-            try:
-                content_box.add_css_class("sshpilot-group-color-overlay")
-            except Exception:
-                logger.debug("Failed to add overlay CSS class to group row content", exc_info=True)
-            self._base_margin_start = _resolve_base_margin_start(content_box)
-            self.set_child(self._drop_overlay)
-            self._drop_overlay.set_child(content_box)
-        else:
-            self._base_margin_start = _DEFAULT_ROW_MARGIN_START
-            self.set_child(self._drop_overlay)
-
-        # Drag indicator widgets (top/bottom lines)
+        # Simplified drop indicators - no complex overlay
         self.drop_indicator_top = DragIndicator()
-        self.drop_indicator_top.set_hexpand(True)
-        self.drop_indicator_top.set_halign(Gtk.Align.FILL)
-        self.drop_indicator_top.set_valign(Gtk.Align.START)
-        self._drop_overlay.add_overlay(self.drop_indicator_top)
-
         self.drop_indicator_bottom = DragIndicator()
-        self.drop_indicator_bottom.set_hexpand(True)
-        self.drop_indicator_bottom.set_halign(Gtk.Align.FILL)
-        self.drop_indicator_bottom.set_valign(Gtk.Align.END)
-        self._drop_overlay.add_overlay(self.drop_indicator_bottom)
-
+        
         # Drop target highlight indicator
         self.drop_target_indicator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.drop_target_indicator.add_css_class("drop-target-indicator")
         self.drop_target_indicator.set_visible(False)
-        self.drop_target_indicator.set_hexpand(True)
-        self.drop_target_indicator.set_vexpand(True)
         self.drop_target_indicator.set_halign(Gtk.Align.CENTER)
         self.drop_target_indicator.set_valign(Gtk.Align.CENTER)
 
@@ -348,8 +333,6 @@ class GroupRow(Adw.ActionRow):
         indicator_label.set_halign(Gtk.Align.CENTER)
         indicator_label.set_valign(Gtk.Align.CENTER)
         self.drop_target_indicator.append(indicator_label)
-
-        self._drop_overlay.add_overlay(self.drop_target_indicator)
 
         self.hide_drop_indicators()
 
@@ -387,7 +370,8 @@ class GroupRow(Adw.ActionRow):
         logger.debug(f"GroupRow {group_name}: mode={mode}, color_value={color_value}, rgba={rgba}")
 
         if mode == 'badge':
-            _set_css_background(self._background_provider, None)
+            # Clear any background styling
+            self.remove_css_class("tinted")
             if rgba:
                 # Update the existing color badge with new color
                 self._update_color_badge(rgba)
@@ -397,13 +381,20 @@ class GroupRow(Adw.ActionRow):
                 self.color_badge.set_visible(False)
                 logger.debug(f"GroupRow {group_name}: Hiding badge (no color)")
         else:
-            # Apply fill color using CSS provider
+            # Apply fill color using tinted approach
             if rgba:
-                fill_color = _fill_rgba(rgba)
-                _set_css_background(self._background_provider, fill_color)
-                logger.debug(f"GroupRow {group_name}: Applied background color {fill_color.to_string() if fill_color else 'None'}")
+                # Add tinted class for proper spacing and selection
+                self.add_css_class("tinted")
+                
+                # Apply color directly to the row using CSS provider
+                _set_tint_card_color(self, rgba)
+                logger.debug(f"GroupRow {group_name}: Applied tinted background color {rgba.to_string()}")
             else:
-                _set_css_background(self._background_provider, None)
+                self.remove_css_class("tinted")
+                # Clear any existing color styling
+                if hasattr(self, '_tint_provider'):
+                    self.get_style_context().remove_provider(self._tint_provider)
+                    self._tint_provider = None
                 logger.debug(f"GroupRow {group_name}: No rgba color to apply")
             
             # Hide badge in fill mode
@@ -545,10 +536,8 @@ class ConnectionRow(Adw.ActionRow):
 
     def __init__(self, connection: Connection, group_manager: GroupManager, config):
         super().__init__()
-        self.add_css_class("sshpilot-sidebar")
-        self.add_css_class("opaque")
-        self.add_css_class("tall-row")
-        self.set_size_request(-1, 60)  # -1 for width (natural), 60 for height in pixels
+        # Use Adwaita's navigation-sidebar class for proper styling
+        self.add_css_class("navigation-sidebar")
         self.connection = connection
         self.group_manager = group_manager
         self.config = config
@@ -560,8 +549,6 @@ class ConnectionRow(Adw.ActionRow):
         # Add computer icon as prefix
         icon = Gtk.Image.new_from_icon_name("computer-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
-        icon.set_margin_start(12)  # Add left margin
-        icon.set_margin_end(12)
         self.add_prefix(icon)
 
         # Box to show forwarding indicators
@@ -571,16 +558,12 @@ class ConnectionRow(Adw.ActionRow):
         self.indicator_box.set_visible(False)
         self.add_suffix(self.indicator_box)
 
-        # Color badge removed - only show in GroupRow
-
         # Add status icon as suffix (far right)
         self.status_icon = Gtk.Image.new_from_icon_name("network-offline-symbolic")
         self.status_icon.set_pixel_size(16)
-        self.status_icon.set_margin_start(12)
-        self.status_icon.set_margin_end(12)  # Add right margin
         self.add_suffix(self.status_icon)
 
-        # Create CSS provider for background colors
+        # Create CSS provider for background colors (simplified)
         self._background_provider = Gtk.CssProvider()
         self.get_style_context().add_provider(
             self._background_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
@@ -591,45 +574,14 @@ class ConnectionRow(Adw.ActionRow):
         self.set_selectable(True)
         self.set_can_focus(True)
 
-        # Prepare overlay to host drag/drop indicators
-        self._drop_overlay = Gtk.Overlay()
-        self._drop_overlay.set_hexpand(True)
-        self._drop_overlay.set_vexpand(True)
-        self._drop_overlay.set_halign(Gtk.Align.FILL)
-        self._drop_overlay.set_valign(Gtk.Align.FILL)
-
-        content_box = self.get_child()
-        self._content_box = content_box
-        self._color_background = content_box
-        if content_box is not None:
-            try:
-                content_box.add_css_class("sshpilot-group-color-overlay")
-            except Exception:
-                logger.debug("Failed to add overlay CSS class to connection row content", exc_info=True)
-            self._base_margin_start = _resolve_base_margin_start(content_box)
-            self.set_child(self._drop_overlay)
-            self._drop_overlay.set_child(content_box)
-        else:
-            self._base_margin_start = _DEFAULT_ROW_MARGIN_START
-            self.set_child(self._drop_overlay)
-
+        # Simplified drop indicators - no complex overlay
         self.drop_indicator_top = DragIndicator()
-        self.drop_indicator_top.set_hexpand(True)
-        self.drop_indicator_top.set_halign(Gtk.Align.FILL)
-        self.drop_indicator_top.set_valign(Gtk.Align.START)
-        self._drop_overlay.add_overlay(self.drop_indicator_top)
-
         self.drop_indicator_bottom = DragIndicator()
-        self.drop_indicator_bottom.set_hexpand(True)
-        self.drop_indicator_bottom.set_halign(Gtk.Align.FILL)
-        self.drop_indicator_bottom.set_valign(Gtk.Align.END)
-        self._drop_overlay.add_overlay(self.drop_indicator_bottom)
-
+        
+        # Drop target highlight indicator
         self.drop_target_indicator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.drop_target_indicator.add_css_class("drop-target-indicator")
         self.drop_target_indicator.set_visible(False)
-        self.drop_target_indicator.set_hexpand(True)
-        self.drop_target_indicator.set_vexpand(True)
         self.drop_target_indicator.set_halign(Gtk.Align.CENTER)
         self.drop_target_indicator.set_valign(Gtk.Align.CENTER)
 
@@ -637,8 +589,6 @@ class ConnectionRow(Adw.ActionRow):
         connection_label.set_halign(Gtk.Align.CENTER)
         connection_label.set_valign(Gtk.Align.CENTER)
         self.drop_target_indicator.append(connection_label)
-
-        self._drop_overlay.add_overlay(self.drop_target_indicator)
 
         self.hide_drop_indicators()
 
@@ -664,17 +614,9 @@ class ConnectionRow(Adw.ActionRow):
     
     def set_indentation(self, level: int):
         """Set indentation level for grouped connections"""
-        margin = getattr(self, '_base_margin_start', _DEFAULT_ROW_MARGIN_START) + max(0, level) * 20
-        if hasattr(self, '_content_box') and self._content_box is not None:
-            try:
-                self._content_box.set_margin_start(margin)
-            except Exception:
-                pass
-        if hasattr(self, '_color_background') and self._color_background is not None:
-            try:
-                self._color_background.set_margin_start(margin)
-            except Exception:
-                pass
+        # Simplified indentation using margin start
+        margin = max(0, level) * 20
+        self.set_margin_start(margin)
 
     def _resolve_group_color(self) -> Optional[Gdk.RGBA]:
         manager = getattr(self, 'group_manager', None)
@@ -717,22 +659,25 @@ class ConnectionRow(Adw.ActionRow):
         connection_name = getattr(self.connection, 'nickname', 'Unknown')
         logger.debug(f"ConnectionRow {connection_name}: mode={mode}, rgba={rgba}")
 
-        # Color badge removed - only show in GroupRow
         if mode == 'badge':
             # No color badge in ConnectionRow - keep default background
-            # Don't call _set_css_background with None to preserve default CSS background
-            pass
+            self.remove_css_class("tinted")
         else:
-            # Apply fill color using CSS provider
+            # Apply fill color using tinted approach
             if rgba:
-                fill_color = _fill_rgba(rgba)
-                _set_css_background(self._background_provider, fill_color)
-                logger.debug(f"ConnectionRow {connection_name}: Applied background color {fill_color.to_string() if fill_color else 'None'}")
+                # Add tinted class for proper spacing and selection
+                self.add_css_class("tinted")
+                
+                # Apply color directly to the row using CSS provider
+                _set_tint_card_color(self, rgba)
+                logger.debug(f"ConnectionRow {connection_name}: Applied tinted background color {rgba.to_string()}")
             else:
-                _set_css_background(self._background_provider, None)
+                self.remove_css_class("tinted")
+                # Clear any existing color styling
+                if hasattr(self, '_tint_provider'):
+                    self.get_style_context().remove_provider(self._tint_provider)
+                    self._tint_provider = None
                 logger.debug(f"ConnectionRow {connection_name}: No rgba color to apply")
-            
-            # Color badge removed - only show in GroupRow
 
     # -- drag source ------------------------------------------------------
 

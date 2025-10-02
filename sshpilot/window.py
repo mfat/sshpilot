@@ -319,10 +319,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             provider = Gtk.CssProvider()
             css = """
             /* optional: a subtle focus ring while the list is focused */
-            row:selected:focus-within {
+            /*row:selected:focus-within {
               /* box-shadow: 0 0 8px 2px @accent_bg_color inset; */
               /* border: 2px solid @accent_bg_color;  Adds a solid border of 2px thickness */
-              border-radius: 8px;
+              /*border-radius: 8px;
             }
             
             /* Group styling */
@@ -347,33 +347,31 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               opacity: 1;
             }
             
-            /* Ensure rows have proper spacing */
-            .sshpilot-sidebar,
-            row.sshpilot-sidebar,
-            .adw-action-row.sshpilot-sidebar {
-              margin: 1px 8px;  /* 6px vertical, 8px horizontal margin */
-              padding: 0;
+            /* Use Adwaita's navigation-sidebar styling */
+            .navigation-sidebar {
               transition: transform 0.1s ease-out;
             }
             
-            /* Selected state - only override text color */
-            .sshpilot-sidebar:selected,
-            row.sshpilot-sidebar:selected,
-            .adw-action-row.sshpilot-sidebar:selected {
-              color: white;
-            }
-            
-            /* Add internal vertical and horizontal padding to rows */
-            .tall-row {
-              padding-top: 18px;
-              padding-bottom: 18px;
-              padding-left: 18px;   /* Internal left padding */
-              padding-right: 18px;  /* Internal right padding */
-            }
-            
-            .sshpilot-sidebar.dragging {
+            .navigation-sidebar.dragging {
               opacity: 0.7;
               transform: scale(0.98);
+            }
+            
+            /* Tinted row styling for proper Adwaita look and feel */
+            .adw-action-row.tinted {
+              margin: 4px 8px;
+              border-radius: 10px;
+            }
+            
+            /* Only apply color when NOT selected/hovered/active */
+            .adw-action-row.tinted:not(:selected):not(:hover):not(:active) {
+              background-color: alpha(@blue_4, 0.18);
+            }
+            
+            /* Let native selection take over completely */
+            .adw-action-row.tinted:selected {
+              background-color: @accent_bg_color;
+              color: @accent_fg_color;
             }
             
             /* Group drop target highlight */
@@ -403,9 +401,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             }
             
             /* Keep good contrast when the row is selected/active */
-            .adw-action-row:selected .tag-accent,
-            .adw-action-row:active .tag-accent {
-              color: white;
+            /*.adw-action-row:selected .tag-accent,
+            /*.adw-action-row:active .tag-accent {
+              /*color: white;
             }
 
             /* Port forwarding indicator color overrides */
@@ -460,7 +458,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             """
             provider.load_from_data(css.encode('utf-8'))
-            Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_THEME)
             setattr(display, '_sidebar_css_installed', True)
             logger.debug("Sidebar CSS installed successfully")
         except Exception as e:
@@ -1274,7 +1272,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_scrolled.set_vexpand(True)
         
         self.connection_list = Gtk.ListBox()
-        self.connection_list.add_css_class("sshpilot-sidebar")
+        self.connection_list.add_css_class("navigation-sidebar")
         self.connection_list.add_css_class("rich-list")
         self.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
         try:
