@@ -1929,7 +1929,7 @@ class PaneToolbar(Gtk.Box):
         right = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self._current_view = "list"
 
-        # Toggle for showing hidden files shares state across both panes via the window
+        # Toggle for showing hidden files within this pane
         self._show_hidden_button = Gtk.ToggleButton()
         self._show_hidden_button.set_valign(Gtk.Align.CENTER)
         self._show_hidden_button.add_css_class("flat")
@@ -2666,9 +2666,7 @@ class FilePane(Gtk.Box):
         self._update_view_button_icon()
 
     def _on_toolbar_show_hidden_toggled(self, _toolbar, show_hidden: bool) -> None:
-        window = self._get_file_manager_window()
-        if isinstance(window, FileManagerWindow):
-            window.set_show_hidden(show_hidden)
+        self.set_show_hidden(show_hidden)
 
     def _on_path_entry(self, entry: Gtk.Entry) -> None:
         self.emit("path-changed", entry.get_text() or "/")
@@ -4238,8 +4236,10 @@ class FileManagerWindow(Adw.Window):
             self._right_pane: None,
         }
 
-        self._show_hidden = False
-        self.set_show_hidden(self._show_hidden)
+        for pane in (self._left_pane, self._right_pane):
+            initial_show_hidden = getattr(pane, "_show_hidden", False)
+            if hasattr(pane, "set_show_hidden"):
+                pane.set_show_hidden(initial_show_hidden, preserve_selection=True)
 
 
         self._clipboard_entries: List[FileEntry] = []
@@ -4395,15 +4395,6 @@ class FileManagerWindow(Adw.Window):
             except (AttributeError, RuntimeError, GLib.GError):
                 # Dialog might be destroyed or invalid, ignore
                 pass
-
-    def set_show_hidden(self, show_hidden: bool) -> None:
-        """Synchronise hidden file visibility across both panes."""
-
-        self._show_hidden = bool(show_hidden)
-
-        for pane in (self._left_pane, self._right_pane):
-            if isinstance(pane, FilePane):
-                pane.set_show_hidden(self._show_hidden, preserve_selection=True)
 
     def _on_local_pane_toggle(self, toggle_button: Gtk.ToggleButton) -> None:
         """Handle local pane toggle button."""
