@@ -1,6 +1,5 @@
 """Preferences dialog and font selection utilities."""
 
-import importlib.util
 import os
 import logging
 import subprocess
@@ -364,89 +363,16 @@ class PreferencesWindow(Adw.PreferencesWindow):
         
         # Initialize the preferences UI
         self.setup_preferences()
-
+        
         # Apply any existing color overrides
         self.apply_color_overrides()
 
         # Save on close to persist advanced SSH settings
         self.connect('close-request', self.on_close_request)
-
-    def _detect_pyxterm_backend(self):
-        try:
-            spec = importlib.util.find_spec('pyxtermjs')
-            if spec is None:
-                raise ImportError('pyxtermjs module not found')
-            __import__('pyxtermjs')
-            return True, None
-        except Exception as exc:
-            return False, str(exc)
-
-    def _build_backend_choices(self):
-        choices = [
-            {
-                'id': 'vte',
-                'label': 'VTE (default)',
-                'description': 'Native VTE-based terminal',
-                'available': True,
-                'error': None,
-            }
-        ]
-        pyxterm_available, pyxterm_error = self._detect_pyxterm_backend()
-        if pyxterm_available:
-            choices.append(
-                {
-                    'id': 'pyxterm',
-                    'label': 'PyXterm.js',
-                    'description': 'Web-based terminal (pyxtermjs)',
-                    'available': True,
-                    'error': None,
-                }
-            )
-        else:
-            choices.append(
-                {
-                    'id': 'pyxterm',
-                    'label': 'PyXterm.js (requires pyxtermjs)',
-                    'description': 'pyxtermjs package not available',
-                    'available': False,
-                    'error': pyxterm_error,
-                }
-            )
-        return choices
-
-    def _update_backend_row_subtitle(self, index: int):
-        if not hasattr(self, 'backend_row'):
-            return
-        if 0 <= index < len(self._backend_choice_data):
-            desc = self._backend_choice_data[index].get('description')
-            if desc:
-                self.backend_row.set_subtitle(desc)
-
-    def _on_backend_row_changed(self, combo_row, _param):
-        index = combo_row.get_selected()
-        if index < 0 or index >= len(self._backend_choice_data):
-            return
-        option = self._backend_choice_data[index]
-        if not option.get('available'):
-            combo_row.set_selected(self._backend_last_valid_index)
-            logger.warning("PyXterm backend unavailable: %s", option.get('error'))
-            return
-        self._backend_last_valid_index = index
-        backend_id = option.get('id', 'vte')
-        self.config.set_setting('terminal.backend', backend_id)
-        self._update_backend_row_subtitle(index)
-        if self.parent_window and hasattr(self.parent_window, 'terminal_manager'):
-            try:
-                self.parent_window.terminal_manager.refresh_backends()
-            except Exception as exc:
-                logger.error("Failed to refresh terminal backends: %s", exc)
     
     def setup_preferences(self):
         """Set up preferences UI with current values"""
         try:
-            # Build backend choices data
-            self._backend_choice_data = self._build_backend_choices()
-            
             # Create Terminal preferences page
             terminal_page = Adw.PreferencesPage()
             terminal_page.set_title("Terminal")
@@ -467,39 +393,8 @@ class PreferencesWindow(Adw.PreferencesWindow):
             font_button.set_valign(Gtk.Align.CENTER)
             font_button.connect('clicked', self.on_font_button_clicked)
             self.font_row.add_suffix(font_button)
-
+            
             appearance_group.add(self.font_row)
-
-            # Terminal backend selector
-            backend_model = Gtk.StringList()
-            for option in self._backend_choice_data:
-                backend_model.append(option.get('label', ''))
-
-            self.backend_row = Adw.ComboRow()
-            self.backend_row.set_title("Terminal Backend")
-            self.backend_row.set_model(backend_model)
-
-            current_backend = self.config.get_setting('terminal.backend', 'vte')
-            selected_index = 0
-            for idx, option in enumerate(self._backend_choice_data):
-                if option.get('id') == current_backend:
-                    selected_index = idx
-                    break
-
-            if not self._backend_choice_data[selected_index].get('available', True):
-                for idx, option in enumerate(self._backend_choice_data):
-                    if option.get('available'):
-                        selected_index = idx
-                        if option.get('id') != current_backend:
-                            self.config.set_setting('terminal.backend', option.get('id', 'vte'))
-                        break
-
-            self.backend_row.set_selected(selected_index)
-            self._backend_last_valid_index = selected_index
-            self._update_backend_row_subtitle(selected_index)
-            self.backend_row.connect('notify::selected', self._on_backend_row_changed)
-
-            appearance_group.add(self.backend_row)
             
             # Terminal color scheme
             self.color_scheme_row = Adw.ComboRow()
@@ -1319,11 +1214,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 count = 0
                 for terms in parent_window.connection_to_terminals.values():
                     for terminal in terms:
-                        setter = getattr(terminal, 'set_font', None)
-                        if callable(setter):
-                            setter(font_desc)
-                            count += 1
-                        elif hasattr(terminal, 'vte'):
+                        if hasattr(terminal, 'vte'):
                             terminal.vte.set_font(font_desc)
                             count += 1
                 logger.info(f"Applied font {font_string} to {count} terminals")
