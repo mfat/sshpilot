@@ -337,7 +337,6 @@ class PreferencesWindow(Adw.PreferencesWindow):
     def __init__(self, parent_window, config):
         super().__init__()
         self.set_transient_for(parent_window)
-        self.set_modal(True)
         self.parent_window = parent_window
         self.config = config
         self._shortcuts_row = None
@@ -362,9 +361,9 @@ class PreferencesWindow(Adw.PreferencesWindow):
 
         self.connect('destroy', self._on_destroy)
 
-        # Set window properties
+        # Set window properties with modern Adwaita structure
         self.set_title("Preferences")
-        self.set_default_size(600, 500)
+        self.set_default_size(820, 600)  # Ensure wide enough to see the sidebar
         
         # Initialize the preferences UI
         self.setup_preferences()
@@ -384,8 +383,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             terminal_page.set_icon_name("utilities-terminal-symbolic")
             
             # Terminal appearance group
-            appearance_group = Adw.PreferencesGroup()
-            appearance_group.set_title("Appearance")
+            appearance_group = Adw.PreferencesGroup(title="Appearance")
             
             # Font selection row
             self.font_row = Adw.ActionRow()
@@ -450,8 +448,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self._initialize_encoding_selector(appearance_group)
 
             # Color scheme preview
-            preview_group = Adw.PreferencesGroup()
-            preview_group.set_title("Preview")
+            preview_group = Adw.PreferencesGroup(title="Preview")
             
             # Create preview terminal widget
             self.color_preview_terminal = Gtk.DrawingArea()
@@ -471,8 +468,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             appearance_group.add(preview_group)
             terminal_page.add(appearance_group)
 
-            keyboard_group = Adw.PreferencesGroup()
-            keyboard_group.set_title("Keyboard")
+            keyboard_group = Adw.PreferencesGroup(title="Keyboard")
 
             self.pass_through_switch = Adw.SwitchRow()
             self.pass_through_switch.set_title("Terminal Shortcut Pass-through")
@@ -494,8 +490,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             
             # Preferred Terminal group (shown when external terminals are available)
             if not should_hide_external_terminal_options():
-                terminal_choice_group = Adw.PreferencesGroup()
-                terminal_choice_group.set_title("Preferred Terminal")
+                terminal_choice_group = Adw.PreferencesGroup(title="Preferred Terminal")
                 
                 # Radio buttons for terminal choice
                 self.builtin_terminal_radio = Gtk.CheckButton(label="Use built-in terminal")
@@ -576,10 +571,9 @@ class PreferencesWindow(Adw.PreferencesWindow):
             # Create Groups preferences page
             groups_page = Adw.PreferencesPage()
             groups_page.set_title("Groups")
-            groups_page.set_icon_name("user-group-symbolic")
+            groups_page.set_icon_name("folder-open-symbolic")
 
-            group_appearance_group = Adw.PreferencesGroup()
-            group_appearance_group.set_title("Group Appearance")
+            group_appearance_group = Adw.PreferencesGroup(title="Group Appearance")
 
             # Sidebar group color display mode
             self._group_color_display_values = ['fill', 'badge']
@@ -657,8 +651,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             groups_page.add(group_appearance_group)
 
             quick_actions_added = False
-            quick_actions_group = Adw.PreferencesGroup()
-            quick_actions_group.set_title("Quick Actions")
+            quick_actions_group = Adw.PreferencesGroup(title="Quick Actions")
             quick_actions_group.set_description(
                 "Manage groups without leaving preferences"
             )
@@ -694,8 +687,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             interface_page.set_icon_name("applications-graphics-symbolic")
 
             # App startup behavior
-            startup_group = Adw.PreferencesGroup()
-            startup_group.set_title("App Startup")
+            startup_group = Adw.PreferencesGroup(title="App Startup")
 
             # Radio buttons for startup behavior
             self.terminal_startup_radio = Gtk.CheckButton(label="Show Terminal")
@@ -724,8 +716,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             interface_page.add(startup_group)
 
             # Appearance group
-            interface_appearance_group = Adw.PreferencesGroup()
-            interface_appearance_group.set_title("Appearance")
+            interface_appearance_group = Adw.PreferencesGroup(title="Appearance")
 
             # Theme selection
             self.theme_row = Adw.ComboRow()
@@ -749,8 +740,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
 
 
             # Color overrides section
-            color_override_group = Adw.PreferencesGroup()
-            color_override_group.set_title("Color Overrides")
+            color_override_group = Adw.PreferencesGroup(title="Color Overrides")
             color_override_group.set_description("Override default app colors")
             
             # App color override
@@ -815,8 +805,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.refresh_color_buttons()
             
             # Window group
-            window_group = Adw.PreferencesGroup()
-            window_group.set_title("Window")
+            window_group = Adw.PreferencesGroup(title="Window")
 
             # Remember window size switch
             remember_size_switch = Adw.SwitchRow()
@@ -839,8 +828,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             shortcuts_page.set_title("Shortcuts")
             shortcuts_page.set_icon_name("preferences-desktop-keyboard-shortcuts-symbolic")
 
-            shortcuts_intro_group = Adw.PreferencesGroup()
-            shortcuts_intro_group.set_title("Keyboard Shortcuts")
+            shortcuts_intro_group = Adw.PreferencesGroup(title="Keyboard Shortcuts")
 
             shortcuts_button_row = Adw.ActionRow()
             shortcuts_button_row.set_title("Shortcut Overview")
@@ -926,8 +914,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             except Exception as e:
                 logger.error(f"Failed to create shortcut editor: {e}", exc_info=True)
                 # Add a fallback message to the shortcuts page
-                fallback_group = Adw.PreferencesGroup()
-                fallback_group.set_title("Shortcut Editor")
+                fallback_group = Adw.PreferencesGroup(title="Shortcut Editor")
                 fallback_row = Adw.ActionRow()
                 fallback_row.set_title("Shortcut Editor Unavailable")
                 fallback_row.set_subtitle("The shortcut editor could not be loaded. Please check the logs for details.")
@@ -940,8 +927,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             advanced_page.set_icon_name("applications-system-symbolic")
 
             # Operation mode selection
-            operation_group = Adw.PreferencesGroup()
-            operation_group.set_title("Operation Mode")
+            operation_group = Adw.PreferencesGroup(title="Operation Mode")
 
 
             # Default mode row
@@ -986,8 +972,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self.force_internal_file_manager_row = None
             self.open_file_manager_externally_row = None
             if has_internal_file_manager():
-                file_manager_group = Adw.PreferencesGroup()
-                file_manager_group.set_title("File Management")
+                file_manager_group = Adw.PreferencesGroup(title="File Management")
 
                 self.force_internal_file_manager_row = Adw.SwitchRow()
                 self.force_internal_file_manager_row.set_title("Always Use Built-in File Manager")
@@ -1019,8 +1004,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
                 self._update_external_file_manager_row()
                 advanced_page.add(file_manager_group)
 
-            advanced_group = Adw.PreferencesGroup()
-            advanced_group.set_title("SSH Settings")
+            advanced_group = Adw.PreferencesGroup(title="SSH Settings")
 
 
             # Use custom options toggle
@@ -1031,8 +1015,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             advanced_group.add(self.apply_advanced_row)
 
 
-            native_connect_group = Adw.PreferencesGroup()
-            native_connect_group.set_title("Connection Method")
+            native_connect_group = Adw.PreferencesGroup(title="Connection Method")
 
             self.native_connect_row = Adw.SwitchRow()
             self.native_connect_row.set_title("Use native SSH Connection mode")
@@ -1175,10 +1158,10 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self._set_shortcut_controls_enabled(not self._pass_through_enabled)
 
             # Add pages to the preferences window
-            self.add(groups_page)
             self.add(interface_page)
             self.add(terminal_page)
             self.add(shortcuts_page)
+            self.add(groups_page)
             self.add(advanced_page)
             
             logger.info("Preferences window initialized")
