@@ -33,6 +33,32 @@ _DEFAULT_ROW_MARGIN_START = 0  # Use libadwaita default
 _MIN_VALID_MARGIN = 0
 
 
+def _extract_row_content_widget(row: Gtk.Widget) -> Optional[Gtk.Widget]:
+    """Return the direct content widget for an Adw.ActionRow."""
+
+    if row is None:
+        return None
+
+    child_getter = getattr(row, "get_child", None)
+    if callable(child_getter):
+        child = child_getter()
+        if child is not None:
+            return child
+
+    first_child_getter = getattr(row, "get_first_child", None)
+    if callable(first_child_getter):
+        candidate = first_child_getter()
+    else:
+        candidate = None
+
+    while candidate is not None:
+        if candidate.get_parent() is row:
+            return candidate
+        candidate = candidate.get_next_sibling()
+
+    return None
+
+
 
 
 def _resolve_base_margin_start(widget: Optional[Gtk.Widget]) -> int:
@@ -320,10 +346,15 @@ class GroupRow(Adw.ActionRow):
 
         # Wrap existing row content in an overlay so we can stack drag indicators on top
         self._overlay = Gtk.Overlay()
-        existing_child = self.get_child()
+        existing_child = _extract_row_content_widget(self)
         if existing_child is not None:
             existing_child.unparent()
             self._overlay.set_child(existing_child)
+        else:
+            logger.debug(
+                "GroupRow %s: Unable to locate existing content widget for overlay",
+                group_info.get("name", "Unknown"),
+            )
         self._overlay.set_halign(Gtk.Align.FILL)
         self._overlay.set_valign(Gtk.Align.FILL)
         self._overlay.set_hexpand(True)
@@ -602,10 +633,15 @@ class ConnectionRow(Adw.ActionRow):
 
         # Wrap existing row content in an overlay so we can stack drag indicators on top
         self._overlay = Gtk.Overlay()
-        existing_child = self.get_child()
+        existing_child = _extract_row_content_widget(self)
         if existing_child is not None:
             existing_child.unparent()
             self._overlay.set_child(existing_child)
+        else:
+            logger.debug(
+                "ConnectionRow %s: Unable to locate existing content widget for overlay",
+                getattr(connection, "nickname", "Unknown"),
+            )
         self._overlay.set_halign(Gtk.Align.FILL)
         self._overlay.set_valign(Gtk.Align.FILL)
         self._overlay.set_hexpand(True)
