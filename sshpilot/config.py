@@ -163,6 +163,7 @@ class Config(GObject.Object):
                 'audible_bell': False,
                 'term': None,
                 'pass_through_mode': False,
+                'encoding': 'UTF-8',
             },
             'ui': {
                 'show_hostname': True,
@@ -708,6 +709,18 @@ class Config(GObject.Object):
             if normalized_term != term_value:
                 terminal_cfg['term'] = normalized_term
                 updated = True
+
+        encoding_value = terminal_cfg.get('encoding')
+        if isinstance(encoding_value, str):
+            normalized_encoding = encoding_value.strip()
+            if not normalized_encoding:
+                normalized_encoding = 'UTF-8'
+            if normalized_encoding != encoding_value:
+                terminal_cfg['encoding'] = normalized_encoding
+                updated = True
+        else:
+            terminal_cfg['encoding'] = 'UTF-8'
+            updated = True
 
         file_manager_cfg = config.get('file_manager')
         if not isinstance(file_manager_cfg, dict):

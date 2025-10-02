@@ -65,7 +65,10 @@ def test_old_config_is_replaced(tmp_path, monkeypatch):
 
     assert backup_file.exists()
     assert new_config['config_version'] == CONFIG_VERSION
-    assert json.loads(config_file.read_text())['config_version'] == CONFIG_VERSION
+    saved_config = json.loads(config_file.read_text())
+    assert saved_config['config_version'] == CONFIG_VERSION
+    assert saved_config['terminal']['encoding'] == 'UTF-8'
+    assert new_config['terminal']['encoding'] == 'UTF-8'
 
 
 def test_config_path_from_glib(tmp_path, monkeypatch):

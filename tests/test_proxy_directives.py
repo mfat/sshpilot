@@ -78,50 +78,14 @@ def test_terminal_widget_uses_prepared_proxy_command(monkeypatch):
 
     from sshpilot import terminal as terminal_mod
 
-    class DummyBackend:
+    class DummyVte:
         def __init__(self):
             self.last_cmd = None
-            self.widget = None
 
-        def spawn_async(
-            self,
-            argv,
-            env=None,
-            cwd=None,
-            flags=0,
-            child_setup=None,
-            callback=None,
-            user_data=None,
-        ):
-            self.last_cmd = list(argv)
-            if callback:
-                try:
-                    callback(self.widget or object(), 0, None, user_data)
-                except TypeError:
-                    callback(self.widget or object(), None)
-
-        def get_pty(self):
-            return object()
+        def spawn_async(self, *args):
+            self.last_cmd = list(args[2])
 
         def grab_focus(self):
-            pass
-
-        def connect_child_exited(self, *args, **kwargs):
-            return 0
-
-        def connect_title_changed(self, *args, **kwargs):
-            return 0
-
-        def connect_termprops_changed(self, *args, **kwargs):
-            return 0
-
-        def disconnect(self, handler_id):
-            pass
-
-        def apply_theme(self, *args, **kwargs):
-            pass
-
-        def initialize(self, *args, **kwargs):
             pass
 
     widget = terminal_mod.TerminalWidget.__new__(terminal_mod.TerminalWidget)
@@ -132,13 +96,11 @@ def test_terminal_widget_uses_prepared_proxy_command(monkeypatch):
         prepare_key_for_connection=lambda *a, **k: True,
         known_hosts_path="",
     )
-    widget.backend = DummyBackend()
-    widget.vte = None
+    widget.vte = DummyVte()
     widget.apply_theme = lambda *a, **k: None
     widget._show_forwarding_error_dialog = lambda *a, **k: None
     widget._set_connecting_overlay_visible = lambda *a, **k: None
     widget._set_disconnected_banner_visible = lambda *a, **k: None
-
     def _fail(*_args, **_kwargs):
         raise AssertionError("unexpected failure")
 
@@ -179,7 +141,7 @@ def test_terminal_widget_uses_prepared_proxy_command(monkeypatch):
 
     widget._setup_ssh_terminal()
 
-    cmd = widget.backend.last_cmd
+    cmd = widget.vte.last_cmd
     assert cmd is not None
     assert any(arg == "ProxyCommand=ssh -W %h:%p bastion" for arg in cmd)
     assert any(arg == "ProxyJump=b1,b2" for arg in cmd)
@@ -224,26 +186,13 @@ def test_terminal_manager_prepares_connection_before_spawn(monkeypatch):
     adw_module.MessageDialog = DummyMessageDialog
 
     gdk_module = types.ModuleType("gi.repository.Gdk")
-
-    class DummyRGBA:
-        def __init__(self):
-            self._value = None
-
-        def parse(self, value):
-            self._value = value
-            return True
-
-        def to_string(self):
-            return str(self._value) if self._value is not None else ""
-
-    gdk_module.RGBA = DummyRGBA
+    gdk_module.RGBA = type("RGBA", (), {})
+    gdkpixbuf_module = types.ModuleType("gi.repository.GdkPixbuf")
 
     repository_module.Gio = gio_module
     repository_module.GLib = glib_module
     repository_module.Adw = adw_module
     repository_module.Gdk = gdk_module
-    gdkpixbuf_module = types.ModuleType("gi.repository.GdkPixbuf")
-    gdkpixbuf_module.Pixbuf = object
     repository_module.GdkPixbuf = gdkpixbuf_module
     gi_module.repository = repository_module
 
@@ -255,6 +204,7 @@ def test_terminal_manager_prepares_connection_before_spawn(monkeypatch):
     monkeypatch.setitem(sys.modules, "gi.repository.Gdk", gdk_module)
     monkeypatch.setitem(sys.modules, "gi.repository.GdkPixbuf", gdkpixbuf_module)
 
+    monkeypatch.setitem(sys.modules, "cairo", types.SimpleNamespace())
     sys.modules.pop("sshpilot.terminal_manager", None)
     terminal_manager_mod = importlib.import_module("sshpilot.terminal_manager")
 
@@ -270,27 +220,17 @@ def test_terminal_manager_prepares_connection_before_spawn(monkeypatch):
     recorded_cmd = {}
 
     class DummyTerminalWidget:
-        def __init__(self, connection, config, connection_manager, **kwargs):
+        def __init__(self, connection, config, connection_manager, group_color=None):
             self.connection = connection
             self.config = config
             self.connection_manager = connection_manager
-            self._backend_name = 'vte'
+            self.vte = types.SimpleNamespace(queue_draw=lambda: None)
 
         def connect(self, *args, **kwargs):
             return 0
 
         def apply_theme(self):
             pass
-
-        def queue_draw_terminal(self):
-            pass
-
-        def ensure_backend(self, backend):
-            self._backend_name = backend
-            return False
-
-        def get_backend_name(self):
-            return self._backend_name
 
         def _connect_ssh(self):
             recorded_cmd["value"] = list(self.connection.ssh_cmd)
