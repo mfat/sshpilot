@@ -1396,11 +1396,18 @@ class TerminalWidget(Gtk.Box):
                     palette_colors.append(fallback)
                 palette_colors = palette_colors[:16]  # Limit to 16 colors
             
-            # Apply colors to terminal
-            self.vte.set_colors(fg_color, bg_color, palette_colors)
-            self.vte.set_color_cursor(cursor_color)
-            self.vte.set_color_highlight(highlight_bg)
-            self.vte.set_color_highlight_foreground(highlight_fg)
+            # Apply colors to terminal using the backend
+            if hasattr(self, 'backend') and hasattr(self.backend, 'apply_theme'):
+                # Use the backend's apply_theme method
+                self.backend.apply_theme(theme_name)
+            elif self.vte is not None:
+                # Fallback to direct VTE calls for backward compatibility
+                self.vte.set_colors(fg_color, bg_color, palette_colors)
+                self.vte.set_color_cursor(cursor_color)
+                self.vte.set_color_highlight(highlight_bg)
+                self.vte.set_color_highlight_foreground(highlight_fg)
+            else:
+                logger.debug("No terminal backend available for theme application")
 
             # Also color the container background to prevent white flash before VTE paints
             try:
@@ -1421,12 +1428,16 @@ class TerminalWidget(Gtk.Box):
             except Exception as e:
                 logger.debug(f"Failed to set container background: {e}")
             
-            # Set font
+            # Set font using backend if available
             font_desc = Pango.FontDescription.from_string(profile['font'])
-            self.vte.set_font(font_desc)
-            
-            # Force a redraw
-            self.vte.queue_draw()
+            if hasattr(self, 'backend') and hasattr(self.backend, 'set_font'):
+                self.backend.set_font(font_desc)
+            elif self.vte is not None:
+                # Fallback to direct VTE calls for backward compatibility
+                self.vte.set_font(font_desc)
+                self.vte.queue_draw()
+            else:
+                logger.debug("No terminal backend available for font setting")
             
             logger.debug(f"Applied terminal theme: {theme_name or 'default'}")
             

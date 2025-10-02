@@ -260,6 +260,27 @@ class VTETerminalBackend:
             highlight_fg = Gdk.RGBA()
             highlight_fg.parse(profile.get("highlight_foreground", profile["foreground"]))
 
+            # Handle group color override if enabled
+            override_rgba = None
+            if hasattr(owner, '_get_group_color_rgba'):
+                override_rgba = owner._get_group_color_rgba()
+            
+            use_group_color = False
+            if owner.config:
+                try:
+                    use_group_color = bool(
+                        owner.config.get_setting('ui.use_group_color_in_terminal', False)
+                    )
+                except Exception:
+                    use_group_color = False
+
+            if use_group_color and override_rgba is not None:
+                bg_color = self._clone_rgba(override_rgba)  # Use exact group color
+                fg_color = self._get_contrast_color(bg_color)
+                highlight_bg = self._clone_rgba(override_rgba)
+                highlight_fg = self._get_contrast_color(highlight_bg)
+                cursor_color = self._clone_rgba(highlight_fg)
+
             palette_colors = None
             if profile.get("palette"):
                 palette_colors = []
@@ -310,6 +331,37 @@ class VTETerminalBackend:
             self.vte.queue_draw()
         except Exception:
             logger.error("Failed to apply terminal theme", exc_info=True)
+
+    def _clone_rgba(self, rgba: Gdk.RGBA) -> Gdk.RGBA:
+        """Clone an RGBA color"""
+        clone = Gdk.RGBA()
+        clone.red = rgba.red
+        clone.green = rgba.green
+        clone.blue = rgba.blue
+        clone.alpha = rgba.alpha
+        return clone
+
+    def _get_contrast_color(self, background: Gdk.RGBA) -> Gdk.RGBA:
+        """Get a contrasting color for the given background"""
+        luminance = self._relative_luminance(background)
+        contrast = Gdk.RGBA()
+        if luminance > 0.5:
+            contrast.parse("#000000")  # Use black on light backgrounds
+        else:
+            contrast.parse("#FFFFFF")  # Use white on dark backgrounds
+        return contrast
+
+    def _relative_luminance(self, rgba: Gdk.RGBA) -> float:
+        """Calculate relative luminance of a color"""
+        def to_linear(channel: float) -> float:
+            if channel <= 0.03928:
+                return channel / 12.92
+            return ((channel + 0.055) / 1.055) ** 2.4
+
+        r_lin = to_linear(rgba.red)
+        g_lin = to_linear(rgba.green)
+        b_lin = to_linear(rgba.blue)
+        return 0.2126 * r_lin + 0.7152 * g_lin + 0.0722 * b_lin
 
     def set_font(self, font_desc: Pango.FontDescription) -> None:
         try:
@@ -663,6 +715,11 @@ class PyXtermTerminalBackend:
         # Web based terminal handles its own theming through CSS.
         pass
 
+    def set_font(self, font_desc: Pango.FontDescription) -> None:
+        # PyXterm backend doesn't support font changes at runtime
+        # Font is handled through CSS in the web interface
+        logger.debug("PyXterm backend: Font changes not supported at runtime")
+
     def grab_focus(self) -> None:
         if not self.available:
             return
@@ -778,10 +835,26 @@ class PyXtermTerminalBackend:
             
             # Start the pyxtermjs server in its own process group/session so the
             # parent process remains isolated from termination signals.
+            # Capture stderr for better error reporting
+            import tempfile
+            stderr_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.log')
+            stderr_file.close()
+            
+            # Ensure the subprocess can find the sshpilot module
+            subprocess_env = dict(env) if env else dict(os.environ)
+            current_pythonpath = subprocess_env.get('PYTHONPATH', '')
+            # Get the project root (sshpilot directory)
+            project_root = os.path.dirname(os.path.dirname(__file__))
+            if project_root not in current_pythonpath:
+                if current_pythonpath:
+                    subprocess_env['PYTHONPATH'] = f"{project_root}:{current_pythonpath}"
+                else:
+                    subprocess_env['PYTHONPATH'] = project_root
+            
             popen_kwargs: dict[str, Any] = {
                 "stdout": subprocess.DEVNULL,
-                "stderr": subprocess.DEVNULL,
-                "env": env,
+                "stderr": open(stderr_file.name, 'w'),
+                "env": subprocess_env,
             }
 
             if cwd:
@@ -824,13 +897,41 @@ class PyXtermTerminalBackend:
                     logger.debug(f"Server not ready yet, attempt {attempt + 1}/{max_retries}: {e}")
                     # Check if the process is still running
                     if self._server_process and self._server_process.poll() is not None:
-                        logger.error(f"PyXterm server process exited early with return code: {self._server_process.returncode}")
+                        # Read stderr for error details
+                        stderr_content = ""
+                        try:
+                            with open(stderr_file.name, 'r') as f:
+                                stderr_content = f.read().strip()
+                        except Exception:
+                            pass
+                        
+                        error_msg = f"PyXterm server process exited early with return code: {self._server_process.returncode}"
+                        if stderr_content:
+                            error_msg += f"\nStderr output: {stderr_content}"
+                        logger.error(error_msg)
                         break
                     time.sleep(retry_delay)
             
             if not server_ready:
-                logger.error(f"PyXterm server failed to start on port {port} after {max_retries} attempts")
-                raise RuntimeError(f"PyXterm server failed to start on port {port}")
+                # Read stderr for error details
+                stderr_content = ""
+                try:
+                    with open(stderr_file.name, 'r') as f:
+                        stderr_content = f.read().strip()
+                except Exception:
+                    pass
+                
+                error_msg = f"PyXterm server failed to start on port {port} after {max_retries} attempts"
+                if stderr_content:
+                    error_msg += f"\nStderr output: {stderr_content}"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+            
+            # Clean up stderr file
+            try:
+                os.unlink(stderr_file.name)
+            except Exception:
+                pass
             
             # Load the terminal in WebView
             if self._webview:
@@ -855,11 +956,18 @@ class PyXtermTerminalBackend:
                 GLib.idle_add(_notify)
 
         except Exception as e:
+            # Clean up stderr file if it exists
+            try:
+                if 'stderr_file' in locals():
+                    os.unlink(stderr_file.name)
+            except Exception:
+                pass
+                
             logger.error(f"Failed to start pyxtermjs server: {e}")
             if callback:
-                def _notify_error() -> bool:
+                def _notify_error(error=e) -> bool:
                     try:
-                        callback(self.widget, None, e, user_data)
+                        callback(self.widget, None, error, user_data)
                     except TypeError:
                         callback(self.widget, None)
                     return False
