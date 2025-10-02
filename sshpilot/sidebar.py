@@ -256,16 +256,14 @@ class GroupRow(Adw.ActionRow):
         icon.set_margin_end(8)
         self.add_prefix(icon)
 
-        # Color badge for badge mode - show symbolic tag icon tinted via CSS
-        self.color_badge = Gtk.Image.new_from_resource(
-            "/io/github/mfat/sshpilot/tag-symbolic.svg"
-        )
-        self.color_badge.set_pixel_size(16)
-        self.color_badge.add_css_class("sidebar-color-icon")
+        # Color badge for badge mode - use empty circular button
+        self.color_badge = Gtk.Button()
+        self.color_badge.add_css_class("circular")
+        self.color_badge.add_css_class("normal")
         self.color_badge.set_valign(Gtk.Align.CENTER)
         self.color_badge.set_margin_start(8)
         self.color_badge.set_visible(False)
-
+        
         self.add_suffix(self.color_badge)
 
         # Add expand button as suffix (far right)
@@ -396,26 +394,44 @@ class GroupRow(Adw.ActionRow):
         
     def _update_color_badge(self, rgba: Gdk.RGBA):
         """Update the color badge with a new color."""
-        # Apply CSS color to the symbolic icon so it tints correctly
+        # Convert RGBA to hex color
+        r = int(rgba.red * 255)
+        g = int(rgba.green * 255)
+        b = int(rgba.blue * 255)
+        color_hex = f"#{r:02x}{g:02x}{b:02x}"
+        
+        # Calculate a darker color for hover state
+        r_hover = max(0, r - 20)
+        g_hover = max(0, g - 20)
+        b_hover = max(0, b - 20)
+        hover_hex = f"#{r_hover:02x}{g_hover:02x}{b_hover:02x}"
+        
+        # Apply CSS color to the button with more specific selector
         css_data = f"""
-        .sidebar-color-icon {{
-          color: {rgba.to_string()};
+        button.circular.normal.color-badge {{
+          background-color: {color_hex};
+          color: white;
+          border: none;
+          box-shadow: none;
+        }}
+        button.circular.normal.color-badge:hover {{
+          background-color: {hover_hex};
         }}
         """
-
+        
         # Remove any existing CSS provider
-        if hasattr(self, "_color_badge_provider"):
-            self.color_badge.get_style_context().remove_provider(
-                self._color_badge_provider
-            )
-
+        if hasattr(self, '_color_badge_provider'):
+            self.color_badge.get_style_context().remove_provider(self._color_badge_provider)
+        
         # Create new CSS provider for the color badge
         self._color_badge_provider = Gtk.CssProvider()
-        self._color_badge_provider.load_from_data(css_data.encode("utf-8"))
+        self._color_badge_provider.load_from_data(css_data.encode('utf-8'))
         self.color_badge.get_style_context().add_provider(
             self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
-
+        
+        # Add the color-badge CSS class
+        self.color_badge.add_css_class("color-badge")
         self.color_badge.set_visible(True)
 
     def _on_expand_clicked(self, button):
