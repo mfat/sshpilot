@@ -585,19 +585,81 @@ class Config(GObject.Object):
                 self.set_setting('ui.sidebar_width', sidebar_width)
 
     def get_ssh_config(self) -> Dict[str, Any]:
-        """Get SSH configuration"""
-        return {
-            'apply_advanced': self.get_setting('ssh.apply_advanced', False),
-            'connection_timeout': self.get_setting('ssh.connection_timeout', 30),
-            'connection_attempts': self.get_setting('ssh.connection_attempts', 1),
-            'keepalive_interval': self.get_setting('ssh.keepalive_interval', 60),
-            'keepalive_count_max': self.get_setting('ssh.keepalive_count_max', 3),
-            'compression': self.get_setting('ssh.compression', False),
-            'auto_add_host_keys': self.get_setting('ssh.auto_add_host_keys', True),
-            'verbosity': self.get_setting('ssh.verbosity', 0),
-            'debug_enabled': self.get_setting('ssh.debug_enabled', False),
-            'native_connect': self.get_setting('ssh.native_connect', False),
+        """Get SSH configuration values with sensible defaults.
+
+        All advanced options persisted under the ``ssh.`` namespace are
+        returned so that downstream builders (terminal, file manager, command
+        helpers, etc.) can honour the user's preferences.
+        """
+
+        defaults: Dict[str, Any] = {
+            'apply_advanced': False,
+            'auto_add_host_keys': True,
+            'batch_mode': True,
+            'compression': False,
+            'connection_attempts': 1,
+            'connection_timeout': 30,
+            'debug_enabled': False,
+            'keepalive_count_max': 3,
+            'keepalive_interval': 60,
+            'native_connect': False,
+            'strict_host_key_checking': 'accept-new',
+            'use_isolated_config': False,
+            'verbosity': 0,
         }
+
+        bool_keys = {
+            'apply_advanced',
+            'auto_add_host_keys',
+            'batch_mode',
+            'compression',
+            'debug_enabled',
+            'native_connect',
+            'use_isolated_config',
+        }
+        int_keys = {
+            'connection_attempts',
+            'connection_timeout',
+            'keepalive_count_max',
+            'keepalive_interval',
+            'verbosity',
+        }
+
+        config: Dict[str, Any] = {}
+
+        for key, default_value in defaults.items():
+            value = self.get_setting(f'ssh.{key}', default_value)
+
+            if key in bool_keys:
+                if isinstance(value, bool):
+                    pass
+                elif isinstance(value, str):
+                    lowered = value.strip().lower()
+                    value = lowered in {'1', 'true', 'yes', 'on'}
+                else:
+                    value = bool(value)
+            elif key in int_keys:
+                try:
+                    value = int(value)
+                except (TypeError, ValueError):
+                    value = default_value
+            elif key == 'strict_host_key_checking':
+                if value is None:
+                    value = default_value
+                else:
+                    strict_value = str(value).strip()
+                    if not strict_value:
+                        value = ''
+                    else:
+                        normalized = strict_value.lower()
+                        if normalized in {'accept-new', 'yes', 'no', 'ask'}:
+                            value = 'accept-new' if normalized == 'accept-new' else normalized
+                        else:
+                            value = default_value
+
+            config[key] = value
+
+        return config
 
     def get_security_config(self) -> Dict[str, Any]:
         """Get security configuration"""
