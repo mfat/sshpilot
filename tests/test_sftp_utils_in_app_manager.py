@@ -225,6 +225,11 @@ def setup_gi(monkeypatch):
     repository.Gdk = gdk
     monkeypatch.setitem(sys.modules, "gi.repository.Gdk", gdk)
 
+    vte = types.ModuleType("Vte")
+    vte.Terminal = DummyWidget
+    repository.Vte = vte
+    monkeypatch.setitem(sys.modules, "gi.repository.Vte", vte)
+
     gobject = types.ModuleType("GObject")
 
     class DummyGObject:
