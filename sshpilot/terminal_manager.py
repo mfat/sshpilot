@@ -21,6 +21,54 @@ class TerminalManager:
     def __init__(self, window):
         self.window = window
 
+    def _ensure_backend_alignment(self, terminal) -> None:
+        """Ensure the given terminal uses the configured backend."""
+        if not terminal or not hasattr(self.window, 'config'):
+            return
+        desired = self.window.config.get_setting('terminal.backend', 'vte')
+        getter = getattr(terminal, 'get_backend_name', None)
+        current = getter() if callable(getter) else 'vte'
+        if isinstance(desired, str) and isinstance(current, str):
+            if current.lower() == (desired or 'vte').lower():
+                return
+        aligner = getattr(terminal, 'ensure_backend', None)
+        if callable(aligner):
+            try:
+                aligner(desired)
+            except Exception:
+                logger.error("Failed to align terminal backend", exc_info=True)
+
+    def refresh_backends(self) -> None:
+        """Ensure all existing terminals use the configured backend."""
+        seen = set()
+        collections = []
+        connection_terms = getattr(self.window, 'connection_to_terminals', None)
+        if isinstance(connection_terms, dict):
+            collections.extend(connection_terms.values())
+        active = getattr(self.window, 'active_terminals', None)
+        if isinstance(active, dict):
+            collections.append(active.values())
+        for group in collections:
+            for term in list(group):
+                if term in seen:
+                    continue
+                self._ensure_backend_alignment(term)
+                seen.add(term)
+        tab_view = getattr(self.window, 'tab_view', None)
+        if tab_view is not None and hasattr(tab_view, 'get_n_pages'):
+            try:
+                for index in range(tab_view.get_n_pages()):
+                    page = tab_view.get_nth_page(index)
+                    if page is None:
+                        continue
+                    term = page.get_child()
+                    if term is None or term in seen:
+                        continue
+                    self._ensure_backend_alignment(term)
+                    seen.add(term)
+            except Exception:
+                logger.debug("Failed to iterate tab view while refreshing backends", exc_info=True)
+
     # Connecting/disconnecting hosts
     def connect_to_host(self, connection, force_new: bool = False):
         window = self.window
@@ -28,6 +76,7 @@ class TerminalManager:
         if not force_new:
             if connection in window.active_terminals:
                 terminal = window.active_terminals[connection]
+                self._ensure_backend_alignment(terminal)
                 page = window.tab_view.get_page(terminal)
                 if page is not None:
                     window.tab_view.set_selected_page(page)
@@ -41,6 +90,7 @@ class TerminalManager:
             for t in reversed(existing_terms):
                 page = window.tab_view.get_page(t)
                 if page is not None:
+                    self._ensure_backend_alignment(t)
                     window.active_terminals[connection] = t
                     window.tab_view.set_selected_page(page)
                     return
@@ -131,7 +181,9 @@ class TerminalManager:
                         logger.error(f"Failed to prepare SSH command: {prep_err}")
 
                 terminal.apply_theme()
-                terminal.vte.queue_draw()
+                refresher = getattr(terminal, 'queue_draw_terminal', None)
+                if callable(refresher):
+                    refresher()
                 if not terminal._connect_ssh():
                     logger.error('Failed to establish SSH connection')
                     _cleanup_failed_terminal()
@@ -440,7 +492,9 @@ class TerminalManager:
             window.active_terminals[local_connection] = terminal_widget
 
             GLib.idle_add(terminal_widget.show)
-            GLib.idle_add(terminal_widget.vte.show)
+            # Show the terminal widget (backend-agnostic)
+            if hasattr(terminal_widget, 'terminal_widget') and terminal_widget.terminal_widget:
+                GLib.idle_add(terminal_widget.terminal_widget.show)
 
             def _focus_local_terminal():
                 try:
@@ -484,7 +538,7 @@ class TerminalManager:
             if page is None:
                 continue
             terminal_widget = page.get_child()
-            if terminal_widget is None or not hasattr(terminal_widget, 'vte'):
+            if terminal_widget is None or not hasattr(terminal_widget, 'feed_child'):
                 continue
             if hasattr(terminal_widget, 'connection'):
                 if (hasattr(terminal_widget.connection, 'nickname') and
@@ -493,7 +547,9 @@ class TerminalManager:
                 if not hasattr(terminal_widget.connection, 'hostname'):
                     continue
                 try:
-                    terminal_widget.vte.feed_child(cmd)
+                    if not terminal_widget.feed_child(cmd):
+                        failed_count += 1
+                        continue
                     sent_count += 1
                     logger.debug(
                         f"Sent command to SSH terminal: {terminal_widget.connection.nickname}")
@@ -525,6 +581,31 @@ class TerminalManager:
         else:
             logger.debug(
                 f"Terminal reconnected after settings update: {terminal.connection.nickname}")
+        
+        # Apply focus after connection is established (same as Ctrl+L + Enter method)
+        def apply_focus_after_connection():
+            try:
+                # Use special focus method for pyxtermjs backend
+                if hasattr(terminal, 'backend') and hasattr(terminal.backend, '_pyxterm'):
+                    logger.debug("Using pyxtermjs special focus method")
+                    # For pyxtermjs, use the special focus method with JavaScript injection
+                    if hasattr(terminal.backend, 'grab_focus_with_js'):
+                        terminal.backend.grab_focus_with_js()
+                        logger.debug("Called grab_focus_with_js for pyxtermjs")
+                    else:
+                        logger.debug("grab_focus_with_js not available, using normal focus")
+                        self.window._focus_terminal_widget(terminal)
+                else:
+                    logger.debug("Using normal focus method for non-pyxtermjs backend")
+                    # For other backends, use the normal focus method
+                    self.window._focus_terminal_widget(terminal)
+            except Exception:
+                logger.debug("Failed to apply focus after terminal connection", exc_info=True)
+            return False  # Don't repeat
+        
+        # Use a longer delay for pyxtermjs backend to ensure WebView is fully ready
+        delay = 500 if hasattr(terminal, 'backend') and hasattr(terminal.backend, '_pyxterm') else 100
+        GLib.timeout_add(delay, apply_focus_after_connection)
 
     def on_terminal_disconnected(self, terminal):
         terminal.connection.is_connected = False

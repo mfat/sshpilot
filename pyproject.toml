@@ -24,6 +24,11 @@ dependencies = [
     "psutil>=5.9.0",
 ]
 
+[project.optional-dependencies]
+pyxterm = [
+    "pyxtermjs>=0.2.2",
+]
+
 [tool.setuptools.packages.find]
 include = ["sshpilot*"]
 exclude = ["packaging*", "screenshots*"]

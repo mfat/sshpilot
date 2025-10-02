@@ -680,6 +680,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_format_size(size_bytes)`** — Handles format size.
 
+- **`_get_file_manager_window()`** — Return the controlling FileManagerWindow if available.
+
 - **`_get_primary_selection_index()`** — Returns primary selection index.
 
 - **`_get_selected_indices()`** — Returns selected indices.
@@ -797,6 +799,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`restore_persisted_folder()`** — Restore access to a previously granted folder on app launch (Flatpak only).
 
 - **`set_can_paste(can_paste)`** — Sets can paste.
+
+- **`set_file_manager_window(window)`** — Associate this pane with its owning file manager window.
 
 - **`set_partner_pane(partner)`** — Sets partner pane.
 
@@ -1135,13 +1139,21 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_apply_default_advanced_settings(update_toggle=True)`** — Restore advanced SSH settings to defaults and update the UI.
 
+- **`_build_backend_choices()`** — Builds backend choices.
+
+- **`_detect_pyxterm_backend()`** — Handles detect pyxterm backend.
+
 - **`_is_internal_file_manager_enabled()`** — Return ``True`` when the application uses the built-in file manager.
+
+- **`_on_backend_row_changed(combo_row, _param)`** — Handles backend row changed.
 
 - **`_populate_terminal_dropdown()`** — Populate the terminal dropdown with available terminals
 
 - **`_set_color_button(button, row, setting_name, default_rgba, default_subtitle)`** — Sets color button.
 
 - **`_set_terminal_dropdown_selection(terminal_name)`** — Set the dropdown selection to the specified terminal
+
+- **`_update_backend_row_subtitle(index)`** — Updates backend row subtitle.
 
 - **`_update_external_file_manager_row()`** — Sync the external window preference with the current availability.
 
@@ -1613,9 +1625,15 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_cleanup_process(pid)`** — Clean up a process by PID
 
+- **`_connect_backend_signals()`** — Connect to backend signals and store handler IDs.
+
 - **`_connect_ssh()`** — Connect to SSH host
 
 - **`_connect_ssh_thread()`** — SSH connection thread: directly spawn SSH and rely on its output for errors.
+
+- **`_create_backend(preferred=None)`** — Create the terminal backend based on configuration.
+
+- **`_disconnect_backend_signals(backend=None)`** — Disconnect previously connected backend signals.
 
 - **`_fallback_hide_spinner()`** — Fallback method to hide spinner if spawn completion doesn't fire
 
@@ -1683,7 +1701,13 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`disconnect()`** — Close the SSH connection and clean up resources
 
+- **`ensure_backend(backend_name)`** — Handles ensure backend.
+
+- **`feed_child(data)`** — Handles feed child.
+
 - **`force_style_refresh()`** — Force a style refresh of the terminal widget.
+
+- **`get_backend_name()`** — Returns backend name.
 
 - **`get_connection_info()`** — Get connection information
 
@@ -1701,6 +1725,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`paste_text()`** — Paste text from clipboard
 
+- **`queue_draw_terminal()`** — Handles queue draw terminal.
+
 - **`reconnect()`** — Reconnect the terminal with updated connection settings
 
 - **`reset_and_clear()`** — Reset and clear terminal
@@ -1713,9 +1739,15 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`select_all()`** — Select all text in terminal
 
+- **`set_font(font_desc)`** — Sets font.
+
 - **`setup_local_shell()`** — Set up the terminal for local shell (not SSH)
 
-- **`setup_terminal()`** — Initialize the VTE terminal with appropriate settings.
+- **`setup_terminal()`** — Initialize the terminal backend with appropriate settings.
+
+- **`show_terminal_widget()`** — Shows terminal widget.
+
+- **`switch_backend(backend_name)`** — Handles switch backend.
 
 
 - **`zoom_in()`** — Zoom in the terminal font
@@ -1726,6 +1758,182 @@ This document enumerates the functions and methods available in the `sshpilot` p
 Application accelerators now remain available even while the terminal widget is focused unless the `terminal.pass_through_mode` preference is enabled, matching GNOME Terminal's pass-through behavior.
 
 
+## Module: `sshpilot.terminal_backends`
+
+### Class: `BaseTerminalBackend`
+
+- **`apply_theme(theme_name=None)`** — Apply the current theme to the terminal widget.
+
+- **`connect_child_exited(callback)`** — Connect to the child exited signal for the backend.
+
+- **`connect_termprops_changed(callback)`** — Connect to the termprops-changed signal if supported.
+
+- **`connect_title_changed(callback)`** — Connect to a signal emitted when the terminal title changes.
+
+- **`copy_clipboard()`** — Copy the current terminal selection to the clipboard.
+
+- **`destroy()`** — Release backend resources.
+
+- **`disconnect(handler_id)`** — Disconnect a previously registered signal handler.
+
+- **`feed(data)`** — Feed raw data to the terminal display.
+
+- **`feed_child(data)`** — Feed raw bytes to the child process input if supported.
+
+- **`get_child_pgid()`** — Return the process group id of the running child process if available.
+
+- **`get_child_pid()`** — Return the PID of the running child process if available.
+
+- **`get_font_scale()`** — Return the current font scale.
+
+- **`get_pty()`** — Return the PTY instance if the backend exposes one.
+
+- **`grab_focus()`** — Give keyboard focus to the terminal widget.
+
+- **`initialize()`** — Perform backend specific initialisation and register internal state.
+
+- **`paste_clipboard()`** — Paste clipboard contents into the terminal.
+
+- **`queue_draw()`** — Queue a redraw of the backend widget if supported.
+
+- **`reset(clear_scrollback, clear_screen)`** — Reset the terminal content.
+
+- **`search_find_next()`** — Search forward using the configured regex.
+
+- **`search_find_previous()`** — Search backwards using the configured regex.
+
+- **`search_set_regex(regex)`** — Configure the search regex for the backend, if supported.
+
+- **`select_all()`** — Select all content in the terminal.
+
+- **`set_font(font_desc)`** — Set the font for the backend if supported.
+
+- **`set_font_scale(scale)`** — Set the font scale for the terminal.
+
+- **`show()`** — Ensure the backend widget is visible.
+
+- **`spawn_async(argv, env=None, cwd=None, flags=0, child_setup=None, callback=None, user_data=None)`** — Spawn a new process attached to the backend terminal.
+
+- **`supports_feature(feature)`** — Return True if the backend supports the given feature name.
+
+### Class: `PyXtermTerminalBackend`
+
+- **`__init__(owner)`** — Handles init.
+
+- **`apply_theme(theme_name=None)`** — Handles apply theme.
+
+- **`connect_child_exited(callback)`** — Connects child exited.
+
+- **`connect_termprops_changed(callback)`** — Connects termprops changed.
+
+- **`connect_title_changed(callback)`** — Connects title changed.
+
+- **`copy_clipboard()`** — Handles copy clipboard.
+
+- **`destroy()`** — Handles destroy.
+
+- **`disconnect(handler_id)`** — Handles disconnect.
+
+- **`feed(data)`** — Handles feed.
+
+- **`feed_child(data)`** — Handles feed child.
+
+- **`get_child_pgid()`** — Returns child pgid.
+
+- **`get_child_pid()`** — Returns child pid.
+
+- **`get_font_scale()`** — Returns font scale.
+
+- **`get_pty()`** — Returns pty.
+
+- **`grab_focus()`** — Handles grab focus.
+
+- **`initialize()`** — Handles initialize.
+
+- **`paste_clipboard()`** — Handles paste clipboard.
+
+- **`queue_draw()`** — Handles queue draw.
+
+- **`reset(clear_scrollback, clear_screen)`** — Handles reset.
+
+- **`search_find_next()`** — Handles search find next.
+
+- **`search_find_previous()`** — Handles search find previous.
+
+- **`search_set_regex(regex)`** — Handles search set regex.
+
+- **`select_all()`** — Handles select all.
+
+- **`set_font(font_desc)`** — Sets font.
+
+- **`set_font_scale(scale)`** — Sets font scale.
+
+- **`show()`** — Handles show.
+
+- **`spawn_async(argv, env=None, cwd=None, flags=0, child_setup=None, callback=None, user_data=None)`** — Handles spawn async.
+
+- **`supports_feature(feature)`** — Handles supports feature.
+
+### Class: `VTETerminalBackend`
+
+- **`__init__(owner)`** — Handles init.
+
+- **`apply_theme(theme_name=None)`** — Handles apply theme.
+
+- **`connect_child_exited(callback)`** — Connects child exited.
+
+- **`connect_termprops_changed(callback)`** — Connects termprops changed.
+
+- **`connect_title_changed(callback)`** — Connects title changed.
+
+- **`copy_clipboard()`** — Handles copy clipboard.
+
+- **`destroy()`** — Handles destroy.
+
+- **`disconnect(handler_id)`** — Handles disconnect.
+
+- **`feed(data)`** — Handles feed.
+
+- **`feed_child(data)`** — Handles feed child.
+
+- **`get_child_pgid()`** — Returns child pgid.
+
+- **`get_child_pid()`** — Returns child pid.
+
+- **`get_font_scale()`** — Returns font scale.
+
+- **`get_pty()`** — Returns pty.
+
+- **`grab_focus()`** — Handles grab focus.
+
+- **`initialize()`** — Handles initialize.
+
+- **`paste_clipboard()`** — Handles paste clipboard.
+
+- **`queue_draw()`** — Handles queue draw.
+
+- **`reset(clear_scrollback, clear_screen)`** — Handles reset.
+
+- **`search_find_next()`** — Handles search find next.
+
+- **`search_find_previous()`** — Handles search find previous.
+
+- **`search_set_regex(regex)`** — Handles search set regex.
+
+- **`select_all()`** — Handles select all.
+
+- **`set_font(font_desc)`** — Sets font.
+
+- **`set_font_scale(scale)`** — Sets font scale.
+
+- **`show()`** — Handles show.
+
+- **`spawn_async(argv, env=None, cwd=None, flags=0, child_setup=None, callback=None, user_data=None)`** — Handles spawn async.
+
+- **`supports_feature(feature)`** — Handles supports feature.
+
+
+
 ## Module: `sshpilot.terminal_manager`
 
 ### Class: `TerminalManager`
@@ -1733,6 +1941,8 @@ Application accelerators now remain available even while the terminal widget is 
 - **`__init__(window)`** — Handles init.
 
 - **`_add_terminal_tab(terminal_widget, title)`** — Adds terminal tab.
+
+- **`_ensure_backend_alignment(terminal)`** — Ensure the given terminal uses the configured backend.
 
 - **`_on_disconnect_confirmed(dialog, response_id, connection)`** — Handles disconnect confirmed.
 
@@ -1751,6 +1961,8 @@ Application accelerators now remain available even while the terminal widget is 
 - **`on_terminal_disconnected(terminal)`** — Handles terminal disconnected.
 
 - **`on_terminal_title_changed(terminal, title)`** — Handles terminal title changed.
+
+- **`refresh_backends()`** — Ensure all existing terminals use the configured backend.
 
 - **`show_local_terminal()`** — Shows local terminal.
 
@@ -1907,6 +2119,8 @@ Application accelerators now remain available even while the terminal widget is 
 - **`_resolve_connection_list_event(x, y, scrolled_window=None)`** — Resolve the target row and viewport coordinates for a pointer event on the connection list.
 
 - **`_save_window_state()`** — Save window state before quitting
+
+- **`_schedule_startup_tasks()`** — Schedule one-time startup behaviors such as focus and welcome state.
 
 - **`_select_only_row(row)`** — Select only the provided row, clearing any other selections.
 

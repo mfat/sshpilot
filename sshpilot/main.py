@@ -395,8 +395,14 @@ class SshPilotApplication(Adw.Application):
         """Request application shutdown, showing confirmation if needed."""
         win = self.props.active_window
         if win and not getattr(win, "_is_quitting", False):
-            if win.on_close_request(win):
-                return  # dialog will handle quitting or cancellation
+            try:
+                if win.on_close_request(win):
+                    return  # dialog will handle quitting or cancellation
+            except Exception as e:
+                logger.error(f"Error in close request: {e}")
+                # If there's an error, force quit to prevent hanging
+                super().quit()
+                return
         super().quit()
 
     def on_quit_action(self, action=None, param=None):
