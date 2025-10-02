@@ -347,14 +347,52 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               opacity: 1;
             }
             
+            /* Drop indicator lines for drag and drop */
+            .drop-indicator-top {
+              border-top: 2px solid @accent_bg_color;
+              margin-top: -1px;
+            }
+            
+            .drop-indicator-bottom {
+              border-bottom: 2px solid @accent_bg_color;
+              margin-bottom: -1px;
+            }
+            
+            .drop-indicator-on-group {
+              background-color: alpha(@accent_bg_color, 0.1);
+              border: 1px solid @accent_bg_color;
+              border-radius: 8px;
+            }
+            
+            .drop-target-group {
+              background-color: alpha(@accent_bg_color, 0.1);
+              border: 1px solid @accent_bg_color;
+              border-radius: 8px;
+            }
+            
             /* Use Adwaita's navigation-sidebar styling */
             .navigation-sidebar {
               transition: transform 0.1s ease-out;
             }
             
-            .navigation-sidebar.dragging {
-              opacity: 0.7;
-              transform: scale(0.98);
+            /* Disable drag feedback on sidebar containers */
+            .sidebar {
+              background: transparent;
+            }
+            
+            .sidebar scrolledwindow {
+              background: transparent;
+            }
+            
+            /* Override any drag feedback styling */
+            .sidebar:backdrop,
+            .sidebar scrolledwindow:backdrop {
+              background: transparent;
+            }
+            
+            /* Disable drag feedback on the connection list itself */
+            .navigation-sidebar {
+              background: transparent;
             }
             
             /* Tinted row styling for proper Adwaita look and feel */
@@ -1150,6 +1188,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         sidebar_box.add_css_class('sidebar')
         
+        # Disable drag feedback on the sidebar box to prevent container highlighting
+        try:
+            sidebar_box.set_drag_threshold(0)
+        except Exception:
+            pass
+        
         # Sidebar header
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         header.set_margin_start(12)
@@ -1270,6 +1314,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_scrolled = Gtk.ScrolledWindow()
         self.connection_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.connection_scrolled.set_vexpand(True)
+        
+        # Disable drag feedback on the scrolled window to prevent container highlighting
+        try:
+            self.connection_scrolled.set_drag_threshold(0)
+        except Exception:
+            pass
         
         self.connection_list = Gtk.ListBox()
         self.connection_list.add_css_class("navigation-sidebar")
