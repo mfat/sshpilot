@@ -676,9 +676,9 @@ class PreferencesWindow(Gtk.Window):
 
             # Toggle for coloring tabs using group colors
             self.tab_group_color_row = Adw.SwitchRow()
-            self.tab_group_color_row.set_title("Color Tabs by Group")
+            self.tab_group_color_row.set_title("Show Group Color in Tabs")
             self.tab_group_color_row.set_subtitle(
-                "Tint terminal tabs using the selected group's color"
+                "Show the selected group's color badge in the terminal tabs"
             )
             try:
                 tab_pref = bool(
@@ -694,9 +694,9 @@ class PreferencesWindow(Gtk.Window):
 
             # Toggle for applying group colors inside terminals
             self.terminal_group_color_row = Adw.SwitchRow()
-            self.terminal_group_color_row.set_title("Color Terminals by Group")
+            self.terminal_group_color_row.set_title("Use Group Color in Terminals")
             self.terminal_group_color_row.set_subtitle(
-                "Adjust terminal background and highlights using group colors"
+                "Use the selected group's color as the terminal background color"
             )
             try:
                 terminal_pref = bool(
