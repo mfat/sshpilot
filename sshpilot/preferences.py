@@ -331,7 +331,7 @@ class MonospaceFontDialog(Adw.Window):
         self.callback = callback
 
 
-class PreferencesWindow(Adw.PreferencesWindow):
+class PreferencesWindow(Gtk.Window):
     """Preferences dialog window"""
     
     def __init__(self, parent_window, config):
@@ -365,6 +365,9 @@ class PreferencesWindow(Adw.PreferencesWindow):
         self.set_title("Preferences")
         self.set_default_size(820, 600)  # Ensure wide enough to see the sidebar
         
+        # Create custom layout with sidebar
+        self.setup_custom_layout()
+        
         # Initialize the preferences UI
         self.setup_preferences()
         
@@ -373,6 +376,65 @@ class PreferencesWindow(Adw.PreferencesWindow):
 
         # Save on close to persist advanced SSH settings
         self.connect('close-request', self.on_close_request)
+    
+    def setup_custom_layout(self):
+        """Set up custom layout with sidebar and content area"""
+        # Create headerbar as the window's titlebar
+        self.headerbar = Adw.HeaderBar()
+        self.set_titlebar(self.headerbar)
+        
+        # Create content area
+        self.content_area = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.set_child(self.content_area)
+        
+        # Create sidebar
+        self.sidebar = Gtk.ListBox()
+        self.sidebar.set_size_request(200, -1)
+        self.sidebar.add_css_class("navigation-sidebar")
+        self.content_area.append(self.sidebar)
+        
+        # Create content stack
+        self.content_stack = Gtk.Stack()
+        self.content_stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        self.content_area.append(self.content_stack)
+        
+        # Connect sidebar selection to content stack
+        self.sidebar.connect('row-selected', self.on_sidebar_row_selected)
+        
+        # Store pages for later reference
+        self.pages = {}
+    
+    def on_sidebar_row_selected(self, listbox, row):
+        """Handle sidebar row selection"""
+        if row is not None:
+            page_name = row.get_name()
+            self.content_stack.set_visible_child_name(page_name)
+    
+    def add_page_to_layout(self, title, icon_name, page):
+        """Add a page to the custom layout"""
+        # Create sidebar row
+        row = Adw.ActionRow()
+        row.set_title(title)
+        row.set_name(title.lower())
+        
+        # Add icon
+        icon = Gtk.Image()
+        icon.set_from_icon_name(icon_name)
+        icon.set_icon_size(Gtk.IconSize.LARGE)
+        row.add_prefix(icon)
+        
+        # Add to sidebar
+        self.sidebar.append(row)
+        
+        # Add page to stack
+        self.content_stack.add_named(page, title.lower())
+        
+        # Store reference
+        self.pages[title.lower()] = page
+        
+        # Select first page
+        if len(self.pages) == 1:
+            self.sidebar.select_row(row)
     
     def setup_preferences(self):
         """Set up preferences UI with current values"""
@@ -1157,12 +1219,12 @@ class PreferencesWindow(Adw.PreferencesWindow):
             # Ensure shortcut overview controls reflect current state
             self._set_shortcut_controls_enabled(not self._pass_through_enabled)
 
-            # Add pages to the preferences window
-            self.add(interface_page)
-            self.add(terminal_page)
-            self.add(shortcuts_page)
-            self.add(groups_page)
-            self.add(advanced_page)
+            # Add pages to the custom layout
+            self.add_page_to_layout("Interface", "applications-graphics-symbolic", interface_page)
+            self.add_page_to_layout("Terminal", "utilities-terminal-symbolic", terminal_page)
+            self.add_page_to_layout("Shortcuts", "preferences-desktop-keyboard-shortcuts-symbolic", shortcuts_page)
+            self.add_page_to_layout("Groups", "folder-open-symbolic", groups_page)
+            self.add_page_to_layout("Advanced", "applications-system-symbolic", advanced_page)
             
             logger.info("Preferences window initialized")
         except Exception as e:
