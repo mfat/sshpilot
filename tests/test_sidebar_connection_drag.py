@@ -11,7 +11,7 @@ pytest.importorskip("gi.repository.Graphene")
 from gi.repository import Gtk
 
 from sshpilot.groups import GroupManager
-from sshpilot.sidebar import _on_connection_list_drop
+from sshpilot.sidebar import _handle_connection_reorder, _on_connection_list_drop
 
 
 class DummyConfig:
@@ -33,6 +33,7 @@ class DummyRow:
         self.group_id = None
         self.ungrouped_area = False
         self._index = index
+        self.parent_list = None
 
     def get_allocation(self):
         return types.SimpleNamespace(y=self._index * 20, height=20)
@@ -46,11 +47,22 @@ class DummyRow:
     def show_drop_indicator(self, top: bool):
         pass
 
+    def get_next_sibling(self):
+        if not self.parent_list:
+            return None
+        next_index = self._index + 1
+        return self.parent_list.get_row_at_index(next_index)
+
+    def get_allocated_height(self):
+        return 20
+
 
 class DummyList:
     def __init__(self, rows):
         self._rows = rows
         self.selection_mode = None
+        for row in self._rows:
+            row.parent_list = self
 
     def get_row_at_y(self, y: int):
         for row in self._rows:
@@ -66,6 +78,9 @@ class DummyList:
         if 0 <= index < len(self._rows):
             return self._rows[index]
         return None
+
+    def get_first_child(self):
+        return self._rows[0] if self._rows else None
 
 
 class DummyWindow:
@@ -123,3 +138,58 @@ def test_multi_connection_drop_reorders_all_selected():
     assert manager.root_connections == ["conn_c", "conn_d", "conn_a", "conn_b"]
     assert window.rebuild_called is True
     assert window.connection_list.selection_mode == Gtk.SelectionMode.MULTIPLE
+
+
+def test_connection_reorder_moves_between_groups():
+    config = DummyConfig()
+    manager = GroupManager(config)
+    manager._save_groups = lambda: None  # type: ignore[attr-defined]
+
+    manager.groups = {
+        "group_a": {
+            "id": "group_a",
+            "name": "Group A",
+            "parent_id": None,
+            "children": [],
+            "connections": ["conn_a"],
+            "expanded": True,
+            "order": 0,
+            "color": None,
+        },
+        "group_b": {
+            "id": "group_b",
+            "name": "Group B",
+            "parent_id": None,
+            "children": [],
+            "connections": ["conn_b"],
+            "expanded": True,
+            "order": 1,
+            "color": None,
+        },
+    }
+
+    manager.connections = {
+        "conn_a": "group_a",
+        "conn_b": "group_b",
+    }
+    manager.root_connections = []
+
+    rows = [DummyRow("conn_a", 0), DummyRow("conn_b", 1)]
+    window = DummyWindow(manager, rows)
+
+    target_row = rows[1]
+    drop_y = target_row.get_allocated_height() * 0.25  # Drop above the target connection
+
+    result = _handle_connection_reorder(
+        window,
+        target_row.connection.nickname,
+        ["conn_a"],
+        0.0,
+        drop_y,
+    )
+
+    assert result is True
+    assert manager.connections["conn_a"] == "group_b"
+    assert manager.groups["group_a"]["connections"] == []
+    assert manager.groups["group_b"]["connections"] == ["conn_a", "conn_b"]
+    assert window.rebuild_called is True
