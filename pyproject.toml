@@ -24,6 +24,12 @@ dependencies = [
     "psutil>=5.9.0",
 ]
 
+[project.optional-dependencies]
+pyxterm = [
+    "Flask>=2.3",
+    "flask-socketio>=5.3",
+]
+
 [tool.setuptools.packages.find]
 include = ["sshpilot*"]
 exclude = ["packaging*", "screenshots*"]

@@ -152,9 +152,16 @@ Optional terminal backends
 --------------------------
 
 The default terminal uses the native VTE widget. sshPilot also ships with a
-vendored copy of `pyxtermjs` (version 0.5.0.2), so the optional PyXterm.js
-backend works out of the box without requiring any additional Python
-packages.
+vendored copy of `pyxtermjs` (version 0.5.0.2). To enable the optional
+PyXterm.js backend and its Flask Socket.IO server, install the extra
+dependencies with:
+
+```
+pip install "sshpilot[pyxterm]"
+```
+
+Manual setups can also install `Flask>=2.3` and `flask-socketio>=5.3`
+directly if preferred.
 
 ### Telegram channel
 https://t.me/sshpilot
