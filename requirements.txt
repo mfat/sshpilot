@@ -17,6 +17,9 @@ psutil>=5.9.0
 
 # Optional terminal backends
 # PyXterm.js backend is bundled via sshpilot.vendor.pyxtermjs (0.5.0.2)
+# Install these packages to enable the Flask Socket.IO backend used by PyXterm.js
+Flask>=2.3
+flask-socketio>=5.3
 
 
 
