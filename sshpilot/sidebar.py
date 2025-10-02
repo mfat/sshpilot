@@ -901,6 +901,27 @@ class ConnectionRow(Adw.ActionRow):
                 window._drag_in_progress = True
                 # Don't disable selection mode - keep it for visual feedback
 
+                # Restore visual selection for dragged rows
+                if hasattr(window, "_captured_selection") and window._captured_selection:
+                    try:
+                        # Get all rows and restore selection for the captured nicknames
+                        all_rows = []
+                        child = window.connection_list.get_first_child()
+                        while child is not None:
+                            all_rows.append(child)
+                            child = child.get_next_sibling()
+                        
+                        # Select the rows that match our captured selection
+                        for row in all_rows:
+                            connection_obj = getattr(row, "connection", None)
+                            nickname = getattr(connection_obj, "nickname", None)
+                            if nickname in window._captured_selection:
+                                window.connection_list.select_row(row)
+                        
+                        logger.debug(f"Drag begin: Restored visual selection for {len(window._captured_selection)} rows")
+                    except Exception as e:
+                        logger.debug(f"Drag begin: Error restoring visual selection: {e}")
+
                 _show_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag begin: {e}")
