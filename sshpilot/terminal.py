@@ -10,6 +10,7 @@ import signal
 import time
 import json
 import re
+import shlex
 import gi
 from gettext import gettext as _
 import asyncio
@@ -1002,6 +1003,14 @@ class TerminalWidget(Gtk.Box):
                 env_list.append(f"{key}={value}")
             
             # Log the command being executed for debugging
+            if native_mode_enabled:
+                try:
+                    cmd_parts = [str(part) for part in ssh_cmd]
+                    formatted_cmd = shlex.join(cmd_parts)
+                except Exception:
+                    formatted_cmd = ' '.join(str(part) for part in ssh_cmd)
+                logger.info("Native SSH spawn command: %s", formatted_cmd)
+
             logger.debug(f"Spawning SSH command: {ssh_cmd}")
             logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
             
