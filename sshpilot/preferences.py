@@ -4,6 +4,7 @@ import os
 import logging
 import subprocess
 import shutil
+from typing import List
 
 from .platform_utils import get_config_dir, is_flatpak, is_macos
 from .file_manager_integration import (
@@ -1023,6 +1024,23 @@ class PreferencesWindow(Gtk.Window):
 
             # File management preferences moved to dedicated page
 
+            ssh_settings_page = Adw.PreferencesPage()
+            ssh_settings_page.set_title("SSH")
+            ssh_settings_page.set_icon_name("network-workgroup-symbolic")
+
+            help_group = Adw.PreferencesGroup()
+            help_row = Adw.ActionRow()
+            help_row.set_title("Custom SSH Options")
+            help_row.set_subtitle(
+                "These settings override values from your ~/.ssh/config when enabled. "
+                "Turn on \"Use custom connection options\" to apply them."
+            )
+            if hasattr(help_row, "set_activatable"):
+                help_row.set_activatable(False)
+            if hasattr(help_row, "set_selectable"):
+                help_row.set_selectable(False)
+            help_group.add(help_row)
+
             advanced_group = Adw.PreferencesGroup(title="SSH Settings")
 
 
@@ -1170,8 +1188,9 @@ class PreferencesWindow(Gtk.Window):
             _sync_advanced_sensitivity()
             self.apply_advanced_row.connect('notify::active', _sync_advanced_sensitivity)
 
-            advanced_page.add(native_connect_group)
-            advanced_page.add(advanced_group)
+            ssh_settings_page.add(help_group)
+            ssh_settings_page.add(native_connect_group)
+            ssh_settings_page.add(advanced_group)
 
             # Ensure shortcut overview controls reflect current state
             self._set_shortcut_controls_enabled(not self._pass_through_enabled)
@@ -1229,6 +1248,7 @@ class PreferencesWindow(Gtk.Window):
             self.add_page_to_layout("File Management", "folder-symbolic", file_management_page)
             self.add_page_to_layout("Shortcuts", "preferences-desktop-keyboard-shortcuts-symbolic", shortcuts_page)
             self.add_page_to_layout("Groups", "folder-open-symbolic", groups_page)
+            self.add_page_to_layout("SSH", "network-workgroup-symbolic", ssh_settings_page)
             self.add_page_to_layout("Advanced", "applications-system-symbolic", advanced_page)
             
             logger.info("Preferences window initialized")
@@ -1746,8 +1766,21 @@ class PreferencesWindow(Gtk.Window):
     def save_advanced_ssh_settings(self):
         """Persist advanced SSH settings from the preferences UI"""
         try:
+            apply_advanced_enabled = False
+            native_value = False
+            connect_timeout = None
+            connection_attempts = None
+            keepalive_interval = None
+            keepalive_count = None
+            strict_host_value = ''
+            batch_mode_enabled = False
+            compression_enabled = False
+            verbosity_value = 0
+            debug_enabled = False
+
             if hasattr(self, 'apply_advanced_row'):
-                self.config.set_setting('ssh.apply_advanced', bool(self.apply_advanced_row.get_active()))
+                apply_advanced_enabled = bool(self.apply_advanced_row.get_active())
+                self.config.set_setting('ssh.apply_advanced', apply_advanced_enabled)
             if hasattr(self, 'native_connect_row'):
                 native_value = bool(self.native_connect_row.get_active())
                 self.config.set_setting('ssh.native_connect', native_value)
@@ -1762,26 +1795,72 @@ class PreferencesWindow(Gtk.Window):
                 if self.parent_window and hasattr(self.parent_window, 'connection_manager'):
                     self.parent_window.connection_manager.native_connect_enabled = native_value
             if hasattr(self, 'connect_timeout_row'):
-                self.config.set_setting('ssh.connection_timeout', int(self.connect_timeout_row.get_value()))
+                connect_timeout = int(self.connect_timeout_row.get_value())
+                self.config.set_setting('ssh.connection_timeout', connect_timeout)
             if hasattr(self, 'connection_attempts_row'):
-                self.config.set_setting('ssh.connection_attempts', int(self.connection_attempts_row.get_value()))
+                connection_attempts = int(self.connection_attempts_row.get_value())
+                self.config.set_setting('ssh.connection_attempts', connection_attempts)
             if hasattr(self, 'keepalive_interval_row'):
-                self.config.set_setting('ssh.keepalive_interval', int(self.keepalive_interval_row.get_value()))
+                keepalive_interval = int(self.keepalive_interval_row.get_value())
+                self.config.set_setting('ssh.keepalive_interval', keepalive_interval)
             if hasattr(self, 'keepalive_count_row'):
-                self.config.set_setting('ssh.keepalive_count_max', int(self.keepalive_count_row.get_value()))
+                keepalive_count = int(self.keepalive_count_row.get_value())
+                self.config.set_setting('ssh.keepalive_count_max', keepalive_count)
             if hasattr(self, 'strict_host_row'):
                 options = ["accept-new", "yes", "no", "ask"]
                 idx = self.strict_host_row.get_selected()
-                value = options[idx] if 0 <= idx < len(options) else 'accept-new'
-                self.config.set_setting('ssh.strict_host_key_checking', value)
+                strict_host_value = options[idx] if 0 <= idx < len(options) else 'accept-new'
+                self.config.set_setting('ssh.strict_host_key_checking', strict_host_value)
             if hasattr(self, 'batch_mode_row'):
-                self.config.set_setting('ssh.batch_mode', bool(self.batch_mode_row.get_active()))
+                batch_mode_enabled = bool(self.batch_mode_row.get_active())
+                self.config.set_setting('ssh.batch_mode', batch_mode_enabled)
             if hasattr(self, 'compression_row'):
-                self.config.set_setting('ssh.compression', bool(self.compression_row.get_active()))
+                compression_enabled = bool(self.compression_row.get_active())
+                self.config.set_setting('ssh.compression', compression_enabled)
             if hasattr(self, 'verbosity_row'):
-                self.config.set_setting('ssh.verbosity', int(self.verbosity_row.get_value()))
+                verbosity_value = int(self.verbosity_row.get_value())
+                self.config.set_setting('ssh.verbosity', verbosity_value)
             if hasattr(self, 'debug_enabled_row'):
-                self.config.set_setting('ssh.debug_enabled', bool(self.debug_enabled_row.get_active()))
+                debug_enabled = bool(self.debug_enabled_row.get_active())
+                self.config.set_setting('ssh.debug_enabled', debug_enabled)
+
+            overrides: List[str] = []
+            if apply_advanced_enabled:
+                if batch_mode_enabled:
+                    overrides.extend(['-o', 'BatchMode=yes'])
+                if connect_timeout is not None:
+                    overrides.extend(['-o', f'ConnectTimeout={connect_timeout}'])
+                if connection_attempts is not None:
+                    overrides.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+                if keepalive_interval is not None:
+                    overrides.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
+                if keepalive_count is not None:
+                    overrides.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
+                if strict_host_value:
+                    overrides.extend(['-o', f'StrictHostKeyChecking={strict_host_value}'])
+                if compression_enabled:
+                    overrides.append('-C')
+
+                safe_verbosity = max(0, min(3, verbosity_value))
+                for _ in range(safe_verbosity):
+                    overrides.append('-v')
+
+                log_level = None
+                if safe_verbosity == 1:
+                    log_level = 'VERBOSE'
+                elif safe_verbosity == 2:
+                    log_level = 'DEBUG2'
+                elif safe_verbosity >= 3:
+                    log_level = 'DEBUG3'
+                elif debug_enabled:
+                    log_level = 'DEBUG'
+
+                if log_level:
+                    overrides.extend(['-o', f'LogLevel={log_level}'])
+            else:
+                overrides = []
+
+            self.config.set_setting('ssh.ssh_overrides', overrides)
             if getattr(self, 'force_internal_file_manager_row', None) is not None:
                 self.config.set_setting(
                     'file_manager.force_internal',
@@ -1801,6 +1880,7 @@ class PreferencesWindow(Gtk.Window):
             defaults = self.config.get_default_config().get('ssh', {})
             # Persist defaults and ensure advanced options are disabled
             self.config.set_setting('ssh.apply_advanced', False)
+            self.config.set_setting('ssh.ssh_overrides', [])
 
             if update_toggle and hasattr(self, 'apply_advanced_row'):
                 self.apply_advanced_row.set_active(False)

@@ -319,17 +319,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 return
             provider = Gtk.CssProvider()
             css = """
-            /* Pulse highlight for selected rows */
-            .pulse-highlight {
-              background: alpha(@accent_bg_color, 0.5);
-              border-radius: 8px;
-              box-shadow: 0 0 0 0.5px alpha(@accent_bg_color, 0.28) inset;
-              opacity: 0;
-              transition: opacity 0.3s ease-in-out;
-            }
-            .pulse-highlight.on {
-              opacity: 1;
-            }
 
             /* optional: a subtle focus ring while the list is focused */
             row:selected:focus-within {
@@ -387,18 +376,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                           0 2px 8px alpha(@accent_bg_color, 0.4);
               transform: scale(1.02);
               transition: all 0.2s ease-in-out;
-              animation: group-drop-pulse 1.5s ease-in-out infinite;
-            }
-            
-            @keyframes group-drop-pulse {
-              0%, 100% { 
-                box-shadow: 0 0 0 2px @accent_bg_color inset,
-                           0 2px 8px alpha(@accent_bg_color, 0.4);
-              }
-              50% { 
-                box-shadow: 0 0 0 3px @accent_bg_color inset,
-                           0 4px 12px alpha(@accent_bg_color, 0.6);
-              }
             }
             
             /* Drop target indicator styling */
@@ -643,66 +620,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
 
 
-    def pulse_selected_row(self, list_box: Gtk.ListBox, repeats=3, duration_ms=280):
-        """Pulse the selected row with highlight effect"""
-        row = list_box.get_selected_row() or (list_box.get_selected_rows()[0] if list_box.get_selected_rows() else None)
-        if not row:
-            return
-        if not hasattr(row, "_pulse"):
-            return
-        # Ensure it's realized so opacity changes render
-        if not row.get_mapped():
-            row.realize()
-        
-        # Use CSS-based pulse for now
-        pulse = row._pulse
-        cycle_duration = max(300, duration_ms // repeats)  # Minimum 300ms per cycle for faster pulses
-        
-        def do_cycle(count):
-            if count == 0:
-                return False
-            pulse.add_css_class("on")
-            # Keep the pulse visible for a shorter time for snappier effect
-            GLib.timeout_add(cycle_duration // 2, lambda: (
-                pulse.remove_css_class("on"),
-                # Add a shorter delay before the next pulse
-                GLib.timeout_add(cycle_duration // 2, lambda: do_cycle(count - 1)) or True
-            ) and False)
-            return False
 
-        GLib.idle_add(lambda: do_cycle(repeats))
 
-    def _test_css_pulse(self, action, param):
-        """Simple test to manually toggle CSS class"""
-        row = self.connection_list.get_selected_row()
-        if row and hasattr(row, "_pulse"):
-            pulse = row._pulse
-            pulse.add_css_class("on")
-            GLib.timeout_add(1000, lambda: (
-                pulse.remove_css_class("on")
-            ) or False)
-
-    def _setup_interaction_stop_pulse(self):
-        """Set up event controllers to stop pulse effect on user interaction"""
-        # Mouse click controller
-        click_ctl = Gtk.GestureClick()
-        click_ctl.connect("pressed", self._stop_pulse_on_interaction)
-        self.connection_list.add_controller(click_ctl)
-        
-        # Key controller
-        key_ctl = Gtk.EventControllerKey()
-        key_ctl.connect("key-pressed", self._on_connection_list_key_pressed)
-        self.connection_list.add_controller(key_ctl)
-        
-        # Scroll controller
-        scroll_ctl = Gtk.EventControllerScroll()
-        scroll_ctl.connect("scroll", self._stop_pulse_on_interaction)
-        self.connection_list.add_controller(scroll_ctl)
 
     def _on_connection_list_key_pressed(self, controller, keyval, keycode, state):
         """Handle key presses in the connection list"""
-        # Stop pulse effect on any key press
-        self._stop_pulse_on_interaction(controller)
         
         # Handle Enter key specifically
         if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
@@ -730,33 +652,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             return False
         return False
 
-    def _stop_pulse_on_interaction(self, controller, *args):
-        """Stop any ongoing pulse effect when user interacts"""
-        # Stop pulse on any row that has the 'on' class
-        for row in self.connection_list:
-            if hasattr(row, "_pulse"):
-                pulse = row._pulse
-                if "on" in pulse.get_css_classes():
-                    pulse.remove_css_class("on")
 
-    def _wire_pulses(self):
-        """Wire pulse effects to trigger on focus-in only"""
-        # Track if this is the initial startup focus
-        self._is_initial_focus = True
-        
-        # When list gains keyboard focus (e.g., after Ctrl/⌘+L)
-        focus_ctl = Gtk.EventControllerFocus()
-        def on_focus_enter(*args):
-            # Don't pulse on initial startup focus
-            if self._is_initial_focus:
-                self._is_initial_focus = False
-                return
-            self.pulse_selected_row(self.connection_list, repeats=1, duration_ms=600)
-        focus_ctl.connect("enter", on_focus_enter)
-        self.connection_list.add_controller(focus_ctl)
-        
-        # Stop pulse effect when user interacts with the list
-        self._setup_interaction_stop_pulse()
         
         # Sidebar toggle action registered via register_window_actions
 
@@ -1302,8 +1198,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
         
-        # Wire pulse effects
-        self._wire_pulses()
         
         # Connect signals
         self.connection_list.connect('row-selected', self.on_connection_selected)  # For button sensitivity
@@ -1336,8 +1230,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 try:
                     logger.debug("Simple right-click detected - showing context menu for selected row")
                     
-                    # Clear any existing pulse effects to prevent multiple highlights
-                    self._stop_pulse_on_interaction(None)
                     
                     # Try to detect the clicked row, but fall back to selected row if detection fails
                     row = None
@@ -1562,10 +1454,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if n_press != 1:
                     return
 
-                try:
-                    self._stop_pulse_on_interaction(None)
-                except Exception:
-                    pass
 
                 row, _, _ = self._resolve_connection_list_event(x, y)
 
@@ -2529,8 +2417,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 
                 self.connection_list.grab_focus()
                 
-                # Pulse the selected row
-                self.pulse_selected_row(self.connection_list, repeats=1, duration_ms=600)
                 
                 # Show toast notification
                 toast = Adw.Toast.new(
