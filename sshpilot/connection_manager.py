@@ -453,6 +453,16 @@ class Connection:
 
     async def native_connect(self):
         """Prepare a minimal SSH command deferring to the user's SSH configuration."""
+
+        def format_ssh_command(parts: List[str]) -> str:
+            joiner = getattr(shlex, 'join', None)
+            if callable(joiner):
+                try:
+                    return joiner(parts)
+                except Exception:
+                    pass
+            return ' '.join(parts)
+
         try:
             quick_cmd = getattr(self, 'quick_connect_command', '')
             if isinstance(quick_cmd, str) and quick_cmd.strip():
@@ -460,6 +470,10 @@ class Connection:
                     ssh_cmd = shlex.split(quick_cmd)
                 except ValueError:
                     ssh_cmd = quick_cmd.split()
+                logger.info(
+                    "Prepared native SSH command: %s",
+                    format_ssh_command(ssh_cmd),
+                )
                 self.ssh_cmd = ssh_cmd
                 self.is_connected = True
                 return True
@@ -600,6 +614,11 @@ class Connection:
                 ssh_cmd.extend(ssh_options)
 
             ssh_cmd.append(host_label)
+
+            logger.info(
+                "Prepared native SSH command: %s",
+                format_ssh_command(ssh_cmd),
+            )
 
             self.ssh_cmd = ssh_cmd
             self.is_connected = True
