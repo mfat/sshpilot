@@ -1021,40 +1021,7 @@ class PreferencesWindow(Gtk.Window):
 
             advanced_page.add(operation_group)
 
-            self.force_internal_file_manager_row = None
-            self.open_file_manager_externally_row = None
-            if has_internal_file_manager():
-                file_manager_group = Adw.PreferencesGroup(title="File Management")
-
-                self.force_internal_file_manager_row = Adw.SwitchRow()
-                self.force_internal_file_manager_row.set_title("Always Use Built-in File Manager")
-                self.force_internal_file_manager_row.set_subtitle(
-                    "Use the in-app file manager even when system integrations are available"
-                )
-                self.force_internal_file_manager_row.set_active(
-                    bool(self.config.get_setting('file_manager.force_internal', False))
-                )
-                self.force_internal_file_manager_row.connect(
-                    'notify::active', self.on_force_internal_file_manager_changed
-                )
-
-                file_manager_group.add(self.force_internal_file_manager_row)
-
-                self.open_file_manager_externally_row = Adw.SwitchRow()
-                self.open_file_manager_externally_row.set_title("Open File Manager in Separate Window")
-                self.open_file_manager_externally_row.set_subtitle(
-                    "Show the built-in file manager in its own window instead of a tab"
-                )
-                self.open_file_manager_externally_row.set_active(
-                    bool(self.config.get_setting('file_manager.open_externally', False))
-                )
-                self.open_file_manager_externally_row.connect(
-                    'notify::active', self.on_open_file_manager_externally_changed
-                )
-
-                file_manager_group.add(self.open_file_manager_externally_row)
-                self._update_external_file_manager_row()
-                advanced_page.add(file_manager_group)
+            # File management preferences moved to dedicated page
 
             advanced_group = Adw.PreferencesGroup(title="SSH Settings")
 
@@ -1209,9 +1176,57 @@ class PreferencesWindow(Gtk.Window):
             # Ensure shortcut overview controls reflect current state
             self._set_shortcut_controls_enabled(not self._pass_through_enabled)
 
+            # Create File Management preferences page
+            file_management_page = Adw.PreferencesPage()
+            file_management_page.set_title("File Management")
+            file_management_page.set_icon_name("folder-symbolic")
+            
+            # File Management group
+            if has_internal_file_manager():
+                file_manager_group = Adw.PreferencesGroup(title="File Manager Options")
+
+                self.force_internal_file_manager_row = Adw.SwitchRow()
+                self.force_internal_file_manager_row.set_title("Always Use Built-in File Manager")
+                self.force_internal_file_manager_row.set_subtitle(
+                    "Use the in-app file manager even when system integrations are available"
+                )
+                self.force_internal_file_manager_row.set_active(
+                    bool(self.config.get_setting('file_manager.force_internal', False))
+                )
+                self.force_internal_file_manager_row.connect(
+                    'notify::active', self.on_force_internal_file_manager_changed
+                )
+
+                file_manager_group.add(self.force_internal_file_manager_row)
+
+                self.open_file_manager_externally_row = Adw.SwitchRow()
+                self.open_file_manager_externally_row.set_title("Open File Manager in Separate Window")
+                self.open_file_manager_externally_row.set_subtitle(
+                    "Show the built-in file manager in its own window instead of a tab"
+                )
+                self.open_file_manager_externally_row.set_active(
+                    bool(self.config.get_setting('file_manager.open_externally', False))
+                )
+                self.open_file_manager_externally_row.connect(
+                    'notify::active', self.on_open_file_manager_externally_changed
+                )
+
+                file_manager_group.add(self.open_file_manager_externally_row)
+                self._update_external_file_manager_row()
+                file_management_page.add(file_manager_group)
+            else:
+                # If no internal file manager, create empty page with message
+                no_file_manager_group = Adw.PreferencesGroup(title="File Manager")
+                no_file_manager_row = Adw.ActionRow()
+                no_file_manager_row.set_title("File Manager Not Available")
+                no_file_manager_row.set_subtitle("Built-in file manager is not available on this system")
+                no_file_manager_group.add(no_file_manager_row)
+                file_management_page.add(no_file_manager_group)
+
             # Add pages to the custom layout
             self.add_page_to_layout("Interface", "applications-graphics-symbolic", interface_page)
             self.add_page_to_layout("Terminal", "utilities-terminal-symbolic", terminal_page)
+            self.add_page_to_layout("File Management", "folder-symbolic", file_management_page)
             self.add_page_to_layout("Shortcuts", "preferences-desktop-keyboard-shortcuts-symbolic", shortcuts_page)
             self.add_page_to_layout("Groups", "folder-open-symbolic", groups_page)
             self.add_page_to_layout("Advanced", "applications-system-symbolic", advanced_page)
