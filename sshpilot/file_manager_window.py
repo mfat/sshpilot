@@ -1945,11 +1945,10 @@ class PaneToolbar(Gtk.Box):
         right.append(self.sort_split_button)
         bar.append(right)
 
-        # Wrap the bar in ToolbarView so it looks native
-        tv = Adw.ToolbarView()
-        tv.add_top_bar(handle)
-        # NOTE: Put your pane's main scroller/content with tv.set_content(content) elsewhere.
-        self.append(tv)
+        # Don't wrap in ToolbarView to avoid nested ToolbarView theme issues
+        # Instead, add toolbar styling via CSS class and append handle directly
+        handle.add_css_class('toolbar')
+        self.append(handle)
 
     # Keep your factory
     def _create_sort_split_button(self) -> Adw.SplitButton:
@@ -4172,6 +4171,35 @@ class FileManagerWindow(Adw.Window):
             background-color: alpha(@accent_color, 0.1);
             border: 2px dashed @accent_color;
             border-radius: 8px;
+        }
+        
+        /* Pane toolbar styling to replace nested ToolbarView */
+        .toolbar {
+            background-color: @headerbar_bg_color;
+            color: @headerbar_fg_color;
+            border-bottom: 1px solid @borders;
+        }
+        
+        .toolbar windowhandle {
+            background-color: @headerbar_bg_color;
+            color: @headerbar_fg_color;
+        }
+        
+        /* Pane divider styling */
+        paned {
+            background-color: @window_bg_color;
+        }
+        
+        paned separator {
+            background-color: @borders;
+            border: none;
+        }
+        
+        /* Action bar styling */
+        .inline-toolbar {
+            background-color: @headerbar_bg_color;
+            color: @headerbar_fg_color;
+            border-top: 1px solid @borders;
         }
         """
         css_provider.load_from_data(toast_css.encode())
