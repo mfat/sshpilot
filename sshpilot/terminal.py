@@ -498,7 +498,46 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.error(f"SSH connection failed: {e}")
             GLib.idle_add(self._on_connection_failed, str(e))
-    
+
+    def _prepare_key_for_native_mode(self):
+        """Ensure explicit keys are unlocked when native SSH mode is active."""
+        connection = getattr(self, 'connection', None)
+        if not connection:
+            return
+
+        manager = getattr(self, 'connection_manager', None)
+        if not manager or not hasattr(manager, 'prepare_key_for_connection'):
+            return
+
+        try:
+            key_select_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
+        except Exception:
+            key_select_mode = 0
+
+        if key_select_mode not in (1, 2):
+            return
+
+        keyfile = getattr(connection, 'keyfile', '') or ''
+        if not keyfile or keyfile.startswith('Select key file'):
+            return
+
+        expanded_keyfile = os.path.expanduser(keyfile)
+        key_path = expanded_keyfile if os.path.isfile(expanded_keyfile) else keyfile
+        if not os.path.isfile(key_path):
+            logger.debug("Explicit key not found on disk, skipping native preload: %s", keyfile)
+            return
+
+        try:
+            prepared = manager.prepare_key_for_connection(key_path)
+        except Exception as exc:
+            logger.warning("Failed to prepare key for native SSH connection: %s", exc)
+            return
+
+        if prepared:
+            logger.debug("Prepared key for native SSH connection: %s", key_path)
+        else:
+            logger.warning("Key could not be prepared for native SSH connection: %s", key_path)
+
     def _setup_ssh_terminal(self):
         """Set up terminal with direct SSH command (called from main thread)"""
         try:
@@ -525,6 +564,7 @@ class TerminalWidget(Gtk.Box):
             quick_connect_mode = bool(getattr(self.connection, 'quick_connect_command', ''))
             if native_mode_enabled:
                 quick_connect_mode = False
+                self._prepare_key_for_native_mode()
             password_auth_selected = False
             has_saved_password = False
             password_value = None
