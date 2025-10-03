@@ -16,7 +16,6 @@ from typing import Dict, List, Optional, Any, Tuple, Union
 
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
 from .platform_utils import is_macos, get_config_dir, get_ssh_dir
-from .ssh_utils import build_connection_ssh_options
 
 try:
     from gi.repository import Secret
@@ -488,18 +487,117 @@ class Connection:
                 )
                 config_obj = None
 
-            try:
-                advanced_options = build_connection_ssh_options(
-                    self, config=config_obj
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to build advanced SSH options for %s: %s", self, exc
-                )
-                advanced_options = []
+            ssh_options: List[str] = []
 
-            if advanced_options:
-                ssh_cmd.extend(advanced_options)
+            ssh_cfg: Dict[str, Any] = {}
+            if config_obj and hasattr(config_obj, 'get_ssh_config'):
+                try:
+                    cfg_value = config_obj.get_ssh_config()
+                    if isinstance(cfg_value, dict):
+                        ssh_cfg = cfg_value
+                except Exception as exc:
+                    logger.debug(
+                        "Failed to read SSH preferences for %s: %s", self, exc
+                    )
+
+            apply_adv = bool(ssh_cfg.get('apply_advanced', False))
+
+            batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
+            connect_timeout = (
+                int(ssh_cfg.get('connection_timeout', 10)) if apply_adv else None
+            )
+            connection_attempts = (
+                int(ssh_cfg.get('connection_attempts', 1)) if apply_adv else None
+            )
+            keepalive_interval = (
+                int(ssh_cfg.get('keepalive_interval', 30)) if apply_adv else None
+            )
+            keepalive_count = (
+                int(ssh_cfg.get('keepalive_count_max', 3)) if apply_adv else None
+            )
+            strict_host = (
+                str(ssh_cfg.get('strict_host_key_checking', '')).strip()
+                if apply_adv
+                else ''
+            )
+            auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
+            compression = bool(ssh_cfg.get('compression', False)) if apply_adv else False
+            exit_on_forward_failure = bool(ssh_cfg.get('exit_on_forward_failure', True))
+
+            password_auth_selected = False
+            has_saved_password = False
+            try:
+                auth_method = int(getattr(self, 'auth_method', 0) or 0)
+                password_auth_selected = (auth_method == 1)
+                has_saved_password = bool(getattr(self, 'password', '') or '')
+            except Exception:
+                password_auth_selected = False
+                has_saved_password = False
+
+            using_password = password_auth_selected or (
+                not password_auth_selected and has_saved_password
+            )
+
+            def append_option(option_key: str, option_value: Union[str, int]) -> None:
+                ssh_options.extend(['-o', f'{option_key}={option_value}'])
+
+            if apply_adv:
+                if batch_mode and not using_password:
+                    append_option('BatchMode', 'yes')
+                if connect_timeout is not None:
+                    append_option('ConnectTimeout', connect_timeout)
+                if connection_attempts is not None:
+                    append_option('ConnectionAttempts', connection_attempts)
+                if keepalive_interval is not None:
+                    append_option('ServerAliveInterval', keepalive_interval)
+                if keepalive_count is not None:
+                    append_option('ServerAliveCountMax', keepalive_count)
+                if strict_host:
+                    append_option('StrictHostKeyChecking', strict_host)
+                if compression:
+                    append_option('Compression', 'yes')
+
+            if (not strict_host) and auto_add_host_keys:
+                append_option('StrictHostKeyChecking', 'accept-new')
+
+            if exit_on_forward_failure:
+                append_option('ExitOnForwardFailure', 'yes')
+
+            try:
+                verbosity = int(ssh_cfg.get('verbosity', 0))
+                debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
+            except Exception:
+                verbosity = 0
+                debug_enabled = False
+
+            v = max(0, min(3, verbosity))
+            for _ in range(v):
+                ssh_options.append('-v')
+
+            if v == 1:
+                append_option('LogLevel', 'VERBOSE')
+            elif v == 2:
+                append_option('LogLevel', 'DEBUG2')
+            elif v >= 3:
+                append_option('LogLevel', 'DEBUG3')
+            elif debug_enabled:
+                append_option('LogLevel', 'DEBUG')
+
+            extra_ssh_config = getattr(self, 'extra_ssh_config', '').strip()
+            if extra_ssh_config:
+                for line in extra_ssh_config.split('\n'):
+                    directive = line.strip()
+                    if not directive or directive.startswith('#'):
+                        continue
+                    parts = directive.split(' ', 1)
+                    if len(parts) == 2:
+                        option, value = parts
+                        append_option(option, value)
+                    else:
+                        append_option(parts[0], 'yes')
+
+            if ssh_options:
+                ssh_cmd.extend(ssh_options)
 
             ssh_cmd.append(host_label)
 
