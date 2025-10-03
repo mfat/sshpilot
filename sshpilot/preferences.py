@@ -409,7 +409,7 @@ class PreferencesWindow(Gtk.Window):
         
         # Create content stack
         self.content_stack = Gtk.Stack()
-        self.content_stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        self.content_stack.set_transition_type(Gtk.StackTransitionType.NONE)
         self.content_area.append(self.content_stack)
         
         # Connect sidebar selection to content stack
