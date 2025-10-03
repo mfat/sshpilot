@@ -192,6 +192,7 @@ class Config(GObject.Object):
                 'debug_enabled': False,
                 'native_connect': False,
                 'use_isolated_config': False,
+                'ssh_overrides': [],
             },
             'file_manager': {
                 'force_internal': False,
@@ -606,6 +607,7 @@ class Config(GObject.Object):
             'strict_host_key_checking': 'accept-new',
             'use_isolated_config': False,
             'verbosity': 0,
+            'ssh_overrides': [],
         }
 
         bool_keys = {
@@ -656,6 +658,16 @@ class Config(GObject.Object):
                             value = 'accept-new' if normalized == 'accept-new' else normalized
                         else:
                             value = default_value
+            elif key == 'ssh_overrides':
+                if isinstance(value, (list, tuple)):
+                    coerced: List[str] = []
+                    for entry in value:
+                        if entry is None:
+                            continue
+                        coerced.append(str(entry))
+                    value = coerced
+                else:
+                    value = []
 
             config[key] = value
 
