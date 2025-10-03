@@ -609,6 +609,7 @@ class TerminalWidget(Gtk.Box):
                 auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
                 batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
                 compression = bool(ssh_cfg.get('compression', False)) if apply_adv else False
+                exit_on_forward_failure = bool(ssh_cfg.get('exit_on_forward_failure', True))
 
                 # Determine auth method from connection and retrieve any saved password
                 try:
@@ -666,7 +667,8 @@ class TerminalWidget(Gtk.Box):
                     logger.debug('Failed to set UserKnownHostsFile option', exc_info=True)
 
                 # Ensure SSH exits immediately on failure rather than waiting in background
-                ensure_option('ExitOnForwardFailure=yes')
+                if exit_on_forward_failure:
+                    ensure_option('ExitOnForwardFailure=yes')
 
                 # Only add verbose flag if explicitly enabled in config
                 try:
