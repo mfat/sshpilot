@@ -19,260 +19,8 @@ from .connection_display import (
     format_connection_host_display as _format_connection_host_display,
 )
 from .groups import GroupManager
-from sshpilot_dnd import (
-    AutoscrollParams,
-    RowBounds,
-    hit_test_insertion,
-    autoscroll_velocity,
-    reorder_connections_state,
-)
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Styling helpers
-# ---------------------------------------------------------------------------
-
-
-_COLOR_CSS_INSTALLED = False
-_DEFAULT_ROW_MARGIN_START = 0  # Use libadwaita default
-_MIN_VALID_MARGIN = 0
-
-
-def _extract_row_content_widget(row: Gtk.Widget) -> Optional[Gtk.Widget]:
-    """Return the direct content widget for an Adw.ActionRow."""
-
-    if row is None:
-        return None
-
-    child_getter = getattr(row, "get_child", None)
-    if callable(child_getter):
-        child = child_getter()
-        if child is not None:
-            return child
-
-    first_child_getter = getattr(row, "get_first_child", None)
-    if callable(first_child_getter):
-        candidate = first_child_getter()
-    else:
-        candidate = None
-
-    while candidate is not None:
-        if candidate.get_parent() is row:
-            return candidate
-        candidate = candidate.get_next_sibling()
-
-    return None
-
-
-
-
-def _resolve_base_margin_start(widget: Optional[Gtk.Widget]) -> int:
-    """Return a sane starting margin for sidebar rows."""
-
-    if widget is None:
-        return _DEFAULT_ROW_MARGIN_START
-
-    try:
-        margin = widget.get_margin_start()
-    except Exception:
-        return _DEFAULT_ROW_MARGIN_START
-
-    try:
-        if margin is None or margin <= _MIN_VALID_MARGIN:
-            return _DEFAULT_ROW_MARGIN_START
-    except TypeError:
-        return _DEFAULT_ROW_MARGIN_START
-
-    return margin
-
-
-def _install_sidebar_color_css():
-    global _COLOR_CSS_INSTALLED
-    if _COLOR_CSS_INSTALLED:
-        return
-
-    try:
-        display = Gdk.Display.get_default()
-        if not display:
-            return
-
-        provider = Gtk.CssProvider()
-        css = """
-        .sidebar-color-badge {
-            border-radius: 999px;
-            min-width: 12px;
-            min-height: 12px;
-        }
-
-        .accent-red {
-            background-color: #ff0000 !important;
-        }
-
-        .accent-blue {
-            background-color: #E3F2FD !important;
-        }
-
-        .accent-green {
-            background-color: #E8F5E9 !important;
-        }
-
-        .accent-orange {
-            background-color: #FFF3E0 !important;
-        }
-
-        .accent-purple {
-            background-color: #F3E5F5 !important;
-        }
-
-        .accent-cyan {
-            background-color: #E0F2F1 !important;
-        }
-
-        .accent-gray {
-            background-color: #F5F5F5 !important;
-        }
-        """
-        provider.load_from_data(css.encode("utf-8"))
-        Gtk.StyleContext.add_provider_for_display(
-            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
-        _COLOR_CSS_INSTALLED = True
-        logger.debug("Sidebar color CSS installed successfully")
-    except Exception:
-        logger.debug("Failed to install sidebar color CSS", exc_info=True)
-
-
-def _parse_color(value: Optional[str]) -> Optional[Gdk.RGBA]:
-    if not value:
-        return None
-
-    rgba = Gdk.RGBA()
-    try:
-        if rgba.parse(str(value)):
-            return rgba
-    except Exception:
-        logger.debug("Failed to parse color value '%s'", value, exc_info=True)
-    return None
-
-
-def _get_color_display_mode(config) -> str:
-    try:
-        mode = str(config.get_setting('ui.group_color_display', 'fill')).lower()
-    except Exception:
-        return 'fill'
-
-    if mode not in {'fill', 'badge'}:
-        return 'fill'
-    return mode
-
-
-def _fill_rgba(rgba: Optional[Gdk.RGBA]) -> Optional[Gdk.RGBA]:
-    if rgba is None:
-        return None
-
-    fill = Gdk.RGBA()
-    fill.red = rgba.red
-    fill.green = rgba.green
-    fill.blue = rgba.blue
-    # Increase alpha for better visibility
-    fill.alpha = 0.4 if rgba.alpha >= 1.0 else max(0.3, min(rgba.alpha, 0.5))
-    return fill
-
-
-def _get_color_class(rgba: Optional[Gdk.RGBA]) -> Optional[str]:
-    """Get CSS class name for a given RGBA color."""
-    if not rgba:
-        return None
-    
-    # Convert to HSV for easier color matching
-    import colorsys
-    h, s, v = colorsys.rgb_to_hsv(rgba.red, rgba.green, rgba.blue)
-    
-    # Map colors to CSS classes based on hue
-    if s < 0.3:  # Low saturation = gray
-        return "accent-gray"
-    elif h < 0.1 or h > 0.9:  # Red
-        return "accent-red"
-    elif h < 0.2:  # Orange
-        return "accent-orange"
-    elif h < 0.4:  # Yellow/Green
-        return "accent-green"
-    elif h < 0.6:  # Cyan
-        return "accent-cyan"
-    elif h < 0.8:  # Blue
-        return "accent-blue"
-    else:  # Purple/Pink
-        return "accent-purple"
-
-
-def _set_css_background(provider: Gtk.CssProvider, rgba: Optional[Gdk.RGBA]):
-    if rgba is None:
-        try:
-            provider.load_from_data(b"")
-            logger.debug("Cleared CSS background provider")
-        except Exception:
-            logger.debug("Failed to clear CSS background", exc_info=True)
-        return
-
-    try:
-        color_value = rgba.to_string()
-    except Exception:
-        try:
-            provider.load_from_data(b"")
-            logger.debug("Cleared CSS background provider after RGBA conversion failure")
-        except Exception:
-            logger.debug("Failed to clear CSS background after RGBA conversion failure", exc_info=True)
-        return
-
-    try:
-        css_data = (
-            "row .sshpilot-group-color-overlay {\n"
-            f"    background-color: {color_value};\n"
-            "}\n\n"
-            "row:selected .sshpilot-group-color-overlay,\n"
-            "row:active .sshpilot-group-color-overlay {\n"
-            "    background-color: transparent;\n"
-            "}\n"
-        )
-        provider.load_from_data(css_data.encode('utf-8'))
-        logger.debug(f"Applied CSS background: {css_data}")
-    except Exception:
-        logger.debug("Failed to update CSS background", exc_info=True)
-
-
-def _set_tint_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
-    """Apply color to a tinted row using CSS provider."""
-    try:
-        color_value = rgba.to_string()
-    except Exception:
-        logger.debug("Failed to convert RGBA to string", exc_info=True)
-        return
-
-    try:
-        # Create CSS provider for the tinted row with proper alpha
-        provider = Gtk.CssProvider()
-        css_data = f"""
-        .tinted:not(:selected):not(:hover):not(:active) {{
-            background-color: {color_value};
-        }}
-        """
-        provider.load_from_data(css_data.encode('utf-8'))
-        
-        # Remove any existing provider
-        if hasattr(row, '_tint_provider'):
-            row.get_style_context().remove_provider(row._tint_provider)
-        
-        # Add new provider
-        row._tint_provider = provider
-        row.get_style_context().add_provider(
-            provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
-        )
-        
-        logger.debug(f"Applied tinted color: {color_value}")
-    except Exception:
-        logger.debug("Failed to apply tinted color", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +52,7 @@ class DragIndicator(Gtk.Widget):
         snapshot.append_color(color, rect)
 
 
-class GroupRow(Adw.ActionRow):
+class GroupRow(Gtk.ListBoxRow):
     """Row widget for group headers."""
 
     __gsignals__ = {
@@ -313,73 +61,84 @@ class GroupRow(Adw.ActionRow):
 
     def __init__(self, group_info: Dict, group_manager: GroupManager, connections_dict: Dict | None = None):
         super().__init__()
+        self.add_css_class("navigation-sidebar")
         self.group_info = group_info
         self.group_manager = group_manager
         self.group_id = group_info["id"]
         self.connections_dict = connections_dict or {}
 
-        # Set up Adw.ActionRow properties
-        self.set_title(group_info["name"])
-        self.set_subtitle("")  # Will be updated with connection count
+        # Main container with drop indicators
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         
-        # Add folder icon as prefix
+        # Drop indicator (top)
+        self.drop_indicator_top = DragIndicator()
+        main_box.append(self.drop_indicator_top)
+
+        # Main content
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        content.set_margin_start(12)
+        content.set_margin_end(12)
+        content.set_margin_top(6)
+        content.set_margin_bottom(6)
+
         icon = Gtk.Image.new_from_icon_name("folder-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
-        self.add_prefix(icon)
+        content.append(icon)
 
-        # Color badge for badge mode - use empty circular button
-        self.color_badge = Gtk.Button()
-        self.color_badge.add_css_class("circular")
-        self.color_badge.add_css_class("normal")
-        self.color_badge.set_valign(Gtk.Align.CENTER)
-        self.color_badge.set_visible(False)
-        
-        self.add_suffix(self.color_badge)
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        info_box.set_hexpand(True)
 
-        # Add expand button as suffix (far right)
+        self.name_label = Gtk.Label()
+        self.name_label.set_halign(Gtk.Align.START)
+        info_box.append(self.name_label)
+
+        self.count_label = Gtk.Label()
+        self.count_label.set_halign(Gtk.Align.START)
+        self.count_label.add_css_class("dim-label")
+        info_box.append(self.count_label)
+
+        content.append(info_box)
+
         self.expand_button = Gtk.Button()
         self.expand_button.set_icon_name("pan-end-symbolic")
         self.expand_button.add_css_class("flat")
         self.expand_button.add_css_class("group-expand-button")
         self.expand_button.set_can_focus(False)
         self.expand_button.connect("clicked", self._on_expand_clicked)
-        self.add_suffix(self.expand_button)
+        content.append(self.expand_button)
 
-        # Apply group color styling
-        logger.debug(f"GroupRow {group_info['name']}: Constructor calling _apply_group_color_style")
-        self._apply_group_color_style()
+        # Add drop target indicator (initially hidden)
+        self.drop_target_indicator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.drop_target_indicator.set_halign(Gtk.Align.CENTER)
+        self.drop_target_indicator.set_margin_top(4)
+        self.drop_target_indicator.set_margin_bottom(4)
+        self.drop_target_indicator.add_css_class("drop-target-indicator")
+        
+        drop_icon = Gtk.Image.new_from_icon_name("list-add-symbolic")
+        drop_icon.set_icon_size(Gtk.IconSize.NORMAL)
+        self.drop_target_indicator.append(drop_icon)
+        
+        drop_label = Gtk.Label()
+        drop_label.set_markup("<b>Add to Group</b>")
+        drop_label.add_css_class("accent")
+        self.drop_target_indicator.append(drop_label)
+        
+        self.drop_target_indicator.set_visible(False)
+
+        # Add content to main_box
+        main_box.append(content)
+        main_box.append(self.drop_target_indicator)
+        
+        # Drop indicator (bottom)
+        self.drop_indicator_bottom = DragIndicator()
+        main_box.append(self.drop_indicator_bottom)
+
+        self.set_child(main_box)
         self.set_selectable(True)
         self.set_can_focus(True)
 
-        # Drop indicators are now handled via CSS classes
-
-        self.hide_drop_indicators()
-
         self._update_display()
         self._setup_drag_source()
-        self._setup_drop_target()
-    
-    def _set_custom_drag_icon(self, drag):
-        """Set a custom drag icon to prevent default sidebar highlighting"""
-        try:
-            # Create a simple icon for the drag operation
-            icon = Gtk.Image.new_from_icon_name("folder-symbolic")
-            icon.set_icon_size(Gtk.IconSize.LARGE)
-            
-            # Create a paintable from the icon
-            paintable = Gtk.WidgetPaintable.new(icon)
-            
-            # Try different methods to set the drag icon
-            if hasattr(drag, 'set_icon'):
-                drag.set_icon(paintable, 0, 0)
-            elif hasattr(self._drag_source, 'set_icon'):
-                self._drag_source.set_icon(paintable, 0, 0)
-            else:
-                # If we can't set a custom icon, at least try to disable default feedback
-                logger.debug("Could not set custom drag icon, drag feedback may still be visible")
-        except Exception as e:
-            logger.debug(f"Could not set custom drag icon: {e}")
-        
         self._setup_double_click_gesture()
 
     # -- internal helpers -------------------------------------------------
@@ -397,92 +156,10 @@ class GroupRow(Adw.ActionRow):
         ]
         count = len(actual_connections)
         group_name = self.group_info['name']
-        self.set_title(group_name)
-        self.set_subtitle(f"{count} connections")
+        self.name_label.set_markup(f"<b>{group_name}</b>")
+        self.count_label.set_text(f"{count} connections")
+        
 
-        self._apply_group_color_style()
-
-    def _apply_group_color_style(self):
-        config = getattr(self.group_manager, 'config', None)
-        mode = _get_color_display_mode(config) if config else 'fill'
-        rgba = _parse_color(self.group_info.get('color'))
-        
-        group_name = self.group_info.get('name', 'Unknown')
-        color_value = self.group_info.get('color')
-        logger.debug(f"GroupRow {group_name}: mode={mode}, color_value={color_value}, rgba={rgba}")
-
-        if mode == 'badge':
-            # Clear any background styling
-            self.remove_css_class("tinted")
-            if rgba:
-                # Update the existing color badge with new color
-                self._update_color_badge(rgba)
-                self.color_badge.set_visible(True)
-                logger.debug(f"GroupRow {group_name}: Showing tag icon with color {rgba.to_string()}")
-            else:
-                self.color_badge.set_visible(False)
-                logger.debug(f"GroupRow {group_name}: Hiding badge (no color)")
-        else:
-            # Apply fill color using tinted approach
-            if rgba:
-                # Add tinted class for proper spacing and selection
-                self.add_css_class("tinted")
-                
-                # Apply color directly to the row using CSS provider
-                _set_tint_card_color(self, rgba)
-                logger.debug(f"GroupRow {group_name}: Applied tinted background color {rgba.to_string()}")
-            else:
-                self.remove_css_class("tinted")
-                # Clear any existing color styling
-                if hasattr(self, '_tint_provider'):
-                    self.get_style_context().remove_provider(self._tint_provider)
-                    self._tint_provider = None
-                logger.debug(f"GroupRow {group_name}: No rgba color to apply")
-            
-            # Hide badge in fill mode
-            self.color_badge.set_visible(False)
-        
-    def _update_color_badge(self, rgba: Gdk.RGBA):
-        """Update the color badge with a new color."""
-        # Convert RGBA to hex color
-        r = int(rgba.red * 255)
-        g = int(rgba.green * 255)
-        b = int(rgba.blue * 255)
-        color_hex = f"#{r:02x}{g:02x}{b:02x}"
-        
-        # Calculate a darker color for hover state
-        r_hover = max(0, r - 20)
-        g_hover = max(0, g - 20)
-        b_hover = max(0, b - 20)
-        hover_hex = f"#{r_hover:02x}{g_hover:02x}{b_hover:02x}"
-        
-        # Apply CSS color to the button with more specific selector
-        css_data = f"""
-        button.circular.normal.color-badge {{
-          background-color: {color_hex};
-          color: white;
-          border: none;
-          box-shadow: none;
-        }}
-        button.circular.normal.color-badge:hover {{
-          background-color: {hover_hex};
-        }}
-        """
-        
-        # Remove any existing CSS provider
-        if hasattr(self, '_color_badge_provider'):
-            self.color_badge.get_style_context().remove_provider(self._color_badge_provider)
-        
-        # Create new CSS provider for the color badge
-        self._color_badge_provider = Gtk.CssProvider()
-        self._color_badge_provider.load_from_data(css_data.encode('utf-8'))
-        self.color_badge.get_style_context().add_provider(
-            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
-        
-        # Add the color-badge CSS class
-        self.color_badge.add_css_class("color-badge")
-        self.color_badge.set_visible(True)
 
     def _on_expand_clicked(self, button):
         self._toggle_expand()
@@ -490,27 +167,12 @@ class GroupRow(Adw.ActionRow):
     def _setup_drag_source(self):
         drag_source = Gtk.DragSource()
         drag_source.set_actions(Gdk.DragAction.MOVE)
-        drag_source.set_exclusive(False)
-        drag_source.set_button(getattr(Gdk, "BUTTON_PRIMARY", 1))
-        # Disable default drag feedback
-        try:
-            drag_source.set_drag_threshold(0)
-        except Exception:
-            pass
         drag_source.connect("prepare", self._on_drag_prepare)
         drag_source.connect("drag-begin", self._on_drag_begin)
         drag_source.connect("drag-end", self._on_drag_end)
         self.add_controller(drag_source)
         # Store reference for cleanup
         self._drag_source = drag_source
-
-    def _setup_drop_target(self):
-        """Set up drop target for this group row"""
-        # Disable individual drop target - let list-level handler manage everything
-        # This prevents the group row from intercepting drop events
-        pass
-
-    # Drop target methods removed - list-level handler manages everything
 
     def _on_drag_prepare(self, source, x, y):
         data = {"type": "group", "group_id": self.group_id}
@@ -524,15 +186,7 @@ class GroupRow(Adw.ActionRow):
             if window:
                 # Track which group is being dragged
                 window._dragged_group_id = self.group_id
-                
-                # Mark drag as in progress but keep selection mode for visual feedback
-                window._drag_in_progress = True
-                # Don't disable selection mode - keep it for visual feedback
-                
                 _show_ungrouped_area(window)
-                
-                # Set custom drag icon to prevent default sidebar highlighting
-                self._set_custom_drag_icon(drag)
         except Exception as e:
             logger.error(f"Error in group drag begin: {e}")
 
@@ -543,15 +197,7 @@ class GroupRow(Adw.ActionRow):
                 # Clear the dragged group tracking
                 if hasattr(window, "_dragged_group_id"):
                     delattr(window, "_dragged_group_id")
-                # Hide drop indicators
-                if hasattr(window, '_hide_all_drop_indicators'):
-                    window._hide_all_drop_indicators()
                 _hide_ungrouped_area(window)
-                _stop_connection_autoscroll(window)
-                # Restore selection mode after drag
-                if hasattr(window, '_drag_in_progress'):
-                    window._drag_in_progress = False
-                    window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
         except Exception as e:
             logger.error(f"Error in group drag end: {e}")
 
@@ -573,201 +219,141 @@ class GroupRow(Adw.ActionRow):
         self.emit("group-toggled", self.group_id, expanded)
 
     def show_drop_indicator(self, top: bool):
-        """Show drop indicator line using CSS classes"""
+        """Show drop indicator line"""
         self.hide_drop_indicators()
-
+        
         if top:
-            self.add_css_class("drop-indicator-top")
+            self.drop_indicator_top.set_visible(True)
         else:
-            self.add_css_class("drop-indicator-bottom")
-
+            self.drop_indicator_bottom.set_visible(True)
+    
     def hide_drop_indicators(self):
         """Hide all drop indicator lines"""
-        self.remove_css_class("drop-indicator-top")
-        self.remove_css_class("drop-indicator-bottom")
-        self.remove_css_class("drop-indicator-on-group")
+        self.drop_indicator_top.set_visible(False)
+        self.drop_indicator_bottom.set_visible(False)
         self.show_group_highlight(False)
-
-        window = self.get_root()
-        if window:
-            _remove_drop_placeholder(window)
 
     def show_group_highlight(self, show: bool):
         """Show/hide group highlight for 'add to group' drop indication"""
         if show:
             self.add_css_class("drop-target-group")
+            self.drop_target_indicator.set_visible(True)
         else:
             self.remove_css_class("drop-target-group")
+            self.drop_target_indicator.set_visible(False)
 
 
-class ConnectionRow(Adw.ActionRow):
+class ConnectionRow(Gtk.ListBoxRow):
     """Row widget for connection list."""
 
-    def __init__(self, connection: Connection, group_manager: GroupManager, config):
+    def __init__(self, connection: Connection):
         super().__init__()
+        self.add_css_class("navigation-sidebar")
         self.connection = connection
-        self.group_manager = group_manager
-        self.config = config
 
-        # Set up Adw.ActionRow properties
-        self.set_title(connection.nickname)
-        self.set_subtitle("")  # Will be updated with host info
+        # Main container with drop indicators
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        
+        # Drop indicator (top)
+        self.drop_indicator_top = DragIndicator()
+        main_box.append(self.drop_indicator_top)
+        
+        # Content container
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        content.set_margin_start(12)
+        content.set_margin_end(12)
+        content.set_margin_top(6)
+        content.set_margin_bottom(6)
 
-        # Add computer icon as prefix
         icon = Gtk.Image.new_from_icon_name("computer-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
-        self.add_prefix(icon)
+        content.append(icon)
 
-        # Box to show forwarding indicators
-        self.indicator_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self.indicator_box.add_css_class("pf-indicator")
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        info_box.set_hexpand(True)
+
+        self.nickname_label = Gtk.Label()
+        self.nickname_label.set_markup(f"<b>{connection.nickname}</b>")
+        self.nickname_label.set_halign(Gtk.Align.START)
+        info_box.append(self.nickname_label)
+
+        self.host_label = Gtk.Label()
+        self.host_label.set_halign(Gtk.Align.START)
+        self.host_label.add_css_class("dim-label")
+        self._apply_host_label_text()
+        info_box.append(self.host_label)
+
+        content.append(info_box)
+
+        self.indicator_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.indicator_box.set_halign(Gtk.Align.CENTER)
         self.indicator_box.set_valign(Gtk.Align.CENTER)
-        self.indicator_box.set_visible(False)
-        self.add_suffix(self.indicator_box)
+        content.append(self.indicator_box)
 
-        # Add status icon as suffix (far right)
         self.status_icon = Gtk.Image.new_from_icon_name("network-offline-symbolic")
         self.status_icon.set_pixel_size(16)
-        self.add_suffix(self.status_icon)
+        content.append(self.status_icon)
+        
+        # Now add the content to main_box
+        main_box.append(content)
+        
+        # Drop indicator (bottom)
+        self.drop_indicator_bottom = DragIndicator()
+        main_box.append(self.drop_indicator_bottom)
 
-        # CSS provider for background colors will be created only when needed
-        self._background_provider = None
+        # Add pulse overlay to the main box
+        self._pulse = Gtk.Box()
+        self._pulse.add_css_class("pulse-highlight")
+        self._pulse.set_can_target(False)
+        self._pulse.set_hexpand(True)
+        self._pulse.set_vexpand(True)
+        
+        # Create overlay for pulse effect
+        overlay = Gtk.Overlay()
+        overlay.set_child(main_box)
+        overlay.add_overlay(self._pulse)
+        self.set_child(overlay)
 
-        # Apply group color styling
-        self._apply_group_color_style()
         self.set_selectable(True)
-        self.set_can_focus(True)
 
-        # Drop indicators are now handled via CSS classes
-
-        self.hide_drop_indicators()
-
-        self._apply_host_label_text()
         self.update_status()
         self._update_forwarding_indicators()
         self._setup_drag_source()
-        self._setup_drop_target()
-        # Double-click is handled at the connection list level
-    
-    def _set_custom_drag_icon(self, drag):
-        """Set a custom drag icon to prevent default sidebar highlighting"""
-        try:
-            # Create a simple icon for the drag operation
-            icon = Gtk.Image.new_from_icon_name("computer-symbolic")
-            icon.set_icon_size(Gtk.IconSize.LARGE)
-            
-            # Create a paintable from the icon
-            paintable = Gtk.WidgetPaintable.new(icon)
-            
-            # Try different methods to set the drag icon
-            if hasattr(drag, 'set_icon'):
-                drag.set_icon(paintable, 0, 0)
-            elif hasattr(self._drag_source, 'set_icon'):
-                self._drag_source.set_icon(paintable, 0, 0)
-            else:
-                # If we can't set a custom icon, at least try to disable default feedback
-                logger.debug("Could not set custom drag icon, drag feedback may still be visible")
-        except Exception as e:
-            logger.debug(f"Could not set custom drag icon: {e}")
     
     def show_drop_indicator(self, top: bool):
-        """Show drop indicator line using CSS classes"""
+        """Show drop indicator line"""
         self.hide_drop_indicators()
         
         if top:
-            self.add_css_class("drop-indicator-top")
+            self.drop_indicator_top.set_visible(True)
         else:
-            self.add_css_class("drop-indicator-bottom")
+            self.drop_indicator_bottom.set_visible(True)
     
     def hide_drop_indicators(self):
         """Hide all drop indicator lines"""
-        self.remove_css_class("drop-indicator-top")
-        self.remove_css_class("drop-indicator-bottom")
-        self.remove_css_class("drop-indicator-on-group")
-
-        window = self.get_root()
-        if window:
-            _remove_drop_placeholder(window)
-
+        self.drop_indicator_top.set_visible(False)
+        self.drop_indicator_bottom.set_visible(False)
+    
     def set_indentation(self, level: int):
         """Set indentation level for grouped connections"""
-        # Simplified indentation using margin start
-        margin = max(0, level) * 20
-        self.set_margin_start(margin)
-
-    def _resolve_group_color(self) -> Optional[Gdk.RGBA]:
-        manager = getattr(self, 'group_manager', None)
-        if not manager:
-            return None
-
-        try:
-            group_id = manager.get_connection_group(self.connection.nickname)
-        except Exception:
-            group_id = None
-
-        visited = set()
-        while group_id:
-            if group_id in visited:
-                break
-            visited.add(group_id)
-
-            group_info = None
-            try:
-                if hasattr(manager, 'groups'):
-                    group_info = manager.groups.get(group_id)
-            except Exception:
-                group_info = None
-
-            if not group_info:
-                break
-
-            color = _parse_color(group_info.get('color'))
-            if color:
-                return color
-
-            group_id = group_info.get('parent_id')
-
-        return None
-
-    def _apply_group_color_style(self):
-        mode = _get_color_display_mode(getattr(self, 'config', None))
-        rgba = self._resolve_group_color()
-        
-        connection_name = getattr(self.connection, 'nickname', 'Unknown')
-        logger.debug(f"ConnectionRow {connection_name}: mode={mode}, rgba={rgba}")
-
-        if mode == 'badge':
-            # No color badge in ConnectionRow - keep default background
-            self.remove_css_class("tinted")
-        else:
-            # Apply fill color using tinted approach
-            if rgba:
-                # Add tinted class for proper spacing and selection
-                self.add_css_class("tinted")
-                
-                # Apply color directly to the row using CSS provider
-                _set_tint_card_color(self, rgba)
-                logger.debug(f"ConnectionRow {connection_name}: Applied tinted background color {rgba.to_string()}")
-            else:
-                self.remove_css_class("tinted")
-                # Clear any existing color styling
-                if hasattr(self, '_tint_provider'):
-                    self.get_style_context().remove_provider(self._tint_provider)
-                    self._tint_provider = None
-                logger.debug(f"ConnectionRow {connection_name}: No rgba color to apply")
+        if level > 0:
+            # Find the content box and set its margin
+            overlay = self.get_child()
+            if overlay and hasattr(overlay, 'get_child'):
+                main_box = overlay.get_child()
+                if main_box and hasattr(main_box, 'get_first_child'):
+                    # Skip the first child (top drop indicator) and get the content box
+                    top_indicator = main_box.get_first_child()
+                    if top_indicator and hasattr(top_indicator, 'get_next_sibling'):
+                        content = top_indicator.get_next_sibling()
+                        if content:
+                            content.set_margin_start(12 + (level * 20))
 
     # -- drag source ------------------------------------------------------
 
     def _setup_drag_source(self):
         drag_source = Gtk.DragSource()
         drag_source.set_actions(Gdk.DragAction.MOVE)
-        drag_source.set_exclusive(False)
-        drag_source.set_button(getattr(Gdk, "BUTTON_PRIMARY", 1))
-        # Disable default drag feedback
-        try:
-            drag_source.set_drag_threshold(0)
-        except Exception:
-            pass
         drag_source.connect("prepare", self._on_drag_prepare)
         drag_source.connect("drag-begin", self._on_drag_begin)
         drag_source.connect("drag-end", self._on_drag_end)
@@ -775,68 +361,19 @@ class ConnectionRow(Adw.ActionRow):
         # Store reference for cleanup
         self._drag_source = drag_source
 
-    def _setup_drop_target(self):
-        """Set up drop target for this connection row"""
-        drop_target = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
-        drop_target.connect("drop", self._on_drop)
-        drop_target.connect("enter", self._on_drop_enter)
-        drop_target.connect("leave", self._on_drop_leave)
-        drop_target.connect("motion", self._on_drop_motion)
-        self.add_controller(drop_target)
-        # Store reference for cleanup
-        self._drop_target = drop_target
-
-    def _on_drop(self, target, value, x, y):
-        """Handle drop on this connection row"""
-        window = self.get_root()
-        if window and hasattr(window, '_dragged_connections'):
-            # Hide indicators before handling drop
-            if hasattr(window, '_hide_all_drop_indicators'):
-                window._hide_all_drop_indicators()
-            # Handle reordering connections
-            return _handle_connection_reorder(window, self.connection.nickname, window._dragged_connections, x, y)
-        return False
-
-    def _on_drop_enter(self, target, x, y):
-        """Handle drag enter on this connection row"""
-        # Let the list-level handler manage indicators
-        return Gdk.DragAction.MOVE
-
-    def _on_drop_leave(self, target):
-        """Handle drag leave on this connection row"""
-        # Let the list-level handler manage indicators
-        pass
-
-    def _on_drop_motion(self, target, x, y):
-        """Handle drag motion over this connection row"""
-        # Delegate to list-level handler for proper indicator management
-        window = self.get_root()
-        if window:
-            # Convert row-relative coordinates to list-absolute coordinates
-            row_y = self.get_allocation().y
-            list_y = y + row_y
-            return _on_connection_list_motion(window, target, x, list_y)
-        return Gdk.DragAction.MOVE
-
     def _on_drag_prepare(self, source, x, y):
         window = self.get_root()
-        logger.debug(f"Drag prepare: Starting drag prepare for {self.connection.nickname}")
 
         connections_payload: List[Dict[str, Optional[int | str]]] = []
         selection_order = 0
 
         if window and hasattr(window, "connection_list"):
-            # Capture current selection at drag time
             try:
                 selected_rows = list(window.connection_list.get_selected_rows())
-                logger.debug(f"Drag prepare: Captured {len(selected_rows)} selected rows")
-            except Exception as e:
-                logger.debug(f"Drag prepare: Error getting selected rows: {e}")
+            except Exception:
                 selected_rows = []
 
-            # If no selection or self not in selection, add self
             if not selected_rows or self not in selected_rows:
-                logger.debug(f"Drag prepare: Adding self to selection")
                 selected_rows.append(self)
 
             seen_nicknames = set()
@@ -903,9 +440,6 @@ class ConnectionRow(Adw.ActionRow):
             "connections": connections_payload,
         }
 
-        logger.debug(f"Drag prepare: Final payload has {len(ordered_nicknames)} nicknames: {ordered_nicknames}")
-
-        # Store dragged connections for drop target indicators
         if window:
             window._dragged_connections = ordered_nicknames
 
@@ -917,16 +451,10 @@ class ConnectionRow(Adw.ActionRow):
         try:
             window = self.get_root()
             if window:
-                # Ensure dragged connections are set (should be set by _on_drag_prepare)
                 if not hasattr(window, "_dragged_connections"):
                     window._dragged_connections = [self.connection.nickname]
-                
-                # Mark drag as in progress
                 window._drag_in_progress = True
                 _show_ungrouped_area(window)
-                
-                # Set custom drag icon to prevent default sidebar highlighting
-                self._set_custom_drag_icon(drag)
         except Exception as e:
             logger.error(f"Error in drag begin: {e}")
 
@@ -934,23 +462,12 @@ class ConnectionRow(Adw.ActionRow):
         try:
             window = self.get_root()
             if window:
-                # Clear dragged connections tracking
                 if hasattr(window, "_dragged_connections"):
                     delattr(window, "_dragged_connections")
-                
-                # Hide drop indicators
-                if hasattr(window, '_hide_all_drop_indicators'):
-                    window._hide_all_drop_indicators()
-                
-                # Clear drag state
                 window._drag_in_progress = False
                 _hide_ungrouped_area(window)
-                _stop_connection_autoscroll(window)
-                # Restore selection mode after drag
-                window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
         except Exception as e:
             logger.error(f"Error in drag end: {e}")
-
 
     # -- display updates --------------------------------------------------
 
@@ -979,14 +496,11 @@ class ConnectionRow(Adw.ActionRow):
 
     def _update_forwarding_indicators(self):
         self._install_pf_css()
-        if not hasattr(self, "indicator_box") or self.indicator_box is None:
+        try:
+            while self.indicator_box.get_first_child():
+                self.indicator_box.remove(self.indicator_box.get_first_child())
+        except Exception:
             return
-
-        child = self.indicator_box.get_first_child()
-        while child is not None:
-            next_child = child.get_next_sibling()
-            self.indicator_box.remove(child)
-            child = next_child
 
         rules = getattr(self.connection, "forwarding_rules", []) or []
         has_local = any(r.get("enabled", True) and r.get("type") == "local" for r in rules)
@@ -994,26 +508,18 @@ class ConnectionRow(Adw.ActionRow):
         has_dynamic = any(r.get("enabled", True) and r.get("type") == "dynamic" for r in rules)
 
         def make_badge(letter: str, cls: str):
-            # Create a button with the letter
-            btn = Gtk.Button(label=letter)
-            btn.add_css_class("flat")
-            btn.set_can_focus(False)
-            btn.set_size_request(12, 12)  # Small button
-            btn.set_tooltip_text({
-                "L": "Local port forwarding",
-                "R": "Remote port forwarding", 
-                "D": "Dynamic port forwarding"
-            }.get(letter, f"{letter} forwarding"))
-            
-            # Apply Adwaita color classes based on forwarding type
-            if cls == "pf-local":
-                btn.add_css_class("accent")  # Use accent color for local forwarding
-            elif cls == "pf-remote":
-                btn.add_css_class("success")  # Use success color for remote forwarding
-            elif cls == "pf-dynamic":
-                btn.add_css_class("warning")  # Use warning color for dynamic forwarding
-                
-            return btn
+            circled_map = {"L": "\u24C1", "R": "\u24C7", "D": "\u24B9"}
+            glyph = circled_map.get(letter, letter)
+            lbl = Gtk.Label(label=glyph)
+            lbl.add_css_class(cls)
+            lbl.set_halign(Gtk.Align.CENTER)
+            lbl.set_valign(Gtk.Align.CENTER)
+            try:
+                lbl.set_xalign(0.5)
+                lbl.set_yalign(0.5)
+            except Exception:
+                pass
+            return lbl
 
         if has_local:
             self.indicator_box.append(make_badge("L", "pf-local"))
@@ -1021,8 +527,6 @@ class ConnectionRow(Adw.ActionRow):
             self.indicator_box.append(make_badge("R", "pf-remote"))
         if has_dynamic:
             self.indicator_box.append(make_badge("D", "pf-dynamic"))
-
-        self.indicator_box.set_visible(has_local or has_remote or has_dynamic)
 
     def _apply_host_label_text(self, include_port: bool | None = None):
         try:
@@ -1032,7 +536,7 @@ class ConnectionRow(Adw.ActionRow):
             hide = False
 
         if hide:
-            self.set_subtitle("••••••••••")
+            self.host_label.set_text("••••••••••")
             return
 
         format_kwargs = {}
@@ -1040,7 +544,7 @@ class ConnectionRow(Adw.ActionRow):
             format_kwargs["include_port"] = include_port
 
         display = _format_connection_host_display(self.connection, **format_kwargs)
-        self.set_subtitle(display or '')
+        self.host_label.set_text(display or '')
 
     def apply_hide_hosts(self, hide: bool):
         self._apply_host_label_text()
@@ -1086,7 +590,6 @@ class ConnectionRow(Adw.ActionRow):
             self._apply_host_label_text(include_port=True)
         self._update_forwarding_indicators()
         self.update_status()
-        self._apply_group_color_style()
 
 
 # ---------------------------------------------------------------------------
@@ -1094,84 +597,17 @@ class ConnectionRow(Adw.ActionRow):
 # ---------------------------------------------------------------------------
 
 
-def _handle_connection_drop_to_group(window, group_id, dragged_connections):
-    """Handle dropping connections into a group"""
-    try:
-        for connection_nickname in dragged_connections:
-            window.move_connection_to_group(connection_nickname, group_id)
-        
-        return True
-    except Exception as e:
-        logger.error(f"Error moving connections to group: {e}")
-        return False
-
-def _handle_connection_reorder(window, target_connection, dragged_connections, x, y):
-    """Handle reordering connections"""
-    try:
-        target_row = None
-        child = window.connection_list.get_first_child()
-        while child:
-            if hasattr(child, 'connection') and child.connection.nickname == target_connection:
-                target_row = child
-                break
-            child = child.get_next_sibling()
-
-        if not target_row or not hasattr(target_row, "connection"):
-            return False
-
-        drop_above = y < target_row.get_allocated_height() / 2
-        position = "above" if drop_above else "below"
-
-        group_manager = window.group_manager
-
-        connection_to_group = dict(getattr(group_manager, 'connections', {}))
-        group_connections: Dict[Optional[str], List[str]] = {
-            group_id: list(group_info.get('connections', []))
-            for group_id, group_info in getattr(group_manager, 'groups', {}).items()
-        }
-        group_connections.setdefault(None, list(getattr(group_manager, 'root_connections', [])))
-
-        plan = reorder_connections_state(
-            connection_to_group,
-            group_connections,
-            target_connection,
-            list(dragged_connections),
-            position,
-        )
-
-        if not plan.changed:
-            return True
-
-        group_manager.connections = plan.connection_to_group
-
-        for group_id, group_info in group_manager.groups.items():
-            group_info['connections'] = list(plan.group_connections.get(group_id, []))
-
-        group_manager.root_connections = list(plan.group_connections.get(None, []))
-        group_manager._save_groups()
-        window.rebuild_connection_list()
-        return True
-    except Exception as e:
-        logger.error(f"Error reordering connections: {e}")
-        return False
-
 def setup_connection_list_dnd(window):
     """Set up drag and drop for the window's connection list."""
-    
-    # Add connection list drop target for autoscroll and motion handling
+
     drop_target = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
     drop_target.connect("drop", lambda t, v, x, y: _on_connection_list_drop(window, t, v, x, y))
     drop_target.connect("motion", lambda t, x, y: _on_connection_list_motion(window, t, x, y))
     drop_target.connect("leave", lambda t: _on_connection_list_leave(window, t))
     window.connection_list.add_controller(drop_target)
-    
+
     window._drop_indicator_row = None
     window._drop_indicator_position = None
-    _remove_drop_placeholder(window)
-    if not hasattr(window, "_drop_placeholder_row"):
-        window._drop_placeholder_row = None
-    window._drop_placeholder_target_row = None
-    window._drop_placeholder_position = None
     window._ungrouped_area_row = None
     window._ungrouped_area_visible = False
     window._connection_autoscroll_timeout_id = 0
@@ -1201,49 +637,10 @@ def _on_connection_list_motion(window, target, x, y):
         _show_ungrouped_area(window)
         _update_connection_autoscroll(window, y)
 
-        row_bounds: List[RowBounds] = []
-        row_lookup: Dict[str, Gtk.ListBoxRow] = {}
-
-        child = window.connection_list.get_first_child()
-        index = 0
-        while child:
-            if isinstance(child, Gtk.ListBoxRow):
-                allocation = child.get_allocation()
-                row_key = str(index)
-                row_bounds.append(
-                    RowBounds(
-                        key=row_key,
-                        top=float(allocation.y),
-                        height=float(max(1, allocation.height)),
-                    )
-                )
-                row_lookup[row_key] = child
-                index += 1
-            child = child.get_next_sibling()
-
-        hit = hit_test_insertion(row_bounds, float(y))
-        if not hit:
-            _clear_drop_indicator(window)
-            return Gdk.DragAction.MOVE
-
-        row = row_lookup.get(hit.key)
+        row = window.connection_list.get_row_at_y(int(y))
         if not row:
             _clear_drop_indicator(window)
             return Gdk.DragAction.MOVE
-
-        position = hit.position
-
-        if getattr(row, 'drop_placeholder', False):
-            target_row = getattr(window, '_drop_placeholder_target_row', None)
-            stored_position = getattr(window, '_drop_placeholder_position', None)
-
-            if target_row is not None:
-                row = target_row
-                if stored_position in {"above", "below"}:
-                    position = stored_position
-            else:
-                _clear_drop_indicator(window)
-                return Gdk.DragAction.MOVE
 
         if getattr(row, "ungrouped_area", False):
             # For ungrouped area, we don't need special highlighting
@@ -1254,18 +651,21 @@ def _on_connection_list_motion(window, target, x, y):
 
         # Show indicators for valid drop targets
         if hasattr(row, "show_drop_indicator"):
+            row_y = row.get_allocation().y
+            row_height = row.get_allocation().height
+            relative_y = y - row_y
+            position = "above" if relative_y < row_height / 2 else "below"
+            
             # Handle connection rows
-            dragged_connections = set(getattr(window, "_dragged_connections", []) or [])
-            if hasattr(row, "connection") and dragged_connections:
-                # Don't show indicators on the row being dragged
+            if hasattr(row, "connection"):
+                dragged = set(getattr(window, "_dragged_connections", []) or [])
                 nickname = getattr(getattr(row, "connection", None), "nickname", None)
-                if nickname in dragged_connections:
+                if dragged and nickname in dragged:
                     _clear_drop_indicator(window)
                     return Gdk.DragAction.MOVE
 
-                # Only show indicator if this is a different connection
                 _show_drop_indicator(window, row, position)
-
+            
             # Handle group rows
             elif (hasattr(row, "group_id") and hasattr(window, "_dragged_group_id")):
                 # Don't show indicators on the group being dragged
@@ -1280,11 +680,8 @@ def _on_connection_list_motion(window, target, x, y):
             elif (hasattr(row, "connection") and hasattr(window, "_dragged_group_id")):
                 # Dragging group over connection - show indicator
                 _show_drop_indicator(window, row, position)
-            elif hasattr(row, "group_id") and dragged_connections:
-                if position == "above":
-                    _show_drop_indicator(window, row, "above")
-                else:
-                    _show_drop_indicator_on_group(window, row)
+            elif (hasattr(row, "group_id") and getattr(window, "_dragged_connections", None)):
+                _show_drop_indicator_on_group(window, row)
             else:
                 _clear_drop_indicator(window)
         else:
@@ -1309,101 +706,6 @@ def _on_connection_list_leave(window, target):
     return True
 
 
-def _ensure_drop_placeholder(window):
-    """Create or return a lightweight placeholder row used to show drop slots."""
-    placeholder = getattr(window, "_drop_placeholder_row", None)
-    if placeholder and isinstance(placeholder, Gtk.ListBoxRow):
-        return placeholder
-
-    try:
-        line = Gtk.Box()
-        line.set_hexpand(True)
-        line.set_size_request(-1, 2)
-        line.add_css_class("drop-placeholder-line")
-
-        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        container.add_css_class("drop-placeholder-container")
-        container.set_margin_start(8)
-        container.set_margin_end(8)
-        container.set_margin_top(6)
-        container.set_margin_bottom(6)
-        container.append(line)
-
-        placeholder = Gtk.ListBoxRow()
-        placeholder.set_child(container)
-        placeholder.set_selectable(False)
-        placeholder.set_activatable(False)
-        placeholder.drop_placeholder = True
-        placeholder.add_css_class("drop-placeholder-row")
-
-        window._drop_placeholder_row = placeholder
-        window._drop_placeholder_target_row = None
-        window._drop_placeholder_position = None
-        return placeholder
-    except Exception:
-        logger.debug("Failed to create drop placeholder row", exc_info=True)
-        return None
-
-
-def _show_drop_placeholder(window, anchor_row, position):
-    """Insert the placeholder row relative to the anchor row."""
-    listbox = getattr(window, "connection_list", None)
-    if listbox is None or anchor_row is None:
-        return
-
-    placeholder = _ensure_drop_placeholder(window)
-    if placeholder is None:
-        return
-
-    try:
-        anchor_index = anchor_row.get_index()
-        if not isinstance(anchor_index, int) or anchor_index < 0:
-            return
-
-        insert_index = anchor_index
-        if str(position).lower() in {"below", "bottom"}:
-            insert_index += 1
-
-        parent = placeholder.get_parent()
-        current_index = placeholder.get_index() if isinstance(parent, Gtk.ListBox) else None
-
-        if parent is listbox and current_index == insert_index:
-            pass
-        else:
-            if parent is not None:
-                try:
-                    parent.remove(placeholder)
-                except Exception:
-                    logger.debug("Failed to detach drop placeholder", exc_info=True)
-
-            try:
-                listbox.insert(placeholder, insert_index)
-            except Exception:
-                logger.debug("Failed to insert drop placeholder", exc_info=True)
-                return
-
-        window._drop_placeholder_target_row = anchor_row
-        window._drop_placeholder_position = "below" if str(position).lower() in {"below", "bottom"} else "above"
-    except Exception:
-        logger.debug("Error positioning drop placeholder", exc_info=True)
-
-
-def _remove_drop_placeholder(window):
-    placeholder = getattr(window, "_drop_placeholder_row", None)
-    if not placeholder:
-        return
-
-    parent = placeholder.get_parent()
-    if parent is not None:
-        try:
-            parent.remove(placeholder)
-        except Exception:
-            logger.debug("Failed to remove drop placeholder", exc_info=True)
-
-    window._drop_placeholder_target_row = None
-    window._drop_placeholder_position = None
-
-
 def _show_drop_indicator(window, row, position):
     try:
         # Only update if the indicator has changed
@@ -1411,12 +713,13 @@ def _show_drop_indicator(window, row, position):
             window._drop_indicator_position != position):
             
             # Clear any existing indicators
-            if hasattr(window, '_hide_all_drop_indicators'):
-                window._hide_all_drop_indicators()
-
-            _remove_drop_placeholder(window)
-
-            _show_drop_placeholder(window, row, position)
+            if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
+                window._drop_indicator_row.hide_drop_indicators()
+            
+            # Show indicator on the target row
+            if hasattr(row, 'show_drop_indicator'):
+                show_top = (position == "above")
+                row.show_drop_indicator(show_top)
 
             window._drop_indicator_row = row
             window._drop_indicator_position = position
@@ -1428,22 +731,19 @@ def _show_drop_indicator_on_group(window, row):
     """Show a special indicator when dropping a connection onto a group (adds to group)"""
     try:
         # Only update if the indicator has changed
-        if (
-            window._drop_indicator_row != row
-            or window._drop_indicator_position != "on_group"
-        ):
-
-            # Clear any existing indicators (line + highlight)
-            if hasattr(window, "_hide_all_drop_indicators"):
-                window._hide_all_drop_indicators()
-
-            _remove_drop_placeholder(window)
-
-            _show_drop_placeholder(window, row, "below")
-
-            # Provide the shaded backdrop that communicates "drop into group"
-            if hasattr(row, "show_group_highlight"):
+        if (window._drop_indicator_row != row or
+            window._drop_indicator_position != "on_group"):
+            
+            # Clear any existing indicators
+            if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
+                window._drop_indicator_row.hide_drop_indicators()
+            
+            # Show group highlight indicator instead of line indicators
+            if hasattr(row, 'show_group_highlight'):
                 row.show_group_highlight(True)
+            elif hasattr(row, 'show_drop_indicator'):
+                # Fallback: show bottom indicator if group highlight not available
+                row.show_drop_indicator(False)
 
             window._drop_indicator_row = row
             window._drop_indicator_position = "on_group"
@@ -1507,14 +807,8 @@ def _hide_ungrouped_area(window):
 
 def _clear_drop_indicator(window):
     try:
-        previous_row = getattr(window, '_drop_indicator_row', None)
-        if previous_row and hasattr(previous_row, 'show_group_highlight'):
-            previous_row.show_group_highlight(False)
-
-        if hasattr(window, '_hide_all_drop_indicators'):
-            window._hide_all_drop_indicators()
-
-        _remove_drop_placeholder(window)
+        if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
+            window._drop_indicator_row.hide_drop_indicators()
 
         window._drop_indicator_row = None
         window._drop_indicator_position = None
@@ -1527,11 +821,6 @@ def _clear_drop_indicator(window):
 
 def _on_connection_list_drop(window, target, value, x, y):
     try:
-        indicator_row = getattr(window, '_drop_indicator_row', None)
-        indicator_position = getattr(window, '_drop_indicator_position', None)
-        placeholder_target = getattr(window, '_drop_placeholder_target_row', None)
-        placeholder_position = getattr(window, '_drop_placeholder_position', None)
-
         _clear_drop_indicator(window)
         _hide_ungrouped_area(window)
         _stop_connection_autoscroll(window)
@@ -1561,160 +850,112 @@ def _on_connection_list_drop(window, target, value, x, y):
         changes_made = False
 
         if drop_type == "connection":
-            connections_payload = value.get("connections")
-            ordered_pairs: List[tuple[int, str]] = []
-
-            if isinstance(connections_payload, list):
-                for order, entry in enumerate(connections_payload):
-                    if not isinstance(entry, dict):
-                        continue
-                    nickname = entry.get("nickname") or entry.get("connection_nickname")
-                    if not isinstance(nickname, str):
-                        continue
-                    idx = entry.get("index")
-                    sort_key = order
-                    if isinstance(idx, int) and idx >= 0:
-                        sort_key = idx
-                    ordered_pairs.append((sort_key, nickname))
-
-            if not ordered_pairs:
-                nicknames = value.get("connection_nicknames")
-                if isinstance(nicknames, list):
-                    for order, nickname in enumerate(n for n in nicknames if isinstance(n, str)):
-                        ordered_pairs.append((order, nickname))
-
-            if not ordered_pairs:
-                nickname = value.get("connection_nickname")
-                if isinstance(nickname, str):
-                    ordered_pairs.append((0, nickname))
-
-            if not ordered_pairs:
-                return False
-
-            ordered_pairs.sort(key=lambda item: item[0])
-
-            seen = set()
             connection_nicknames: List[str] = []
-            for _, nickname in ordered_pairs:
-                if nickname not in seen:
-                    seen.add(nickname)
-                    connection_nicknames.append(nickname)
+
+            payload = value.get("connections")
+            if isinstance(payload, list):
+                for item in payload:
+                    if isinstance(item, dict):
+                        nickname = item.get("nickname")
+                        if isinstance(nickname, str) and nickname not in connection_nicknames:
+                            connection_nicknames.append(nickname)
 
             if not connection_nicknames:
-                return False
+                raw_list = value.get("connection_nicknames")
+                if isinstance(raw_list, list):
+                    for nickname in raw_list:
+                        if isinstance(nickname, str) and nickname not in connection_nicknames:
+                            connection_nicknames.append(nickname)
 
-            target_row = window.connection_list.get_row_at_y(int(y))
+            if not connection_nicknames:
+                nickname = value.get("connection_nickname")
+                if isinstance(nickname, str):
+                    connection_nicknames.append(nickname)
 
-            if not target_row and indicator_row is not None:
-                target_row = indicator_row
+            if connection_nicknames:
+                target_row = window.connection_list.get_row_at_y(int(y))
 
-            if not target_row and placeholder_target is not None:
-                target_row = placeholder_target
-
-            if not target_row:
-                for nickname in connection_nicknames:
-                    current_group_id = window.group_manager.get_connection_group(nickname)
-                    if current_group_id is not None:
+                if not target_row:
+                    for nickname in connection_nicknames:
                         window.group_manager.move_connection(nickname, None)
                         changes_made = True
-                # Dropping on empty area when already ungrouped leaves ordering unchanged
-            elif getattr(target_row, "ungrouped_area", False):
-                for nickname in connection_nicknames:
-                    current_group_id = window.group_manager.get_connection_group(nickname)
-                    if current_group_id is not None:
+                elif getattr(target_row, "ungrouped_area", False):
+                    for nickname in connection_nicknames:
                         window.group_manager.move_connection(nickname, None)
                         changes_made = True
-            else:
-                row_allocation = target_row.get_allocation()
-                row_y = row_allocation.y
-                row_height = row_allocation.height
-                relative_y = y - row_y
-                position = "above" if relative_y < row_height / 2 else "below"
+                else:
+                    row_y = target_row.get_allocation().y
+                    row_height = target_row.get_allocation().height
+                    relative_y = y - row_y
+                    position = "above" if relative_y < row_height / 2 else "below"
 
-                if indicator_row is target_row:
-                    if indicator_position == 'on_group':
-                        position = 'below'
-                    elif indicator_position in {'above', 'below'}:
-                        position = indicator_position
-                elif placeholder_target is target_row and placeholder_position in {'above', 'below'}:
-                    position = placeholder_position
+                    if hasattr(target_row, "group_id"):
+                        target_group_id = target_row.group_id
 
-                if hasattr(target_row, "group_id"):
-                    target_group_id = target_row.group_id
-                    
-                    # Check if we're dropping in the top half (above first row) or bottom half (into group)
-                    if position == "above":
-                        # Dropping in top half - position above the first row in the group
-                        # Find the first connection in this group
-                        first_connection = None
-                        child = window.connection_list.get_first_child()
-                        while child:
-                            if hasattr(child, 'connection'):
-                                connection_group = window.group_manager.get_connection_group(child.connection.nickname)
-                                if connection_group == target_group_id:
-                                    first_connection = child.connection.nickname
-                                    break
-                            child = child.get_next_sibling()
-                        
-                        if first_connection:
-                            # Position above the first connection in the group
-                            for nickname in connection_nicknames:
-                                current_group_id = window.group_manager.get_connection_group(nickname)
-                                if target_group_id != current_group_id:
-                                    window.group_manager.move_connection(nickname, target_group_id)
+                        if position == "above":
+                            first_connection = None
+                            child = window.connection_list.get_first_child()
+                            while child:
+                                if hasattr(child, 'connection'):
+                                    connection_group = window.group_manager.get_connection_group(child.connection.nickname)
+                                    if connection_group == target_group_id:
+                                        first_connection = child.connection.nickname
+                                        break
+                                child = child.get_next_sibling()
+
+                            if first_connection:
+                                for nickname in connection_nicknames:
+                                    current_group_id = window.group_manager.get_connection_group(nickname)
+                                    if current_group_id != target_group_id:
+                                        window.group_manager.move_connection(nickname, target_group_id)
+                                        changes_made = True
+                                    window.group_manager.reorder_connection_in_group(
+                                        nickname, first_connection, "above"
+                                    )
+                                    first_connection = nickname
                                     changes_made = True
-                                
-                                # Position above the first connection
-                                window.group_manager.reorder_connection_in_group(
-                                    nickname, first_connection, "above"
-                                )
-                                changes_made = True
+                            else:
+                                for nickname in connection_nicknames:
+                                    if window.group_manager.get_connection_group(nickname) != target_group_id:
+                                        window.group_manager.move_connection(nickname, target_group_id)
+                                        changes_made = True
                         else:
-                            # No connections in group yet, just add to group
                             for nickname in connection_nicknames:
-                                current_group_id = window.group_manager.get_connection_group(nickname)
-                                if target_group_id != current_group_id:
+                                if window.group_manager.get_connection_group(nickname) != target_group_id:
                                     window.group_manager.move_connection(nickname, target_group_id)
                                     changes_made = True
                     else:
-                        # Dropping in bottom half - add to group
-                        for nickname in connection_nicknames:
-                            current_group_id = window.group_manager.get_connection_group(nickname)
-                            if target_group_id != current_group_id:
-                                window.group_manager.move_connection(nickname, target_group_id)
-                                changes_made = True
-                else:
-                    target_connection = getattr(target_row, "connection", None)
-                    if target_connection:
-                        reference_nickname = target_connection.nickname
-                        target_group_id = window.group_manager.get_connection_group(reference_nickname)
+                        target_connection = getattr(target_row, "connection", None)
+                        if target_connection:
+                            reference_nickname = target_connection.nickname
+                            target_group_id = window.group_manager.get_connection_group(reference_nickname)
 
-                        for nickname in connection_nicknames:
-                            current_group_id = window.group_manager.get_connection_group(nickname)
-                            if target_group_id != current_group_id:
-                                window.group_manager.move_connection(nickname, target_group_id)
-                                changes_made = True
-
-                        if position == "above":
-                            reference = reference_nickname
-                            for nickname in reversed(connection_nicknames):
-                                if nickname == reference:
-                                    continue
-                                window.group_manager.reorder_connection_in_group(
-                                    nickname, reference, "above"
-                                )
-                                reference = nickname
-                                changes_made = True
-                        else:
-                            reference = reference_nickname
                             for nickname in connection_nicknames:
-                                if nickname == reference:
-                                    continue
-                                window.group_manager.reorder_connection_in_group(
-                                    nickname, reference, "below"
-                                )
-                                reference = nickname
-                                changes_made = True
+                                current_group_id = window.group_manager.get_connection_group(nickname)
+                                if current_group_id != target_group_id:
+                                    window.group_manager.move_connection(nickname, target_group_id)
+                                    changes_made = True
+
+                            if position == "above":
+                                reference = reference_nickname
+                                for nickname in reversed(connection_nicknames):
+                                    if nickname == reference:
+                                        continue
+                                    window.group_manager.reorder_connection_in_group(
+                                        nickname, reference, "above"
+                                    )
+                                    reference = nickname
+                                    changes_made = True
+                            else:
+                                reference = reference_nickname
+                                for nickname in connection_nicknames:
+                                    if nickname == reference:
+                                        continue
+                                    window.group_manager.reorder_connection_in_group(
+                                        nickname, reference, "below"
+                                    )
+                                    reference = nickname
+                                    changes_made = True
 
         elif drop_type == "group":
             group_id = value.get("group_id")
@@ -1832,19 +1073,27 @@ def _update_connection_autoscroll(window, y):
     adjustment_value = vadjustment.get_value() if vadjustment else 0.0
     viewport_y = max(0.0, min(height, y - adjustment_value))
 
-    params = AutoscrollParams(
-        viewport_height=float(height),
-        pointer_y=float(viewport_y),
-        margin=float(margin),
-        max_velocity=float(max_velocity),
-    )
+    top_threshold = margin
+    bottom_threshold = height - margin
 
-    velocity = autoscroll_velocity(params)
+    velocity = 0.0
+    if viewport_y < top_threshold:
+        distance = top_threshold - viewport_y
+        velocity = -_calculate_autoscroll_velocity(distance, margin, max_velocity)
+    elif viewport_y > bottom_threshold:
+        distance = viewport_y - bottom_threshold
+        velocity = _calculate_autoscroll_velocity(distance, margin, max_velocity)
 
     if velocity:
         _start_connection_autoscroll(window, velocity)
     else:
         _stop_connection_autoscroll(window)
+
+
+def _calculate_autoscroll_velocity(distance, margin, max_velocity):
+    """Scale the autoscroll velocity based on how deep the pointer is in the margin."""
+    ratio = min(1.0, max(0.0, distance) / margin)
+    return max_velocity * ratio
 
 
 def _start_connection_autoscroll(window, velocity):

@@ -318,11 +318,23 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 return
             provider = Gtk.CssProvider()
             css = """
+            /* Pulse highlight for selected rows */
+            .pulse-highlight {
+              background: alpha(@accent_bg_color, 0.5);
+              border-radius: 8px;
+              box-shadow: 0 0 0 0.5px alpha(@accent_bg_color, 0.28) inset;
+              opacity: 0;
+              transition: opacity 0.3s ease-in-out;
+            }
+            .pulse-highlight.on {
+              opacity: 1;
+            }
+
             /* optional: a subtle focus ring while the list is focused */
-            /*row:selected:focus-within {
+            row:selected:focus-within {
               /* box-shadow: 0 0 8px 2px @accent_bg_color inset; */
               /* border: 2px solid @accent_bg_color;  Adds a solid border of 2px thickness */
-              /*border-radius: 8px;
+              border-radius: 8px;
             }
             
             /* Group styling */
@@ -334,7 +346,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             }
             
             .group-expand-button:hover {
-              background: rgba(53, 132, 228, 0.1);
+              background: alpha(@accent_bg_color, 0.1);
             }
             
             /* Smooth drag indicator transitions */
@@ -347,187 +359,63 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               opacity: 1;
             }
             
-            /* List-level overlay drop indicator lines for drag and drop */
-            .drop-indicator-line {
-              min-height: 1px; /* Use 1px to sit perfectly in a 1px gap */
-              background-image: linear-gradient(@accent_bg_color, @accent_bg_color);
-              background-repeat: no-repeat;
-              background-size: 100% 100%;
-              opacity: 0;
-              transition: opacity 120ms ease-in-out;
-            }
-            
-            .drop-indicator-line.visible { 
-              opacity: 1; 
-            }
-            
-            /* Dot cap (pin) */
-            .drop-indicator-dot {
-              min-width: 6px;
-              min-height: 6px;
-              background-color: @accent_bg_color;
-              border-radius: 9999px;
-              opacity: 0;
-              transition: opacity 120ms ease-in-out;
-            }
-            
-            .drop-indicator-dot.visible { 
-              opacity: 1; 
-            }
-
-            .drop-placeholder-row {
-              padding: 0;
-              min-height: 6px;
-            }
-
-            .drop-placeholder-container {
-              margin: 4px 8px;
-            }
-
-            .drop-placeholder-line {
-              min-height: 2px;
-              background-color: @accent_bg_color;
-              border-radius: 999px;
-            }
-
-            .drop-indicator-on-group {
-              background-color: alpha(@accent_bg_color, 0.1);
-              border: 1px solid @accent_bg_color;
-              border-radius: 8px;
-            }
-            
-            .drop-target-group {
-              background-color: alpha(@accent_bg_color, 0.1);
-              border: 1px solid @accent_bg_color;
-              border-radius: 8px;
-            }
-            
-            /* Use Adwaita's navigation-sidebar styling */
+            /* Smooth transitions for connection rows during drag */
             .navigation-sidebar {
-              transition: transform 0.1s ease-out;
-            }
-
-            /* Disable drag feedback on sidebar containers */
-            .sidebar {
-              background: transparent;
-            }
-
-            .sidebar scrolledwindow {
-              background: transparent;
-            }
-
-            .navigation-sidebar:drop(active),
-            .navigation-sidebar *:drop(active),
-            .navigation-sidebar:drag-hover,
-            .navigation-sidebar *:drag-hover {
-              background: transparent;
-              box-shadow: none;
-              outline: none;
-            }
-
-            /* Override any drag feedback styling */
-            .sidebar:backdrop,
-            .sidebar scrolledwindow:backdrop {
-              background: transparent;
+              transition: transform 0.1s ease-out, opacity 0.1s ease-out;
             }
             
-            /* Disable drag feedback on the connection list itself */
-            .navigation-sidebar {
-              background: transparent;
+            .navigation-sidebar.dragging {
+              opacity: 0.7;
+              transform: scale(0.98);
             }
-            
-            /* Tinted row styling for proper Adwaita look and feel */
-            .adw-action-row.tinted {
-              margin: 4px 8px;
-              border-radius: 10px;
-            }
-            
-            /* Only apply color when NOT selected/hovered/active */
-            .adw-action-row.tinted:not(:selected):not(:hover):not(:active) {
-              background-color: alpha(@blue_4, 0.18);
-            }
-            
             
             /* Group drop target highlight */
             .drop-target-group {
-              background: rgba(53, 132, 228, 0.25);
+              background: alpha(@accent_bg_color, 0.25);
               border-radius: 8px;
-              box-shadow: 0 0 0 2px #3584e4 inset,
-                          0 2px 8px rgba(53, 132, 228, 0.4);
+              box-shadow: 0 0 0 2px @accent_bg_color inset,
+                          0 2px 8px alpha(@accent_bg_color, 0.4);
               transform: scale(1.02);
               transition: all 0.2s ease-in-out;
+              animation: group-drop-pulse 1.5s ease-in-out infinite;
+            }
+            
+            @keyframes group-drop-pulse {
+              0%, 100% { 
+                box-shadow: 0 0 0 2px @accent_bg_color inset,
+                           0 2px 8px alpha(@accent_bg_color, 0.4);
+              }
+              50% { 
+                box-shadow: 0 0 0 3px @accent_bg_color inset,
+                           0 4px 12px alpha(@accent_bg_color, 0.6);
+              }
             }
             
             /* Drop target indicator styling */
             .drop-target-indicator {
-              background: rgba(53, 132, 228, 0.9);
+              background: alpha(@accent_bg_color, 0.9);
               color: white;
               border-radius: 12px;
               padding: 4px 12px;
               margin: 4px 8px;
               font-weight: bold;
               font-size: 0.9em;
-            }
-
-            /* Tag accent styling for symbolic icons */
-            .tag-accent {
-              color: #3584e4;
+              animation: drop-indicator-bounce 0.6s ease-in-out;
             }
             
-            /* Keep good contrast when the row is selected/active */
-            /*.adw-action-row:selected .tag-accent,
-            /*.adw-action-row:active .tag-accent {
-              /*color: white;
-            }
-
-            /* Port forwarding indicator color overrides */
-            button.circular.accent {
-              background-color: #3584e4; /* Custom blue for local forwarding */
-              color: white;
-            }
-            
-            button.circular.success {
-              background-color: #2ec27e; /* Custom green for remote forwarding */
-              color: white;
-            }
-            
-            button.circular.warning {
-              background-color: #e66100; /* Custom orange for dynamic forwarding */
-              color: white;
-            }
-            
-            /* Hover states for port forwarding buttons */
-            button.circular.accent:hover {
-              background-color: #1c71d8;
-            }
-            
-            button.circular.success:hover {
-              background-color: #26a269;
-            }
-            
-            button.circular.warning:hover {
-              background-color: #d04a00;
-            }
-
-            /* Color tag button overrides */
-            /* Color tag button overrides - handled by individual CSS providers */
-
-            /* Circular button size classes */
-            button.circular.small {
-              min-width: 8px;
-              min-height: 8px;
-            }
-
-            /* Normal (default Libadwaita) */
-            button.circular {
-              min-width: 12px;
-              min-height: 12px;
-            }
-
-            /* Large circle */
-            button.circular.large {
-              min-width: 16px;
-              min-height: 16px;
+            @keyframes drop-indicator-bounce {
+              0% { 
+                transform: translateY(-10px) scale(0.8);
+                opacity: 0;
+              }
+              60% {
+                transform: translateY(2px) scale(1.05);
+                opacity: 1;
+              }
+              100% {
+                transform: translateY(0) scale(1);
+                opacity: 1;
+              }
             }
 
             """
@@ -745,50 +633,71 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
 
 
-    def _setup_connection_list_interactions(self):
-        """Set up event controllers for connection list interaction"""
-        # Double-click controller (only for double-clicks, not single clicks)
-        click_ctl = Gtk.GestureClick()
-        click_ctl.set_button(1)  # Left mouse button
-        click_ctl.connect("pressed", self._on_connection_list_double_click)
-        self.connection_list.add_controller(click_ctl)
-        logger.debug("GestureClick controller added to connection_list for double-clicks")
+    def pulse_selected_row(self, list_box: Gtk.ListBox, repeats=3, duration_ms=280):
+        """Pulse the selected row with highlight effect"""
+        row = list_box.get_selected_row() or (list_box.get_selected_rows()[0] if list_box.get_selected_rows() else None)
+        if not row:
+            return
+        if not hasattr(row, "_pulse"):
+            return
+        # Ensure it's realized so opacity changes render
+        if not row.get_mapped():
+            row.realize()
+        
+        # Use CSS-based pulse for now
+        pulse = row._pulse
+        cycle_duration = max(300, duration_ms // repeats)  # Minimum 300ms per cycle for faster pulses
+        
+        def do_cycle(count):
+            if count == 0:
+                return False
+            pulse.add_css_class("on")
+            # Keep the pulse visible for a shorter time for snappier effect
+            GLib.timeout_add(cycle_duration // 2, lambda: (
+                pulse.remove_css_class("on"),
+                # Add a shorter delay before the next pulse
+                GLib.timeout_add(cycle_duration // 2, lambda: do_cycle(count - 1)) or True
+            ) and False)
+            return False
 
+        GLib.idle_add(lambda: do_cycle(repeats))
+
+    def _test_css_pulse(self, action, param):
+        """Simple test to manually toggle CSS class"""
+        row = self.connection_list.get_selected_row()
+        if row and hasattr(row, "_pulse"):
+            pulse = row._pulse
+            pulse.add_css_class("on")
+            GLib.timeout_add(1000, lambda: (
+                pulse.remove_css_class("on")
+            ) or False)
+
+    def _setup_interaction_stop_pulse(self):
+        """Set up event controllers to stop pulse effect on user interaction"""
+        # Mouse click controller
+        click_ctl = Gtk.GestureClick()
+        click_ctl.connect("pressed", self._stop_pulse_on_interaction)
+        self.connection_list.add_controller(click_ctl)
+        
         # Key controller
         key_ctl = Gtk.EventControllerKey()
         key_ctl.connect("key-pressed", self._on_connection_list_key_pressed)
         self.connection_list.add_controller(key_ctl)
-        logger.debug("EventControllerKey added to connection_list")
-
-    def _on_connection_list_double_click(self, gesture, n_press, x, y):
-        """Handle double-clicks on the connection list"""
-        if n_press == 2:  # Only handle double-clicks
-            # Get the row that was clicked
-            row, _, _ = self._resolve_connection_list_event(x, y)
-            if row is None:
-                logger.debug(f"_on_connection_list_double_click: No row found at ({x}, {y})")
-                return
-
-            row_type = "connection" if hasattr(row, 'connection') else "group" if hasattr(row, 'group_id') else "unknown"
-            logger.debug(f"_on_connection_list_double_click: Double-click on {row_type} row")
-
-            if hasattr(row, 'connection'):
-                logger.debug(f"_on_connection_list_double_click: Connecting to {row.connection.nickname}")
-                self._cycle_connection_tabs_or_open(row.connection)
-            elif hasattr(row, 'group_id'):
-                logger.debug(f"_on_connection_list_double_click: Toggling group {row.group_id}")
-                row._toggle_expand()
+        
+        # Scroll controller
+        scroll_ctl = Gtk.EventControllerScroll()
+        scroll_ctl.connect("scroll", self._stop_pulse_on_interaction)
+        self.connection_list.add_controller(scroll_ctl)
 
     def _on_connection_list_key_pressed(self, controller, keyval, keycode, state):
         """Handle key presses in the connection list"""
-        # Handle Enter key for both group and connection rows
+        # Stop pulse effect on any key press
+        self._stop_pulse_on_interaction(controller)
+        
+        # Handle Enter key specifically
         if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
             selected_row = self.connection_list.get_selected_row()
-            if selected_row and hasattr(selected_row, 'group_id'):
-                logger.debug(f"_on_connection_list_key_pressed: Enter key pressed on group row {selected_row.group_id}")
-                selected_row._toggle_expand()
-                return True  # Claim the event
-            elif selected_row and hasattr(selected_row, 'connection'):
+            if selected_row and hasattr(selected_row, 'connection'):
                 connection = selected_row.connection
                 self._focus_most_recent_tab_or_open_new(connection)
                 return True  # Consume the event to prevent row-activated
@@ -810,6 +719,36 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             return False
         return False
+
+    def _stop_pulse_on_interaction(self, controller, *args):
+        """Stop any ongoing pulse effect when user interacts"""
+        # Stop pulse on any row that has the 'on' class
+        for row in self.connection_list:
+            if hasattr(row, "_pulse"):
+                pulse = row._pulse
+                if "on" in pulse.get_css_classes():
+                    pulse.remove_css_class("on")
+
+    def _wire_pulses(self):
+        """Wire pulse effects to trigger on focus-in only"""
+        # Track if this is the initial startup focus
+        self._is_initial_focus = True
+        
+        # When list gains keyboard focus (e.g., after Ctrl/⌘+L)
+        focus_ctl = Gtk.EventControllerFocus()
+        def on_focus_enter(*args):
+            # Don't pulse on initial startup focus
+            if self._is_initial_focus:
+                self._is_initial_focus = False
+                return
+            self.pulse_selected_row(self.connection_list, repeats=1, duration_ms=600)
+        focus_ctl.connect("enter", on_focus_enter)
+        self.connection_list.add_controller(focus_ctl)
+        
+        # Stop pulse effect when user interacts with the list
+        self._setup_interaction_stop_pulse()
+        
+        # Sidebar toggle action registered via register_window_actions
 
     def setup_window(self):
         """Configure main window properties"""
@@ -1224,12 +1163,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         sidebar_box.add_css_class('sidebar')
         
-        # Disable drag feedback on the sidebar box to prevent container highlighting
-        try:
-            sidebar_box.set_drag_threshold(0)
-        except Exception:
-            pass
-        
         # Sidebar header
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         header.set_margin_start(12)
@@ -1351,28 +1284,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.connection_scrolled.set_vexpand(True)
         
-        # Disable drag feedback on the scrolled window to prevent container highlighting
-        try:
-            self.connection_scrolled.set_drag_threshold(0)
-        except Exception:
-            pass
-        
         self.connection_list = Gtk.ListBox()
         self.connection_list.add_css_class("navigation-sidebar")
-        self.connection_list.add_css_class("rich-list")
         self.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
         try:
             self.connection_list.set_can_focus(True)
         except Exception:
             pass
         
-        # Set up controllers for connection list interactions
-        self._setup_connection_list_interactions()
+        # Wire pulse effects
+        self._wire_pulses()
         
         # Connect signals
         self.connection_list.connect('row-selected', self.on_connection_selected)  # For button sensitivity
         self.connection_list.connect('row-activated', self.on_connection_activated)  # For Enter key/double-click
-        logger.debug("Connected row-selected and row-activated signals to connection_list")
         
         # Make sure the connection list is focusable and can receive key events
         self.connection_list.set_focusable(True)
@@ -1400,6 +1325,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             def _on_right_click(gesture, n_press, x, y):
                 try:
                     logger.debug("Simple right-click detected - showing context menu for selected row")
+                    
+                    # Clear any existing pulse effects to prevent multiple highlights
+                    self._stop_pulse_on_interaction(None)
                     
                     # Try to detect the clicked row, but fall back to selected row if detection fails
                     row = None
@@ -1624,6 +1552,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if n_press != 1:
                     return
 
+                try:
+                    self._stop_pulse_on_interaction(None)
+                except Exception:
+                    pass
+
                 row, _, _ = self._resolve_connection_list_event(x, y)
 
                 if not row:
@@ -1683,59 +1616,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             )
         
         self.connection_scrolled.set_child(self.connection_list)
-        
-        # Create overlay wrapper for drop indicators
-        self.connection_overlay = Gtk.Overlay()
-        self.connection_overlay.set_child(self.connection_scrolled)
-        sidebar_box.append(self.connection_overlay)
-        
-        # Create drop indicator lines
-        self.top_drop_line = Gtk.Box()
-        self.top_drop_line.add_css_class("drop-indicator-line")
-        self.top_drop_line.set_hexpand(True)
-        self.top_drop_line.set_vexpand(False)
-        self.top_drop_line.set_valign(Gtk.Align.START)
-        self.top_drop_line.set_can_target(False)
-        self.connection_overlay.add_overlay(self.top_drop_line)
-        
-        self.bottom_drop_line = Gtk.Box()
-        self.bottom_drop_line.add_css_class("drop-indicator-line")
-        self.bottom_drop_line.set_hexpand(True)
-        self.bottom_drop_line.set_vexpand(False)
-        self.bottom_drop_line.set_valign(Gtk.Align.START)
-        self.bottom_drop_line.set_can_target(False)
-        self.connection_overlay.add_overlay(self.bottom_drop_line)
-        
-        # Create pin caps (dots)
-        self.top_drop_dot = Gtk.Box()
-        self.top_drop_dot.add_css_class("drop-indicator-dot")
-        self.top_drop_dot.set_size_request(6, 6)
-        self.top_drop_dot.set_valign(Gtk.Align.START)
-        self.top_drop_dot.set_halign(Gtk.Align.END)   # right-end cap
-        self.top_drop_dot.set_margin_end(10)          # inset from right edge
-        self.top_drop_dot.set_can_target(False)
-        self.connection_overlay.add_overlay(self.top_drop_dot)
-        
-        self.bottom_drop_dot = Gtk.Box()
-        self.bottom_drop_dot.add_css_class("drop-indicator-dot")
-        self.bottom_drop_dot.set_size_request(6, 6)
-        self.bottom_drop_dot.set_valign(Gtk.Align.START)
-        self.bottom_drop_dot.set_halign(Gtk.Align.END)
-        self.bottom_drop_dot.set_margin_end(10)
-        self.bottom_drop_dot.set_can_target(False)
-        self.connection_overlay.add_overlay(self.bottom_drop_dot)
-        
-        # Note: Size allocation tracking removed as it's not essential for basic functionality
-        # The overlay lines will automatically size to match the list width
-        
-        # Initialize drop indicator state
-        self._current_drop_row = None
-        self._current_drop_position = None
-        
-        # Add motion controller for auto-hide on leave
-        motion_controller = Gtk.EventControllerMotion()
-        motion_controller.connect("leave", lambda *a: self._hide_all_drop_indicators())
-        self.connection_list.add_controller(motion_controller)
+        sidebar_box.append(self.connection_scrolled)
         
         # Sidebar toolbar
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -2036,109 +1917,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 break
 
         return None
-
-    def _row_edges_in_overlay(self, row: Gtk.Widget) -> tuple[float, float]:
-        """Return (top_y, bottom_y) of the row in overlay coordinates, adjusted by widget margins."""
-        try:
-            # translate_coordinates returns (ok, x, y) but we only need y
-            result = row.translate_coordinates(self.connection_overlay, 0, 0)
-            if len(result) == 3:
-                ok, _, row_y = result
-            elif len(result) == 2:
-                ok, row_y = result
-            else:
-                ok = False
-                row_y = 0
-                
-            if not ok:
-                # Fallback to manual accumulation if needed
-                alloc = row.get_allocation()
-                row_y = alloc.y
-                w = row.get_parent()
-                while w and w is not self.connection_overlay:
-                    a = w.get_allocation()
-                    row_y += a.y
-                    w = w.get_parent()
-
-            top_y = row_y - row.get_margin_top()
-            bottom_y = row_y + row.get_allocation().height + row.get_margin_bottom()
-            return float(top_y), float(bottom_y)
-        except Exception as e:
-            logger.debug(f"Error computing row edges: {e}")
-            return 0.0, 0.0
-
-    def _position_drop_y(self, w: Gtk.Widget, y: float):
-        """Place an overlay child at absolute Y via top margin. Does not affect layout of list rows."""
-        try:
-            w.set_margin_top(int(round(y)))
-            w.set_hexpand(True)
-        except Exception as e:
-            logger.debug(f"Error positioning drop indicator: {e}")
-
-    def _set_overlay_visible(self, w: Gtk.Widget, show: bool):
-        """Show or hide an overlay widget"""
-        try:
-            if show:
-                w.add_css_class("visible")
-            else:
-                w.remove_css_class("visible")
-        except Exception as e:
-            logger.debug(f"Error setting overlay visibility: {e}")
-
-    def _show_drop_indicator_at_row(self, row: Gtk.Widget, position: str, gap_px: int = 1):
-        """Show indicator (line + pin) at a row edge. position: 'top' or 'bottom'."""
-        try:
-            if not row:
-                self._hide_all_drop_indicators()
-                return
-
-            top_y, bottom_y = self._row_edges_in_overlay(row)
-
-            if position == "top":
-                # Position line just above the row's top edge
-                y = top_y - 1  # 1px above the row
-                self._position_drop_y(self.top_drop_line, y)
-                self._position_drop_y(self.top_drop_dot, y - 2)  # nudge so dot centers on 1px line
-                self._set_overlay_visible(self.top_drop_line, True)
-                self._set_overlay_visible(self.top_drop_dot, True)
-                self._set_overlay_visible(self.bottom_drop_line, False)
-                self._set_overlay_visible(self.bottom_drop_dot, False)
-            else:
-                # Position line just below the row's bottom edge
-                y = bottom_y + 1  # 1px below the row
-                self._position_drop_y(self.bottom_drop_line, y)
-                self._position_drop_y(self.bottom_drop_dot, y - 2)
-                self._set_overlay_visible(self.bottom_drop_line, True)
-                self._set_overlay_visible(self.bottom_drop_dot, True)
-                self._set_overlay_visible(self.top_drop_line, False)
-                self._set_overlay_visible(self.top_drop_dot, False)
-
-            self._current_drop_row = row
-            self._current_drop_position = position
-        except Exception as e:
-            logger.debug(f"Error showing drop indicator: {e}")
-
-    def _hide_all_drop_indicators(self):
-        """Hide all drop indicator lines and dots"""
-        try:
-            for w in (self.top_drop_line, self.bottom_drop_line, self.top_drop_dot, self.bottom_drop_dot):
-                if w:
-                    self._set_overlay_visible(w, False)
-            self._current_drop_row = None
-            self._current_drop_position = None
-
-            placeholder = getattr(self, '_drop_placeholder_row', None)
-            if placeholder is not None:
-                parent = placeholder.get_parent()
-                if parent is not None:
-                    try:
-                        parent.remove(placeholder)
-                    except Exception as exc:
-                        logger.debug("Failed to remove drop placeholder: %s", exc)
-            self._drop_placeholder_target_row = None
-            self._drop_placeholder_position = None
-        except Exception as e:
-            logger.debug(f"Error hiding drop indicators: {e}")
 
     def setup_content_area(self):
         """Set up the main content area with stack for tabs and welcome view"""
@@ -2543,15 +2321,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             vadj = self.connection_scrolled.get_vadjustment()
             if vadj:
                 GLib.idle_add(lambda: vadj.set_value(scroll_position))
-
-        if hasattr(self, 'terminal_manager'):
-            try:
-                self.terminal_manager.restyle_open_terminals()
-            except Exception as exc:
-                logger.debug(
-                    "Failed to restyle terminals after rebuilding connection list: %s",
-                    exc,
-                )
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list"""
         for group_info in hierarchy:
@@ -2589,7 +2358,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     def add_connection_row(self, connection: Connection, indent_level: int = 0):
         """Add a connection row to the list with optional indentation"""
-        row = ConnectionRow(connection, self.group_manager, self.config)
+        row = ConnectionRow(connection)
         
         # Apply indentation for grouped connections
         if indent_level > 0:
@@ -2749,6 +2518,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         logger.debug(f"Focus connection list - selected first row: {first_row}")
                 
                 self.connection_list.grab_focus()
+                
+                # Pulse the selected row
+                self.pulse_selected_row(self.connection_list, repeats=1, duration_ms=600)
                 
                 # Show toast notification
                 toast = Adw.Toast.new(
@@ -3583,21 +3355,45 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
 
     # Signal handlers
+    def on_connection_click(self, gesture, n_press, x, y):
+        """Handle clicks on the connection list"""
+        # Get the row that was clicked
+        row, _, _ = self._resolve_connection_list_event(x, y)
+        if row is None:
+            return
+
+        if n_press == 1:  # Single click - just select
+            try:
+                state = gesture.get_current_event_state()
+            except Exception:
+                state = 0
+
+            multi_mask = (
+                Gdk.ModifierType.CONTROL_MASK
+                | Gdk.ModifierType.SHIFT_MASK
+                | getattr(Gdk.ModifierType, 'PRIMARY_ACCELERATOR_MASK', 0)
+            )
+
+            if state & multi_mask:
+                # Allow default multi-selection behavior
+                return
+
+            self._select_only_row(row)
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        elif n_press == 2:  # Double click - connect
+            if hasattr(row, 'connection'):
+                self._cycle_connection_tabs_or_open(row.connection)
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
 
     def on_connection_activated(self, list_box, row):
-        """Handle connection activation (Enter key or double-click)"""
-        row_type = "connection" if hasattr(row, 'connection') else "group" if hasattr(row, 'group_id') else "unknown"
-        logger.debug(f"on_connection_activated: row_type={row_type}, row={row}")
-        
+        """Handle connection activation (Enter key)"""
+        logger.debug(f"Connection activated - row: {row}, has connection: {hasattr(row, 'connection') if row else False}")
         if row and hasattr(row, 'connection'):
-            logger.debug(f"on_connection_activated: Connecting to {row.connection.nickname}")
             self._cycle_connection_tabs_or_open(row.connection)
         elif row and hasattr(row, 'group_id'):
             # Handle group row activation - toggle expand/collapse
-            logger.debug(f"on_connection_activated: Group row activated - toggling expand/collapse for group: {row.group_id}")
+            logger.debug(f"Group row activated - toggling expand/collapse for group: {row.group_id}")
             row._toggle_expand()
-        else:
-            logger.debug(f"on_connection_activated: Unknown row type or no row provided")
             
 
         
@@ -5456,45 +5252,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             for terms in self.connection_to_terminals.values():
                 for terminal in terms:
                     terminal.apply_theme()
-            return
-
-        if key == 'ui.group_color_display':
-            try:
-                self.rebuild_connection_list()
-            except Exception as exc:
-                logger.debug(
-                    "Failed to rebuild connection list for color display change: %s",
-                    exc,
-                )
-            if hasattr(self, 'terminal_manager'):
-                try:
-                    self.terminal_manager.restyle_open_terminals()
-                except Exception as refresh_error:
-                    logger.debug(
-                        "Failed to restyle terminals after color display change: %s",
-                        refresh_error,
-                    )
-            return
-
-        if key in {'ui.use_group_color_in_tab', 'ui.use_group_color_in_terminal'}:
-            if hasattr(self, 'terminal_manager'):
-                try:
-                    self.terminal_manager.restyle_open_terminals()
-                except Exception as exc:
-                    logger.debug(
-                        "Failed to restyle terminals after preference update: %s",
-                        exc,
-                    )
-            return
-
-        if key in {'ui.use_group_color_in_tab', 'ui.use_group_color_in_terminal', 'connection_groups'}:
-            manager = getattr(self, 'terminal_manager', None)
-            if manager is not None:
-                try:
-                    manager.restyle_open_terminals()
-                except Exception as exc:
-                    logger.debug("Failed to restyle terminals after preference change: %s", exc)
-            return
 
     def on_window_size_changed(self, window, param):
         """Handle window size change"""
@@ -5578,7 +5335,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 return True  # Prevent close, let dialog handle it
         
         # No active connections or all local terminals are idle, safe to close
-        self._cleanup_internal_file_manager_windows()
         return False  # Allow close
 
     def show_quit_confirmation_dialog(self):
@@ -5838,33 +5594,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 window.connect('close-request', _cleanup)
         except Exception:  # pragma: no cover - defensive
             logger.debug('Unable to attach close handler to internal file manager window')
-
-    def _cleanup_internal_file_manager_windows(self) -> None:
-        """Close any tracked embedded file manager windows/controllers."""
-
-        if not self._internal_file_manager_windows:
-            return
-
-        tracked_windows = list(self._internal_file_manager_windows)
-
-        for window in tracked_windows:
-            manager = getattr(window, "_manager", None)
-            if manager is not None:
-                close_fn = getattr(manager, "close", None)
-                if callable(close_fn):
-                    try:
-                        close_fn()
-                    except Exception:
-                        pass
-
-            destroy_fn = getattr(window, "destroy", None)
-            if callable(destroy_fn):
-                try:
-                    destroy_fn()
-                except Exception:
-                    pass
-
-        self._internal_file_manager_windows.clear()
 
     def _create_file_manager_placeholder_tab(self, nickname, host_value):
         """Create and show a placeholder tab while the embedded manager loads."""
@@ -6254,50 +5983,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             entry.set_activates_default(True)
             entry.set_hexpand(True)
             content_area.append(entry)
-
-            # Color selector
-            color_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            color_row.set_hexpand(True)
-            color_label = Gtk.Label(label=_("Group color"))
-            color_label.set_xalign(0)
-            color_label.set_hexpand(True)
-            color_row.append(color_label)
-
-            color_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-            color_button = Gtk.ColorButton()
-            color_button.set_use_alpha(True)
-            color_button.set_title(_("Select group color"))
-            rgba = Gdk.RGBA()
-            rgba.red = rgba.green = rgba.blue = 0
-            rgba.alpha = 0
-            color_button.set_rgba(rgba)
-            color_controls.append(color_button)
-
-            color_selected = False
-
-            def on_color_set(_button):
-                nonlocal color_selected
-                color_selected = True
-
-            color_button.connect('color-set', on_color_set)
-
-            clear_color_button = Gtk.Button(label=_("Clear"))
-            clear_color_button.add_css_class('flat')
-
-            def on_clear_color(_button):
-                nonlocal color_selected
-                color_selected = False
-                cleared = Gdk.RGBA()
-                cleared.red = cleared.green = cleared.blue = 0
-                cleared.alpha = 0
-                color_button.set_rgba(cleared)
-
-            clear_color_button.connect('clicked', on_clear_color)
-            color_controls.append(clear_color_button)
-
-            color_row.append(color_controls)
-            content_area.append(color_row)
-
+            
             # Add buttons
             dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
             create_button = dialog.add_button(_('Create'), Gtk.ResponseType.OK)
@@ -6309,11 +5995,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if response == Gtk.ResponseType.OK:
                     group_name = entry.get_text().strip()
                     if group_name:
-                        selected_color = None
-                        rgba_value = color_button.get_rgba()
-                        if color_selected and rgba_value.alpha > 0:
-                            selected_color = rgba_value.to_string()
-                        self.group_manager.create_group(group_name, color=selected_color)
+                        self.group_manager.create_group(group_name)
                         self.rebuild_connection_list()
                     else:
                         # Show error for empty name
@@ -6392,66 +6074,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             entry.set_activates_default(True)
             entry.set_hexpand(True)
             content_area.append(entry)
-
-            # Color selector
-            color_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            color_row.set_hexpand(True)
-            color_label = Gtk.Label(label=_("Group color"))
-            color_label.set_xalign(0)
-            color_label.set_hexpand(True)
-            color_row.append(color_label)
-
-            color_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-            color_button = Gtk.ColorButton()
-            color_button.set_use_alpha(True)
-            color_button.set_title(_("Select group color"))
-
-            color_selected = False
-            rgba = Gdk.RGBA()
-            existing_color = group_info.get('color')
-            if existing_color:
-                try:
-                    if rgba.parse(existing_color):
-                        color_button.set_rgba(rgba)
-                        color_selected = True
-                    else:
-                        rgba.red = rgba.green = rgba.blue = 0
-                        rgba.alpha = 0
-                        color_button.set_rgba(rgba)
-                except Exception:
-                    rgba.red = rgba.green = rgba.blue = 0
-                    rgba.alpha = 0
-                    color_button.set_rgba(rgba)
-                    color_selected = False
-            else:
-                rgba.red = rgba.green = rgba.blue = 0
-                rgba.alpha = 0
-                color_button.set_rgba(rgba)
-
-            def on_color_set(_button):
-                nonlocal color_selected
-                color_selected = True
-
-            color_button.connect('color-set', on_color_set)
-            color_controls.append(color_button)
-
-            clear_color_button = Gtk.Button(label=_("Clear"))
-            clear_color_button.add_css_class('flat')
-
-            def on_clear_color(_button):
-                nonlocal color_selected
-                color_selected = False
-                cleared = Gdk.RGBA()
-                cleared.red = cleared.green = cleared.blue = 0
-                cleared.alpha = 0
-                color_button.set_rgba(cleared)
-
-            clear_color_button.connect('clicked', on_clear_color)
-            color_controls.append(clear_color_button)
-
-            color_row.append(color_controls)
-            content_area.append(color_row)
-
+            
             # Add buttons
             dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
             save_button = dialog.add_button(_('Save'), Gtk.ResponseType.OK)
@@ -6464,11 +6087,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     new_name = entry.get_text().strip()
                     if new_name:
                         group_info['name'] = new_name
-                        rgba_value = color_button.get_rgba()
-                        selected_color = None
-                        if color_selected and rgba_value.alpha > 0:
-                            selected_color = rgba_value.to_string()
-                        self.group_manager.set_group_color(group_id, selected_color)
+                        self.group_manager._save_groups()
                         self.rebuild_connection_list()
                     else:
                         # Show error for empty name
@@ -7122,9 +6741,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Actually quit the application - FINAL STEP"""
         try:
             logger.info("Quitting application")
-
-            self._cleanup_internal_file_manager_windows()
-
+            
             # Save window geometry
             self._save_window_state()
             
