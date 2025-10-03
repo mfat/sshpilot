@@ -610,8 +610,6 @@ class ConnectionRow(Adw.ActionRow):
 
     def __init__(self, connection: Connection, group_manager: GroupManager, config):
         super().__init__()
-        # Use Adwaita's navigation-sidebar class for proper styling
-        self.add_css_class("navigation-sidebar")
         self.connection = connection
         self.group_manager = group_manager
         self.config = config
@@ -637,11 +635,8 @@ class ConnectionRow(Adw.ActionRow):
         self.status_icon.set_pixel_size(16)
         self.add_suffix(self.status_icon)
 
-        # Create CSS provider for background colors (simplified)
-        self._background_provider = Gtk.CssProvider()
-        self.get_style_context().add_provider(
-            self._background_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
-        )
+        # CSS provider for background colors will be created only when needed
+        self._background_provider = None
 
         # Apply group color styling
         self._apply_group_color_style()

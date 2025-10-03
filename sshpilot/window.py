@@ -406,11 +406,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               background-color: alpha(@blue_4, 0.18);
             }
             
-            /* Let native selection take over completely */
-            .adw-action-row.tinted:selected {
-              background-color: @accent_bg_color;
-              color: @accent_fg_color;
-            }
             
             /* Group drop target highlight */
             .drop-target-group {
@@ -496,7 +491,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             """
             provider.load_from_data(css.encode('utf-8'))
-            Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_THEME)
+            Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
             setattr(display, '_sidebar_css_installed', True)
             logger.debug("Sidebar CSS installed successfully")
         except Exception as e:
