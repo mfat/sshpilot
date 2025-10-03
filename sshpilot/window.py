@@ -6000,6 +6000,49 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             entry.set_activates_default(True)
             entry.set_hexpand(True)
             content_area.append(entry)
+
+            # Color selector
+            color_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            color_row.set_hexpand(True)
+            color_label = Gtk.Label(label=_("Group color"))
+            color_label.set_xalign(0)
+            color_label.set_hexpand(True)
+            color_row.append(color_label)
+
+            color_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            color_button = Gtk.ColorButton()
+            color_button.set_use_alpha(True)
+            color_button.set_title(_("Select group color"))
+            rgba = Gdk.RGBA()
+            rgba.red = rgba.green = rgba.blue = 0
+            rgba.alpha = 0
+            color_button.set_rgba(rgba)
+            color_controls.append(color_button)
+
+            color_selected = False
+
+            def on_color_set(_button):
+                nonlocal color_selected
+                color_selected = True
+
+            color_button.connect('color-set', on_color_set)
+
+            clear_color_button = Gtk.Button(label=_("Clear"))
+            clear_color_button.add_css_class('flat')
+
+            def on_clear_color(_button):
+                nonlocal color_selected
+                color_selected = False
+                cleared = Gdk.RGBA()
+                cleared.red = cleared.green = cleared.blue = 0
+                cleared.alpha = 0
+                color_button.set_rgba(cleared)
+
+            clear_color_button.connect('clicked', on_clear_color)
+            color_controls.append(clear_color_button)
+
+            color_row.append(color_controls)
+            content_area.append(color_row)
             
             # Add buttons
             dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
@@ -6012,7 +6055,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if response == Gtk.ResponseType.OK:
                     group_name = entry.get_text().strip()
                     if group_name:
-                        self.group_manager.create_group(group_name)
+                        selected_color = None
+                        rgba_value = color_button.get_rgba()
+                        if color_selected and rgba_value.alpha > 0:
+                            selected_color = rgba_value.to_string()
+                        self.group_manager.create_group(group_name, color=selected_color)
                         self.rebuild_connection_list()
                     else:
                         # Show error for empty name
@@ -6091,6 +6138,65 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             entry.set_activates_default(True)
             entry.set_hexpand(True)
             content_area.append(entry)
+
+            # Color selector
+            color_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            color_row.set_hexpand(True)
+            color_label = Gtk.Label(label=_("Group color"))
+            color_label.set_xalign(0)
+            color_label.set_hexpand(True)
+            color_row.append(color_label)
+
+            color_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            color_button = Gtk.ColorButton()
+            color_button.set_use_alpha(True)
+            color_button.set_title(_("Select group color"))
+
+            color_selected = False
+            rgba = Gdk.RGBA()
+            existing_color = group_info.get('color')
+            if existing_color:
+                try:
+                    if rgba.parse(existing_color):
+                        color_button.set_rgba(rgba)
+                        color_selected = True
+                    else:
+                        rgba.red = rgba.green = rgba.blue = 0
+                        rgba.alpha = 0
+                        color_button.set_rgba(rgba)
+                except Exception:
+                    rgba.red = rgba.green = rgba.blue = 0
+                    rgba.alpha = 0
+                    color_button.set_rgba(rgba)
+                    color_selected = False
+            else:
+                rgba.red = rgba.green = rgba.blue = 0
+                rgba.alpha = 0
+                color_button.set_rgba(rgba)
+
+            def on_color_set(_button):
+                nonlocal color_selected
+                color_selected = True
+
+            color_button.connect('color-set', on_color_set)
+            color_controls.append(color_button)
+
+            clear_color_button = Gtk.Button(label=_("Clear"))
+            clear_color_button.add_css_class('flat')
+
+            def on_clear_color(_button):
+                nonlocal color_selected
+                color_selected = False
+                cleared = Gdk.RGBA()
+                cleared.red = cleared.green = cleared.blue = 0
+                cleared.alpha = 0
+                color_button.set_rgba(cleared)
+
+            clear_color_button.connect('clicked', on_clear_color)
+            color_controls.append(clear_color_button)
+
+            color_row.append(color_controls)
+            content_area.append(color_row)
             
             # Add buttons
             dialog.add_button(_('Cancel'), Gtk.ResponseType.CANCEL)
@@ -6104,7 +6210,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     new_name = entry.get_text().strip()
                     if new_name:
                         group_info['name'] = new_name
-                        self.group_manager._save_groups()
+                        rgba_value = color_button.get_rgba()
+                        selected_color = None
+                        if color_selected and rgba_value.alpha > 0:
+                            selected_color = rgba_value.to_string()
+                        self.group_manager.set_group_color(group_id, selected_color)
                         self.rebuild_connection_list()
                     else:
                         # Show error for empty name
