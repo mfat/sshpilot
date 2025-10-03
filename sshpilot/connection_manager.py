@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Any, Tuple, Union
 
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
 from .platform_utils import is_macos, get_config_dir, get_ssh_dir
+from .ssh_utils import build_connection_ssh_options
 
 try:
     from gi.repository import Secret
@@ -475,6 +476,30 @@ class Connection:
             config_override = self._resolve_config_override_path()
             if config_override:
                 ssh_cmd.extend(['-F', config_override])
+
+            config_obj = None
+            try:
+                from .config import Config
+
+                config_obj = Config()
+            except Exception as cfg_exc:
+                logger.debug(
+                    "Unable to load Config for native SSH options: %s", cfg_exc
+                )
+                config_obj = None
+
+            try:
+                advanced_options = build_connection_ssh_options(
+                    self, config=config_obj
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to build advanced SSH options for %s: %s", self, exc
+                )
+                advanced_options = []
+
+            if advanced_options:
+                ssh_cmd.extend(advanced_options)
 
             ssh_cmd.append(host_label)
 
