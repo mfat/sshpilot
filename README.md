@@ -80,8 +80,6 @@ OR in a terminal typ:
 flatpak install flathub io.github.mfat.sshpilot
 `
 
-Please see the relevant [wiki entry](https://github.com/mfat/sshpilot/wiki/Flatpak) for more information on the Flatpak. 
-
 - ### Arch linux
 Arch linux package via AUR: https://aur.archlinux.org/packages/sshpilot
 
@@ -148,20 +146,19 @@ Enable verbose debugging with:
 python3 run.py --verbose
 ```
 
-Optional terminal backends
---------------------------
+## Testing
 
-The default terminal uses the native VTE widget. sshPilot also ships with a
-vendored copy of `pyxtermjs` (version 0.5.0.2). To enable the optional
-PyXterm.js backend and its Flask Socket.IO server, install the extra
-dependencies with:
+- **Unit & integration:**
 
-```
-pip install "sshpilot[pyxterm]"
-```
+  ```bash
+  pytest -m "not e2e"
+  ```
 
-Manual setups can also install `Flask>=2.3` and `flask-socketio>=5.3`
-directly if preferred.
+- **End-to-end (Dogtail, requires X11/AT-SPI):**
+
+  ```bash
+  dbus-run-session -- xvfb-run -s "-screen 0 1024x768x24" pytest -m e2e tests_e2e
+  ```
 
 ### Telegram channel
 https://t.me/sshpilot

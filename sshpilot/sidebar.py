@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -29,30 +29,8 @@ logger = logging.getLogger(__name__)
 
 
 _COLOR_CSS_INSTALLED = False
-_DEFAULT_ROW_MARGIN_START = 12
-_MIN_VALID_MARGIN = 2
-
-
-
-
-def _resolve_base_margin_start(widget: Optional[Gtk.Widget]) -> int:
-    """Return a sane starting margin for sidebar rows."""
-
-    if widget is None:
-        return _DEFAULT_ROW_MARGIN_START
-
-    try:
-        margin = widget.get_margin_start()
-    except Exception:
-        return _DEFAULT_ROW_MARGIN_START
-
-    try:
-        if margin is None or margin <= _MIN_VALID_MARGIN:
-            return _DEFAULT_ROW_MARGIN_START
-    except TypeError:
-        return _DEFAULT_ROW_MARGIN_START
-
-    return margin
+_DEFAULT_ROW_MARGIN_START = 0
+_MIN_VALID_MARGIN = 0
 
 
 def _install_sidebar_color_css():
@@ -73,40 +51,19 @@ def _install_sidebar_color_css():
             min-height: 12px;
         }
 
-        .accent-red {
-            background-color: #ff0000 !important;
-        }
-
-        .accent-blue {
-            background-color: #E3F2FD !important;
-        }
-
-        .accent-green {
-            background-color: #E8F5E9 !important;
-        }
-
-        .accent-orange {
-            background-color: #FFF3E0 !important;
-        }
-
-        .accent-purple {
-            background-color: #F3E5F5 !important;
-        }
-
-        .accent-cyan {
-            background-color: #E0F2F1 !important;
-        }
-
-        .accent-gray {
-            background-color: #F5F5F5 !important;
-        }
+        .accent-red { background-color: #ff5c57; }
+        .accent-blue { background-color: #51a1ff; }
+        .accent-green { background-color: #5fff8d; }
+        .accent-orange { background-color: #ffb347; }
+        .accent-purple { background-color: #d6a2ff; }
+        .accent-cyan { background-color: #5be7ff; }
+        .accent-gray { background-color: #d3d7db; }
         """
         provider.load_from_data(css.encode("utf-8"))
         Gtk.StyleContext.add_provider_for_display(
             display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
         _COLOR_CSS_INSTALLED = True
-        logger.debug("Sidebar color CSS installed successfully")
     except Exception:
         logger.debug("Failed to install sidebar color CSS", exc_info=True)
 
@@ -143,63 +100,61 @@ def _fill_rgba(rgba: Optional[Gdk.RGBA]) -> Optional[Gdk.RGBA]:
     fill.red = rgba.red
     fill.green = rgba.green
     fill.blue = rgba.blue
-    # Increase alpha for better visibility
     fill.alpha = 0.4 if rgba.alpha >= 1.0 else max(0.3, min(rgba.alpha, 0.5))
     return fill
 
 
 def _get_color_class(rgba: Optional[Gdk.RGBA]) -> Optional[str]:
-    """Get CSS class name for a given RGBA color."""
     if not rgba:
         return None
-    
-    # Convert to HSV for easier color matching
+
     import colorsys
-    h, s, v = colorsys.rgb_to_hsv(rgba.red, rgba.green, rgba.blue)
-    
-    # Map colors to CSS classes based on hue
-    if s < 0.3:  # Low saturation = gray
+
+    h, s, _v = colorsys.rgb_to_hsv(rgba.red, rgba.green, rgba.blue)
+
+    if s < 0.3:
         return "accent-gray"
-    elif h < 0.1 or h > 0.9:  # Red
+    if h < 0.1 or h > 0.9:
         return "accent-red"
-    elif h < 0.2:  # Orange
+    if h < 0.2:
         return "accent-orange"
-    elif h < 0.4:  # Yellow/Green
+    if h < 0.4:
         return "accent-green"
-    elif h < 0.6:  # Cyan
+    if h < 0.6:
         return "accent-cyan"
-    elif h < 0.8:  # Blue
+    if h < 0.8:
         return "accent-blue"
-    else:  # Purple/Pink
-        return "accent-purple"
+    return "accent-purple"
 
 
-def _set_css_background(provider: Gtk.CssProvider, rgba: Optional[Gdk.RGBA]):
-    if rgba is None:
-        try:
-            provider.load_from_data(b"")
-            logger.debug("Cleared CSS background provider")
-        except Exception:
-            logger.debug("Failed to clear CSS background", exc_info=True)
-        return
-
+def _set_tint_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
     try:
         color_value = rgba.to_string()
     except Exception:
-        try:
-            provider.load_from_data(b"")
-            logger.debug("Cleared CSS background provider after RGBA conversion failure")
-        except Exception:
-            logger.debug("Failed to clear CSS background after RGBA conversion failure", exc_info=True)
+        logger.debug("Failed to convert RGBA to string", exc_info=True)
         return
 
     try:
-        css_data = f"*:not(:selected) {{ background-color: {color_value}; border-radius: 8px; }}"
+        provider = Gtk.CssProvider()
+        css_data = f"""
+        .tinted:not(:selected):not(:hover):not(:active) {{
+            background-color: {color_value};
+        }}
+        """
         provider.load_from_data(css_data.encode('utf-8'))
-        logger.debug(f"Applied CSS background: {css_data}")
-    except Exception:
-        logger.debug("Failed to update CSS background", exc_info=True)
 
+        if hasattr(row, '_tint_provider') and getattr(row, '_tint_provider'):
+            try:
+                row.get_style_context().remove_provider(row._tint_provider)
+            except Exception:
+                pass
+
+        row._tint_provider = provider  # type: ignore[attr-defined]
+        row.get_style_context().add_provider(
+            provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+        )
+    except Exception:
+        logger.debug("Failed to apply tinted color", exc_info=True)
 
 # ---------------------------------------------------------------------------
 # Row widgets
@@ -230,7 +185,7 @@ class DragIndicator(Gtk.Widget):
         snapshot.append_color(color, rect)
 
 
-class GroupRow(Adw.ActionRow):
+class GroupRow(Gtk.ListBoxRow):
     """Row widget for group headers."""
 
     __gsignals__ = {
@@ -239,102 +194,96 @@ class GroupRow(Adw.ActionRow):
 
     def __init__(self, group_info: Dict, group_manager: GroupManager, connections_dict: Dict | None = None):
         super().__init__()
-        self.add_css_class("sshpilot-sidebar")
-        self.add_css_class("opaque")
+        _install_sidebar_color_css()
+        self.add_css_class("navigation-sidebar")
         self.group_info = group_info
         self.group_manager = group_manager
         self.group_id = group_info["id"]
         self.connections_dict = connections_dict or {}
+        self._tint_provider = None
+        self._color_badge_provider = None
+        self._tint_provider = None
+        self._color_badge_provider = None
 
-        # Set up Adw.ActionRow properties
-        self.set_title(group_info["name"])
-        self.set_subtitle("")  # Will be updated with connection count
+        # Main container with drop indicators
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         
-        # Add folder icon as prefix
+        # Drop indicator (top)
+        self.drop_indicator_top = DragIndicator()
+        main_box.append(self.drop_indicator_top)
+
+        # Main content
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        content.set_margin_start(12)
+        content.set_margin_end(12)
+        content.set_margin_top(6)
+        content.set_margin_bottom(6)
+
         icon = Gtk.Image.new_from_icon_name("folder-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
-        icon.set_margin_end(8)
-        self.add_prefix(icon)
+        content.append(icon)
 
-        # Color badge for badge mode - use empty circular button
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        info_box.set_hexpand(True)
+
+        self.name_label = Gtk.Label()
+        self.name_label.set_halign(Gtk.Align.START)
+        info_box.append(self.name_label)
+
+        self.count_label = Gtk.Label()
+        self.count_label.set_halign(Gtk.Align.START)
+        self.count_label.add_css_class("dim-label")
+        info_box.append(self.count_label)
+
+        content.append(info_box)
+
         self.color_badge = Gtk.Button()
         self.color_badge.add_css_class("circular")
         self.color_badge.add_css_class("normal")
+        self.color_badge.add_css_class("sidebar-color-badge")
+        self.color_badge.set_can_focus(False)
+        self.color_badge.set_sensitive(False)
         self.color_badge.set_valign(Gtk.Align.CENTER)
-        self.color_badge.set_margin_start(8)
         self.color_badge.set_visible(False)
-        
-        self.add_suffix(self.color_badge)
+        content.append(self.color_badge)
 
-        # Add expand button as suffix (far right)
         self.expand_button = Gtk.Button()
         self.expand_button.set_icon_name("pan-end-symbolic")
         self.expand_button.add_css_class("flat")
         self.expand_button.add_css_class("group-expand-button")
         self.expand_button.set_can_focus(False)
         self.expand_button.connect("clicked", self._on_expand_clicked)
-        self.add_suffix(self.expand_button)
+        content.append(self.expand_button)
 
-        # Create CSS provider for background colors
-        self._background_provider = Gtk.CssProvider()
-        self.get_style_context().add_provider(
-            self._background_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
-        )
+        # Add drop target indicator (initially hidden)
+        self.drop_target_indicator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.drop_target_indicator.set_halign(Gtk.Align.CENTER)
+        self.drop_target_indicator.set_margin_top(4)
+        self.drop_target_indicator.set_margin_bottom(4)
+        self.drop_target_indicator.add_css_class("drop-target-indicator")
+        
+        drop_icon = Gtk.Image.new_from_icon_name("list-add-symbolic")
+        drop_icon.set_icon_size(Gtk.IconSize.NORMAL)
+        self.drop_target_indicator.append(drop_icon)
+        
+        drop_label = Gtk.Label()
+        drop_label.set_markup("<b>Add to Group</b>")
+        drop_label.add_css_class("accent")
+        self.drop_target_indicator.append(drop_label)
+        
+        self.drop_target_indicator.set_visible(False)
 
-        # Apply group color styling
-        logger.debug(f"GroupRow {group_info['name']}: Constructor calling _apply_group_color_style")
-        self._apply_group_color_style()
+        # Add content to main_box
+        main_box.append(content)
+        main_box.append(self.drop_target_indicator)
+        
+        # Drop indicator (bottom)
+        self.drop_indicator_bottom = DragIndicator()
+        main_box.append(self.drop_indicator_bottom)
+
+        self.set_child(main_box)
         self.set_selectable(True)
         self.set_can_focus(True)
-
-        # Prepare overlay to host drag/drop indicators
-        self._drop_overlay = Gtk.Overlay()
-        self._drop_overlay.set_hexpand(True)
-        self._drop_overlay.set_vexpand(True)
-        self._drop_overlay.set_halign(Gtk.Align.FILL)
-        self._drop_overlay.set_valign(Gtk.Align.FILL)
-
-        content_box = self.get_child()
-        self._content_box = content_box
-        self._color_background = content_box
-        if content_box is not None:
-            self._base_margin_start = _resolve_base_margin_start(content_box)
-            self.set_child(self._drop_overlay)
-            self._drop_overlay.set_child(content_box)
-        else:
-            self._base_margin_start = _DEFAULT_ROW_MARGIN_START
-            self.set_child(self._drop_overlay)
-
-        # Drag indicator widgets (top/bottom lines)
-        self.drop_indicator_top = DragIndicator()
-        self.drop_indicator_top.set_hexpand(True)
-        self.drop_indicator_top.set_halign(Gtk.Align.FILL)
-        self.drop_indicator_top.set_valign(Gtk.Align.START)
-        self._drop_overlay.add_overlay(self.drop_indicator_top)
-
-        self.drop_indicator_bottom = DragIndicator()
-        self.drop_indicator_bottom.set_hexpand(True)
-        self.drop_indicator_bottom.set_halign(Gtk.Align.FILL)
-        self.drop_indicator_bottom.set_valign(Gtk.Align.END)
-        self._drop_overlay.add_overlay(self.drop_indicator_bottom)
-
-        # Drop target highlight indicator
-        self.drop_target_indicator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        self.drop_target_indicator.add_css_class("drop-target-indicator")
-        self.drop_target_indicator.set_visible(False)
-        self.drop_target_indicator.set_hexpand(True)
-        self.drop_target_indicator.set_vexpand(True)
-        self.drop_target_indicator.set_halign(Gtk.Align.CENTER)
-        self.drop_target_indicator.set_valign(Gtk.Align.CENTER)
-
-        indicator_label = Gtk.Label(label=_("Add to group"))
-        indicator_label.set_halign(Gtk.Align.CENTER)
-        indicator_label.set_valign(Gtk.Align.CENTER)
-        self.drop_target_indicator.append(indicator_label)
-
-        self._drop_overlay.add_overlay(self.drop_target_indicator)
-
-        self.hide_drop_indicators()
 
         self._update_display()
         self._setup_drag_source()
@@ -355,84 +304,10 @@ class GroupRow(Adw.ActionRow):
         ]
         count = len(actual_connections)
         group_name = self.group_info['name']
-        self.set_title(group_name)
-        self.set_subtitle(f"{count} connections")
-
+        self.name_label.set_markup(f"<b>{group_name}</b>")
+        self.count_label.set_text(f"{count} connections")
         self._apply_group_color_style()
 
-    def _apply_group_color_style(self):
-        config = getattr(self.group_manager, 'config', None)
-        mode = _get_color_display_mode(config) if config else 'fill'
-        rgba = _parse_color(self.group_info.get('color'))
-        
-        group_name = self.group_info.get('name', 'Unknown')
-        color_value = self.group_info.get('color')
-        logger.debug(f"GroupRow {group_name}: mode={mode}, color_value={color_value}, rgba={rgba}")
-
-        if mode == 'badge':
-            _set_css_background(self._background_provider, None)
-            if rgba:
-                # Update the existing color badge with new color
-                self._update_color_badge(rgba)
-                self.color_badge.set_visible(True)
-                logger.debug(f"GroupRow {group_name}: Showing tag icon with color {rgba.to_string()}")
-            else:
-                self.color_badge.set_visible(False)
-                logger.debug(f"GroupRow {group_name}: Hiding badge (no color)")
-        else:
-            # Apply fill color using CSS provider
-            if rgba:
-                fill_color = _fill_rgba(rgba)
-                _set_css_background(self._background_provider, fill_color)
-                logger.debug(f"GroupRow {group_name}: Applied background color {fill_color.to_string() if fill_color else 'None'}")
-            else:
-                _set_css_background(self._background_provider, None)
-                logger.debug(f"GroupRow {group_name}: No rgba color to apply")
-            
-            # Hide badge in fill mode
-            self.color_badge.set_visible(False)
-        
-    def _update_color_badge(self, rgba: Gdk.RGBA):
-        """Update the color badge with a new color."""
-        # Convert RGBA to hex color
-        r = int(rgba.red * 255)
-        g = int(rgba.green * 255)
-        b = int(rgba.blue * 255)
-        color_hex = f"#{r:02x}{g:02x}{b:02x}"
-        
-        # Calculate a darker color for hover state
-        r_hover = max(0, r - 20)
-        g_hover = max(0, g - 20)
-        b_hover = max(0, b - 20)
-        hover_hex = f"#{r_hover:02x}{g_hover:02x}{b_hover:02x}"
-        
-        # Apply CSS color to the button with more specific selector
-        css_data = f"""
-        button.circular.normal.color-badge {{
-          background-color: {color_hex};
-          color: white;
-          border: none;
-          box-shadow: none;
-        }}
-        button.circular.normal.color-badge:hover {{
-          background-color: {hover_hex};
-        }}
-        """
-        
-        # Remove any existing CSS provider
-        if hasattr(self, '_color_badge_provider'):
-            self.color_badge.get_style_context().remove_provider(self._color_badge_provider)
-        
-        # Create new CSS provider for the color badge
-        self._color_badge_provider = Gtk.CssProvider()
-        self._color_badge_provider.load_from_data(css_data.encode('utf-8'))
-        self.color_badge.get_style_context().add_provider(
-            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
-        
-        # Add the color-badge CSS class
-        self.color_badge.add_css_class("color-badge")
-        self.color_badge.set_visible(True)
 
     def _on_expand_clicked(self, button):
         self._toggle_expand()
@@ -440,8 +315,6 @@ class GroupRow(Adw.ActionRow):
     def _setup_drag_source(self):
         drag_source = Gtk.DragSource()
         drag_source.set_actions(Gdk.DragAction.MOVE)
-        drag_source.set_exclusive(False)
-        drag_source.set_button(getattr(Gdk, "BUTTON_PRIMARY", 1))
         drag_source.connect("prepare", self._on_drag_prepare)
         drag_source.connect("drag-begin", self._on_drag_begin)
         drag_source.connect("drag-end", self._on_drag_end)
@@ -493,6 +366,81 @@ class GroupRow(Adw.ActionRow):
         self._update_display()
         self.emit("group-toggled", self.group_id, expanded)
 
+    def _apply_group_color_style(self):
+        config = getattr(self.group_manager, 'config', None)
+        mode = _get_color_display_mode(config) if config else 'fill'
+        rgba = _parse_color(self.group_info.get('color'))
+
+        if mode == 'badge':
+            self.remove_css_class("tinted")
+            if hasattr(self, '_tint_provider') and self._tint_provider:
+                try:
+                    self.get_style_context().remove_provider(self._tint_provider)
+                except Exception:
+                    pass
+                self._tint_provider = None
+
+            if rgba:
+                self._update_color_badge(rgba)
+                self.color_badge.set_visible(True)
+            else:
+                self.color_badge.set_visible(False)
+        else:
+            self.color_badge.set_visible(False)
+            if rgba:
+                tint = _fill_rgba(rgba) or rgba
+                self.add_css_class("tinted")
+                _set_tint_card_color(self, tint)
+            else:
+                self.remove_css_class("tinted")
+                if hasattr(self, '_tint_provider') and self._tint_provider:
+                    try:
+                        self.get_style_context().remove_provider(self._tint_provider)
+                    except Exception:
+                        pass
+                    self._tint_provider = None
+
+    def _update_color_badge(self, rgba: Gdk.RGBA):
+        r = int(rgba.red * 255)
+        g = int(rgba.green * 255)
+        b = int(rgba.blue * 255)
+        color_hex = f"#{r:02x}{g:02x}{b:02x}"
+
+        r_hover = max(0, r - 20)
+        g_hover = max(0, g - 20)
+        b_hover = max(0, b - 20)
+        hover_hex = f"#{r_hover:02x}{g_hover:02x}{b_hover:02x}"
+
+        css_data = f"""
+        button.circular.normal.sidebar-color-badge {{
+          background-color: {color_hex};
+          color: white;
+          border: none;
+          box-shadow: none;
+        }}
+        button.circular.normal.sidebar-color-badge:hover {{
+          background-color: {hover_hex};
+        }}
+        """
+
+        if self._color_badge_provider:
+            try:
+                self.color_badge.get_style_context().remove_provider(self._color_badge_provider)
+            except Exception:
+                pass
+
+        self._color_badge_provider = Gtk.CssProvider()
+        self._color_badge_provider.load_from_data(css_data.encode('utf-8'))
+        self.color_badge.get_style_context().add_provider(
+            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+        for cls in ("accent-red", "accent-blue", "accent-green", "accent-orange", "accent-purple", "accent-cyan", "accent-gray"):
+            self.color_badge.remove_css_class(cls)
+        accent_class = _get_color_class(rgba)
+        if accent_class:
+            self.color_badge.add_css_class(accent_class)
+
     def show_drop_indicator(self, top: bool):
         """Show drop indicator line"""
         self.hide_drop_indicators()
@@ -518,104 +466,87 @@ class GroupRow(Adw.ActionRow):
             self.drop_target_indicator.set_visible(False)
 
 
-class ConnectionRow(Adw.ActionRow):
+class ConnectionRow(Gtk.ListBoxRow):
     """Row widget for connection list."""
 
     def __init__(self, connection: Connection, group_manager: GroupManager, config):
         super().__init__()
-        self.add_css_class("sshpilot-sidebar")
-        self.add_css_class("opaque")
+        _install_sidebar_color_css()
+        self.add_css_class("navigation-sidebar")
         self.connection = connection
         self.group_manager = group_manager
         self.config = config
+        self._tint_provider = None
 
-        # Set up Adw.ActionRow properties
-        self.set_title(connection.nickname)
-        self.set_subtitle("")  # Will be updated with host info
+        # Main container with drop indicators
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        
+        # Drop indicator (top)
+        self.drop_indicator_top = DragIndicator()
+        main_box.append(self.drop_indicator_top)
+        
+        # Content container
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        content.set_margin_start(12)
+        content.set_margin_end(12)
+        content.set_margin_top(6)
+        content.set_margin_bottom(6)
 
-        # Add computer icon as prefix
         icon = Gtk.Image.new_from_icon_name("computer-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
-        icon.set_margin_end(8)
-        self.add_prefix(icon)
+        content.append(icon)
 
-        # Box to show forwarding indicators
-        self.indicator_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self.indicator_box.add_css_class("pf-indicator")
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        info_box.set_hexpand(True)
+
+        self.nickname_label = Gtk.Label()
+        self.nickname_label.set_markup(f"<b>{connection.nickname}</b>")
+        self.nickname_label.set_halign(Gtk.Align.START)
+        info_box.append(self.nickname_label)
+
+        self.host_label = Gtk.Label()
+        self.host_label.set_halign(Gtk.Align.START)
+        self.host_label.add_css_class("dim-label")
+        self._apply_host_label_text()
+        info_box.append(self.host_label)
+
+        content.append(info_box)
+
+        self.indicator_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.indicator_box.set_halign(Gtk.Align.CENTER)
         self.indicator_box.set_valign(Gtk.Align.CENTER)
-        self.indicator_box.set_visible(False)
-        self.add_suffix(self.indicator_box)
+        content.append(self.indicator_box)
 
-        # Color badge removed - only show in GroupRow
-
-        # Add status icon as suffix (far right)
         self.status_icon = Gtk.Image.new_from_icon_name("network-offline-symbolic")
         self.status_icon.set_pixel_size(16)
-        self.status_icon.set_margin_start(8)
-        self.add_suffix(self.status_icon)
-
-        # Create CSS provider for background colors
-        self._background_provider = Gtk.CssProvider()
-        self.get_style_context().add_provider(
-            self._background_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
-        )
-
-        # Apply group color styling
-        self._apply_group_color_style()
-        self.set_selectable(True)
-        self.set_can_focus(True)
-
-        # Prepare overlay to host drag/drop indicators
-        self._drop_overlay = Gtk.Overlay()
-        self._drop_overlay.set_hexpand(True)
-        self._drop_overlay.set_vexpand(True)
-        self._drop_overlay.set_halign(Gtk.Align.FILL)
-        self._drop_overlay.set_valign(Gtk.Align.FILL)
-
-        content_box = self.get_child()
-        self._content_box = content_box
-        self._color_background = content_box
-        if content_box is not None:
-            self._base_margin_start = _resolve_base_margin_start(content_box)
-            self.set_child(self._drop_overlay)
-            self._drop_overlay.set_child(content_box)
-        else:
-            self._base_margin_start = _DEFAULT_ROW_MARGIN_START
-            self.set_child(self._drop_overlay)
-
-        self.drop_indicator_top = DragIndicator()
-        self.drop_indicator_top.set_hexpand(True)
-        self.drop_indicator_top.set_halign(Gtk.Align.FILL)
-        self.drop_indicator_top.set_valign(Gtk.Align.START)
-        self._drop_overlay.add_overlay(self.drop_indicator_top)
-
+        content.append(self.status_icon)
+        
+        # Now add the content to main_box
+        main_box.append(content)
+        
+        # Drop indicator (bottom)
         self.drop_indicator_bottom = DragIndicator()
-        self.drop_indicator_bottom.set_hexpand(True)
-        self.drop_indicator_bottom.set_halign(Gtk.Align.FILL)
-        self.drop_indicator_bottom.set_valign(Gtk.Align.END)
-        self._drop_overlay.add_overlay(self.drop_indicator_bottom)
+        main_box.append(self.drop_indicator_bottom)
 
-        self.drop_target_indicator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        self.drop_target_indicator.add_css_class("drop-target-indicator")
-        self.drop_target_indicator.set_visible(False)
-        self.drop_target_indicator.set_hexpand(True)
-        self.drop_target_indicator.set_vexpand(True)
-        self.drop_target_indicator.set_halign(Gtk.Align.CENTER)
-        self.drop_target_indicator.set_valign(Gtk.Align.CENTER)
+        # Add pulse overlay to the main box
+        self._pulse = Gtk.Box()
+        self._pulse.add_css_class("pulse-highlight")
+        self._pulse.set_can_target(False)
+        self._pulse.set_hexpand(True)
+        self._pulse.set_vexpand(True)
+        
+        # Create overlay for pulse effect
+        overlay = Gtk.Overlay()
+        overlay.set_child(main_box)
+        overlay.add_overlay(self._pulse)
+        self.set_child(overlay)
 
-        connection_label = Gtk.Label(label=_("Move here"))
-        connection_label.set_halign(Gtk.Align.CENTER)
-        connection_label.set_valign(Gtk.Align.CENTER)
-        self.drop_target_indicator.append(connection_label)
+        self.set_selectable(True)
 
-        self._drop_overlay.add_overlay(self.drop_target_indicator)
-
-        self.hide_drop_indicators()
-
-        self._apply_host_label_text()
         self.update_status()
         self._update_forwarding_indicators()
         self._setup_drag_source()
+        self._apply_group_color_style()
     
     def show_drop_indicator(self, top: bool):
         """Show drop indicator line"""
@@ -633,17 +564,18 @@ class ConnectionRow(Adw.ActionRow):
     
     def set_indentation(self, level: int):
         """Set indentation level for grouped connections"""
-        margin = getattr(self, '_base_margin_start', _DEFAULT_ROW_MARGIN_START) + max(0, level) * 20
-        if hasattr(self, '_content_box') and self._content_box is not None:
-            try:
-                self._content_box.set_margin_start(margin)
-            except Exception:
-                pass
-        if hasattr(self, '_color_background') and self._color_background is not None:
-            try:
-                self._color_background.set_margin_start(margin)
-            except Exception:
-                pass
+        if level > 0:
+            # Find the content box and set its margin
+            overlay = self.get_child()
+            if overlay and hasattr(overlay, 'get_child'):
+                main_box = overlay.get_child()
+                if main_box and hasattr(main_box, 'get_first_child'):
+                    # Skip the first child (top drop indicator) and get the content box
+                    top_indicator = main_box.get_first_child()
+                    if top_indicator and hasattr(top_indicator, 'get_next_sibling'):
+                        content = top_indicator.get_next_sibling()
+                        if content:
+                            content.set_margin_start(12 + (level * 20))
 
     def _resolve_group_color(self) -> Optional[Gdk.RGBA]:
         manager = getattr(self, 'group_manager', None)
@@ -663,8 +595,7 @@ class ConnectionRow(Adw.ActionRow):
 
             group_info = None
             try:
-                if hasattr(manager, 'groups'):
-                    group_info = manager.groups.get(group_id)
+                group_info = manager.groups.get(group_id)
             except Exception:
                 group_info = None
 
@@ -682,33 +613,33 @@ class ConnectionRow(Adw.ActionRow):
     def _apply_group_color_style(self):
         mode = _get_color_display_mode(getattr(self, 'config', None))
         rgba = self._resolve_group_color()
-        
-        connection_name = getattr(self.connection, 'nickname', 'Unknown')
-        logger.debug(f"ConnectionRow {connection_name}: mode={mode}, rgba={rgba}")
 
-        # Color badge removed - only show in GroupRow
         if mode == 'badge':
-            # No color badge in ConnectionRow
-            _set_css_background(self._background_provider, None)
+            self.remove_css_class("tinted")
+            if hasattr(self, '_tint_provider') and self._tint_provider:
+                try:
+                    self.get_style_context().remove_provider(self._tint_provider)
+                except Exception:
+                    pass
+                self._tint_provider = None
         else:
-            # Apply fill color using CSS provider
             if rgba:
-                fill_color = _fill_rgba(rgba)
-                _set_css_background(self._background_provider, fill_color)
-                logger.debug(f"ConnectionRow {connection_name}: Applied background color {fill_color.to_string() if fill_color else 'None'}")
+                self.add_css_class("tinted")
+                _set_tint_card_color(self, _fill_rgba(rgba) or rgba)
             else:
-                _set_css_background(self._background_provider, None)
-                logger.debug(f"ConnectionRow {connection_name}: No rgba color to apply")
-            
-            # Color badge removed - only show in GroupRow
+                self.remove_css_class("tinted")
+                if hasattr(self, '_tint_provider') and self._tint_provider:
+                    try:
+                        self.get_style_context().remove_provider(self._tint_provider)
+                    except Exception:
+                        pass
+                    self._tint_provider = None
 
     # -- drag source ------------------------------------------------------
 
     def _setup_drag_source(self):
         drag_source = Gtk.DragSource()
         drag_source.set_actions(Gdk.DragAction.MOVE)
-        drag_source.set_exclusive(False)
-        drag_source.set_button(getattr(Gdk, "BUTTON_PRIMARY", 1))
         drag_source.connect("prepare", self._on_drag_prepare)
         drag_source.connect("drag-begin", self._on_drag_begin)
         drag_source.connect("drag-end", self._on_drag_end)
@@ -717,7 +648,87 @@ class ConnectionRow(Adw.ActionRow):
         self._drag_source = drag_source
 
     def _on_drag_prepare(self, source, x, y):
-        data = {"type": "connection", "connection_nickname": self.connection.nickname}
+        window = self.get_root()
+
+        connections_payload: List[Dict[str, Optional[int | str]]] = []
+        selection_order = 0
+
+        if window and hasattr(window, "connection_list"):
+            try:
+                selected_rows = list(window.connection_list.get_selected_rows())
+            except Exception:
+                selected_rows = []
+
+            if not selected_rows or self not in selected_rows:
+                selected_rows.append(self)
+
+            seen_nicknames = set()
+            for row in selected_rows:
+                connection_obj = getattr(row, "connection", None)
+                nickname = getattr(connection_obj, "nickname", None)
+                if not nickname or nickname in seen_nicknames:
+                    continue
+
+                seen_nicknames.add(nickname)
+
+                row_index = None
+                try:
+                    idx = row.get_index()
+                    if isinstance(idx, int) and idx >= 0:
+                        row_index = idx
+                except Exception:
+                    row_index = None
+
+                connections_payload.append(
+                    {
+                        "nickname": nickname,
+                        "index": row_index,
+                        "order": selection_order,
+                    }
+                )
+                selection_order += 1
+
+        if not connections_payload:
+            row_index = None
+            try:
+                idx = self.get_index()
+                if isinstance(idx, int) and idx >= 0:
+                    row_index = idx
+            except Exception:
+                row_index = None
+
+            connections_payload.append(
+                {
+                    "nickname": self.connection.nickname,
+                    "index": row_index,
+                    "order": 0,
+                }
+            )
+
+        connections_payload.sort(
+            key=lambda item: (
+                item.get("index") is None,
+                item.get("index") if isinstance(item.get("index"), int) else item.get("order", 0),
+            )
+        )
+
+        ordered_nicknames: List[str] = []
+        for item in connections_payload:
+            nickname = item.get("nickname")
+            if isinstance(nickname, str) and nickname not in ordered_nicknames:
+                ordered_nicknames.append(nickname)
+            item.pop("order", None)
+
+        data = {
+            "type": "connection",
+            "connection_nickname": ordered_nicknames[0] if ordered_nicknames else self.connection.nickname,
+            "connection_nicknames": ordered_nicknames,
+            "connections": connections_payload,
+        }
+
+        if window:
+            window._dragged_connections = ordered_nicknames
+
         return Gdk.ContentProvider.new_for_value(
             GObject.Value(GObject.TYPE_PYOBJECT, data)
         )
@@ -726,8 +737,9 @@ class ConnectionRow(Adw.ActionRow):
         try:
             window = self.get_root()
             if window:
-                # Track which connection is being dragged
-                window._dragged_connection = self.connection
+                if not hasattr(window, "_dragged_connections"):
+                    window._dragged_connections = [self.connection.nickname]
+                window._drag_in_progress = True
                 _show_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag begin: {e}")
@@ -736,9 +748,9 @@ class ConnectionRow(Adw.ActionRow):
         try:
             window = self.get_root()
             if window:
-                # Clear the dragged connection tracking
-                if hasattr(window, "_dragged_connection"):
-                    delattr(window, "_dragged_connection")
+                if hasattr(window, "_dragged_connections"):
+                    delattr(window, "_dragged_connections")
+                window._drag_in_progress = False
                 _hide_ungrouped_area(window)
         except Exception as e:
             logger.error(f"Error in drag end: {e}")
@@ -770,14 +782,11 @@ class ConnectionRow(Adw.ActionRow):
 
     def _update_forwarding_indicators(self):
         self._install_pf_css()
-        if not hasattr(self, "indicator_box") or self.indicator_box is None:
+        try:
+            while self.indicator_box.get_first_child():
+                self.indicator_box.remove(self.indicator_box.get_first_child())
+        except Exception:
             return
-
-        child = self.indicator_box.get_first_child()
-        while child is not None:
-            next_child = child.get_next_sibling()
-            self.indicator_box.remove(child)
-            child = next_child
 
         rules = getattr(self.connection, "forwarding_rules", []) or []
         has_local = any(r.get("enabled", True) and r.get("type") == "local" for r in rules)
@@ -785,26 +794,18 @@ class ConnectionRow(Adw.ActionRow):
         has_dynamic = any(r.get("enabled", True) and r.get("type") == "dynamic" for r in rules)
 
         def make_badge(letter: str, cls: str):
-            # Create a button with the letter
-            btn = Gtk.Button(label=letter)
-            btn.add_css_class("flat")
-            btn.set_can_focus(False)
-            btn.set_size_request(12, 12)  # Small button
-            btn.set_tooltip_text({
-                "L": "Local port forwarding",
-                "R": "Remote port forwarding", 
-                "D": "Dynamic port forwarding"
-            }.get(letter, f"{letter} forwarding"))
-            
-            # Apply Adwaita color classes based on forwarding type
-            if cls == "pf-local":
-                btn.add_css_class("accent")  # Use accent color for local forwarding
-            elif cls == "pf-remote":
-                btn.add_css_class("success")  # Use success color for remote forwarding
-            elif cls == "pf-dynamic":
-                btn.add_css_class("warning")  # Use warning color for dynamic forwarding
-                
-            return btn
+            circled_map = {"L": "\u24C1", "R": "\u24C7", "D": "\u24B9"}
+            glyph = circled_map.get(letter, letter)
+            lbl = Gtk.Label(label=glyph)
+            lbl.add_css_class(cls)
+            lbl.set_halign(Gtk.Align.CENTER)
+            lbl.set_valign(Gtk.Align.CENTER)
+            try:
+                lbl.set_xalign(0.5)
+                lbl.set_yalign(0.5)
+            except Exception:
+                pass
+            return lbl
 
         if has_local:
             self.indicator_box.append(make_badge("L", "pf-local"))
@@ -812,8 +813,6 @@ class ConnectionRow(Adw.ActionRow):
             self.indicator_box.append(make_badge("R", "pf-remote"))
         if has_dynamic:
             self.indicator_box.append(make_badge("D", "pf-dynamic"))
-
-        self.indicator_box.set_visible(has_local or has_remote or has_dynamic)
 
     def _apply_host_label_text(self, include_port: bool | None = None):
         try:
@@ -823,7 +822,7 @@ class ConnectionRow(Adw.ActionRow):
             hide = False
 
         if hide:
-            self.set_subtitle("••••••••••")
+            self.host_label.set_text("••••••••••")
             return
 
         format_kwargs = {}
@@ -831,7 +830,7 @@ class ConnectionRow(Adw.ActionRow):
             format_kwargs["include_port"] = include_port
 
         display = _format_connection_host_display(self.connection, **format_kwargs)
-        self.set_subtitle(display or '')
+        self.host_label.set_text(display or '')
 
     def apply_hide_hosts(self, hide: bool):
         self._apply_host_label_text()
@@ -869,6 +868,8 @@ class ConnectionRow(Adw.ActionRow):
                 f"Error updating status for {getattr(self.connection, 'nickname', 'connection')}: {e}"
             )
 
+        self._apply_group_color_style()
+
     def update_display(self):
         if hasattr(self.connection, "nickname") and hasattr(self, "nickname_label"):
             self.nickname_label.set_markup(f"<b>{self.connection.nickname}</b>")
@@ -877,7 +878,6 @@ class ConnectionRow(Adw.ActionRow):
             self._apply_host_label_text(include_port=True)
         self._update_forwarding_indicators()
         self.update_status()
-        self._apply_group_color_style()
 
 
 # ---------------------------------------------------------------------------
@@ -945,13 +945,13 @@ def _on_connection_list_motion(window, target, x, y):
             position = "above" if relative_y < row_height / 2 else "below"
             
             # Handle connection rows
-            if (hasattr(row, "connection") and hasattr(window, "_dragged_connection")):
-                # Don't show indicators on the row being dragged
-                if row.connection == window._dragged_connection:
+            if hasattr(row, "connection"):
+                dragged = set(getattr(window, "_dragged_connections", []) or [])
+                nickname = getattr(getattr(row, "connection", None), "nickname", None)
+                if dragged and nickname in dragged:
                     _clear_drop_indicator(window)
                     return Gdk.DragAction.MOVE
-                
-                # Only show indicator if this is a different connection
+
                 _show_drop_indicator(window, row, position)
             
             # Handle group rows
@@ -968,9 +968,7 @@ def _on_connection_list_motion(window, target, x, y):
             elif (hasattr(row, "connection") and hasattr(window, "_dragged_group_id")):
                 # Dragging group over connection - show indicator
                 _show_drop_indicator(window, row, position)
-            elif (hasattr(row, "group_id") and hasattr(window, "_dragged_connection")):
-                # Dragging connection over group - only show indicator on the group itself (not above/below)
-                # This indicates the connection will be added to the group
+            elif (hasattr(row, "group_id") and getattr(window, "_dragged_connections", None)):
                 _show_drop_indicator_on_group(window, row)
             else:
                 _clear_drop_indicator(window)
@@ -1039,6 +1037,82 @@ def _show_drop_indicator_on_group(window, row):
             window._drop_indicator_position = "on_group"
     except Exception as e:
         logger.error(f"Error showing group drop indicator: {e}")
+
+
+    def _apply_group_color_style(self):
+        config = getattr(self.group_manager, 'config', None)
+        mode = _get_color_display_mode(config) if config else 'fill'
+        rgba = _parse_color(self.group_info.get('color'))
+
+        if mode == 'badge':
+            self.remove_css_class("tinted")
+            if hasattr(self, '_tint_provider') and self._tint_provider:
+                try:
+                    self.get_style_context().remove_provider(self._tint_provider)
+                except Exception:
+                    pass
+                self._tint_provider = None
+
+            if rgba:
+                self._update_color_badge(rgba)
+                self.color_badge.set_visible(True)
+            else:
+                self.color_badge.set_visible(False)
+        else:
+            self.color_badge.set_visible(False)
+            if rgba:
+                tint = _fill_rgba(rgba) or rgba
+                self.add_css_class("tinted")
+                _set_tint_card_color(self, tint)
+            else:
+                self.remove_css_class("tinted")
+                if hasattr(self, '_tint_provider') and self._tint_provider:
+                    try:
+                        self.get_style_context().remove_provider(self._tint_provider)
+                    except Exception:
+                        pass
+                    self._tint_provider = None
+
+    def _update_color_badge(self, rgba: Gdk.RGBA):
+        r = int(rgba.red * 255)
+        g = int(rgba.green * 255)
+        b = int(rgba.blue * 255)
+        color_hex = f"#{r:02x}{g:02x}{b:02x}"
+
+        r_hover = max(0, r - 20)
+        g_hover = max(0, g - 20)
+        b_hover = max(0, b - 20)
+        hover_hex = f"#{r_hover:02x}{g_hover:02x}{b_hover:02x}"
+
+        css_data = f"""
+        button.circular.normal.sidebar-color-badge {{
+          background-color: {color_hex};
+          color: white;
+          border: none;
+          box-shadow: none;
+        }}
+        button.circular.normal.sidebar-color-badge:hover {{
+          background-color: {hover_hex};
+        }}
+        """
+
+        if self._color_badge_provider:
+            try:
+                self.color_badge.get_style_context().remove_provider(self._color_badge_provider)
+            except Exception:
+                pass
+
+        self._color_badge_provider = Gtk.CssProvider()
+        self._color_badge_provider.load_from_data(css_data.encode('utf-8'))
+        self.color_badge.get_style_context().add_provider(
+            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+        for cls in ("accent-red", "accent-blue", "accent-green", "accent-orange", "accent-purple", "accent-cyan", "accent-gray"):
+            self.color_badge.remove_css_class(cls)
+        accent_class = _get_color_class(rgba)
+        if accent_class:
+            self.color_badge.add_css_class(accent_class)
 
 
 def _create_ungrouped_area(window):
@@ -1140,19 +1214,39 @@ def _on_connection_list_drop(window, target, value, x, y):
         changes_made = False
 
         if drop_type == "connection":
-            connection_nickname = value.get("connection_nickname")
-            if connection_nickname:
-                current_group_id = window.group_manager.get_connection_group(connection_nickname)
+            connection_nicknames: List[str] = []
 
+            payload = value.get("connections")
+            if isinstance(payload, list):
+                for item in payload:
+                    if isinstance(item, dict):
+                        nickname = item.get("nickname")
+                        if isinstance(nickname, str) and nickname not in connection_nicknames:
+                            connection_nicknames.append(nickname)
+
+            if not connection_nicknames:
+                raw_list = value.get("connection_nicknames")
+                if isinstance(raw_list, list):
+                    for nickname in raw_list:
+                        if isinstance(nickname, str) and nickname not in connection_nicknames:
+                            connection_nicknames.append(nickname)
+
+            if not connection_nicknames:
+                nickname = value.get("connection_nickname")
+                if isinstance(nickname, str):
+                    connection_nicknames.append(nickname)
+
+            if connection_nicknames:
                 target_row = window.connection_list.get_row_at_y(int(y))
+
                 if not target_row:
-                    # Drop on empty space - ungroup the connection
-                    window.group_manager.move_connection(connection_nickname, None)
-                    changes_made = True
+                    for nickname in connection_nicknames:
+                        window.group_manager.move_connection(nickname, None)
+                        changes_made = True
                 elif getattr(target_row, "ungrouped_area", False):
-                    # Drop on ungrouped area
-                    window.group_manager.move_connection(connection_nickname, None)
-                    changes_made = True
+                    for nickname in connection_nicknames:
+                        window.group_manager.move_connection(nickname, None)
+                        changes_made = True
                 else:
                     row_y = target_row.get_allocation().y
                     row_height = target_row.get_allocation().height
@@ -1160,32 +1254,72 @@ def _on_connection_list_drop(window, target, value, x, y):
                     position = "above" if relative_y < row_height / 2 else "below"
 
                     if hasattr(target_row, "group_id"):
-                        # Drop on group row - add to the group
                         target_group_id = target_row.group_id
-                        if target_group_id != current_group_id:
-                            window.group_manager.move_connection(connection_nickname, target_group_id)
-                            changes_made = True
+
+                        if position == "above":
+                            first_connection = None
+                            child = window.connection_list.get_first_child()
+                            while child:
+                                if hasattr(child, 'connection'):
+                                    connection_group = window.group_manager.get_connection_group(child.connection.nickname)
+                                    if connection_group == target_group_id:
+                                        first_connection = child.connection.nickname
+                                        break
+                                child = child.get_next_sibling()
+
+                            if first_connection:
+                                for nickname in connection_nicknames:
+                                    current_group_id = window.group_manager.get_connection_group(nickname)
+                                    if current_group_id != target_group_id:
+                                        window.group_manager.move_connection(nickname, target_group_id)
+                                        changes_made = True
+                                    window.group_manager.reorder_connection_in_group(
+                                        nickname, first_connection, "above"
+                                    )
+                                    first_connection = nickname
+                                    changes_made = True
+                            else:
+                                for nickname in connection_nicknames:
+                                    if window.group_manager.get_connection_group(nickname) != target_group_id:
+                                        window.group_manager.move_connection(nickname, target_group_id)
+                                        changes_made = True
+                        else:
+                            for nickname in connection_nicknames:
+                                if window.group_manager.get_connection_group(nickname) != target_group_id:
+                                    window.group_manager.move_connection(nickname, target_group_id)
+                                    changes_made = True
                     else:
-                        # Drop on connection row
                         target_connection = getattr(target_row, "connection", None)
                         if target_connection:
-                            target_group_id = window.group_manager.get_connection_group(
-                                target_connection.nickname
-                            )
-                            if target_group_id != current_group_id:
-                                # Moving to a different group - move first, then reorder
-                                window.group_manager.move_connection(connection_nickname, target_group_id)
-                                # Now reorder within the new group
-                                window.group_manager.reorder_connection_in_group(
-                                    connection_nickname, target_connection.nickname, position
-                                )
-                                changes_made = True
+                            reference_nickname = target_connection.nickname
+                            target_group_id = window.group_manager.get_connection_group(reference_nickname)
+
+                            for nickname in connection_nicknames:
+                                current_group_id = window.group_manager.get_connection_group(nickname)
+                                if current_group_id != target_group_id:
+                                    window.group_manager.move_connection(nickname, target_group_id)
+                                    changes_made = True
+
+                            if position == "above":
+                                reference = reference_nickname
+                                for nickname in reversed(connection_nicknames):
+                                    if nickname == reference:
+                                        continue
+                                    window.group_manager.reorder_connection_in_group(
+                                        nickname, reference, "above"
+                                    )
+                                    reference = nickname
+                                    changes_made = True
                             else:
-                                # Same group - just reorder
-                                window.group_manager.reorder_connection_in_group(
-                                    connection_nickname, target_connection.nickname, position
-                                )
-                                changes_made = True
+                                reference = reference_nickname
+                                for nickname in connection_nicknames:
+                                    if nickname == reference:
+                                        continue
+                                    window.group_manager.reorder_connection_in_group(
+                                        nickname, reference, "below"
+                                    )
+                                    reference = nickname
+                                    changes_made = True
 
         elif drop_type == "group":
             group_id = value.get("group_id")
@@ -1402,4 +1536,3 @@ def build_sidebar(window):
 
 
 __all__ = ["GroupRow", "ConnectionRow", "build_sidebar"]
-

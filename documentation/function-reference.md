@@ -1419,11 +1419,16 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 
 
+## Module: `sshpilot_dnd.logic`
+
+- **`hit_test_insertion(rows, pointer_y)`** — Return which row key and side the drop indicator should target for a pointer position.
+- **`reorder_connections_state(connection_to_group, group_connections, target_connection, dragged_connections, position)`** — Compute an immutable plan describing how connection orders and group membership change after a drop.
+- **`autoscroll_velocity(params)`** — Pure helper that scales autoscroll speed based on pointer depth inside the viewport margins.
+
+
 ## Module: `sshpilot.sidebar`
 
 ### Functions
-
-- **`_calculate_autoscroll_velocity(distance, margin, max_velocity)`** — Scale the autoscroll velocity based on how deep the pointer is in the margin.
 
 - **`_clear_drop_indicator(window)`** — Handles clear drop indicator.
 
@@ -2130,7 +2135,7 @@ Application accelerators now remain available even while the terminal widget is 
 
 - **`_set_sidebar_widget(widget)`** — Sets sidebar widget.
 
-- **`_setup_interaction_stop_pulse()`** — Set up event controllers to stop pulse effect on user interaction
+- **`_setup_connection_list_interactions()`** — Set up event controllers for connection list interaction handling
 
 - **`_show_duplicate_connection_error(connection, error)`** — Display an error dialog when duplication fails.
 
@@ -2148,10 +2153,6 @@ Application accelerators now remain available even while the terminal widget is 
 
 - **`_start_scp_upload_flow(connection)`** — Kick off the upload flow using a portal-aware file chooser.
 
-- **`_stop_pulse_on_interaction(controller, *args)`** — Stop any ongoing pulse effect when user interacts
-
-- **`_test_css_pulse(action, param)`** — Simple test to manually toggle CSS class
-
 - **`_toggle_class(widget, name, on)`** — Helper to toggle CSS class on a widget
 
 - **`_toggle_sidebar_visibility(is_visible)`** — Helper method to toggle sidebar visibility
@@ -2161,8 +2162,6 @@ Application accelerators now remain available even while the terminal widget is 
 - **`_update_tab_button_visibility()`** — Update TabButton visibility based on number of tabs
 
 - **`_update_tab_titles()`** — Update tab titles
-
-- **`_wire_pulses()`** — Wire pulse effects to trigger on focus-in only
 
 - **`add_connection_row(connection, indent_level=0)`** — Add a connection row to the list with optional indentation
 
@@ -2271,8 +2270,6 @@ Application accelerators now remain available even while the terminal widget is 
 - **`open_help_url()`** — Open the SSH Pilot wiki in the default browser
 
 - **`open_in_system_terminal(connection)`** — Open the connection in the system's default terminal
-
-- **`pulse_selected_row(list_box, repeats=3, duration_ms=280)`** — Pulse the selected row with highlight effect
 
 - **`rebuild_connection_list()`** — Rebuild the connection list with groups
 
