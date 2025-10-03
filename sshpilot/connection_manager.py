@@ -520,36 +520,45 @@ class Connection:
 
             ssh_options: List[str] = []
 
-            apply_adv = bool(safe_get_setting('ssh.apply_advanced', False))
+            apply_adv_value = safe_get_setting('ssh.apply_advanced', False)
+            apply_adv = bool(apply_adv_value)
 
-            batch_mode = bool(safe_get_setting('ssh.batch_mode', True))
+            batch_mode_value = safe_get_setting('ssh.batch_mode', True)
+            batch_mode = bool(batch_mode_value)
+
             connect_timeout_value = safe_get_setting('ssh.connection_timeout', 10)
             connect_timeout = safe_int(connect_timeout_value, 10) if apply_adv else None
+
             connection_attempts_value = safe_get_setting('ssh.connection_attempts', 1)
             connection_attempts = (
                 safe_int(connection_attempts_value, 1) if apply_adv else None
             )
+
             keepalive_interval_value = safe_get_setting('ssh.keepalive_interval', 30)
             keepalive_interval = (
                 safe_int(keepalive_interval_value, 30) if apply_adv else None
             )
+
             keepalive_count_value = safe_get_setting('ssh.keepalive_count_max', 3)
             keepalive_count = (
                 safe_int(keepalive_count_value, 3) if apply_adv else None
             )
-            strict_host_value = safe_get_setting(
-                'ssh.strict_host_key_checking', ''
-            )
+
+            strict_host_value = safe_get_setting('ssh.strict_host_key_checking', '')
             strict_host = ''
             if apply_adv:
                 if isinstance(strict_host_value, str):
                     strict_host = strict_host_value.strip()
                 elif strict_host_value is not None:
                     strict_host = str(strict_host_value).strip()
-            compression = bool(safe_get_setting('ssh.compression', False)) if apply_adv else False
-            exit_on_forward_failure = bool(
-                safe_get_setting('ssh.exit_on_forward_failure', True)
+
+            compression_value = safe_get_setting('ssh.compression', False)
+            compression = bool(compression_value)
+
+            exit_on_forward_failure_value = safe_get_setting(
+                'ssh.exit_on_forward_failure', True
             )
+            exit_on_forward_failure = bool(exit_on_forward_failure_value)
 
             password_auth_selected = False
             has_saved_password = False
@@ -589,7 +598,9 @@ class Connection:
 
             verbosity_value = safe_get_setting('ssh.verbosity', 0)
             verbosity = safe_int(verbosity_value, 0)
-            debug_enabled = bool(safe_get_setting('ssh.debug_enabled', False))
+
+            debug_enabled_value = safe_get_setting('ssh.debug_enabled', False)
+            debug_enabled = bool(debug_enabled_value)
 
             v = max(0, min(3, verbosity))
             for _ in range(v):

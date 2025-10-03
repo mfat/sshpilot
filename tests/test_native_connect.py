@@ -21,9 +21,14 @@ class DummyConfig:
             'ssh.verbosity': 2,
             'ssh.debug_enabled': True,
         }
+        self.calls = []
 
     def get_setting(self, key, default=None):
+        self.calls.append(key)
         return self._settings.get(key, default)
+
+    def get_ssh_config(self):  # pragma: no cover - guard against legacy access
+        raise AssertionError('native_connect should not call get_ssh_config')
 
 
 class DisabledAdvancedConfig:
@@ -33,9 +38,14 @@ class DisabledAdvancedConfig:
             'ssh.strict_host_key_checking': 'accept-new',
             'ssh.exit_on_forward_failure': True,
         }
+        self.calls = []
 
     def get_setting(self, key, default=None):
+        self.calls.append(key)
         return self._settings.get(key, default)
+
+    def get_ssh_config(self):  # pragma: no cover - guard against legacy access
+        raise AssertionError('native_connect should not call get_ssh_config')
 
 
 def run_native_connect(connection: Connection) -> bool:
@@ -54,7 +64,8 @@ def run_native_connect(connection: Connection) -> bool:
 
 
 def test_native_connect_includes_advanced_options(monkeypatch):
-    monkeypatch.setattr(config_module, 'Config', DummyConfig)
+    config_instance = DummyConfig()
+    monkeypatch.setattr(config_module, 'Config', lambda: config_instance)
 
     connection = Connection(
         {
@@ -106,9 +117,25 @@ def test_native_connect_includes_advanced_options(monkeypatch):
     assert has_option('Compression=yes')
     assert has_option('UserKnownHostsFile=/tmp/custom_known_hosts')
 
+    expected_keys = {
+        'ssh.apply_advanced',
+        'ssh.batch_mode',
+        'ssh.connection_timeout',
+        'ssh.connection_attempts',
+        'ssh.keepalive_interval',
+        'ssh.keepalive_count_max',
+        'ssh.strict_host_key_checking',
+        'ssh.compression',
+        'ssh.exit_on_forward_failure',
+        'ssh.verbosity',
+        'ssh.debug_enabled',
+    }
+    assert expected_keys.issubset(set(config_instance.calls))
+
 
 def test_native_connect_logs_raw_command(monkeypatch, caplog):
-    monkeypatch.setattr(config_module, 'Config', DummyConfig)
+    config_instance = DummyConfig()
+    monkeypatch.setattr(config_module, 'Config', lambda: config_instance)
 
     connection = Connection(
         {
@@ -138,7 +165,8 @@ def test_native_connect_logs_raw_command(monkeypatch, caplog):
 
 
 def test_native_connect_excludes_strict_host_key_checking_when_advanced_disabled(monkeypatch):
-    monkeypatch.setattr(config_module, 'Config', DisabledAdvancedConfig)
+    config_instance = DisabledAdvancedConfig()
+    monkeypatch.setattr(config_module, 'Config', lambda: config_instance)
 
     connection = Connection(
         {
