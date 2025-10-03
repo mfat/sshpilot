@@ -12,7 +12,7 @@ import subprocess
 import shlex
 import signal
 import re
-from typing import Dict, List, Optional, Any, Tuple, Union, Set
+from typing import Dict, List, Optional, Any, Tuple, Union
 
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
 from .platform_utils import is_macos, get_config_dir, get_ssh_dir
@@ -74,8 +74,6 @@ class Connection:
         self.connection = None
         self.forwarders: List[asyncio.Task] = []
         self.listeners: List[asyncio.Server] = []
-        self.resolved_ssh_config: Dict[str, Any] = {}
-        self.resolved_user_known_hosts: List[str] = []
 
         raw_quick = data.get('quick_connect_command', '') if isinstance(data, dict) else ''
         if isinstance(raw_quick, str):
@@ -259,93 +257,6 @@ class Connection:
 
             ssh_cmd = ['ssh']
 
-            def _parse_option_token(token: str) -> Tuple[str, bool]:
-                token = str(token or '').strip()
-                if not token:
-                    return '', False
-                if '=' in token:
-                    key, _ = token.split('=', 1)
-                    return key.strip(), True
-                return token, False
-
-            def _collect_option_keys(cmd: List[str]) -> Set[str]:
-                keys: Set[str] = set()
-                i = 0
-                length = len(cmd)
-                while i < length:
-                    arg = cmd[i]
-                    if arg == '-o':
-                        i += 1
-                        if i < length:
-                            opt = cmd[i]
-                            key, has_value = _parse_option_token(opt)
-                            if key:
-                                keys.add(key.lower())
-                            if (not has_value) and (i + 1 < length):
-                                lookahead = cmd[i + 1]
-                                if not str(lookahead).startswith('-'):
-                                    i += 1
-                    elif isinstance(arg, str) and arg.startswith('-o'):
-                        remainder = arg[2:].lstrip()
-                        if remainder:
-                            key, has_value = _parse_option_token(remainder)
-                            if key:
-                                keys.add(key.lower())
-                            if (not has_value) and (i + 1 < length):
-                                lookahead = cmd[i + 1]
-                                if not str(lookahead).startswith('-'):
-                                    i += 1
-                    i += 1
-                return keys
-
-            def _has_option(cmd: List[str], option_key: str) -> bool:
-                key = str(option_key or '').strip().lower()
-                if not key:
-                    return False
-                return key in _collect_option_keys(cmd)
-
-            stored_alias = ''
-            if isinstance(self.data, dict):
-                stored_alias = str(self.data.get('host') or '')
-            alias_fallback = (
-                stored_alias
-                or self.nickname
-                or self.host
-                or self.hostname
-            )
-
-            target_alias = self.nickname or self.hostname
-            config_override = self._resolve_config_override_path()
-            effective_cfg: Dict[str, Union[str, List[str]]] = {}
-            if target_alias:
-                if config_override:
-                    effective_cfg = get_effective_ssh_config(
-                        target_alias, config_file=config_override
-                    )
-                else:
-                    effective_cfg = get_effective_ssh_config(target_alias)
-
-            if not isinstance(effective_cfg, dict):
-                effective_cfg = {}
-
-            self.resolved_ssh_config = dict(effective_cfg)
-
-            raw_known_hosts = effective_cfg.get('userknownhostsfile')
-            resolved_known_hosts: List[str] = []
-            if isinstance(raw_known_hosts, list):
-                resolved_known_hosts = [
-                    str(path)
-                    for path in raw_known_hosts
-                    if str(path).strip()
-                ]
-            elif isinstance(raw_known_hosts, str) and raw_known_hosts.strip():
-                resolved_known_hosts = [raw_known_hosts.strip()]
-            self.resolved_user_known_hosts = resolved_known_hosts
-
-            effective_strict = str(
-                effective_cfg.get('stricthostkeychecking', '') or ''
-            ).strip()
-
             # Pull advanced SSH defaults from config when available
             try:
                 from .config import Config  # avoid circular import at top level
@@ -365,35 +276,22 @@ class Connection:
 
             # Apply advanced args only when user explicitly enabled them
             if apply_adv:
-                if batch_mode and not _has_option(ssh_cmd, 'batchmode'):
+                if batch_mode:
                     ssh_cmd.extend(['-o', 'BatchMode=yes'])
-                if connect_timeout is not None and not _has_option(
-                    ssh_cmd, 'connecttimeout'
-                ):
+                if connect_timeout is not None:
                     ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
-                if connection_attempts is not None and not _has_option(
-                    ssh_cmd, 'connectionattempts'
-                ):
+                if connection_attempts is not None:
                     ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
-                if strict_host and not _has_option(
-                    ssh_cmd, 'stricthostkeychecking'
-                ):
+                if strict_host:
                     ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
                 if compression:
                     ssh_cmd.append('-C')
-            if not _has_option(ssh_cmd, 'exitonforwardfailure'):
-                ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
-            if not _has_option(ssh_cmd, 'numberofpasswordprompts'):
-                ssh_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
+            ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
+            ssh_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
 
             # Apply default host key behavior when not explicitly set
             try:
-                if (
-                    (not strict_host)
-                    and auto_add_host_keys
-                    and not effective_strict
-                    and not _has_option(ssh_cmd, 'stricthostkeychecking')
-                ):
+                if (not strict_host) and auto_add_host_keys:
                     ssh_cmd.extend(['-o', 'StrictHostKeyChecking=accept-new'])
             except Exception:
                 pass
@@ -413,6 +311,28 @@ class Connection:
                     ssh_cmd.extend(['-o', 'LogLevel=DEBUG'])
             except Exception:
                 pass
+
+            # Resolve effective SSH configuration for this nickname/host
+            effective_cfg: Dict[str, Union[str, List[str]]] = {}
+            target_alias = self.nickname or self.hostname
+            stored_alias = ""
+            if isinstance(self.data, dict):
+                stored_alias = str(self.data.get('host') or '')
+            alias_fallback = (
+                stored_alias
+                or self.nickname
+                or self.host
+                or self.hostname
+            )
+            config_override = self._resolve_config_override_path()
+            if target_alias:
+                if config_override:
+                    effective_cfg = get_effective_ssh_config(
+                        target_alias, config_file=config_override
+                    )
+                else:
+                    effective_cfg = get_effective_ssh_config(target_alias)
+
 
             # Determine final parameters, falling back to resolved config when needed
             existing_hostname = self.hostname or ''

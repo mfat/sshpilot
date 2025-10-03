@@ -587,54 +587,8 @@ class TerminalWidget(Gtk.Box):
                 if using_prepared_cmd and host_arg is None:
                     needs_host_append = False
 
-                def _parse_option_token(token: str):
-                    token = str(token or '').strip()
-                    if not token:
-                        return '', False
-                    if '=' in token:
-                        key, _ = token.split('=', 1)
-                        return key.strip(), True
-                    return token, False
-
-                def _collect_option_keys(cmd):
-                    keys = set()
-                    i = 0
-                    length = len(cmd)
-                    while i < length:
-                        arg = cmd[i]
-                        if arg == '-o':
-                            i += 1
-                            if i < length:
-                                opt = cmd[i]
-                                key, has_value = _parse_option_token(opt)
-                                if key:
-                                    keys.add(key.lower())
-                                if (not has_value) and (i + 1 < length):
-                                    lookahead = cmd[i + 1]
-                                    if not str(lookahead).startswith('-'):
-                                        i += 1
-                        elif isinstance(arg, str) and arg.startswith('-o'):
-                            remainder = arg[2:].lstrip()
-                            if remainder:
-                                key, has_value = _parse_option_token(remainder)
-                                if key:
-                                    keys.add(key.lower())
-                                if (not has_value) and (i + 1 < length):
-                                    lookahead = cmd[i + 1]
-                                    if not str(lookahead).startswith('-'):
-                                        i += 1
-                        i += 1
-                    return keys
-
-                def option_key_present(key_name: str) -> bool:
-                    key = str(key_name or '').strip().lower()
-                    if not key:
-                        return False
-                    return key in _collect_option_keys(ssh_cmd)
-
                 def ensure_option(option: str):
-                    option_key = str(option or '').split('=', 1)[0].strip().lower()
-                    if option_key and not option_key_present(option_key):
+                    if option not in ssh_cmd:
                         ssh_cmd.extend(['-o', option])
 
                 def ensure_flag(flag: str):
@@ -655,31 +609,6 @@ class TerminalWidget(Gtk.Box):
                 auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
                 batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
                 compression = bool(ssh_cfg.get('compression', False)) if apply_adv else False
-
-                resolved_cfg = {}
-                try:
-                    resolved_cfg = getattr(self.connection, 'resolved_ssh_config', {}) or {}
-                except Exception:
-                    resolved_cfg = {}
-                resolved_strict_cfg = ''
-                has_known_hosts_override = False
-                if isinstance(resolved_cfg, dict):
-                    resolved_strict_cfg = str(
-                        resolved_cfg.get('stricthostkeychecking', '') or ''
-                    ).strip()
-                    raw_known_hosts = resolved_cfg.get('userknownhostsfile')
-                    if isinstance(raw_known_hosts, list):
-                        has_known_hosts_override = any(
-                            str(item).strip() for item in raw_known_hosts
-                        )
-                    elif isinstance(raw_known_hosts, str):
-                        has_known_hosts_override = bool(raw_known_hosts.strip())
-                if not has_known_hosts_override:
-                    try:
-                        overrides = getattr(self.connection, 'resolved_user_known_hosts', [])
-                        has_known_hosts_override = bool(overrides)
-                    except Exception:
-                        has_known_hosts_override = False
 
                 # Determine auth method from connection and retrieve any saved password
                 try:
@@ -722,12 +651,7 @@ class TerminalWidget(Gtk.Box):
 
                 # Default to accepting new host keys non-interactively on fresh installs
                 try:
-                    if (
-                        (not strict_host)
-                        and auto_add_host_keys
-                        and not resolved_strict_cfg
-                        and not option_key_present('StrictHostKeyChecking')
-                    ):
+                    if (not strict_host) and auto_add_host_keys:
                         ensure_option('StrictHostKeyChecking=accept-new')
                 except Exception:
                     pass
@@ -736,12 +660,7 @@ class TerminalWidget(Gtk.Box):
                 try:
                     if getattr(self, 'connection_manager', None):
                         kh_path = getattr(self.connection_manager, 'known_hosts_path', '')
-                        if (
-                            kh_path
-                            and os.path.exists(kh_path)
-                            and not option_key_present('UserKnownHostsFile')
-                            and not has_known_hosts_override
-                        ):
+                        if kh_path and os.path.exists(kh_path):
                             ensure_option(f'UserKnownHostsFile={kh_path}')
                 except Exception:
                     logger.debug('Failed to set UserKnownHostsFile option', exc_info=True)
