@@ -273,6 +273,7 @@ class Connection:
             verbosity = int(ssh_cfg.get('verbosity', 0))
             debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
             auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
+            exit_on_forward_failure = bool(ssh_cfg.get('exit_on_forward_failure', True))
 
             # Apply advanced args only when user explicitly enabled them
             if apply_adv:
@@ -286,7 +287,8 @@ class Connection:
                     ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
                 if compression:
                     ssh_cmd.append('-C')
-            ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
+            if exit_on_forward_failure:
+                ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
             ssh_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
 
             # Apply default host key behavior when not explicitly set
@@ -602,6 +604,7 @@ class Connection:
             keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3))
             strict_host = str(ssh_cfg.get('strict_host_key_checking', 'accept-new'))
             batch_mode = bool(ssh_cfg.get('batch_mode', True))
+            exit_on_forward_failure = bool(ssh_cfg.get('exit_on_forward_failure', True))
 
             # Robust non-interactive options to prevent hangs
             if batch_mode:
@@ -631,14 +634,18 @@ class Connection:
             forward_spec = f"{listen_addr}:{listen_port}"
             logger.debug(f"Setting up dynamic forwarding to: {forward_spec}")
             
-            ssh_cmd.extend([
+            forwarding_args = [
                 '-N',  # No remote command
                 '-D', forward_spec,  # Dynamic port forwarding (SOCKS)
                 '-f',  # Run in background
-                '-o', 'ExitOnForwardFailure=yes',  # Exit if forwarding fails
+            ]
+            if exit_on_forward_failure:
+                forwarding_args.extend(['-o', 'ExitOnForwardFailure=yes'])
+            forwarding_args.extend([
                 '-o', 'ServerAliveInterval=30',    # Keep connection alive
                 '-o', 'ServerAliveCountMax=3'      # Max missed keepalives before disconnect
             ])
+            ssh_cmd.extend(forwarding_args)
             
             # Add username and host
             target = f"{self.username}@{self.hostname}" if self.username else self.hostname
