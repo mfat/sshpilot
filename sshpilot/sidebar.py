@@ -528,18 +528,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.drop_indicator_bottom = DragIndicator()
         main_box.append(self.drop_indicator_bottom)
 
-        # Add pulse overlay to the main box
-        self._pulse = Gtk.Box()
-        self._pulse.add_css_class("pulse-highlight")
-        self._pulse.set_can_target(False)
-        self._pulse.set_hexpand(True)
-        self._pulse.set_vexpand(True)
-        
-        # Create overlay for pulse effect
-        overlay = Gtk.Overlay()
-        overlay.set_child(main_box)
-        overlay.add_overlay(self._pulse)
-        self.set_child(overlay)
+        # Set the main box as the child directly (no pulse overlay)
+        self.set_child(main_box)
 
         self.set_selectable(True)
 
