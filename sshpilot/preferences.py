@@ -1189,8 +1189,8 @@ class PreferencesWindow(Gtk.Window):
             self.apply_advanced_row.connect('notify::active', _sync_advanced_sensitivity)
 
             ssh_settings_page.add(help_group)
-            ssh_settings_page.add(native_connect_group)
             ssh_settings_page.add(advanced_group)
+            ssh_settings_page.add(native_connect_group)
 
             # Ensure shortcut overview controls reflect current state
             self._set_shortcut_controls_enabled(not self._pass_through_enabled)
@@ -1248,7 +1248,7 @@ class PreferencesWindow(Gtk.Window):
             self.add_page_to_layout("File Management", "folder-symbolic", file_management_page)
             self.add_page_to_layout("Shortcuts", "preferences-desktop-keyboard-shortcuts-symbolic", shortcuts_page)
             self.add_page_to_layout("Groups", "folder-open-symbolic", groups_page)
-            self.add_page_to_layout("SSH", "network-workgroup-symbolic", ssh_settings_page)
+            self.add_page_to_layout("SSH Options", "network-workgroup-symbolic", ssh_settings_page)
             self.add_page_to_layout("Advanced", "applications-system-symbolic", advanced_page)
             
             logger.info("Preferences window initialized")
