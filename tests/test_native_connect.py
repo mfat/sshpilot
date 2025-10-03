@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import shlex
+from unittest.mock import MagicMock
 
 from sshpilot.connection_manager import Connection
 from sshpilot import config as config_module
@@ -54,7 +55,27 @@ def run_native_connect(connection: Connection) -> bool:
 
 
 def test_native_connect_includes_advanced_options(monkeypatch):
-    monkeypatch.setattr(config_module, 'Config', DummyConfig)
+    advanced_settings = {
+        'ssh.apply_advanced': True,
+        'ssh.batch_mode': True,
+        'ssh.connection_timeout': 15,
+        'ssh.connection_attempts': 4,
+        'ssh.keepalive_interval': 30,
+        'ssh.keepalive_count_max': 2,
+        'ssh.strict_host_key_checking': 'no',
+        'ssh.exit_on_forward_failure': True,
+        'ssh.compression': True,
+        'ssh.verbosity': 2,
+        'ssh.debug_enabled': True,
+    }
+
+    config_instance = MagicMock(spec=['get_setting'])
+    config_instance.get_setting.side_effect = (
+        lambda key, default=None: advanced_settings.get(key, default)
+    )
+    config_factory = MagicMock(return_value=config_instance)
+
+    monkeypatch.setattr(config_module, 'Config', config_factory)
 
     connection = Connection(
         {
@@ -73,6 +94,24 @@ def test_native_connect_includes_advanced_options(monkeypatch):
 
     host_index = ssh_cmd.index(host_label)
     advanced_section = ssh_cmd[:host_index]
+
+    config_factory.assert_called_once()
+
+    expected_keys = {
+        'ssh.apply_advanced',
+        'ssh.batch_mode',
+        'ssh.connection_timeout',
+        'ssh.connection_attempts',
+        'ssh.keepalive_interval',
+        'ssh.keepalive_count_max',
+        'ssh.strict_host_key_checking',
+        'ssh.compression',
+        'ssh.exit_on_forward_failure',
+        'ssh.verbosity',
+        'ssh.debug_enabled',
+    }
+    retrieved_keys = {call.args[0] for call in config_instance.get_setting.call_args_list}
+    assert expected_keys.issubset(retrieved_keys)
 
     def has_option_pair(value: str) -> bool:
         return any(
