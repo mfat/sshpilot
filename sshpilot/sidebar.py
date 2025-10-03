@@ -561,6 +561,11 @@ class GroupRow(Adw.ActionRow):
                 if hasattr(window, "_dragged_group_id"):
                     delattr(window, "_dragged_group_id")
                 _hide_ungrouped_area(window)
+                _stop_connection_autoscroll(window)
+                # Restore selection mode after drag
+                if hasattr(window, '_drag_in_progress'):
+                    window._drag_in_progress = False
+                    window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
         except Exception as e:
             logger.error(f"Error in group drag end: {e}")
 
@@ -940,6 +945,9 @@ class ConnectionRow(Adw.ActionRow):
                 # Clear drag state
                 window._drag_in_progress = False
                 _hide_ungrouped_area(window)
+                _stop_connection_autoscroll(window)
+                # Restore selection mode after drag
+                window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
         except Exception as e:
             logger.error(f"Error in drag end: {e}")
 
