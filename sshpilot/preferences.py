@@ -717,7 +717,7 @@ class PreferencesWindow(Gtk.Window):
             self.terminal_group_color_row = Adw.SwitchRow()
             self.terminal_group_color_row.set_title("Use Group Color in Terminals")
             self.terminal_group_color_row.set_subtitle(
-                "Use the selected group's color as the terminal background color"
+                "Use parent group's color as terminal background"
             )
             try:
                 terminal_pref = bool(
