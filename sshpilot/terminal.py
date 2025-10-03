@@ -18,7 +18,7 @@ import weakref
 import subprocess
 import pwd
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, List, Tuple
 from .port_utils import get_port_checker
 from .platform_utils import is_macos
 
@@ -587,9 +587,63 @@ class TerminalWidget(Gtk.Box):
                 if using_prepared_cmd and host_arg is None:
                     needs_host_append = False
 
+                option_token_map: Dict[str, List[Tuple[int, str, bool]]] = {}
+
+                def _rebuild_option_index():
+                    option_token_map.clear()
+                    idx = 0
+                    while idx < len(ssh_cmd):
+                        token = ssh_cmd[idx]
+                        if token == '-o' and idx + 1 < len(ssh_cmd):
+                            option_token = ssh_cmd[idx + 1]
+                            key, sep, _ = option_token.partition('=')
+                            if sep:
+                                lowered = key.lower()
+                                option_token_map.setdefault(lowered, []).append((idx + 1, key, False))
+                            idx += 2
+                            continue
+                        if token.startswith('-o') and len(token) > 2:
+                            option_token = token[2:]
+                            key, sep, _ = option_token.partition('=')
+                            if sep:
+                                lowered = key.lower()
+                                option_token_map.setdefault(lowered, []).append((idx, key, True))
+                        idx += 1
+
+                _rebuild_option_index()
+
                 def ensure_option(option: str):
+                    _rebuild_option_index()
+                    key_part, sep, value = option.partition('=')
+                    normalized_key = key_part.strip().lower() if sep else option.strip().lower()
+                    entries = option_token_map.get(normalized_key, []) if normalized_key else []
+
+                    if entries and sep:
+                        token_index, original_key, is_inline = entries[0]
+                        preserved_key = original_key or key_part
+                        new_token = f"{preserved_key}={value}"
+                        if is_inline:
+                            ssh_cmd[token_index] = f"-o{new_token}"
+                        else:
+                            ssh_cmd[token_index] = new_token
+
+                        for extra_index, _, extra_inline in sorted(entries[1:], key=lambda item: item[0], reverse=True):
+                            if extra_inline:
+                                if 0 <= extra_index < len(ssh_cmd):
+                                    del ssh_cmd[extra_index]
+                            else:
+                                if 0 <= extra_index < len(ssh_cmd):
+                                    del ssh_cmd[extra_index]
+                                    preceding = extra_index - 1
+                                    if 0 <= preceding < len(ssh_cmd) and ssh_cmd[preceding] == '-o':
+                                        del ssh_cmd[preceding]
+
+                        _rebuild_option_index()
+                        return
+
                     if option not in ssh_cmd:
                         ssh_cmd.extend(['-o', option])
+                        _rebuild_option_index()
 
                 def ensure_flag(flag: str):
                     if flag not in ssh_cmd:
