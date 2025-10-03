@@ -2,5 +2,6 @@
 <gresources>
   <gresource prefix="/io/github/mfat/sshpilot">
     <file>sshpilot.svg</file>
+    <file>tag-symbolic.svg</file>
   </gresource>
 </gresources>

@@ -18,6 +18,7 @@ import weakref
 import subprocess
 import pwd
 from datetime import datetime
+from typing import Optional
 from .port_utils import get_port_checker
 from .platform_utils import is_macos
 
@@ -201,15 +202,18 @@ class TerminalWidget(Gtk.Box):
         'title-changed': (GObject.SignalFlags.RUN_FIRST, None, (str,)),
     }
     
-    def __init__(self, connection, config, connection_manager):
+    def __init__(self, connection, config, connection_manager, group_color=None):
+
         # Initialize as a vertical Gtk.Box
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
-        
+
         # Store references
         self.connection = connection
         self.config = config
         self.connection_manager = connection_manager
-        
+        self.group_color = group_color
+
+
         # Process tracking
         self.process = None
         self.process_pid = None
@@ -245,6 +249,8 @@ class TerminalWidget(Gtk.Box):
         self._shortcut_controller = None
         self._scroll_controller = None
         self._config_handler = None
+        self._supported_encodings = None
+        self._updating_encoding_config = False
         try:
             self._pass_through_mode = bool(self.config.get_setting('terminal.pass_through_mode', False))
         except Exception:
@@ -1232,10 +1238,64 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.debug(f"Failed to present forwarding error dialog: {e}")
         return False
-        
+
+    def set_group_color(self, color: Optional[str]):
+        """Update the stored group color and refresh the theme if needed."""
+        self.group_color = color if color else None
+        try:
+            self.apply_theme()
+        except Exception:
+            logger.debug("Failed to reapply theme after group color update", exc_info=True)
+
+    @staticmethod
+    def _mix_rgba(base: Gdk.RGBA, other: Gdk.RGBA, ratio: float) -> Gdk.RGBA:
+        ratio = max(0.0, min(1.0, ratio))
+        mixed = Gdk.RGBA()
+        mixed.red = base.red * (1.0 - ratio) + other.red * ratio
+        mixed.green = base.green * (1.0 - ratio) + other.green * ratio
+        mixed.blue = base.blue * (1.0 - ratio) + other.blue * ratio
+        mixed.alpha = base.alpha * (1.0 - ratio) + other.alpha * ratio
+        return mixed
+
+    @staticmethod
+    def _calculate_luminance(rgba: Gdk.RGBA) -> float:
+        return 0.2126 * rgba.red + 0.7152 * rgba.green + 0.0722 * rgba.blue
+
+    @classmethod
+    def _contrast_color(cls, rgba: Gdk.RGBA) -> Gdk.RGBA:
+        contrast = Gdk.RGBA()
+        if cls._calculate_luminance(rgba) < 0.5:
+            contrast.parse('#FFFFFF')
+        else:
+            contrast.parse('#000000')
+        contrast.alpha = 1.0
+        return contrast
+
+    @staticmethod
+    def _ensure_opaque(rgba: Gdk.RGBA) -> Gdk.RGBA:
+        opaque = Gdk.RGBA()
+        opaque.red = rgba.red
+        opaque.green = rgba.green
+        opaque.blue = rgba.blue
+        opaque.alpha = 1.0
+        return opaque
+
+    def _parse_group_color(self) -> Optional[Gdk.RGBA]:
+        if not self.group_color:
+            return None
+        rgba = Gdk.RGBA()
+        try:
+            parsed = rgba.parse(str(self.group_color))
+        except Exception:
+            logger.debug("Failed to parse terminal group color '%s'", self.group_color, exc_info=True)
+            return None
+        if not parsed or rgba.alpha <= 0:
+            return None
+        return rgba
+
     def apply_theme(self, theme_name=None):
         """Apply terminal theme and font settings
-        
+
         Args:
             theme_name (str, optional): Name of the theme to apply. If None, uses the saved theme.
         """
@@ -1267,19 +1327,37 @@ class TerminalWidget(Gtk.Box):
             # Set colors
             fg_color = Gdk.RGBA()
             fg_color.parse(profile['foreground'])
-            
+
             bg_color = Gdk.RGBA()
             bg_color.parse(profile['background'])
-            
+
             cursor_color = Gdk.RGBA()
             cursor_color.parse(profile.get('cursor_color', profile['foreground']))
-            
+
             highlight_bg = Gdk.RGBA()
             highlight_bg.parse(profile.get('highlight_background', '#4A90E2'))
-            
+
             highlight_fg = Gdk.RGBA()
             highlight_fg.parse(profile.get('highlight_foreground', profile['foreground']))
-            
+
+            override_rgba = self._get_group_color_rgba()
+            use_group_color = False
+
+            try:
+                use_group_color = bool(
+                    self.config.get_setting('ui.use_group_color_in_terminal', False)
+                )
+            except Exception:
+                use_group_color = False
+
+            if use_group_color and override_rgba is not None:
+                bg_color = self._clone_rgba(override_rgba)  # Use exact group color
+                fg_color = self._get_contrast_color(bg_color)
+                highlight_bg = self._clone_rgba(override_rgba)
+                highlight_fg = self._get_contrast_color(highlight_bg)
+                cursor_color = self._clone_rgba(highlight_fg)
+
+
             # Prepare palette colors (16 ANSI colors)
             palette_colors = None
             if 'palette' in profile and profile['palette']:
@@ -1338,6 +1416,69 @@ class TerminalWidget(Gtk.Box):
             
         except Exception as e:
             logger.error(f"Failed to apply terminal theme: {e}")
+
+    def _clone_rgba(self, rgba: Gdk.RGBA) -> Gdk.RGBA:
+        clone = Gdk.RGBA()
+        clone.red = rgba.red
+        clone.green = rgba.green
+        clone.blue = rgba.blue
+        clone.alpha = rgba.alpha
+        return clone
+
+    def _get_group_color_rgba(self) -> Optional[Gdk.RGBA]:
+        color_value = getattr(self, 'group_color', None)
+        if not color_value:
+            return None
+
+        rgba = Gdk.RGBA()
+        try:
+            if rgba.parse(str(color_value)):
+                rgba.alpha = 1.0 if rgba.alpha == 0 else rgba.alpha
+                return rgba
+        except Exception:
+            logger.debug("Failed to parse group color '%s'", color_value, exc_info=True)
+        return None
+
+    def _mix_with_white(self, rgba: Gdk.RGBA, ratio: float = 0.35) -> Gdk.RGBA:
+        ratio = max(0.0, min(1.0, ratio))
+        mixed = Gdk.RGBA()
+        mixed.red = min(1.0, rgba.red * ratio + (1 - ratio))
+        mixed.green = min(1.0, rgba.green * ratio + (1 - ratio))
+        mixed.blue = min(1.0, rgba.blue * ratio + (1 - ratio))
+        mixed.alpha = 1.0
+        return mixed
+
+    def _relative_luminance(self, rgba: Gdk.RGBA) -> float:
+        def to_linear(channel: float) -> float:
+            if channel <= 0.03928:
+                return channel / 12.92
+            return ((channel + 0.055) / 1.055) ** 2.4
+
+        r_lin = to_linear(rgba.red)
+        g_lin = to_linear(rgba.green)
+        b_lin = to_linear(rgba.blue)
+        return 0.2126 * r_lin + 0.7152 * g_lin + 0.0722 * b_lin
+
+    def _get_contrast_color(self, background: Gdk.RGBA) -> Gdk.RGBA:
+        luminance = self._relative_luminance(background)
+        contrast = Gdk.RGBA()
+        if luminance > 0.5:
+            contrast.parse('#1B1B1D')
+        else:
+            contrast.parse('#FFFFFF')
+        contrast.alpha = 1.0
+        return contrast
+
+    def set_group_color(self, color_value, force: bool = False):
+        normalized = color_value or None
+        if not force and normalized == getattr(self, 'group_color', None):
+            return
+
+        self.group_color = normalized
+        try:
+            self.apply_theme()
+        except Exception:
+            logger.debug("Failed to reapply theme after group color update", exc_info=True)
             
     def force_style_refresh(self):
         """Force a style refresh of the terminal widget."""
@@ -1407,12 +1548,12 @@ class TerminalWidget(Gtk.Box):
                 self.vte.set_mouse_autohide(True)
                 logger.debug("Enabled mouse autohide")
                 
-            # Set terminal encoding
+            encoding_value = 'UTF-8'
             try:
-                self.vte.set_encoding('UTF-8')
-                logger.debug("Set terminal encoding to UTF-8")
-            except Exception as e:
-                logger.warning(f"Could not set terminal encoding: {e}")
+                encoding_value = self.config.get_setting('terminal.encoding', 'UTF-8')
+            except Exception:
+                encoding_value = 'UTF-8'
+            self._apply_terminal_encoding(encoding_value, update_config_on_fallback=True)
                 
             # Enable bold text
             try:
@@ -1438,6 +1579,100 @@ class TerminalWidget(Gtk.Box):
         # Install terminal shortcuts and custom context menu
         self._apply_pass_through_mode(self._pass_through_mode)
         self._setup_context_menu()
+
+    def _get_supported_encodings(self):
+        if self._supported_encodings is not None:
+            return self._supported_encodings
+
+        encodings = []
+        try:
+            for item in self.vte.get_encodings() or []:
+                code = None
+                if isinstance(item, (list, tuple)):
+                    if item:
+                        code = item[0]
+                elif isinstance(item, str):
+                    code = item
+                if code and code not in encodings:
+                    encodings.append(code)
+        except Exception as exc:  # pragma: no cover - depends on VTE runtime
+            logger.debug("Unable to query VTE encodings: %s", exc)
+
+        if 'UTF-8' in encodings:
+            encodings.insert(0, encodings.pop(encodings.index('UTF-8')))
+        else:
+            encodings.insert(0, 'UTF-8')
+
+        self._supported_encodings = encodings
+        return self._supported_encodings
+
+    def _apply_terminal_encoding_idle(self, encoding_value):
+        self._apply_terminal_encoding(encoding_value, update_config_on_fallback=True)
+        return False
+
+    def _apply_terminal_encoding(self, encoding_value, update_config_on_fallback=True):
+        supported = self._get_supported_encodings()
+        fallback = supported[0] if supported else 'UTF-8'
+
+        requested = encoding_value.strip() if isinstance(encoding_value, str) else ''
+        canonical = None
+        if requested:
+            if requested in supported:
+                canonical = requested
+            else:
+                lower_requested = requested.lower()
+                for code in supported:
+                    if code.lower() == lower_requested:
+                        canonical = code
+                        break
+
+        if canonical:
+            target = canonical
+            fallback_triggered = False
+        else:
+            target = fallback
+            fallback_triggered = bool(requested)
+
+        update_needed = update_config_on_fallback and target != requested
+
+        try:
+            self.vte.set_encoding(target)
+            logger.debug("Set terminal encoding to %s", target)
+        except Exception as exc:
+            logger.warning("Could not set terminal encoding to %s: %s", target, exc)
+            return False
+
+        if fallback_triggered:
+            self._notify_invalid_encoding(requested, target)
+
+        if update_needed and hasattr(self.config, 'set_setting') and not self._updating_encoding_config:
+            self._updating_encoding_config = True
+            try:
+                self.config.set_setting('terminal.encoding', target)
+            finally:
+                self._updating_encoding_config = False
+
+        return False
+
+    def _notify_invalid_encoding(self, requested, fallback):
+        message = _(f"Encoding '{requested}' is not supported. Using {fallback} instead.")
+        logger.warning(message)
+        root = self.get_root()
+        try:
+            toast = Adw.Toast.new(message)
+        except Exception:
+            toast = None
+
+        if toast is None:
+            return
+
+        try:
+            if root and hasattr(root, 'toast_overlay') and root.toast_overlay is not None:
+                root.toast_overlay.add_toast(toast)
+            elif root and hasattr(root, 'add_toast'):
+                root.add_toast(toast)
+        except Exception:
+            pass
 
     def setup_local_shell(self):
         """Set up the terminal for local shell (not SSH)"""
@@ -1656,47 +1891,52 @@ class TerminalWidget(Gtk.Box):
             if is_macos():
                 # macOS: Use Cmd+= (equals key), Cmd+-, and Cmd+0 for zoom
                 # Note: On macOS, Cmd+Shift+= is the same as Cmd+=
-                zoom_in_trigger = "<Meta>equal"
-                zoom_out_trigger = "<Meta>minus"
+                zoom_in_triggers = ["<Meta>equal"]
+                zoom_out_triggers = ["<Meta>minus"]
                 zoom_reset_trigger = "<Meta>0"
             else:
                 # Linux/Windows: Use Ctrl++, Ctrl+-, and Ctrl+0 for zoom
-                zoom_in_trigger = "<Primary>equal"
-                zoom_out_trigger = "<Primary>minus"
+                # Support both regular keys and numeric keypad variants
+                zoom_in_triggers = ["<Primary>equal", "<Primary>KP_Add"]
+                zoom_out_triggers = ["<Primary>minus", "<Primary>KP_Subtract"]
                 zoom_reset_trigger = "<Primary>0"
             
-            logger.debug(f"Setting up terminal zoom shortcuts: in={zoom_in_trigger}, out={zoom_out_trigger}, reset={zoom_reset_trigger}")
+            logger.debug(f"Setting up terminal zoom shortcuts: in={zoom_in_triggers}, out={zoom_out_triggers}, reset={zoom_reset_trigger}")
             
             def _cb_zoom_in(widget, *args):
                 try:
                     self.zoom_in()
                 except Exception as exc:
                     logger.debug("Zoom in shortcut failed: %s", exc)
-                return False
+                return True
 
             def _cb_zoom_out(widget, *args):
                 try:
                     self.zoom_out()
                 except Exception as exc:
                     logger.debug("Zoom out shortcut failed: %s", exc)
-                return False
+                return True
 
             def _cb_reset_zoom(widget, *args):
                 try:
                     self.reset_zoom()
                 except Exception as exc:
                     logger.debug("Zoom reset shortcut failed: %s", exc)
-                return False
+                return True
             
-            controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string(zoom_in_trigger),
-                Gtk.CallbackAction.new(_cb_zoom_in)
-            ))
+            # Add zoom in shortcuts (support both regular and keypad plus)
+            for trig in zoom_in_triggers:
+                controller.add_shortcut(Gtk.Shortcut.new(
+                    Gtk.ShortcutTrigger.parse_string(trig),
+                    Gtk.CallbackAction.new(_cb_zoom_in)
+                ))
             
-            controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string(zoom_out_trigger),
-                Gtk.CallbackAction.new(_cb_zoom_out)
-            ))
+            # Add zoom out shortcuts (support both regular and keypad minus)
+            for trig in zoom_out_triggers:
+                controller.add_shortcut(Gtk.Shortcut.new(
+                    Gtk.ShortcutTrigger.parse_string(trig),
+                    Gtk.CallbackAction.new(_cb_zoom_out)
+                ))
             
             controller.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string(zoom_reset_trigger),
@@ -1799,6 +2039,10 @@ class TerminalWidget(Gtk.Box):
     def _on_config_setting_changed(self, _config, key, value):
         if key == 'terminal.pass_through_mode':
             GLib.idle_add(self._apply_pass_through_mode, bool(value))
+        elif key == 'terminal.encoding':
+            if self._updating_encoding_config:
+                return
+            GLib.idle_add(self._apply_terminal_encoding_idle, value or '')
 
     # PTY forwarding is now handled automatically by VTE
     # No need for manual PTY management in this implementation

@@ -60,6 +60,7 @@ from .file_manager_integration import (
     create_internal_file_manager_tab,
     has_internal_file_manager,
 )
+from .sftp_utils import should_use_in_app_file_manager
 from .sshcopyid_window import SshCopyIdWindow
 from .groups import GroupManager
 from .sidebar import GroupRow, ConnectionRow, build_sidebar
@@ -367,6 +368,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             .navigation-sidebar.dragging {
               opacity: 0.7;
               transform: scale(0.98);
+            }
+
+            .navigation-sidebar row.tinted {
+              margin: 4px 8px;
+              border-radius: 10px;
+            }
+
+            .navigation-sidebar row.tinted:not(:selected):not(:hover):not(:active) {
+              background-color: alpha(@accent_bg_color, 0.18);
             }
             
             /* Group drop target highlight */
@@ -2358,7 +2368,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     def add_connection_row(self, connection: Connection, indent_level: int = 0):
         """Add a connection row to the list with optional indentation"""
-        row = ConnectionRow(connection)
+        row = ConnectionRow(connection, self.group_manager, self.config)
         
         # Apply indentation for grouped connections
         if indent_level > 0:
@@ -5478,13 +5488,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 ssh_config = None
 
         open_externally = False
+        force_internal = False
         try:
             open_externally = bool(self.config.get_setting('file_manager.open_externally', False))
+            force_internal = bool(self.config.get_setting('file_manager.force_internal', False))
         except Exception:
             open_externally = False
+            force_internal = False
+
+        use_internal = False
+        if not open_externally:
+            use_internal = force_internal or should_use_in_app_file_manager()
 
         placeholder_info = None
-        if not open_externally and has_internal_file_manager():
+        if use_internal and has_internal_file_manager():
             placeholder_info = self._create_file_manager_placeholder_tab(nickname, host_value)
 
             def _create_embedded_file_manager():

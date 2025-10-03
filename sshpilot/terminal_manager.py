@@ -1,8 +1,12 @@
 import os
 import asyncio
 import logging
+import math
 
-from gi.repository import Gio, GLib, Adw, Gdk
+import cairo
+
+
+from gi.repository import Gio, GLib, Adw, Gdk, GdkPixbuf, Gtk
 from gettext import gettext as _
 
 from .terminal import TerminalWidget
@@ -20,6 +24,7 @@ class TerminalManager:
     # Connecting/disconnecting hosts
     def connect_to_host(self, connection, force_new: bool = False):
         window = self.window
+        group_color = self._resolve_group_color(connection)
         if not force_new:
             if connection in window.active_terminals:
                 terminal = window.active_terminals[connection]
@@ -47,7 +52,14 @@ class TerminalManager:
             window._open_connection_in_external_terminal(connection)
             return
         else:
-            terminal = TerminalWidget(connection, window.config, window.connection_manager)
+            group_color = self._resolve_group_color(connection)
+
+            terminal = TerminalWidget(
+                connection,
+                window.config,
+                window.connection_manager,
+                group_color=group_color,
+            )
             terminal.connect('connection-established', self.on_terminal_connected)
             terminal.connect('connection-failed', lambda w, e: logger.error(f"Connection failed: {e}"))
             terminal.connect('connection-lost', self.on_terminal_disconnected)
@@ -56,6 +68,8 @@ class TerminalManager:
             page = window.tab_view.append(terminal)
             page.set_title(connection.nickname)
             page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
+            self._apply_tab_group_color(page, group_color)
+
 
             window.connection_to_terminals.setdefault(connection, []).append(terminal)
             window.terminal_to_connection[terminal] = connection
@@ -128,6 +142,231 @@ class TerminalManager:
                     _cleanup_failed_terminal()
 
         GLib.idle_add(_set_terminal_colors)
+
+    def _resolve_group_color(self, connection):
+        manager = getattr(self.window, 'group_manager', None)
+        if not manager:
+            return None
+
+        nickname = getattr(connection, 'nickname', None)
+        if not nickname:
+            return None
+
+        try:
+            group_id = manager.get_connection_group(nickname)
+        except Exception:
+            group_id = None
+
+        visited = set()
+        while group_id:
+            if group_id in visited:
+                break
+            visited.add(group_id)
+
+            try:
+                group_info = getattr(manager, 'groups', {}).get(group_id)
+            except Exception:
+                group_info = None
+
+            if not group_info:
+                break
+
+            color = group_info.get('color') if isinstance(group_info, dict) else None
+            if color:
+                return color
+
+            group_id = group_info.get('parent_id') if isinstance(group_info, dict) else None
+
+        return None
+
+    def _create_tab_color_icon(self, rgba: Gdk.RGBA):
+        # Use a simple themed icon instead of creating custom icons
+        # This avoids the pixbuf save issues and works reliably
+        return Gio.ThemedIcon.new("media-record-symbolic")
+
+    def _apply_tab_group_color(self, page, color_value):
+        use_pref = False
+        try:
+            use_pref = bool(
+                self.window.config.get_setting('ui.use_group_color_in_tab', False)
+            )
+        except Exception:
+            use_pref = False
+
+        if not use_pref or not color_value:
+            self._clear_tab_group_color(page)
+            return
+
+        rgba = Gdk.RGBA()
+        try:
+            if not rgba.parse(str(color_value)):
+                self._clear_tab_group_color(page)
+                return
+        except Exception:
+            self._clear_tab_group_color(page)
+            return
+
+        # Create a themed icon and apply color via CSS
+        icon = self._create_tab_color_icon(rgba)
+        if icon is None:
+            self._clear_tab_group_color(page)
+            return
+
+        if hasattr(page, 'set_indicator_icon'):
+            try:
+                page.set_indicator_icon(icon)
+                if hasattr(page, 'set_indicator_tooltip'):
+                    page.set_indicator_tooltip(_('Group color'))
+                
+                # Apply color to the icon using CSS
+                self._apply_tab_icon_color(page, rgba)
+                setattr(page, '_sshpilot_group_indicator_icon', icon)
+                setattr(page, '_sshpilot_group_color', rgba.to_string())
+            except Exception as exc:
+                logger.debug("Failed to set tab indicator icon: %s", exc)
+        elif hasattr(page, 'set_icon') and hasattr(page, 'get_icon'):
+            try:
+                if not hasattr(page, '_sshpilot_original_icon'):
+                    setattr(page, '_sshpilot_original_icon', page.get_icon())
+                page.set_icon(icon)
+                
+                # Apply color to the icon using CSS
+                self._apply_tab_icon_color(page, rgba)
+                setattr(page, '_sshpilot_group_indicator_icon', icon)
+                setattr(page, '_sshpilot_group_color', rgba.to_string())
+            except Exception as exc:
+                logger.debug("Failed to set tab icon for group color: %s", exc)
+
+    def _clear_tab_group_color(self, page):
+        if hasattr(page, 'set_indicator_icon'):
+            try:
+                page.set_indicator_icon(None)
+                if hasattr(page, 'set_indicator_tooltip'):
+                    page.set_indicator_tooltip(None)
+            except Exception:
+                pass
+        elif hasattr(page, 'set_icon') and hasattr(page, '_sshpilot_original_icon'):
+            try:
+                original = getattr(page, '_sshpilot_original_icon')
+                if original is not None:
+                    page.set_icon(original)
+            except Exception:
+                pass
+
+        # Clear the custom icon from the tab page
+        if hasattr(page, 'set_indicator_icon'):
+            try:
+                page.set_indicator_icon(None)
+                if hasattr(page, 'set_indicator_tooltip'):
+                    page.set_indicator_tooltip(None)
+            except Exception:
+                pass
+
+        # No CSS provider to remove since we're using direct colored icons
+
+        setattr(page, '_sshpilot_group_indicator_icon', None)
+        if hasattr(page, '_sshpilot_group_color'):
+            delattr(page, '_sshpilot_group_color')
+
+    def _create_colored_tab_icon(self, rgba: Gdk.RGBA):
+        """Create a simple colored icon for the tab indicator"""
+        try:
+            # Use a simple approach - create a basic colored icon
+            # Convert RGBA to hex for CSS
+            hex_color = f"#{int(rgba.red * 255):02x}{int(rgba.green * 255):02x}{int(rgba.blue * 255):02x}"
+            
+            # Create a simple SVG icon with the color
+            svg_data = f"""<svg width="12" height="12" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="6" cy="6" r="5" fill="{hex_color}" stroke="none"/>
+            </svg>"""
+            
+            # Create a bytes icon from the SVG
+            svg_bytes = svg_data.encode('utf-8')
+            return Gio.BytesIcon.new(GLib.Bytes.new(svg_bytes))
+        except Exception as exc:
+            logger.debug(f"Failed to create colored tab icon: {exc}")
+            # Fallback to themed icon
+            return Gio.ThemedIcon.new("media-record-symbolic")
+
+    def _apply_tab_css_color(self, page, rgba: Gdk.RGBA):
+        """Apply CSS color to the tab view to color indicator icons"""
+        try:
+            # Get the tab view
+            tab_view = None
+            try:
+                if hasattr(self.window, 'tab_view'):
+                    tab_view = self.window.tab_view
+            except Exception:
+                pass
+            
+            if not tab_view:
+                return
+            
+            # Remove any existing CSS provider
+            if hasattr(tab_view, '_sshpilot_tab_css_provider'):
+                tab_view.get_style_context().remove_provider(tab_view._sshpilot_tab_css_provider)
+            
+            # Create new CSS provider with the group color
+            provider = Gtk.CssProvider()
+            color_value = rgba.to_string()
+            
+            # Use a simple CSS rule to color indicator icons
+            css_data = f"tab page indicator-icon {{ color: {color_value}; }}"
+            provider.load_from_data(css_data.encode())
+            tab_view.get_style_context().add_provider(
+                provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+            )
+            tab_view._sshpilot_tab_css_provider = provider
+            
+        except Exception as exc:
+            logger.debug(f"Failed to apply tab CSS color: {exc}")
+
+    def _apply_tab_icon_color(self, page, rgba: Gdk.RGBA):
+        """Apply color to tab icon by setting a colored icon"""
+        try:
+            # Create a colored icon
+            icon = self._create_colored_tab_icon(rgba)
+            if icon is None:
+                self._clear_tab_group_color(page)
+                return
+            
+            # Set the colored icon on the tab page
+            page.set_indicator_icon(icon)
+            page.set_indicator_activatable(True)
+            page.set_indicator_tooltip("Group color indicator")
+            
+            # Store reference to the icon and color for cleanup
+            setattr(page, '_sshpilot_group_indicator_icon', icon)
+            setattr(page, '_sshpilot_group_color', rgba)
+        except Exception as exc:
+            logger.debug("Failed to apply tab icon color: %s", exc)
+            self._clear_tab_group_color(page)
+
+    def restyle_open_terminals(self):
+        window = self.window
+        n_pages = window.tab_view.get_n_pages() if hasattr(window.tab_view, 'get_n_pages') else 0
+        for index in range(n_pages):
+            try:
+                page = window.tab_view.get_nth_page(index)
+            except Exception:
+                continue
+            if not page:
+                continue
+
+            terminal = page.get_child() if hasattr(page, 'get_child') else None
+            if terminal is None:
+                continue
+
+            connection = window.terminal_to_connection.get(terminal)
+            color_value = self._resolve_group_color(connection) if connection else None
+
+            if hasattr(terminal, 'set_group_color'):
+                try:
+                    terminal.set_group_color(color_value, force=True)
+                except Exception as exc:
+                    logger.debug("Failed to update terminal group color: %s", exc)
+
+            self._apply_tab_group_color(page, color_value)
 
 
     def _on_disconnect_confirmed(self, dialog, response_id, connection):

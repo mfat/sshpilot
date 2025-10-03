@@ -65,7 +65,10 @@ def test_old_config_is_replaced(tmp_path, monkeypatch):
 
     assert backup_file.exists()
     assert new_config['config_version'] == CONFIG_VERSION
-    assert json.loads(config_file.read_text())['config_version'] == CONFIG_VERSION
+    saved_config = json.loads(config_file.read_text())
+    assert saved_config['config_version'] == CONFIG_VERSION
+    assert saved_config['terminal']['encoding'] == 'UTF-8'
+    assert new_config['terminal']['encoding'] == 'UTF-8'
 
 
 def test_config_path_from_glib(tmp_path, monkeypatch):
@@ -79,4 +82,48 @@ def test_config_path_from_glib(tmp_path, monkeypatch):
     cfg = Config()
     expected = tmp_path / '.config' / 'sshpilot' / 'config.json'
     assert cfg.config_file == str(expected)
+
+
+def test_get_ssh_config_defaults(tmp_path, monkeypatch):
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setattr(
+        platform_utils.GLib,
+        'get_user_config_dir',
+        lambda: str(tmp_path / '.config'),
+        raising=False,
+    )
+    cfg = Config()
+
+    ssh_cfg = cfg.get_ssh_config()
+
+    assert ssh_cfg['strict_host_key_checking'] == 'accept-new'
+    assert ssh_cfg['batch_mode'] is True
+    assert ssh_cfg['apply_advanced'] is False
+
+
+def test_get_ssh_config_respects_saved_values(tmp_path, monkeypatch):
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setattr(
+        platform_utils.GLib,
+        'get_user_config_dir',
+        lambda: str(tmp_path / '.config'),
+        raising=False,
+    )
+    cfg = Config()
+
+    cfg.set_setting('ssh.strict_host_key_checking', 'no')
+    cfg.set_setting('ssh.connection_timeout', '45')
+    cfg.set_setting('ssh.connection_attempts', '3')
+    cfg.set_setting('ssh.batch_mode', 'false')
+
+    ssh_cfg = cfg.get_ssh_config()
+
+    assert ssh_cfg['strict_host_key_checking'] == 'no'
+    assert ssh_cfg['connection_timeout'] == 45
+    assert ssh_cfg['connection_attempts'] == 3
+    assert ssh_cfg['batch_mode'] is False
+
+    cfg.set_setting('ssh.strict_host_key_checking', 'maybe')
+    ssh_cfg_invalid = cfg.get_ssh_config()
+    assert ssh_cfg_invalid['strict_host_key_checking'] == 'accept-new'
 

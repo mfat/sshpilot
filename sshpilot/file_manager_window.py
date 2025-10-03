@@ -46,6 +46,25 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _sftp_path_exists(sftp: paramiko.SFTPClient, path: str) -> bool:
+    """Return ``True`` if *path* exists on the remote SFTP server."""
+
+    try:
+        sftp.stat(path)
+    except FileNotFoundError:
+        return False
+    except IOError as exc:
+        error_code = getattr(exc, "errno", None)
+        if error_code is None and exc.args:
+            first_arg = exc.args[0]
+            if isinstance(first_arg, int):
+                error_code = first_arg
+        if error_code in {errno.ENOENT, errno.EINVAL}:
+            return False
+        raise
+    return True
+
+
 def _get_docs_json_path():
     """Get the path to the granted folders config file."""
     from .platform_utils import get_config_dir
@@ -359,14 +378,16 @@ class TransferCancelledException(Exception):
 
 class SFTPProgressDialog(Adw.MessageDialog):
     """Modern GNOME HIG-compliant SFTP file transfer progress dialog"""
-    
+
+    _LABEL_WIDTH_CHARS = 48
+
     def __init__(self, parent=None, operation_type="transfer"):
         # Set appropriate title based on operation
         title = "Downloading Files" if operation_type == "download" else "Uploading Files"
-        
+
         super().__init__(
             title=title,
-            body="Preparing transfer...",
+            body="Transferring files…",
             default_response="cancel"
         )
         
@@ -407,12 +428,23 @@ class SFTPProgressDialog(Adw.MessageDialog):
             margin_bottom=12
         )
         
+        def _configure_progress_label(label: Gtk.Label) -> None:
+            label.set_ellipsize(Pango.EllipsizeMode.END)
+            label.set_justify(Gtk.Justification.CENTER)
+            label.set_width_chars(self._LABEL_WIDTH_CHARS)
+            label.set_max_width_chars(self._LABEL_WIDTH_CHARS)
+
         # Current file label (primary info)
         self.file_label = Gtk.Label()
-        self.file_label.set_text("Preparing transfer...")
-        self.file_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.file_label.set_justify(Gtk.Justification.CENTER)
+        self.file_label.set_text("—")
+        _configure_progress_label(self.file_label)
         progress_box.append(self.file_label)
+
+        # Status label for detailed progress messages
+        self.status_label = Gtk.Label()
+        self.status_label.set_text("Preparing transfer…")
+        _configure_progress_label(self.status_label)
+        progress_box.append(self.status_label)
         
         # Main progress bar
         self.progress_bar = Gtk.ProgressBar()
@@ -491,9 +523,9 @@ class SFTPProgressDialog(Adw.MessageDialog):
         self.progress_bar.set_fraction(fraction)
         self.progress_bar.set_text(f"{percentage}%")
         
-        # Update dialog body with status message
+        # Update status label with status message
         if message:
-            self.set_body(message)
+            self.status_label.set_text(message)
         
         # Update current file
         if current_file:
@@ -587,13 +619,13 @@ class SFTPProgressDialog(Adw.MessageDialog):
         """Update UI to show completion state"""
         if success:
             self.set_title("Transfer Complete")
-            self.set_body("Transfer completed successfully")
+            self.status_label.set_text("Transfer completed successfully")
             self.file_label.set_text(f"Successfully transferred {self.files_completed} files")
             self.progress_bar.set_fraction(1.0)
             self.progress_bar.set_text("100%")
         else:
             self.set_title("Transfer Failed")
-            self.set_body("Transfer failed")
+            self.status_label.set_text("Transfer failed")
             if error_message:
                 self.file_label.set_text(f"Error: {error_message}")
             else:
@@ -1560,6 +1592,15 @@ class AsyncSFTPManager(GObject.GObject):
             # Don't call listdir from callback - let the UI handle refresh
         )
 
+    def path_exists(self, path: str) -> Future:
+        """Return a future that resolves to whether *path* exists remotely."""
+
+        def _impl() -> bool:
+            assert self._sftp is not None
+            return _sftp_path_exists(self._sftp, path)
+
+        return self._submit(_impl)
+
     def remove(self, path: str) -> Future:
         def _impl() -> None:
             assert self._sftp is not None
@@ -1855,6 +1896,7 @@ class PaneControls(Gtk.Box):
 class PaneToolbar(Gtk.Box):
     __gsignals__ = {
         "view-changed": (GObject.SignalFlags.RUN_LAST, None, (str,)),
+        "show-hidden-toggled": (GObject.SignalFlags.RUN_LAST, None, (bool,)),
     }
 
     def __init__(self):
@@ -1886,15 +1928,27 @@ class PaneToolbar(Gtk.Box):
         # Right side (compact, flush-right)
         right = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self._current_view = "list"
+
+        # Toggle for showing hidden files within this pane
+        self._show_hidden_button = Gtk.ToggleButton()
+        self._show_hidden_button.set_valign(Gtk.Align.CENTER)
+        self._show_hidden_button.add_css_class("flat")
+        self._show_hidden_image = Gtk.Image.new_from_icon_name("view-conceal-symbolic")
+        self._show_hidden_button.set_child(self._show_hidden_image)
+        self._show_hidden_handler_id = self._show_hidden_button.connect(
+            "toggled", self._on_show_hidden_toggled
+        )
+        self._update_show_hidden_icon(False)
+        right.append(self._show_hidden_button)
+
         self.sort_split_button = self._create_sort_split_button()
         right.append(self.sort_split_button)
         bar.append(right)
 
-        # Wrap the bar in ToolbarView so it looks native
-        tv = Adw.ToolbarView()
-        tv.add_top_bar(handle)
-        # NOTE: Put your pane's main scroller/content with tv.set_content(content) elsewhere.
-        self.append(tv)
+        # Don't wrap in ToolbarView to avoid nested ToolbarView theme issues
+        # Instead, add toolbar styling via CSS class and append handle directly
+        handle.add_css_class('toolbar')
+        self.append(handle)
 
     # Keep your factory
     def _create_sort_split_button(self) -> Adw.SplitButton:
@@ -1921,7 +1975,34 @@ class PaneToolbar(Gtk.Box):
         self._current_view = "grid" if self._current_view == "list" else "list"
         self.sort_split_button.set_icon_name("view-grid-symbolic" if self._current_view == "grid" else "view-list-symbolic")
         self.emit("view-changed", self._current_view)
-    
+
+    def _on_show_hidden_toggled(self, button: Gtk.ToggleButton) -> None:
+        state = button.get_active()
+        self._update_show_hidden_icon(state)
+        self.emit("show-hidden-toggled", state)
+
+    def set_show_hidden_state(self, show_hidden: bool) -> None:
+        if not hasattr(self, "_show_hidden_button"):
+            return
+        current = self._show_hidden_button.get_active()
+        if current == show_hidden:
+            self._update_show_hidden_icon(show_hidden)
+            return
+        if self._show_hidden_handler_id is not None:
+            self._show_hidden_button.handler_block(self._show_hidden_handler_id)
+        try:
+            self._show_hidden_button.set_active(show_hidden)
+        finally:
+            if self._show_hidden_handler_id is not None:
+                self._show_hidden_button.handler_unblock(self._show_hidden_handler_id)
+        self._update_show_hidden_icon(show_hidden)
+
+    def _update_show_hidden_icon(self, show_hidden: bool) -> None:
+        icon_name = "view-reveal-symbolic" if show_hidden else "view-conceal-symbolic"
+        tooltip = "Hide Hidden Files" if show_hidden else "Show Hidden Files"
+        self._show_hidden_image.set_from_icon_name(icon_name)
+        self._show_hidden_button.set_tooltip_text(tooltip)
+
     def get_header_bar(self):
         """Get the actual header bar for toolbar view."""
         return None  # No longer using Adw.HeaderBar
@@ -2461,6 +2542,7 @@ class FilePane(Gtk.Box):
 
         # Connect to view-changed signal from toolbar
         self.toolbar.connect("view-changed", self._on_view_toggle)
+        self.toolbar.connect("show-hidden-toggled", self._on_toolbar_show_hidden_toggled)
         self.toolbar.path_entry.connect("activate", self._on_path_entry)
         # Wire navigation buttons
         self.toolbar.controls.up_button.connect("clicked", self._on_up_clicked)
@@ -2477,6 +2559,7 @@ class FilePane(Gtk.Box):
         self._cached_entries: List[FileEntry] = []
         self._raw_entries: List[FileEntry] = []
         self._show_hidden = False
+        self.toolbar.set_show_hidden_state(self._show_hidden)
         self._sort_key = "name"  # Default sort by name
         self._sort_descending = False  # Default ascending order
 
@@ -2580,6 +2663,9 @@ class FilePane(Gtk.Box):
         self._stack.set_visible_child_name(view_name)
         # Update the split button icon to reflect current view
         self._update_view_button_icon()
+
+    def _on_toolbar_show_hidden_toggled(self, _toolbar, show_hidden: bool) -> None:
+        self.set_show_hidden(show_hidden)
 
     def _on_path_entry(self, entry: Gtk.Entry) -> None:
         self.emit("path-changed", entry.get_text() or "/")
@@ -3049,6 +3135,16 @@ class FilePane(Gtk.Box):
             return
         self._can_paste = can_paste
         self._update_menu_state()
+
+    def set_show_hidden(self, show_hidden: bool, *, preserve_selection: bool = True) -> None:
+        """Update the hidden file visibility state and refresh entries."""
+
+        self.toolbar.set_show_hidden_state(show_hidden)
+        if self._show_hidden == show_hidden:
+            return
+
+        self._show_hidden = show_hidden
+        self._apply_entry_filter(preserve_selection=preserve_selection)
 
     def _on_menu_download(self) -> None:
         if not self._is_remote:
@@ -4021,9 +4117,6 @@ class FileManagerWindow(Adw.Window):
         self._local_pane_toggle.connect("toggled", self._on_local_pane_toggle)
         header_bar.pack_start(self._local_pane_toggle)
         
-        # Create menu button for headerbar
-        self._create_headerbar_menu(header_bar)
-        
         # Create toast overlay first and set it as toolbar content
         self._toast_overlay = Adw.ToastOverlay()
         self._progress_dialog: Optional[SFTPProgressDialog] = None
@@ -4078,6 +4171,35 @@ class FileManagerWindow(Adw.Window):
             background-color: alpha(@accent_color, 0.1);
             border: 2px dashed @accent_color;
             border-radius: 8px;
+        }
+        
+        /* Pane toolbar styling to replace nested ToolbarView */
+        .toolbar {
+            background-color: @headerbar_bg_color;
+            color: @headerbar_fg_color;
+            border-bottom: 1px solid @borders;
+        }
+        
+        .toolbar windowhandle {
+            background-color: @headerbar_bg_color;
+            color: @headerbar_fg_color;
+        }
+        
+        /* Pane divider styling */
+        paned {
+            background-color: @window_bg_color;
+        }
+        
+        paned separator {
+            background-color: @borders;
+            border: none;
+        }
+        
+        /* Action bar styling */
+        .inline-toolbar {
+            background-color: @headerbar_bg_color;
+            color: @headerbar_fg_color;
+            border-top: 1px solid @borders;
         }
         """
         css_provider.load_from_data(toast_css.encode())
@@ -4141,6 +4263,11 @@ class FileManagerWindow(Adw.Window):
             self._left_pane: None,
             self._right_pane: None,
         }
+
+        for pane in (self._left_pane, self._right_pane):
+            initial_show_hidden = getattr(pane, "_show_hidden", False)
+            if hasattr(pane, "set_show_hidden"):
+                pane.set_show_hidden(initial_show_hidden, preserve_selection=True)
 
 
         self._clipboard_entries: List[FileEntry] = []
@@ -4296,51 +4423,6 @@ class FileManagerWindow(Adw.Window):
             except (AttributeError, RuntimeError, GLib.GError):
                 # Dialog might be destroyed or invalid, ignore
                 pass
-
-    def _create_headerbar_menu(self, header_bar: Adw.HeaderBar) -> None:
-        """Create and add menu button to headerbar."""
-        # Create menu model
-        menu_model = Gio.Menu()
-        
-        # Add "Show Hidden Files" toggle action
-        menu_model.append("Show Hidden Files", "win.show-hidden")
-        
-        # Create action group for window actions
-        self._window_action_group = Gio.SimpleActionGroup()
-        self.insert_action_group("win", self._window_action_group)
-        
-        # Create action for show hidden files
-        self._show_hidden_action = Gio.SimpleAction.new_stateful(
-            "show-hidden", 
-            None, 
-            GLib.Variant.new_boolean(False)
-        )
-        self._show_hidden_action.connect("activate", self._on_show_hidden_action)
-        self._window_action_group.add_action(self._show_hidden_action)
-        
-        # Create menu button
-        menu_button = Gtk.MenuButton()
-        menu_button.set_icon_name("open-menu-symbolic")
-        menu_button.set_menu_model(menu_model)
-        menu_button.set_tooltip_text("Main menu")
-        
-        # Add to headerbar
-        header_bar.pack_end(menu_button)
-
-    def _on_show_hidden_action(self, action: Gio.SimpleAction, _parameter: Optional[GLib.Variant]) -> None:
-        """Handle show hidden files action from menu."""
-        # Toggle the state
-        current_state = action.get_state().get_boolean()
-        new_state = not current_state
-        action.set_state(GLib.Variant.new_boolean(new_state))
-        
-        # Apply to both panes
-        self._left_pane._show_hidden = new_state
-        self._right_pane._show_hidden = new_state
-        
-        # Refresh both panes
-        self._left_pane._apply_entry_filter(preserve_selection=True)
-        self._right_pane._apply_entry_filter(preserve_selection=True)
 
     def _on_local_pane_toggle(self, toggle_button: Gtk.ToggleButton) -> None:
         """Handle local pane toggle button."""
@@ -4548,74 +4630,114 @@ class FileManagerWindow(Adw.Window):
         print(f"=== CHECKING FILE CONFLICTS ===")
         print(f"Operation type: {operation_type}")
         print(f"Files to transfer: {files_to_transfer}")
-        
-        conflicts = []
-        
-        # Check for conflicts
-        for source, dest in files_to_transfer:
-            print(f"Checking: {source} -> {dest}")
-            if operation_type == "download":
-                # For downloads, check if local file exists
+
+        def _finalize_conflicts(conflicts: List[Tuple[str, str]]) -> None:
+            print(f"Total conflicts found: {len(conflicts)}")
+
+            if not conflicts:
+                # No conflicts, proceed with all transfers
+                print("No conflicts, proceeding with transfers")
+                callback(files_to_transfer)
+                return
+
+            # Show conflict resolution dialog
+            conflict_count = len(conflicts)
+            total_count = len(files_to_transfer)
+
+            if conflict_count == 1:
+                filename = os.path.basename(conflicts[0][1])
+                title = "File Already Exists"
+                message = f"'{filename}' already exists in the destination folder."
+            else:
+                title = "Files Already Exist"
+                message = f"{conflict_count} of {total_count} files already exist in the destination folder."
+
+            dialog = Adw.AlertDialog.new(title, message)
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response("skip", "Skip Existing")
+            dialog.add_response("replace", "Replace All")
+            dialog.set_default_response("skip")
+            dialog.set_close_response("cancel")
+
+            def _on_conflict_response(_dialog, response: str) -> None:
+                dialog.close()
+
+                if response == "cancel":
+                    return
+                elif response == "skip":
+                    # Only transfer files that don't conflict
+                    non_conflicting = [item for item in files_to_transfer if item not in conflicts]
+                    if non_conflicting:
+                        callback(non_conflicting)
+                        # Show toast about skipped files
+                        if conflict_count == 1:
+                            filename = os.path.basename(conflicts[0][1])
+                            self._left_pane.show_toast(f"Skipped existing file: {filename}")
+                        else:
+                            self._left_pane.show_toast(f"Skipped {conflict_count} existing files")
+                elif response == "replace":
+                    # Transfer all files, replacing existing ones
+                    callback(files_to_transfer)
+
+            dialog.connect("response", _on_conflict_response)
+            dialog.present()
+
+        def _idle_finalize(conflicts: List[Tuple[str, str]]) -> bool:
+            _finalize_conflicts(conflicts)
+            return False
+
+        if operation_type == "download":
+            conflicts: List[Tuple[str, str]] = []
+            for source, dest in files_to_transfer:
+                print(f"Checking: {source} -> {dest}")
                 exists = os.path.exists(dest)
                 print(f"  Local file exists: {exists}")
                 if exists:
                     conflicts.append((source, dest))
                     print(f"  CONFLICT DETECTED: {dest}")
-            else:  # upload
-                # For uploads, we'd need to check remote files - this is more complex
-                # For now, let the upload proceed (remote conflict handling would require SFTP stat calls)
-                print(f"  Upload conflict checking not implemented yet")
-                pass
-        
-        print(f"Total conflicts found: {len(conflicts)}")
-        
-        if not conflicts:
-            # No conflicts, proceed with all transfers
-            print("No conflicts, proceeding with transfers")
-            callback(files_to_transfer)
+
+            _finalize_conflicts(conflicts)
             return
-            
-        # Show conflict resolution dialog
-        conflict_count = len(conflicts)
-        total_count = len(files_to_transfer)
-        
-        if conflict_count == 1:
-            filename = os.path.basename(conflicts[0][1])
-            title = "File Already Exists"
-            message = f"'{filename}' already exists in the destination folder."
-        else:
-            title = "Files Already Exist"
-            message = f"{conflict_count} of {total_count} files already exist in the destination folder."
-            
-        dialog = Adw.AlertDialog.new(title, message)
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("skip", "Skip Existing")
-        dialog.add_response("replace", "Replace All")
-        dialog.set_default_response("skip")
-        dialog.set_close_response("cancel")
-        
-        def _on_conflict_response(_dialog, response: str) -> None:
-            dialog.close()
-            
-            if response == "cancel":
+
+        if operation_type == "upload":
+            if not files_to_transfer:
+                _finalize_conflicts([])
                 return
-            elif response == "skip":
-                # Only transfer files that don't conflict
-                non_conflicting = [item for item in files_to_transfer if item not in conflicts]
-                if non_conflicting:
-                    callback(non_conflicting)
-                    # Show toast about skipped files
-                    if conflict_count == 1:
-                        filename = os.path.basename(conflicts[0][1])
-                        self._left_pane.show_toast(f"Skipped existing file: {filename}")
-                    else:
-                        self._left_pane.show_toast(f"Skipped {conflict_count} existing files")
-            elif response == "replace":
-                # Transfer all files, replacing existing ones
-                callback(files_to_transfer)
-                
-        dialog.connect("response", _on_conflict_response)
-        dialog.present()
+
+            if self._manager is None:
+                logger.warning("Upload conflict check requested without an active SFTP manager")
+                _finalize_conflicts([])
+                return
+
+            pending = {"remaining": len(files_to_transfer)}
+            conflicts: List[Tuple[str, str]] = []
+
+            for source, dest in files_to_transfer:
+                print(f"Checking: {source} -> {dest}")
+
+                def _on_result(fut: Future, pair: Tuple[str, str] = (source, dest)) -> None:
+                    try:
+                        exists = fut.result()
+                    except Exception as exc:
+                        logger.warning("Failed to check remote path %s: %s", pair[1], exc)
+                        exists = False
+
+                    print(f"  Remote file exists: {exists}")
+                    if exists:
+                        conflicts.append(pair)
+                        print(f"  CONFLICT DETECTED: {pair[1]}")
+
+                    pending["remaining"] -= 1
+                    if pending["remaining"] == 0:
+                        GLib.idle_add(_idle_finalize, list(conflicts))
+
+                future = self._manager.path_exists(dest)
+                future.add_done_callback(_on_result)
+
+            return
+
+        # Unknown operation type, default to proceeding
+        _finalize_conflicts([])
 
     def _on_request_operation(self, pane: FilePane, action: str, payload, user_data=None) -> None:
         if action in {"copy", "cut"} and isinstance(payload, dict):
@@ -5456,20 +5578,7 @@ class FileManagerWindow(Adw.Window):
 
     @staticmethod
     def _remote_path_exists(sftp: paramiko.SFTPClient, path: str) -> bool:
-        try:
-            sftp.stat(path)
-        except FileNotFoundError:
-            return False
-        except IOError as exc:
-            error_code = getattr(exc, "errno", None)
-            if error_code is None and exc.args:
-                first_arg = exc.args[0]
-                if isinstance(first_arg, int):
-                    error_code = first_arg
-            if error_code in {errno.ENOENT, errno.EINVAL}:
-                return False
-            raise
-        return True
+        return _sftp_path_exists(sftp, path)
 
     @staticmethod
     def _is_remote_descendant(source_path: str, destination_path: str) -> bool:

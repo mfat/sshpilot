@@ -12,10 +12,12 @@ def setup_gi(monkeypatch):
     gi.repository = repository
     monkeypatch.setitem(sys.modules, "gi", gi)
     monkeypatch.setitem(sys.modules, "gi.repository", repository)
-    for name in ["Gtk", "Adw", "Pango", "PangoFT2", "Gio", "GLib", "Gdk"]:
+    for name in ["Gtk", "Adw", "Pango", "PangoFT2", "Gio", "GLib", "Gdk", "Vte"]:
         module = types.ModuleType(name)
         setattr(repository, name, module)
         monkeypatch.setitem(sys.modules, f"gi.repository.{name}", module)
+    repository.Gtk.Window = type("Window", (), {})
+    repository.Adw.Toast = types.SimpleNamespace(new=lambda *_args, **_kwargs: object())
     repository.Adw.Window = type("Window", (), {})
     repository.Adw.PreferencesWindow = type("PreferencesWindow", (), {})
     class SimpleAction:

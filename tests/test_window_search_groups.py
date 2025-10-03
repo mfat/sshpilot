@@ -1,4 +1,6 @@
 import importlib
+import sys
+import types
 
 from sshpilot.connection_manager import Connection
 
@@ -61,6 +63,11 @@ class DummyConnectionManager:
         return list(self._connections)
 
 
+class DummyConfig:
+    def get_setting(self, key, default=None):
+        return default
+
+
 class DummyGroupManager:
     def __init__(self, groups):
         self.groups = groups
@@ -89,12 +96,12 @@ class StubGroupRow(DummyRowBase):
 
 
 class StubConnectionRow(DummyRowBase):
-    def __init__(self, connection):
+    def __init__(self, connection, group_manager=None, config=None):
         super().__init__()
         self.connection = connection
         self.indentation = 0
         self.hide_hosts = None
-
+        
     def set_indentation(self, level):
         self.indentation = level
 
@@ -103,6 +110,7 @@ class StubConnectionRow(DummyRowBase):
 
 
 def test_search_results_include_matching_groups(monkeypatch):
+    monkeypatch.setitem(sys.modules, "cairo", types.SimpleNamespace())
     window_module = importlib.import_module("sshpilot.window")
     window_module = importlib.reload(window_module)
 
@@ -153,6 +161,7 @@ def test_search_results_include_matching_groups(monkeypatch):
     test_window.connection_scrolled = None
     test_window.connection_manager = DummyConnectionManager([grouped_connection, direct_connection])
     test_window.group_manager = DummyGroupManager(group_data)
+    test_window.config = DummyConfig()
     test_window.search_entry = DummySearchEntry("prod")
     test_window._hide_hosts = False
 

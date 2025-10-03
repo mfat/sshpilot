@@ -7,6 +7,10 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+SRC = os.path.join(ROOT, 'src')
+if os.path.isdir(SRC) and SRC not in sys.path:
+    sys.path.insert(0, SRC)
+
 
 class _DummyGITypeMeta(type):
     def __getattr__(cls, name):
@@ -53,7 +57,11 @@ if 'gi' not in sys.modules:
     # Provide concrete stubs for modules referenced in tests
     gobject_module = _DummyGIModule('gi.repository.GObject')
     setattr(gobject_module, 'Object', _make_dummy_gi_type('Object'))
-    setattr(gobject_module, 'SignalFlags', types.SimpleNamespace(RUN_FIRST=None))
+    setattr(
+        gobject_module,
+        'SignalFlags',
+        types.SimpleNamespace(RUN_FIRST=None, RUN_LAST=None),
+    )
     setattr(repository, 'GObject', gobject_module)
     sys.modules['gi.repository.GObject'] = gobject_module
 
