@@ -169,15 +169,29 @@ class MonospaceFontDialog(Adw.Window):
         # Preview text
         preview_frame = Gtk.Frame()
         preview_frame.set_label("Preview")
-        
+
         self.preview_label = Gtk.Label()
-        self.preview_label.set_text("The quick brown fox jumps over the lazy dog\n0123456789 !@#$%^&*()_+-=[]{}|;:,.<>?")
+        self.preview_label.set_text(
+            "The quick brown fox jumps over the lazy dog\n0123456789 !@#$%^&*()_+-=[]{}|;:,.<>?"
+        )
         self.preview_label.set_margin_top(12)
         self.preview_label.set_margin_bottom(12)
         self.preview_label.set_margin_start(12)
         self.preview_label.set_margin_end(12)
         self.preview_label.set_selectable(True)
-        preview_frame.set_child(self.preview_label)
+        self.preview_label.set_wrap(True)
+        self.preview_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        self.preview_label.set_xalign(0.0)
+
+        preview_scroller = Gtk.ScrolledWindow()
+        preview_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        preview_scroller.set_min_content_height(140)
+        preview_scroller.set_max_content_height(140)
+        preview_scroller.set_hexpand(True)
+        preview_scroller.set_vexpand(False)
+        preview_scroller.set_child(self.preview_label)
+
+        preview_frame.set_child(preview_scroller)
         
         # Add everything to main box
         main_box.append(header)
@@ -2495,4 +2509,3 @@ class PreferencesWindow(Gtk.Window):
                 logger.info(f"Applied color scheme {scheme_key} to {count} terminals")
         except Exception as e:
             logger.error(f"Failed to apply color scheme to terminals: {e}")
-
