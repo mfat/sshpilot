@@ -51,6 +51,7 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
     auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
     batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
     compression = bool(ssh_cfg.get('compression', False)) if apply_adv else False
+    exit_on_forward_failure = bool(ssh_cfg.get('exit_on_forward_failure', True))
 
     # Determine auth method from connection and whether a password is available
     password_auth_selected = False
@@ -91,7 +92,8 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
         pass
 
     # Ensure SSH exits immediately on failure rather than waiting in background (same as terminal.py)
-    options.extend(['-o', 'ExitOnForwardFailure=yes'])
+    if exit_on_forward_failure:
+        options.extend(['-o', 'ExitOnForwardFailure=yes'])
     
     # Only add verbose flag if explicitly enabled in config (same as terminal.py)
     # Note: ssh-copy-id doesn't support -v flags, only -x for debug

@@ -10,6 +10,7 @@ import signal
 import time
 import json
 import re
+import shlex
 import gi
 from gettext import gettext as _
 import asyncio
@@ -609,6 +610,7 @@ class TerminalWidget(Gtk.Box):
                 auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
                 batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
                 compression = bool(ssh_cfg.get('compression', False)) if apply_adv else False
+                exit_on_forward_failure = bool(ssh_cfg.get('exit_on_forward_failure', True))
 
                 # Determine auth method from connection and retrieve any saved password
                 try:
@@ -666,7 +668,8 @@ class TerminalWidget(Gtk.Box):
                     logger.debug('Failed to set UserKnownHostsFile option', exc_info=True)
 
                 # Ensure SSH exits immediately on failure rather than waiting in background
-                ensure_option('ExitOnForwardFailure=yes')
+                if exit_on_forward_failure:
+                    ensure_option('ExitOnForwardFailure=yes')
 
                 # Only add verbose flag if explicitly enabled in config
                 try:
@@ -1000,6 +1003,14 @@ class TerminalWidget(Gtk.Box):
                 env_list.append(f"{key}={value}")
             
             # Log the command being executed for debugging
+            if native_mode_enabled:
+                try:
+                    cmd_parts = [str(part) for part in ssh_cmd]
+                    formatted_cmd = shlex.join(cmd_parts)
+                except Exception:
+                    formatted_cmd = ' '.join(str(part) for part in ssh_cmd)
+                logger.info("Native SSH spawn command: %s", formatted_cmd)
+
             logger.debug(f"Spawning SSH command: {ssh_cmd}")
             logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
             

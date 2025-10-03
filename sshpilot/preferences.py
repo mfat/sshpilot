@@ -1104,6 +1104,17 @@ class PreferencesWindow(Gtk.Window):
             self.compression_row.set_active(bool(self.config.get_setting('ssh.compression', False)))
             advanced_group.add(self.compression_row)
 
+            # ExitOnForwardFailure behaviour
+            self.exit_on_forward_failure_row = Adw.SwitchRow()
+            self.exit_on_forward_failure_row.set_title("ExitOnForwardFailure")
+            self.exit_on_forward_failure_row.set_subtitle(
+                "Automatically terminate the connection when a forward cannot be established"
+            )
+            self.exit_on_forward_failure_row.set_active(
+                bool(self.config.get_setting('ssh.exit_on_forward_failure', True))
+            )
+            advanced_group.add(self.exit_on_forward_failure_row)
+
             # SSH verbosity (-v levels)
             self.verbosity_row = Adw.SpinRow.new_with_range(0, 3, 1)
             self.verbosity_row.set_title("SSH Verbosity (-v)")
@@ -1154,6 +1165,7 @@ class PreferencesWindow(Gtk.Window):
                     self.strict_host_row,
                     self.batch_mode_row,
                     self.compression_row,
+                    self.exit_on_forward_failure_row,
                     self.verbosity_row,
                     self.debug_enabled_row,
                 ]:
@@ -1778,6 +1790,11 @@ class PreferencesWindow(Gtk.Window):
                 self.config.set_setting('ssh.batch_mode', bool(self.batch_mode_row.get_active()))
             if hasattr(self, 'compression_row'):
                 self.config.set_setting('ssh.compression', bool(self.compression_row.get_active()))
+            if hasattr(self, 'exit_on_forward_failure_row'):
+                self.config.set_setting(
+                    'ssh.exit_on_forward_failure',
+                    bool(self.exit_on_forward_failure_row.get_active())
+                )
             if hasattr(self, 'verbosity_row'):
                 self.config.set_setting('ssh.verbosity', int(self.verbosity_row.get_value()))
             if hasattr(self, 'debug_enabled_row'):
@@ -1831,6 +1848,10 @@ class PreferencesWindow(Gtk.Window):
             if hasattr(self, 'compression_row'):
                 self.config.set_setting('ssh.compression', bool(defaults.get('compression', False)))
                 self.compression_row.set_active(bool(defaults.get('compression', False)))
+            if hasattr(self, 'exit_on_forward_failure_row'):
+                default_exit = bool(defaults.get('exit_on_forward_failure', True))
+                self.config.set_setting('ssh.exit_on_forward_failure', default_exit)
+                self.exit_on_forward_failure_row.set_active(default_exit)
             if hasattr(self, 'verbosity_row'):
                 self.config.set_setting('ssh.verbosity', defaults.get('verbosity'))
                 self.verbosity_row.set_value(int(defaults.get('verbosity', 0)))
