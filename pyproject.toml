@@ -25,7 +25,8 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["sshpilot*"]
+where = ["", "src"]
+include = ["sshpilot*", "sshpilot_dnd*"]
 exclude = ["packaging*", "screenshots*"]
 [project.urls]
 Homepage = "https://github.com/mfat/sshpilot"

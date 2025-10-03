@@ -146,6 +146,20 @@ Enable verbose debugging with:
 python3 run.py --verbose
 ```
 
+## Testing
+
+- **Unit & integration:**
+
+  ```bash
+  pytest -m "not e2e"
+  ```
+
+- **End-to-end (Dogtail, requires X11/AT-SPI):**
+
+  ```bash
+  dbus-run-session -- xvfb-run -s "-screen 0 1024x768x24" pytest -m e2e tests_e2e
+  ```
+
 ### Telegram channel
 https://t.me/sshpilot
 

@@ -19,6 +19,13 @@ from .connection_display import (
     format_connection_host_display as _format_connection_host_display,
 )
 from .groups import GroupManager
+from sshpilot_dnd import (
+    AutoscrollParams,
+    RowBounds,
+    hit_test_insertion,
+    autoscroll_velocity,
+    reorder_connections_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1101,7 +1108,6 @@ def _handle_connection_drop_to_group(window, group_id, dragged_connections):
 def _handle_connection_reorder(window, target_connection, dragged_connections, x, y):
     """Handle reordering connections"""
     try:
-        # Find the target row by iterating through the listbox
         target_row = None
         child = window.connection_list.get_first_child()
         while child:
@@ -1113,31 +1119,37 @@ def _handle_connection_reorder(window, target_connection, dragged_connections, x
         if not target_row or not hasattr(target_row, "connection"):
             return False
 
-        target_group_id = window.group_manager.get_connection_group(target_connection)
-
         drop_above = y < target_row.get_allocated_height() / 2
         position = "above" if drop_above else "below"
 
-        changes_made = False
+        group_manager = window.group_manager
 
-        # Move each dragged connection
-        for connection_nickname in dragged_connections:
-            if connection_nickname == target_connection:
-                continue
+        connection_to_group = dict(getattr(group_manager, 'connections', {}))
+        group_connections: Dict[Optional[str], List[str]] = {
+            group_id: list(group_info.get('connections', []))
+            for group_id, group_info in getattr(group_manager, 'groups', {}).items()
+        }
+        group_connections.setdefault(None, list(getattr(group_manager, 'root_connections', [])))
 
-            current_group_id = window.group_manager.get_connection_group(connection_nickname)
-            if current_group_id != target_group_id:
-                window.group_manager.move_connection(connection_nickname, target_group_id)
-                changes_made = True
+        plan = reorder_connections_state(
+            connection_to_group,
+            group_connections,
+            target_connection,
+            list(dragged_connections),
+            position,
+        )
 
-            window.group_manager.reorder_connection_in_group(
-                connection_nickname, target_connection, position
-            )
-            changes_made = True
+        if not plan.changed:
+            return True
 
-        if changes_made:
-            window.rebuild_connection_list()
+        group_manager.connections = plan.connection_to_group
 
+        for group_id, group_info in group_manager.groups.items():
+            group_info['connections'] = list(plan.group_connections.get(group_id, []))
+
+        group_manager.root_connections = list(plan.group_connections.get(None, []))
+        group_manager._save_groups()
+        window.rebuild_connection_list()
         return True
     except Exception as e:
         logger.error(f"Error reordering connections: {e}")
@@ -1189,25 +1201,49 @@ def _on_connection_list_motion(window, target, x, y):
         _show_ungrouped_area(window)
         _update_connection_autoscroll(window, y)
 
-        row = window.connection_list.get_row_at_y(int(y))
-        placeholder_override = False
-        placeholder_position = None
+        row_bounds: List[RowBounds] = []
+        row_lookup: Dict[str, Gtk.ListBoxRow] = {}
 
-        if row and getattr(row, 'drop_placeholder', False):
+        child = window.connection_list.get_first_child()
+        index = 0
+        while child:
+            if isinstance(child, Gtk.ListBoxRow):
+                allocation = child.get_allocation()
+                row_key = str(index)
+                row_bounds.append(
+                    RowBounds(
+                        key=row_key,
+                        top=float(allocation.y),
+                        height=float(max(1, allocation.height)),
+                    )
+                )
+                row_lookup[row_key] = child
+                index += 1
+            child = child.get_next_sibling()
+
+        hit = hit_test_insertion(row_bounds, float(y))
+        if not hit:
+            _clear_drop_indicator(window)
+            return Gdk.DragAction.MOVE
+
+        row = row_lookup.get(hit.key)
+        if not row:
+            _clear_drop_indicator(window)
+            return Gdk.DragAction.MOVE
+
+        position = hit.position
+
+        if getattr(row, 'drop_placeholder', False):
             target_row = getattr(window, '_drop_placeholder_target_row', None)
             stored_position = getattr(window, '_drop_placeholder_position', None)
 
             if target_row is not None:
                 row = target_row
-                placeholder_override = True
-                placeholder_position = stored_position
+                if stored_position in {"above", "below"}:
+                    position = stored_position
             else:
                 _clear_drop_indicator(window)
                 return Gdk.DragAction.MOVE
-
-        if not row:
-            _clear_drop_indicator(window)
-            return Gdk.DragAction.MOVE
 
         if getattr(row, "ungrouped_area", False):
             # For ungrouped area, we don't need special highlighting
@@ -1218,14 +1254,6 @@ def _on_connection_list_motion(window, target, x, y):
 
         # Show indicators for valid drop targets
         if hasattr(row, "show_drop_indicator"):
-            if placeholder_override and placeholder_position in {"above", "below"}:
-                position = placeholder_position
-            else:
-                row_y = row.get_allocation().y
-                row_height = row.get_allocation().height
-                relative_y = y - row_y
-                position = "above" if relative_y < row_height / 2 else "below"
-
             # Handle connection rows
             dragged_connections = set(getattr(window, "_dragged_connections", []) or [])
             if hasattr(row, "connection") and dragged_connections:
@@ -1253,23 +1281,10 @@ def _on_connection_list_motion(window, target, x, y):
                 # Dragging group over connection - show indicator
                 _show_drop_indicator(window, row, position)
             elif hasattr(row, "group_id") and dragged_connections:
-                if placeholder_override and placeholder_position in {"above", "below"}:
-                    if placeholder_position == "above":
-                        _show_drop_indicator(window, row, "above")
-                    else:
-                        _show_drop_indicator_on_group(window, row)
+                if position == "above":
+                    _show_drop_indicator(window, row, "above")
                 else:
-                    # Dragging connection over group - check if we're in the top half of the group
-                    row_y = row.get_allocation().y
-                    row_height = row.get_allocation().height
-                    relative_y = y - row_y
-
-                    if relative_y < row_height / 2:
-                        # In top half of group - show indicator above the group (for positioning above first row)
-                        _show_drop_indicator(window, row, "above")
-                    else:
-                        # In bottom half of group - show group highlight (for adding to group)
-                        _show_drop_indicator_on_group(window, row)
+                    _show_drop_indicator_on_group(window, row)
             else:
                 _clear_drop_indicator(window)
         else:
@@ -1817,27 +1832,19 @@ def _update_connection_autoscroll(window, y):
     adjustment_value = vadjustment.get_value() if vadjustment else 0.0
     viewport_y = max(0.0, min(height, y - adjustment_value))
 
-    top_threshold = margin
-    bottom_threshold = height - margin
+    params = AutoscrollParams(
+        viewport_height=float(height),
+        pointer_y=float(viewport_y),
+        margin=float(margin),
+        max_velocity=float(max_velocity),
+    )
 
-    velocity = 0.0
-    if viewport_y < top_threshold:
-        distance = top_threshold - viewport_y
-        velocity = -_calculate_autoscroll_velocity(distance, margin, max_velocity)
-    elif viewport_y > bottom_threshold:
-        distance = viewport_y - bottom_threshold
-        velocity = _calculate_autoscroll_velocity(distance, margin, max_velocity)
+    velocity = autoscroll_velocity(params)
 
     if velocity:
         _start_connection_autoscroll(window, velocity)
     else:
         _stop_connection_autoscroll(window)
-
-
-def _calculate_autoscroll_velocity(distance, margin, max_velocity):
-    """Scale the autoscroll velocity based on how deep the pointer is in the margin."""
-    ratio = min(1.0, max(0.0, distance) / margin)
-    return max_velocity * ratio
 
 
 def _start_connection_autoscroll(window, velocity):

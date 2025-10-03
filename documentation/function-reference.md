@@ -1407,11 +1407,16 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 
 
+## Module: `sshpilot_dnd.logic`
+
+- **`hit_test_insertion(rows, pointer_y)`** — Return which row key and side the drop indicator should target for a pointer position.
+- **`reorder_connections_state(connection_to_group, group_connections, target_connection, dragged_connections, position)`** — Compute an immutable plan describing how connection orders and group membership change after a drop.
+- **`autoscroll_velocity(params)`** — Pure helper that scales autoscroll speed based on pointer depth inside the viewport margins.
+
+
 ## Module: `sshpilot.sidebar`
 
 ### Functions
-
-- **`_calculate_autoscroll_velocity(distance, margin, max_velocity)`** — Scale the autoscroll velocity based on how deep the pointer is in the margin.
 
 - **`_clear_drop_indicator(window)`** — Handles clear drop indicator.
 
