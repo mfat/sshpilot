@@ -347,27 +347,49 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               opacity: 1;
             }
             
-            /* Drop indicator lines for drag and drop */
-            .drop-indicator-top {
+            /* List-level overlay drop indicator lines for drag and drop */
+            .drop-indicator-line {
+              min-height: 1px; /* Use 1px to sit perfectly in a 1px gap */
               background-image: linear-gradient(@accent_bg_color, @accent_bg_color);
               background-repeat: no-repeat;
-              background-size: 100% 2px;
-              background-position: top;
-              border: none;
-              border-radius: 0;
-              margin-top: -1px;
+              background-size: 100% 100%;
+              opacity: 0;
+              transition: opacity 120ms ease-in-out;
             }
             
-            .drop-indicator-bottom {
-              background-image: linear-gradient(@accent_bg_color, @accent_bg_color);
-              background-repeat: no-repeat;
-              background-size: 100% 2px;
-              background-position: bottom;
-              border: none;
-              border-radius: 0;
-              margin-bottom: -1px;
+            .drop-indicator-line.visible { 
+              opacity: 1; 
             }
             
+            /* Dot cap (pin) */
+            .drop-indicator-dot {
+              min-width: 6px;
+              min-height: 6px;
+              background-color: @accent_bg_color;
+              border-radius: 9999px;
+              opacity: 0;
+              transition: opacity 120ms ease-in-out;
+            }
+            
+            .drop-indicator-dot.visible { 
+              opacity: 1; 
+            }
+
+            .drop-placeholder-row {
+              padding: 0;
+              min-height: 6px;
+            }
+
+            .drop-placeholder-container {
+              margin: 4px 8px;
+            }
+
+            .drop-placeholder-line {
+              min-height: 2px;
+              background-color: @accent_bg_color;
+              border-radius: 999px;
+            }
+
             .drop-indicator-on-group {
               background-color: alpha(@accent_bg_color, 0.1);
               border: 1px solid @accent_bg_color;
@@ -384,16 +406,25 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             .navigation-sidebar {
               transition: transform 0.1s ease-out;
             }
-            
+
             /* Disable drag feedback on sidebar containers */
             .sidebar {
               background: transparent;
             }
-            
+
             .sidebar scrolledwindow {
               background: transparent;
             }
-            
+
+            .navigation-sidebar:drop(active),
+            .navigation-sidebar *:drop(active),
+            .navigation-sidebar:drag-hover,
+            .navigation-sidebar *:drag-hover {
+              background: transparent;
+              box-shadow: none;
+              outline: none;
+            }
+
             /* Override any drag feedback styling */
             .sidebar:backdrop,
             .sidebar scrolledwindow:backdrop {
@@ -1652,7 +1683,59 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             )
         
         self.connection_scrolled.set_child(self.connection_list)
-        sidebar_box.append(self.connection_scrolled)
+        
+        # Create overlay wrapper for drop indicators
+        self.connection_overlay = Gtk.Overlay()
+        self.connection_overlay.set_child(self.connection_scrolled)
+        sidebar_box.append(self.connection_overlay)
+        
+        # Create drop indicator lines
+        self.top_drop_line = Gtk.Box()
+        self.top_drop_line.add_css_class("drop-indicator-line")
+        self.top_drop_line.set_hexpand(True)
+        self.top_drop_line.set_vexpand(False)
+        self.top_drop_line.set_valign(Gtk.Align.START)
+        self.top_drop_line.set_can_target(False)
+        self.connection_overlay.add_overlay(self.top_drop_line)
+        
+        self.bottom_drop_line = Gtk.Box()
+        self.bottom_drop_line.add_css_class("drop-indicator-line")
+        self.bottom_drop_line.set_hexpand(True)
+        self.bottom_drop_line.set_vexpand(False)
+        self.bottom_drop_line.set_valign(Gtk.Align.START)
+        self.bottom_drop_line.set_can_target(False)
+        self.connection_overlay.add_overlay(self.bottom_drop_line)
+        
+        # Create pin caps (dots)
+        self.top_drop_dot = Gtk.Box()
+        self.top_drop_dot.add_css_class("drop-indicator-dot")
+        self.top_drop_dot.set_size_request(6, 6)
+        self.top_drop_dot.set_valign(Gtk.Align.START)
+        self.top_drop_dot.set_halign(Gtk.Align.END)   # right-end cap
+        self.top_drop_dot.set_margin_end(10)          # inset from right edge
+        self.top_drop_dot.set_can_target(False)
+        self.connection_overlay.add_overlay(self.top_drop_dot)
+        
+        self.bottom_drop_dot = Gtk.Box()
+        self.bottom_drop_dot.add_css_class("drop-indicator-dot")
+        self.bottom_drop_dot.set_size_request(6, 6)
+        self.bottom_drop_dot.set_valign(Gtk.Align.START)
+        self.bottom_drop_dot.set_halign(Gtk.Align.END)
+        self.bottom_drop_dot.set_margin_end(10)
+        self.bottom_drop_dot.set_can_target(False)
+        self.connection_overlay.add_overlay(self.bottom_drop_dot)
+        
+        # Note: Size allocation tracking removed as it's not essential for basic functionality
+        # The overlay lines will automatically size to match the list width
+        
+        # Initialize drop indicator state
+        self._current_drop_row = None
+        self._current_drop_position = None
+        
+        # Add motion controller for auto-hide on leave
+        motion_controller = Gtk.EventControllerMotion()
+        motion_controller.connect("leave", lambda *a: self._hide_all_drop_indicators())
+        self.connection_list.add_controller(motion_controller)
         
         # Sidebar toolbar
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -1953,6 +2036,109 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 break
 
         return None
+
+    def _row_edges_in_overlay(self, row: Gtk.Widget) -> tuple[float, float]:
+        """Return (top_y, bottom_y) of the row in overlay coordinates, adjusted by widget margins."""
+        try:
+            # translate_coordinates returns (ok, x, y) but we only need y
+            result = row.translate_coordinates(self.connection_overlay, 0, 0)
+            if len(result) == 3:
+                ok, _, row_y = result
+            elif len(result) == 2:
+                ok, row_y = result
+            else:
+                ok = False
+                row_y = 0
+                
+            if not ok:
+                # Fallback to manual accumulation if needed
+                alloc = row.get_allocation()
+                row_y = alloc.y
+                w = row.get_parent()
+                while w and w is not self.connection_overlay:
+                    a = w.get_allocation()
+                    row_y += a.y
+                    w = w.get_parent()
+
+            top_y = row_y - row.get_margin_top()
+            bottom_y = row_y + row.get_allocation().height + row.get_margin_bottom()
+            return float(top_y), float(bottom_y)
+        except Exception as e:
+            logger.debug(f"Error computing row edges: {e}")
+            return 0.0, 0.0
+
+    def _position_drop_y(self, w: Gtk.Widget, y: float):
+        """Place an overlay child at absolute Y via top margin. Does not affect layout of list rows."""
+        try:
+            w.set_margin_top(int(round(y)))
+            w.set_hexpand(True)
+        except Exception as e:
+            logger.debug(f"Error positioning drop indicator: {e}")
+
+    def _set_overlay_visible(self, w: Gtk.Widget, show: bool):
+        """Show or hide an overlay widget"""
+        try:
+            if show:
+                w.add_css_class("visible")
+            else:
+                w.remove_css_class("visible")
+        except Exception as e:
+            logger.debug(f"Error setting overlay visibility: {e}")
+
+    def _show_drop_indicator_at_row(self, row: Gtk.Widget, position: str, gap_px: int = 1):
+        """Show indicator (line + pin) at a row edge. position: 'top' or 'bottom'."""
+        try:
+            if not row:
+                self._hide_all_drop_indicators()
+                return
+
+            top_y, bottom_y = self._row_edges_in_overlay(row)
+
+            if position == "top":
+                # Position line just above the row's top edge
+                y = top_y - 1  # 1px above the row
+                self._position_drop_y(self.top_drop_line, y)
+                self._position_drop_y(self.top_drop_dot, y - 2)  # nudge so dot centers on 1px line
+                self._set_overlay_visible(self.top_drop_line, True)
+                self._set_overlay_visible(self.top_drop_dot, True)
+                self._set_overlay_visible(self.bottom_drop_line, False)
+                self._set_overlay_visible(self.bottom_drop_dot, False)
+            else:
+                # Position line just below the row's bottom edge
+                y = bottom_y + 1  # 1px below the row
+                self._position_drop_y(self.bottom_drop_line, y)
+                self._position_drop_y(self.bottom_drop_dot, y - 2)
+                self._set_overlay_visible(self.bottom_drop_line, True)
+                self._set_overlay_visible(self.bottom_drop_dot, True)
+                self._set_overlay_visible(self.top_drop_line, False)
+                self._set_overlay_visible(self.top_drop_dot, False)
+
+            self._current_drop_row = row
+            self._current_drop_position = position
+        except Exception as e:
+            logger.debug(f"Error showing drop indicator: {e}")
+
+    def _hide_all_drop_indicators(self):
+        """Hide all drop indicator lines and dots"""
+        try:
+            for w in (self.top_drop_line, self.bottom_drop_line, self.top_drop_dot, self.bottom_drop_dot):
+                if w:
+                    self._set_overlay_visible(w, False)
+            self._current_drop_row = None
+            self._current_drop_position = None
+
+            placeholder = getattr(self, '_drop_placeholder_row', None)
+            if placeholder is not None:
+                parent = placeholder.get_parent()
+                if parent is not None:
+                    try:
+                        parent.remove(placeholder)
+                    except Exception as exc:
+                        logger.debug("Failed to remove drop placeholder: %s", exc)
+            self._drop_placeholder_target_row = None
+            self._drop_placeholder_position = None
+        except Exception as e:
+            logger.debug(f"Error hiding drop indicators: {e}")
 
     def setup_content_area(self):
         """Set up the main content area with stack for tabs and welcome view"""

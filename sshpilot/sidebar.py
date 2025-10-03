@@ -499,35 +499,11 @@ class GroupRow(Adw.ActionRow):
 
     def _setup_drop_target(self):
         """Set up drop target for this group row"""
-        drop_target = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
-        drop_target.connect("drop", self._on_drop)
-        drop_target.connect("enter", self._on_drop_enter)
-        drop_target.connect("leave", self._on_drop_leave)
-        drop_target.connect("motion", self._on_drop_motion)
-        self.add_controller(drop_target)
-        # Store reference for cleanup
-        self._drop_target = drop_target
+        # Disable individual drop target - let list-level handler manage everything
+        # This prevents the group row from intercepting drop events
+        pass
 
-    def _on_drop(self, target, value, x, y):
-        """Handle drop on this group row"""
-        window = self.get_root()
-        if window and hasattr(window, '_dragged_connections'):
-            # Handle dropping connections into this group
-            return _handle_connection_drop_to_group(window, self.group_id, window._dragged_connections)
-        return False
-
-    def _on_drop_enter(self, target, x, y):
-        """Handle drag enter on this group row"""
-        self.add_css_class("drop-target-group")
-        return Gdk.DragAction.MOVE
-
-    def _on_drop_leave(self, target):
-        """Handle drag leave on this group row"""
-        self.remove_css_class("drop-target-group")
-
-    def _on_drop_motion(self, target, x, y):
-        """Handle drag motion over this group row"""
-        return Gdk.DragAction.MOVE
+    # Drop target methods removed - list-level handler manages everything
 
     def _on_drag_prepare(self, source, x, y):
         data = {"type": "group", "group_id": self.group_id}
@@ -560,6 +536,9 @@ class GroupRow(Adw.ActionRow):
                 # Clear the dragged group tracking
                 if hasattr(window, "_dragged_group_id"):
                     delattr(window, "_dragged_group_id")
+                # Hide drop indicators
+                if hasattr(window, '_hide_all_drop_indicators'):
+                    window._hide_all_drop_indicators()
                 _hide_ungrouped_area(window)
                 _stop_connection_autoscroll(window)
                 # Restore selection mode after drag
@@ -601,6 +580,10 @@ class GroupRow(Adw.ActionRow):
         self.remove_css_class("drop-indicator-bottom")
         self.remove_css_class("drop-indicator-on-group")
         self.show_group_highlight(False)
+
+        window = self.get_root()
+        if window:
+            _remove_drop_placeholder(window)
 
     def show_group_highlight(self, show: bool):
         """Show/hide group highlight for 'add to group' drop indication"""
@@ -694,7 +677,11 @@ class ConnectionRow(Adw.ActionRow):
         self.remove_css_class("drop-indicator-top")
         self.remove_css_class("drop-indicator-bottom")
         self.remove_css_class("drop-indicator-on-group")
-    
+
+        window = self.get_root()
+        if window:
+            _remove_drop_placeholder(window)
+
     def set_indentation(self, level: int):
         """Set indentation level for grouped connections"""
         # Simplified indentation using margin start
@@ -796,30 +783,32 @@ class ConnectionRow(Adw.ActionRow):
         """Handle drop on this connection row"""
         window = self.get_root()
         if window and hasattr(window, '_dragged_connections'):
+            # Hide indicators before handling drop
+            if hasattr(window, '_hide_all_drop_indicators'):
+                window._hide_all_drop_indicators()
             # Handle reordering connections
             return _handle_connection_reorder(window, self.connection.nickname, window._dragged_connections, x, y)
         return False
 
     def _on_drop_enter(self, target, x, y):
         """Handle drag enter on this connection row"""
-        # Show drop indicator based on position
-        if y < self.get_allocated_height() / 2:
-            self.show_drop_indicator(True)  # Top
-        else:
-            self.show_drop_indicator(False)  # Bottom
+        # Let the list-level handler manage indicators
         return Gdk.DragAction.MOVE
 
     def _on_drop_leave(self, target):
         """Handle drag leave on this connection row"""
-        self.hide_drop_indicators()
+        # Let the list-level handler manage indicators
+        pass
 
     def _on_drop_motion(self, target, x, y):
         """Handle drag motion over this connection row"""
-        # Update drop indicator based on position
-        if y < self.get_allocated_height() / 2:
-            self.show_drop_indicator(True)  # Top
-        else:
-            self.show_drop_indicator(False)  # Bottom
+        # Delegate to list-level handler for proper indicator management
+        window = self.get_root()
+        if window:
+            # Convert row-relative coordinates to list-absolute coordinates
+            row_y = self.get_allocation().y
+            list_y = y + row_y
+            return _on_connection_list_motion(window, target, x, list_y)
         return Gdk.DragAction.MOVE
 
     def _on_drag_prepare(self, source, x, y):
@@ -941,6 +930,10 @@ class ConnectionRow(Adw.ActionRow):
                 # Clear dragged connections tracking
                 if hasattr(window, "_dragged_connections"):
                     delattr(window, "_dragged_connections")
+                
+                # Hide drop indicators
+                if hasattr(window, '_hide_all_drop_indicators'):
+                    window._hide_all_drop_indicators()
                 
                 # Clear drag state
                 window._drag_in_progress = False
@@ -1162,6 +1155,11 @@ def setup_connection_list_dnd(window):
     
     window._drop_indicator_row = None
     window._drop_indicator_position = None
+    _remove_drop_placeholder(window)
+    if not hasattr(window, "_drop_placeholder_row"):
+        window._drop_placeholder_row = None
+    window._drop_placeholder_target_row = None
+    window._drop_placeholder_position = None
     window._ungrouped_area_row = None
     window._ungrouped_area_visible = False
     window._connection_autoscroll_timeout_id = 0
@@ -1192,6 +1190,21 @@ def _on_connection_list_motion(window, target, x, y):
         _update_connection_autoscroll(window, y)
 
         row = window.connection_list.get_row_at_y(int(y))
+        placeholder_override = False
+        placeholder_position = None
+
+        if row and getattr(row, 'drop_placeholder', False):
+            target_row = getattr(window, '_drop_placeholder_target_row', None)
+            stored_position = getattr(window, '_drop_placeholder_position', None)
+
+            if target_row is not None:
+                row = target_row
+                placeholder_override = True
+                placeholder_position = stored_position
+            else:
+                _clear_drop_indicator(window)
+                return Gdk.DragAction.MOVE
+
         if not row:
             _clear_drop_indicator(window)
             return Gdk.DragAction.MOVE
@@ -1205,10 +1218,13 @@ def _on_connection_list_motion(window, target, x, y):
 
         # Show indicators for valid drop targets
         if hasattr(row, "show_drop_indicator"):
-            row_y = row.get_allocation().y
-            row_height = row.get_allocation().height
-            relative_y = y - row_y
-            position = "above" if relative_y < row_height / 2 else "below"
+            if placeholder_override and placeholder_position in {"above", "below"}:
+                position = placeholder_position
+            else:
+                row_y = row.get_allocation().y
+                row_height = row.get_allocation().height
+                relative_y = y - row_y
+                position = "above" if relative_y < row_height / 2 else "below"
 
             # Handle connection rows
             dragged_connections = set(getattr(window, "_dragged_connections", []) or [])
@@ -1237,9 +1253,23 @@ def _on_connection_list_motion(window, target, x, y):
                 # Dragging group over connection - show indicator
                 _show_drop_indicator(window, row, position)
             elif hasattr(row, "group_id") and dragged_connections:
-                # Dragging connection over group - only show indicator on the group itself (not above/below)
-                # This indicates the connection will be added to the group
-                _show_drop_indicator_on_group(window, row)
+                if placeholder_override and placeholder_position in {"above", "below"}:
+                    if placeholder_position == "above":
+                        _show_drop_indicator(window, row, "above")
+                    else:
+                        _show_drop_indicator_on_group(window, row)
+                else:
+                    # Dragging connection over group - check if we're in the top half of the group
+                    row_y = row.get_allocation().y
+                    row_height = row.get_allocation().height
+                    relative_y = y - row_y
+
+                    if relative_y < row_height / 2:
+                        # In top half of group - show indicator above the group (for positioning above first row)
+                        _show_drop_indicator(window, row, "above")
+                    else:
+                        # In bottom half of group - show group highlight (for adding to group)
+                        _show_drop_indicator_on_group(window, row)
             else:
                 _clear_drop_indicator(window)
         else:
@@ -1264,6 +1294,101 @@ def _on_connection_list_leave(window, target):
     return True
 
 
+def _ensure_drop_placeholder(window):
+    """Create or return a lightweight placeholder row used to show drop slots."""
+    placeholder = getattr(window, "_drop_placeholder_row", None)
+    if placeholder and isinstance(placeholder, Gtk.ListBoxRow):
+        return placeholder
+
+    try:
+        line = Gtk.Box()
+        line.set_hexpand(True)
+        line.set_size_request(-1, 2)
+        line.add_css_class("drop-placeholder-line")
+
+        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        container.add_css_class("drop-placeholder-container")
+        container.set_margin_start(8)
+        container.set_margin_end(8)
+        container.set_margin_top(6)
+        container.set_margin_bottom(6)
+        container.append(line)
+
+        placeholder = Gtk.ListBoxRow()
+        placeholder.set_child(container)
+        placeholder.set_selectable(False)
+        placeholder.set_activatable(False)
+        placeholder.drop_placeholder = True
+        placeholder.add_css_class("drop-placeholder-row")
+
+        window._drop_placeholder_row = placeholder
+        window._drop_placeholder_target_row = None
+        window._drop_placeholder_position = None
+        return placeholder
+    except Exception:
+        logger.debug("Failed to create drop placeholder row", exc_info=True)
+        return None
+
+
+def _show_drop_placeholder(window, anchor_row, position):
+    """Insert the placeholder row relative to the anchor row."""
+    listbox = getattr(window, "connection_list", None)
+    if listbox is None or anchor_row is None:
+        return
+
+    placeholder = _ensure_drop_placeholder(window)
+    if placeholder is None:
+        return
+
+    try:
+        anchor_index = anchor_row.get_index()
+        if not isinstance(anchor_index, int) or anchor_index < 0:
+            return
+
+        insert_index = anchor_index
+        if str(position).lower() in {"below", "bottom"}:
+            insert_index += 1
+
+        parent = placeholder.get_parent()
+        current_index = placeholder.get_index() if isinstance(parent, Gtk.ListBox) else None
+
+        if parent is listbox and current_index == insert_index:
+            pass
+        else:
+            if parent is not None:
+                try:
+                    parent.remove(placeholder)
+                except Exception:
+                    logger.debug("Failed to detach drop placeholder", exc_info=True)
+
+            try:
+                listbox.insert(placeholder, insert_index)
+            except Exception:
+                logger.debug("Failed to insert drop placeholder", exc_info=True)
+                return
+
+        window._drop_placeholder_target_row = anchor_row
+        window._drop_placeholder_position = "below" if str(position).lower() in {"below", "bottom"} else "above"
+    except Exception:
+        logger.debug("Error positioning drop placeholder", exc_info=True)
+
+
+def _remove_drop_placeholder(window):
+    placeholder = getattr(window, "_drop_placeholder_row", None)
+    if not placeholder:
+        return
+
+    parent = placeholder.get_parent()
+    if parent is not None:
+        try:
+            parent.remove(placeholder)
+        except Exception:
+            logger.debug("Failed to remove drop placeholder", exc_info=True)
+
+    window._drop_placeholder_target_row = None
+    window._drop_placeholder_position = None
+
+
 def _show_drop_indicator(window, row, position):
     try:
         # Only update if the indicator has changed
@@ -1271,13 +1396,12 @@ def _show_drop_indicator(window, row, position):
             window._drop_indicator_position != position):
             
             # Clear any existing indicators
-            if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
-                window._drop_indicator_row.hide_drop_indicators()
-            
-            # Show indicator on the target row
-            if hasattr(row, 'show_drop_indicator'):
-                show_top = (position == "above")
-                row.show_drop_indicator(show_top)
+            if hasattr(window, '_hide_all_drop_indicators'):
+                window._hide_all_drop_indicators()
+
+            _remove_drop_placeholder(window)
+
+            _show_drop_placeholder(window, row, position)
 
             window._drop_indicator_row = row
             window._drop_indicator_position = position
@@ -1289,19 +1413,22 @@ def _show_drop_indicator_on_group(window, row):
     """Show a special indicator when dropping a connection onto a group (adds to group)"""
     try:
         # Only update if the indicator has changed
-        if (window._drop_indicator_row != row or
-            window._drop_indicator_position != "on_group"):
-            
-            # Clear any existing indicators
-            if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
-                window._drop_indicator_row.hide_drop_indicators()
-            
-            # Show group highlight indicator instead of line indicators
-            if hasattr(row, 'show_group_highlight'):
+        if (
+            window._drop_indicator_row != row
+            or window._drop_indicator_position != "on_group"
+        ):
+
+            # Clear any existing indicators (line + highlight)
+            if hasattr(window, "_hide_all_drop_indicators"):
+                window._hide_all_drop_indicators()
+
+            _remove_drop_placeholder(window)
+
+            _show_drop_placeholder(window, row, "below")
+
+            # Provide the shaded backdrop that communicates "drop into group"
+            if hasattr(row, "show_group_highlight"):
                 row.show_group_highlight(True)
-            elif hasattr(row, 'show_drop_indicator'):
-                # Fallback: show bottom indicator if group highlight not available
-                row.show_drop_indicator(False)
 
             window._drop_indicator_row = row
             window._drop_indicator_position = "on_group"
@@ -1365,8 +1492,14 @@ def _hide_ungrouped_area(window):
 
 def _clear_drop_indicator(window):
     try:
-        if window._drop_indicator_row and hasattr(window._drop_indicator_row, 'hide_drop_indicators'):
-            window._drop_indicator_row.hide_drop_indicators()
+        previous_row = getattr(window, '_drop_indicator_row', None)
+        if previous_row and hasattr(previous_row, 'show_group_highlight'):
+            previous_row.show_group_highlight(False)
+
+        if hasattr(window, '_hide_all_drop_indicators'):
+            window._hide_all_drop_indicators()
+
+        _remove_drop_placeholder(window)
 
         window._drop_indicator_row = None
         window._drop_indicator_position = None
@@ -1379,6 +1512,11 @@ def _clear_drop_indicator(window):
 
 def _on_connection_list_drop(window, target, value, x, y):
     try:
+        indicator_row = getattr(window, '_drop_indicator_row', None)
+        indicator_position = getattr(window, '_drop_indicator_position', None)
+        placeholder_target = getattr(window, '_drop_placeholder_target_row', None)
+        placeholder_position = getattr(window, '_drop_placeholder_position', None)
+
         _clear_drop_indicator(window)
         _hide_ungrouped_area(window)
         _stop_connection_autoscroll(window)
@@ -1452,6 +1590,12 @@ def _on_connection_list_drop(window, target, value, x, y):
 
             target_row = window.connection_list.get_row_at_y(int(y))
 
+            if not target_row and indicator_row is not None:
+                target_row = indicator_row
+
+            if not target_row and placeholder_target is not None:
+                target_row = placeholder_target
+
             if not target_row:
                 for nickname in connection_nicknames:
                     current_group_id = window.group_manager.get_connection_group(nickname)
@@ -1472,13 +1616,58 @@ def _on_connection_list_drop(window, target, value, x, y):
                 relative_y = y - row_y
                 position = "above" if relative_y < row_height / 2 else "below"
 
+                if indicator_row is target_row:
+                    if indicator_position == 'on_group':
+                        position = 'below'
+                    elif indicator_position in {'above', 'below'}:
+                        position = indicator_position
+                elif placeholder_target is target_row and placeholder_position in {'above', 'below'}:
+                    position = placeholder_position
+
                 if hasattr(target_row, "group_id"):
                     target_group_id = target_row.group_id
-                    for nickname in connection_nicknames:
-                        current_group_id = window.group_manager.get_connection_group(nickname)
-                        if target_group_id != current_group_id:
-                            window.group_manager.move_connection(nickname, target_group_id)
-                            changes_made = True
+                    
+                    # Check if we're dropping in the top half (above first row) or bottom half (into group)
+                    if position == "above":
+                        # Dropping in top half - position above the first row in the group
+                        # Find the first connection in this group
+                        first_connection = None
+                        child = window.connection_list.get_first_child()
+                        while child:
+                            if hasattr(child, 'connection'):
+                                connection_group = window.group_manager.get_connection_group(child.connection.nickname)
+                                if connection_group == target_group_id:
+                                    first_connection = child.connection.nickname
+                                    break
+                            child = child.get_next_sibling()
+                        
+                        if first_connection:
+                            # Position above the first connection in the group
+                            for nickname in connection_nicknames:
+                                current_group_id = window.group_manager.get_connection_group(nickname)
+                                if target_group_id != current_group_id:
+                                    window.group_manager.move_connection(nickname, target_group_id)
+                                    changes_made = True
+                                
+                                # Position above the first connection
+                                window.group_manager.reorder_connection_in_group(
+                                    nickname, first_connection, "above"
+                                )
+                                changes_made = True
+                        else:
+                            # No connections in group yet, just add to group
+                            for nickname in connection_nicknames:
+                                current_group_id = window.group_manager.get_connection_group(nickname)
+                                if target_group_id != current_group_id:
+                                    window.group_manager.move_connection(nickname, target_group_id)
+                                    changes_made = True
+                    else:
+                        # Dropping in bottom half - add to group
+                        for nickname in connection_nicknames:
+                            current_group_id = window.group_manager.get_connection_group(nickname)
+                            if target_group_id != current_group_id:
+                                window.group_manager.move_connection(nickname, target_group_id)
+                                changes_made = True
                 else:
                     target_connection = getattr(target_row, "connection", None)
                     if target_connection:
@@ -1727,4 +1916,3 @@ def build_sidebar(window):
 
 
 __all__ = ["GroupRow", "ConnectionRow", "build_sidebar"]
-
