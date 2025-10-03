@@ -368,6 +368,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
               opacity: 0.7;
               transform: scale(0.98);
             }
+
+            .navigation-sidebar row.tinted {
+              margin: 4px 8px;
+              border-radius: 10px;
+            }
+
+            .navigation-sidebar row.tinted:not(:selected):not(:hover):not(:active) {
+              background-color: alpha(@accent_bg_color, 0.18);
+            }
             
             /* Group drop target highlight */
             .drop-target-group {
@@ -2358,7 +2367,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     def add_connection_row(self, connection: Connection, indent_level: int = 0):
         """Add a connection row to the list with optional indentation"""
-        row = ConnectionRow(connection)
+        row = ConnectionRow(connection, self.group_manager, self.config)
         
         # Apply indentation for grouped connections
         if indent_level > 0:

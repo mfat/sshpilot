@@ -24,6 +24,139 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Styling helpers
+# ---------------------------------------------------------------------------
+
+
+_COLOR_CSS_INSTALLED = False
+_DEFAULT_ROW_MARGIN_START = 0
+_MIN_VALID_MARGIN = 0
+
+
+def _install_sidebar_color_css():
+    global _COLOR_CSS_INSTALLED
+    if _COLOR_CSS_INSTALLED:
+        return
+
+    try:
+        display = Gdk.Display.get_default()
+        if not display:
+            return
+
+        provider = Gtk.CssProvider()
+        css = """
+        .sidebar-color-badge {
+            border-radius: 999px;
+            min-width: 12px;
+            min-height: 12px;
+        }
+
+        .accent-red { background-color: #ff5c57; }
+        .accent-blue { background-color: #51a1ff; }
+        .accent-green { background-color: #5fff8d; }
+        .accent-orange { background-color: #ffb347; }
+        .accent-purple { background-color: #d6a2ff; }
+        .accent-cyan { background-color: #5be7ff; }
+        .accent-gray { background-color: #d3d7db; }
+        """
+        provider.load_from_data(css.encode("utf-8"))
+        Gtk.StyleContext.add_provider_for_display(
+            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        _COLOR_CSS_INSTALLED = True
+    except Exception:
+        logger.debug("Failed to install sidebar color CSS", exc_info=True)
+
+
+def _parse_color(value: Optional[str]) -> Optional[Gdk.RGBA]:
+    if not value:
+        return None
+
+    rgba = Gdk.RGBA()
+    try:
+        if rgba.parse(str(value)):
+            return rgba
+    except Exception:
+        logger.debug("Failed to parse color value '%s'", value, exc_info=True)
+    return None
+
+
+def _get_color_display_mode(config) -> str:
+    try:
+        mode = str(config.get_setting('ui.group_color_display', 'fill')).lower()
+    except Exception:
+        return 'fill'
+
+    if mode not in {'fill', 'badge'}:
+        return 'fill'
+    return mode
+
+
+def _fill_rgba(rgba: Optional[Gdk.RGBA]) -> Optional[Gdk.RGBA]:
+    if rgba is None:
+        return None
+
+    fill = Gdk.RGBA()
+    fill.red = rgba.red
+    fill.green = rgba.green
+    fill.blue = rgba.blue
+    fill.alpha = 0.4 if rgba.alpha >= 1.0 else max(0.3, min(rgba.alpha, 0.5))
+    return fill
+
+
+def _get_color_class(rgba: Optional[Gdk.RGBA]) -> Optional[str]:
+    if not rgba:
+        return None
+
+    import colorsys
+
+    h, s, _v = colorsys.rgb_to_hsv(rgba.red, rgba.green, rgba.blue)
+
+    if s < 0.3:
+        return "accent-gray"
+    if h < 0.1 or h > 0.9:
+        return "accent-red"
+    if h < 0.2:
+        return "accent-orange"
+    if h < 0.4:
+        return "accent-green"
+    if h < 0.6:
+        return "accent-cyan"
+    if h < 0.8:
+        return "accent-blue"
+    return "accent-purple"
+
+
+def _set_tint_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
+    try:
+        color_value = rgba.to_string()
+    except Exception:
+        logger.debug("Failed to convert RGBA to string", exc_info=True)
+        return
+
+    try:
+        provider = Gtk.CssProvider()
+        css_data = f"""
+        .tinted:not(:selected):not(:hover):not(:active) {{
+            background-color: {color_value};
+        }}
+        """
+        provider.load_from_data(css_data.encode('utf-8'))
+
+        if hasattr(row, '_tint_provider') and getattr(row, '_tint_provider'):
+            try:
+                row.get_style_context().remove_provider(row._tint_provider)
+            except Exception:
+                pass
+
+        row._tint_provider = provider  # type: ignore[attr-defined]
+        row.get_style_context().add_provider(
+            provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+        )
+    except Exception:
+        logger.debug("Failed to apply tinted color", exc_info=True)
+
+# ---------------------------------------------------------------------------
 # Row widgets
 # ---------------------------------------------------------------------------
 
@@ -61,11 +194,16 @@ class GroupRow(Gtk.ListBoxRow):
 
     def __init__(self, group_info: Dict, group_manager: GroupManager, connections_dict: Dict | None = None):
         super().__init__()
+        _install_sidebar_color_css()
         self.add_css_class("navigation-sidebar")
         self.group_info = group_info
         self.group_manager = group_manager
         self.group_id = group_info["id"]
         self.connections_dict = connections_dict or {}
+        self._tint_provider = None
+        self._color_badge_provider = None
+        self._tint_provider = None
+        self._color_badge_provider = None
 
         # Main container with drop indicators
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -98,6 +236,16 @@ class GroupRow(Gtk.ListBoxRow):
         info_box.append(self.count_label)
 
         content.append(info_box)
+
+        self.color_badge = Gtk.Button()
+        self.color_badge.add_css_class("circular")
+        self.color_badge.add_css_class("normal")
+        self.color_badge.add_css_class("sidebar-color-badge")
+        self.color_badge.set_can_focus(False)
+        self.color_badge.set_sensitive(False)
+        self.color_badge.set_valign(Gtk.Align.CENTER)
+        self.color_badge.set_visible(False)
+        content.append(self.color_badge)
 
         self.expand_button = Gtk.Button()
         self.expand_button.set_icon_name("pan-end-symbolic")
@@ -158,7 +306,7 @@ class GroupRow(Gtk.ListBoxRow):
         group_name = self.group_info['name']
         self.name_label.set_markup(f"<b>{group_name}</b>")
         self.count_label.set_text(f"{count} connections")
-        
+        self._apply_group_color_style()
 
 
     def _on_expand_clicked(self, button):
@@ -218,6 +366,81 @@ class GroupRow(Gtk.ListBoxRow):
         self._update_display()
         self.emit("group-toggled", self.group_id, expanded)
 
+    def _apply_group_color_style(self):
+        config = getattr(self.group_manager, 'config', None)
+        mode = _get_color_display_mode(config) if config else 'fill'
+        rgba = _parse_color(self.group_info.get('color'))
+
+        if mode == 'badge':
+            self.remove_css_class("tinted")
+            if hasattr(self, '_tint_provider') and self._tint_provider:
+                try:
+                    self.get_style_context().remove_provider(self._tint_provider)
+                except Exception:
+                    pass
+                self._tint_provider = None
+
+            if rgba:
+                self._update_color_badge(rgba)
+                self.color_badge.set_visible(True)
+            else:
+                self.color_badge.set_visible(False)
+        else:
+            self.color_badge.set_visible(False)
+            if rgba:
+                tint = _fill_rgba(rgba) or rgba
+                self.add_css_class("tinted")
+                _set_tint_card_color(self, tint)
+            else:
+                self.remove_css_class("tinted")
+                if hasattr(self, '_tint_provider') and self._tint_provider:
+                    try:
+                        self.get_style_context().remove_provider(self._tint_provider)
+                    except Exception:
+                        pass
+                    self._tint_provider = None
+
+    def _update_color_badge(self, rgba: Gdk.RGBA):
+        r = int(rgba.red * 255)
+        g = int(rgba.green * 255)
+        b = int(rgba.blue * 255)
+        color_hex = f"#{r:02x}{g:02x}{b:02x}"
+
+        r_hover = max(0, r - 20)
+        g_hover = max(0, g - 20)
+        b_hover = max(0, b - 20)
+        hover_hex = f"#{r_hover:02x}{g_hover:02x}{b_hover:02x}"
+
+        css_data = f"""
+        button.circular.normal.sidebar-color-badge {{
+          background-color: {color_hex};
+          color: white;
+          border: none;
+          box-shadow: none;
+        }}
+        button.circular.normal.sidebar-color-badge:hover {{
+          background-color: {hover_hex};
+        }}
+        """
+
+        if self._color_badge_provider:
+            try:
+                self.color_badge.get_style_context().remove_provider(self._color_badge_provider)
+            except Exception:
+                pass
+
+        self._color_badge_provider = Gtk.CssProvider()
+        self._color_badge_provider.load_from_data(css_data.encode('utf-8'))
+        self.color_badge.get_style_context().add_provider(
+            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+        for cls in ("accent-red", "accent-blue", "accent-green", "accent-orange", "accent-purple", "accent-cyan", "accent-gray"):
+            self.color_badge.remove_css_class(cls)
+        accent_class = _get_color_class(rgba)
+        if accent_class:
+            self.color_badge.add_css_class(accent_class)
+
     def show_drop_indicator(self, top: bool):
         """Show drop indicator line"""
         self.hide_drop_indicators()
@@ -246,10 +469,14 @@ class GroupRow(Gtk.ListBoxRow):
 class ConnectionRow(Gtk.ListBoxRow):
     """Row widget for connection list."""
 
-    def __init__(self, connection: Connection):
+    def __init__(self, connection: Connection, group_manager: GroupManager, config):
         super().__init__()
+        _install_sidebar_color_css()
         self.add_css_class("navigation-sidebar")
         self.connection = connection
+        self.group_manager = group_manager
+        self.config = config
+        self._tint_provider = None
 
         # Main container with drop indicators
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -319,6 +546,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.update_status()
         self._update_forwarding_indicators()
         self._setup_drag_source()
+        self._apply_group_color_style()
     
     def show_drop_indicator(self, top: bool):
         """Show drop indicator line"""
@@ -348,6 +576,64 @@ class ConnectionRow(Gtk.ListBoxRow):
                         content = top_indicator.get_next_sibling()
                         if content:
                             content.set_margin_start(12 + (level * 20))
+
+    def _resolve_group_color(self) -> Optional[Gdk.RGBA]:
+        manager = getattr(self, 'group_manager', None)
+        if not manager:
+            return None
+
+        try:
+            group_id = manager.get_connection_group(self.connection.nickname)
+        except Exception:
+            group_id = None
+
+        visited = set()
+        while group_id:
+            if group_id in visited:
+                break
+            visited.add(group_id)
+
+            group_info = None
+            try:
+                group_info = manager.groups.get(group_id)
+            except Exception:
+                group_info = None
+
+            if not group_info:
+                break
+
+            color = _parse_color(group_info.get('color'))
+            if color:
+                return color
+
+            group_id = group_info.get('parent_id')
+
+        return None
+
+    def _apply_group_color_style(self):
+        mode = _get_color_display_mode(getattr(self, 'config', None))
+        rgba = self._resolve_group_color()
+
+        if mode == 'badge':
+            self.remove_css_class("tinted")
+            if hasattr(self, '_tint_provider') and self._tint_provider:
+                try:
+                    self.get_style_context().remove_provider(self._tint_provider)
+                except Exception:
+                    pass
+                self._tint_provider = None
+        else:
+            if rgba:
+                self.add_css_class("tinted")
+                _set_tint_card_color(self, _fill_rgba(rgba) or rgba)
+            else:
+                self.remove_css_class("tinted")
+                if hasattr(self, '_tint_provider') and self._tint_provider:
+                    try:
+                        self.get_style_context().remove_provider(self._tint_provider)
+                    except Exception:
+                        pass
+                    self._tint_provider = None
 
     # -- drag source ------------------------------------------------------
 
@@ -582,6 +868,8 @@ class ConnectionRow(Gtk.ListBoxRow):
                 f"Error updating status for {getattr(self.connection, 'nickname', 'connection')}: {e}"
             )
 
+        self._apply_group_color_style()
+
     def update_display(self):
         if hasattr(self.connection, "nickname") and hasattr(self, "nickname_label"):
             self.nickname_label.set_markup(f"<b>{self.connection.nickname}</b>")
@@ -749,6 +1037,82 @@ def _show_drop_indicator_on_group(window, row):
             window._drop_indicator_position = "on_group"
     except Exception as e:
         logger.error(f"Error showing group drop indicator: {e}")
+
+
+    def _apply_group_color_style(self):
+        config = getattr(self.group_manager, 'config', None)
+        mode = _get_color_display_mode(config) if config else 'fill'
+        rgba = _parse_color(self.group_info.get('color'))
+
+        if mode == 'badge':
+            self.remove_css_class("tinted")
+            if hasattr(self, '_tint_provider') and self._tint_provider:
+                try:
+                    self.get_style_context().remove_provider(self._tint_provider)
+                except Exception:
+                    pass
+                self._tint_provider = None
+
+            if rgba:
+                self._update_color_badge(rgba)
+                self.color_badge.set_visible(True)
+            else:
+                self.color_badge.set_visible(False)
+        else:
+            self.color_badge.set_visible(False)
+            if rgba:
+                tint = _fill_rgba(rgba) or rgba
+                self.add_css_class("tinted")
+                _set_tint_card_color(self, tint)
+            else:
+                self.remove_css_class("tinted")
+                if hasattr(self, '_tint_provider') and self._tint_provider:
+                    try:
+                        self.get_style_context().remove_provider(self._tint_provider)
+                    except Exception:
+                        pass
+                    self._tint_provider = None
+
+    def _update_color_badge(self, rgba: Gdk.RGBA):
+        r = int(rgba.red * 255)
+        g = int(rgba.green * 255)
+        b = int(rgba.blue * 255)
+        color_hex = f"#{r:02x}{g:02x}{b:02x}"
+
+        r_hover = max(0, r - 20)
+        g_hover = max(0, g - 20)
+        b_hover = max(0, b - 20)
+        hover_hex = f"#{r_hover:02x}{g_hover:02x}{b_hover:02x}"
+
+        css_data = f"""
+        button.circular.normal.sidebar-color-badge {{
+          background-color: {color_hex};
+          color: white;
+          border: none;
+          box-shadow: none;
+        }}
+        button.circular.normal.sidebar-color-badge:hover {{
+          background-color: {hover_hex};
+        }}
+        """
+
+        if self._color_badge_provider:
+            try:
+                self.color_badge.get_style_context().remove_provider(self._color_badge_provider)
+            except Exception:
+                pass
+
+        self._color_badge_provider = Gtk.CssProvider()
+        self._color_badge_provider.load_from_data(css_data.encode('utf-8'))
+        self.color_badge.get_style_context().add_provider(
+            self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+        for cls in ("accent-red", "accent-blue", "accent-green", "accent-orange", "accent-purple", "accent-cyan", "accent-gray"):
+            self.color_badge.remove_css_class(cls)
+        accent_class = _get_color_class(rgba)
+        if accent_class:
+            self.color_badge.add_css_class(accent_class)
 
 
 def _create_ungrouped_area(window):
