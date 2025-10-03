@@ -1144,8 +1144,13 @@ def _handle_connection_reorder(window, target_connection, dragged_connections, x
 
 def setup_connection_list_dnd(window):
     """Set up drag and drop for the window's connection list."""
-    # Note: Drop targets are now attached to individual rows instead of the entire listbox
-    # This prevents the entire sidebar from being highlighted during drag operations
+    
+    # Add connection list drop target for autoscroll and motion handling
+    drop_target = Gtk.DropTarget.new(type=GObject.TYPE_PYOBJECT, actions=Gdk.DragAction.MOVE)
+    drop_target.connect("drop", lambda t, v, x, y: _on_connection_list_drop(window, t, v, x, y))
+    drop_target.connect("motion", lambda t, x, y: _on_connection_list_motion(window, t, x, y))
+    drop_target.connect("leave", lambda t: _on_connection_list_leave(window, t))
+    window.connection_list.add_controller(drop_target)
     
     window._drop_indicator_row = None
     window._drop_indicator_position = None
@@ -1163,9 +1168,10 @@ def setup_connection_list_dnd(window):
 
 def _on_connection_list_motion(window, target, x, y):
     try:
-        # Ensure drag is marked as in progress
+        # Prevent row selection during drag by temporarily disabling selection
         if not hasattr(window, '_drag_in_progress'):
             window._drag_in_progress = True
+            window.connection_list.set_selection_mode(Gtk.SelectionMode.NONE)
 
         # Throttle motion events to improve performance
         current_time = GLib.get_monotonic_time()
@@ -1242,9 +1248,10 @@ def _on_connection_list_leave(window, target):
     _hide_ungrouped_area(window)
     _stop_connection_autoscroll(window)
 
-    # Mark drag as no longer in progress
+    # Restore selection mode after drag
     if hasattr(window, '_drag_in_progress'):
         window._drag_in_progress = False
+        window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
     
     return True
 
@@ -1368,9 +1375,10 @@ def _on_connection_list_drop(window, target, value, x, y):
         _hide_ungrouped_area(window)
         _stop_connection_autoscroll(window)
 
-        # Mark drag as no longer in progress
+        # Restore selection mode after drag
         if hasattr(window, '_drag_in_progress'):
             window._drag_in_progress = False
+            window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
 
         # Extract Python object from GObject.Value drops
         if isinstance(value, GObject.Value):
