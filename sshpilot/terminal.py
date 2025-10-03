@@ -1891,16 +1891,17 @@ class TerminalWidget(Gtk.Box):
             if is_macos():
                 # macOS: Use Cmd+= (equals key), Cmd+-, and Cmd+0 for zoom
                 # Note: On macOS, Cmd+Shift+= is the same as Cmd+=
-                zoom_in_trigger = "<Meta>equal"
-                zoom_out_trigger = "<Meta>minus"
+                zoom_in_triggers = ["<Meta>equal"]
+                zoom_out_triggers = ["<Meta>minus"]
                 zoom_reset_trigger = "<Meta>0"
             else:
                 # Linux/Windows: Use Ctrl++, Ctrl+-, and Ctrl+0 for zoom
-                zoom_in_trigger = "<Primary>equal"
-                zoom_out_trigger = "<Primary>minus"
+                # Support both regular keys and numeric keypad variants
+                zoom_in_triggers = ["<Primary>equal", "<Primary>KP_Add"]
+                zoom_out_triggers = ["<Primary>minus", "<Primary>KP_Subtract"]
                 zoom_reset_trigger = "<Primary>0"
             
-            logger.debug(f"Setting up terminal zoom shortcuts: in={zoom_in_trigger}, out={zoom_out_trigger}, reset={zoom_reset_trigger}")
+            logger.debug(f"Setting up terminal zoom shortcuts: in={zoom_in_triggers}, out={zoom_out_triggers}, reset={zoom_reset_trigger}")
             
             def _cb_zoom_in(widget, *args):
                 try:
@@ -1923,15 +1924,19 @@ class TerminalWidget(Gtk.Box):
                     logger.debug("Zoom reset shortcut failed: %s", exc)
                 return True
             
-            controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string(zoom_in_trigger),
-                Gtk.CallbackAction.new(_cb_zoom_in)
-            ))
+            # Add zoom in shortcuts (support both regular and keypad plus)
+            for trig in zoom_in_triggers:
+                controller.add_shortcut(Gtk.Shortcut.new(
+                    Gtk.ShortcutTrigger.parse_string(trig),
+                    Gtk.CallbackAction.new(_cb_zoom_in)
+                ))
             
-            controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string(zoom_out_trigger),
-                Gtk.CallbackAction.new(_cb_zoom_out)
-            ))
+            # Add zoom out shortcuts (support both regular and keypad minus)
+            for trig in zoom_out_triggers:
+                controller.add_shortcut(Gtk.Shortcut.new(
+                    Gtk.ShortcutTrigger.parse_string(trig),
+                    Gtk.CallbackAction.new(_cb_zoom_out)
+                ))
             
             controller.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string(zoom_reset_trigger),
