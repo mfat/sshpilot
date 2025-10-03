@@ -349,12 +349,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
             /* Drop indicator lines for drag and drop */
             .drop-indicator-top {
-              border-top: 2px solid @accent_bg_color;
+              background-image: linear-gradient(@accent_bg_color, @accent_bg_color);
+              background-repeat: no-repeat;
+              background-size: 100% 2px;
+              background-position: top;
+              border: none;
+              border-radius: 0;
               margin-top: -1px;
             }
             
             .drop-indicator-bottom {
-              border-bottom: 2px solid @accent_bg_color;
+              background-image: linear-gradient(@accent_bg_color, @accent_bg_color);
+              background-repeat: no-repeat;
+              background-size: 100% 2px;
+              background-position: bottom;
+              border: none;
+              border-radius: 0;
               margin-bottom: -1px;
             }
             
