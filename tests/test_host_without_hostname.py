@@ -189,3 +189,54 @@ def test_isolated_config_used_for_effective_resolution(tmp_path, monkeypatch):
     assert calls == [expected_cmd]
     assert connection.hostname == '10.0.0.5'
 
+
+def test_effective_config_overrides_default_options(monkeypatch):
+    """Effective SSH config should replace defaults for matching -o options."""
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+    connection = Connection(
+        {
+            'nickname': 'example',
+            'host': 'example',
+            'hostname': '',
+            'username': 'tester',
+        }
+    )
+
+    class DummyConfig:
+        def get_ssh_config(self):
+            return {
+                'apply_advanced': True,
+                'strict_host_key_checking': 'accept-new',
+                'verbosity': 1,
+                'batch_mode': False,
+                'compression': False,
+                'debug_enabled': False,
+                'auto_add_host_keys': True,
+            }
+
+    monkeypatch.setattr('sshpilot.connection_manager.Config', DummyConfig)
+
+    def fake_effective(_alias, config_file=None):
+        return {
+            'stricthostkeychecking': 'no',
+            'loglevel': 'QUIET',
+            'user': 'tester',
+            'hostname': 'example',
+        }
+
+    monkeypatch.setattr(
+        'sshpilot.connection_manager.get_effective_ssh_config', fake_effective
+    )
+
+    loop = asyncio.get_event_loop()
+    assert loop.run_until_complete(connection.connect())
+
+    strict_options = [part for part in connection.ssh_cmd if 'StrictHostKeyChecking' in part]
+    loglevel_options = [part for part in connection.ssh_cmd if 'LogLevel' in part]
+
+    assert 'StrictHostKeyChecking=no' in strict_options
+    assert 'StrictHostKeyChecking=accept-new' not in strict_options
+    assert 'LogLevel=QUIET' in loglevel_options
+    assert 'LogLevel=VERBOSE' not in loglevel_options
+

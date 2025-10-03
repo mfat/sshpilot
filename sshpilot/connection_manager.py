@@ -312,6 +312,28 @@ class Connection:
             except Exception:
                 pass
 
+            # Track -o options so effective config can override defaults
+            option_token_map: Dict[str, List[Tuple[int, str]]] = {}
+
+            idx = 0
+            while idx < len(ssh_cmd):
+                token = ssh_cmd[idx]
+                if token == '-o' and idx + 1 < len(ssh_cmd):
+                    option_token = ssh_cmd[idx + 1]
+                    key, sep, _ = option_token.partition('=')
+                    if sep:
+                        lowered = key.lower()
+                        option_token_map.setdefault(lowered, []).append((idx + 1, key))
+                    idx += 2
+                    continue
+                if token.startswith('-o') and len(token) > 2:
+                    option_token = token[2:]
+                    key, sep, _ = option_token.partition('=')
+                    if sep:
+                        lowered = key.lower()
+                        option_token_map.setdefault(lowered, []).append((idx, key))
+                idx += 1
+
             # Resolve effective SSH configuration for this nickname/host
             effective_cfg: Dict[str, Union[str, List[str]]] = {}
             target_alias = self.nickname or self.hostname
@@ -332,6 +354,40 @@ class Connection:
                     )
                 else:
                     effective_cfg = get_effective_ssh_config(target_alias)
+
+            # Override defaults with values from the effective SSH config when conflicts arise
+            for cfg_key, cfg_value in list(effective_cfg.items()):
+                key_lower = str(cfg_key).lower()
+                if key_lower not in option_token_map:
+                    continue
+
+                if isinstance(cfg_value, list):
+                    values = []
+                    for item in cfg_value:
+                        text_value = str(item)
+                        if text_value:
+                            values.append(text_value)
+                elif cfg_value is None:
+                    continue
+                else:
+                    values = [str(cfg_value)]
+
+                if not values:
+                    continue
+
+                token_entries = option_token_map.get(key_lower, [])
+
+                for idx, (token_index, original_key) in enumerate(token_entries):
+                    if idx < len(values):
+                        replacement = values[idx]
+                    else:
+                        replacement = values[-1]
+                    ssh_cmd[token_index] = f"{original_key}={replacement}"
+
+                if len(values) > len(token_entries):
+                    preserved_key = token_entries[-1][1] if token_entries else str(cfg_key)
+                    for extra_value in values[len(token_entries):]:
+                        ssh_cmd.extend(['-o', f"{preserved_key}={extra_value}"])
 
 
             # Determine final parameters, falling back to resolved config when needed
