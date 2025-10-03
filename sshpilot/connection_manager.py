@@ -474,6 +474,28 @@ class Connection:
             if config_override:
                 ssh_cmd.extend(['-F', config_override])
 
+            try:
+                from .config import Config  # avoid circular import at top level
+                cfg = Config()
+                ssh_cfg = cfg.get_ssh_config()
+            except Exception:
+                ssh_cfg = {}
+
+            apply_adv = bool(ssh_cfg.get('apply_advanced', False))
+            native_toggle = bool(ssh_cfg.get('native_connect', False))
+            overrides = ssh_cfg.get('ssh_overrides', [])
+            sanitized_overrides: List[str] = []
+            if isinstance(overrides, (list, tuple)):
+                for entry in overrides:
+                    if entry is None:
+                        continue
+                    flag = str(entry)
+                    if flag:
+                        sanitized_overrides.append(flag)
+
+            if native_toggle and apply_adv and sanitized_overrides:
+                ssh_cmd.extend(sanitized_overrides)
+
             ssh_cmd.append(host_label)
 
             self.ssh_cmd = ssh_cmd
