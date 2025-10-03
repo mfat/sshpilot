@@ -1,4 +1,6 @@
 import asyncio
+import logging
+import shlex
 
 from sshpilot.connection_manager import Connection
 from sshpilot import config as config_module
@@ -23,9 +25,7 @@ class DummyConfig:
         return self._ssh_config
 
 
-def test_native_connect_includes_advanced_options(monkeypatch):
-    monkeypatch.setattr(config_module, 'Config', DummyConfig)
-
+def run_native_connect(connection: Connection) -> bool:
     loop = asyncio.new_event_loop()
     old_loop = None
     try:
@@ -34,20 +34,25 @@ def test_native_connect_includes_advanced_options(monkeypatch):
         except RuntimeError:
             old_loop = None
         asyncio.set_event_loop(loop)
-
-        connection = Connection(
-            {
-                'hostname': 'example.com',
-                'nickname': 'example',
-                'username': 'alice',
-                'extra_ssh_config': 'Compression yes\nUserKnownHostsFile /tmp/custom_known_hosts',
-            }
-        )
-
-        assert loop.run_until_complete(connection.native_connect()) is True
+        return loop.run_until_complete(connection.native_connect())
     finally:
         loop.close()
         asyncio.set_event_loop(old_loop)
+
+
+def test_native_connect_includes_advanced_options(monkeypatch):
+    monkeypatch.setattr(config_module, 'Config', DummyConfig)
+
+    connection = Connection(
+        {
+            'hostname': 'example.com',
+            'nickname': 'example',
+            'username': 'alice',
+            'extra_ssh_config': 'Compression yes\nUserKnownHostsFile /tmp/custom_known_hosts',
+        }
+    )
+
+    assert run_native_connect(connection) is True
 
     ssh_cmd = connection.ssh_cmd
     host_label = connection.resolve_host_identifier()
@@ -67,3 +72,33 @@ def test_native_connect_includes_advanced_options(monkeypatch):
     assert has_option('ExitOnForwardFailure=yes')
     assert has_option('Compression=yes')
     assert has_option('UserKnownHostsFile=/tmp/custom_known_hosts')
+
+
+def test_native_connect_logs_raw_command(monkeypatch, caplog):
+    monkeypatch.setattr(config_module, 'Config', DummyConfig)
+
+    connection = Connection(
+        {
+            'hostname': 'example.com',
+            'nickname': 'example',
+            'username': 'alice',
+            'extra_ssh_config': 'Compression yes\nUserKnownHostsFile /tmp/custom_known_hosts',
+        }
+    )
+
+    caplog.set_level(logging.INFO, logger='sshpilot.connection_manager')
+
+    assert run_native_connect(connection) is True
+
+    if hasattr(shlex, 'join'):
+        expected_command = shlex.join(connection.ssh_cmd)
+    else:
+        expected_command = ' '.join(connection.ssh_cmd)
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == 'sshpilot.connection_manager' and record.levelno == logging.INFO
+    ]
+
+    assert any(expected_command in message for message in messages)
