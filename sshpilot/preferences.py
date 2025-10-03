@@ -171,15 +171,29 @@ class MonospaceFontDialog(Adw.Window):
         # Preview text
         preview_frame = Gtk.Frame()
         preview_frame.set_label("Preview")
-        
+
         self.preview_label = Gtk.Label()
-        self.preview_label.set_text("The quick brown fox jumps over the lazy dog\n0123456789 !@#$%^&*()_+-=[]{}|;:,.<>?")
+        self.preview_label.set_text(
+            "The quick brown fox jumps over the lazy dog\n0123456789 !@#$%^&*()_+-=[]{}|;:,.<>?"
+        )
         self.preview_label.set_margin_top(12)
         self.preview_label.set_margin_bottom(12)
         self.preview_label.set_margin_start(12)
         self.preview_label.set_margin_end(12)
         self.preview_label.set_selectable(True)
-        preview_frame.set_child(self.preview_label)
+        self.preview_label.set_wrap(True)
+        self.preview_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        self.preview_label.set_xalign(0.0)
+
+        preview_scroller = Gtk.ScrolledWindow()
+        preview_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        preview_scroller.set_min_content_height(140)
+        preview_scroller.set_max_content_height(140)
+        preview_scroller.set_hexpand(True)
+        preview_scroller.set_vexpand(False)
+        preview_scroller.set_child(self.preview_label)
+
+        preview_frame.set_child(preview_scroller)
         
         # Add everything to main box
         main_box.append(header)
@@ -486,7 +500,7 @@ class PreferencesWindow(Gtk.Window):
         
         # Create content stack
         self.content_stack = Gtk.Stack()
-        self.content_stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        self.content_stack.set_transition_type(Gtk.StackTransitionType.NONE)
         self.content_area.append(self.content_stack)
         
         # Connect sidebar selection to content stack
@@ -1132,40 +1146,7 @@ class PreferencesWindow(Gtk.Window):
 
             advanced_page.add(operation_group)
 
-            self.force_internal_file_manager_row = None
-            self.open_file_manager_externally_row = None
-            if has_internal_file_manager():
-                file_manager_group = Adw.PreferencesGroup(title="File Management")
-
-                self.force_internal_file_manager_row = Adw.SwitchRow()
-                self.force_internal_file_manager_row.set_title("Always Use Built-in File Manager")
-                self.force_internal_file_manager_row.set_subtitle(
-                    "Use the in-app file manager even when system integrations are available"
-                )
-                self.force_internal_file_manager_row.set_active(
-                    bool(self.config.get_setting('file_manager.force_internal', False))
-                )
-                self.force_internal_file_manager_row.connect(
-                    'notify::active', self.on_force_internal_file_manager_changed
-                )
-
-                file_manager_group.add(self.force_internal_file_manager_row)
-
-                self.open_file_manager_externally_row = Adw.SwitchRow()
-                self.open_file_manager_externally_row.set_title("Open File Manager in Separate Window")
-                self.open_file_manager_externally_row.set_subtitle(
-                    "Show the built-in file manager in its own window instead of a tab"
-                )
-                self.open_file_manager_externally_row.set_active(
-                    bool(self.config.get_setting('file_manager.open_externally', False))
-                )
-                self.open_file_manager_externally_row.connect(
-                    'notify::active', self.on_open_file_manager_externally_changed
-                )
-
-                file_manager_group.add(self.open_file_manager_externally_row)
-                self._update_external_file_manager_row()
-                advanced_page.add(file_manager_group)
+            # File management preferences moved to dedicated page
 
             advanced_group = Adw.PreferencesGroup(title="SSH Settings")
 
@@ -1320,9 +1301,57 @@ class PreferencesWindow(Gtk.Window):
             # Ensure shortcut overview controls reflect current state
             self._set_shortcut_controls_enabled(not self._pass_through_enabled)
 
+            # Create File Management preferences page
+            file_management_page = Adw.PreferencesPage()
+            file_management_page.set_title("File Management")
+            file_management_page.set_icon_name("folder-symbolic")
+            
+            # File Management group
+            if has_internal_file_manager():
+                file_manager_group = Adw.PreferencesGroup(title="File Manager Options")
+
+                self.force_internal_file_manager_row = Adw.SwitchRow()
+                self.force_internal_file_manager_row.set_title("Always Use Built-in File Manager")
+                self.force_internal_file_manager_row.set_subtitle(
+                    "Use the in-app file manager even when system integrations are available"
+                )
+                self.force_internal_file_manager_row.set_active(
+                    bool(self.config.get_setting('file_manager.force_internal', False))
+                )
+                self.force_internal_file_manager_row.connect(
+                    'notify::active', self.on_force_internal_file_manager_changed
+                )
+
+                file_manager_group.add(self.force_internal_file_manager_row)
+
+                self.open_file_manager_externally_row = Adw.SwitchRow()
+                self.open_file_manager_externally_row.set_title("Open File Manager in Separate Window")
+                self.open_file_manager_externally_row.set_subtitle(
+                    "Show the built-in file manager in its own window instead of a tab"
+                )
+                self.open_file_manager_externally_row.set_active(
+                    bool(self.config.get_setting('file_manager.open_externally', False))
+                )
+                self.open_file_manager_externally_row.connect(
+                    'notify::active', self.on_open_file_manager_externally_changed
+                )
+
+                file_manager_group.add(self.open_file_manager_externally_row)
+                self._update_external_file_manager_row()
+                file_management_page.add(file_manager_group)
+            else:
+                # If no internal file manager, create empty page with message
+                no_file_manager_group = Adw.PreferencesGroup(title="File Manager")
+                no_file_manager_row = Adw.ActionRow()
+                no_file_manager_row.set_title("File Manager Not Available")
+                no_file_manager_row.set_subtitle("Built-in file manager is not available on this system")
+                no_file_manager_group.add(no_file_manager_row)
+                file_management_page.add(no_file_manager_group)
+
             # Add pages to the custom layout
             self.add_page_to_layout("Interface", "applications-graphics-symbolic", interface_page)
             self.add_page_to_layout("Terminal", "utilities-terminal-symbolic", terminal_page)
+            self.add_page_to_layout("File Management", "folder-symbolic", file_management_page)
             self.add_page_to_layout("Shortcuts", "preferences-desktop-keyboard-shortcuts-symbolic", shortcuts_page)
             self.add_page_to_layout("Groups", "folder-open-symbolic", groups_page)
             self.add_page_to_layout("Advanced", "applications-system-symbolic", advanced_page)
@@ -2624,4 +2653,3 @@ class PreferencesWindow(Gtk.Window):
                 logger.info(f"Applied color scheme {scheme_key} to {count} terminals")
         except Exception as e:
             logger.error(f"Failed to apply color scheme to terminals: {e}")
-
