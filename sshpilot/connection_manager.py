@@ -1703,6 +1703,17 @@ class ConnectionManager(GObject.Object):
         from .askpass_utils import prepare_key_for_connection
         return prepare_key_for_connection(key_path)
 
+    def invalidate_cached_commands(self):
+        """Clear cached SSH commands so future launches pick up new settings."""
+        for connection in list(self.connections):
+            try:
+                if hasattr(connection, 'ssh_cmd'):
+                    connection.ssh_cmd = []
+                if getattr(connection, 'is_connected', False):
+                    connection.is_connected = False
+            except Exception as exc:
+                logger.debug("Failed to invalidate cached command for %s: %s", connection, exc)
+
     def format_ssh_config_entry(self, data: Dict[str, Any]) -> str:
         """Format connection data as SSH config entry"""
         def _quote_token(token: str) -> str:

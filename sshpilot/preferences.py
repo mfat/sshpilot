@@ -1871,6 +1871,12 @@ class PreferencesWindow(Gtk.Window):
                     'file_manager.open_externally',
                     bool(self.open_file_manager_externally_row.get_active()),
                 )
+
+            manager = None
+            if self.parent_window and hasattr(self.parent_window, 'connection_manager'):
+                manager = self.parent_window.connection_manager
+            if manager and hasattr(manager, 'invalidate_cached_commands'):
+                manager.invalidate_cached_commands()
         except Exception as e:
             logger.error(f"Failed to save advanced SSH settings: {e}")
 
