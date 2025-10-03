@@ -1024,6 +1024,23 @@ class PreferencesWindow(Gtk.Window):
 
             # File management preferences moved to dedicated page
 
+            ssh_settings_page = Adw.PreferencesPage()
+            ssh_settings_page.set_title("SSH")
+            ssh_settings_page.set_icon_name("network-workgroup-symbolic")
+
+            help_group = Adw.PreferencesGroup()
+            help_row = Adw.ActionRow()
+            help_row.set_title("Custom SSH Options")
+            help_row.set_subtitle(
+                "These settings override values from your ~/.ssh/config when enabled. "
+                "Turn on \"Use custom connection options\" to apply them."
+            )
+            if hasattr(help_row, "set_activatable"):
+                help_row.set_activatable(False)
+            if hasattr(help_row, "set_selectable"):
+                help_row.set_selectable(False)
+            help_group.add(help_row)
+
             advanced_group = Adw.PreferencesGroup(title="SSH Settings")
 
 
@@ -1171,8 +1188,9 @@ class PreferencesWindow(Gtk.Window):
             _sync_advanced_sensitivity()
             self.apply_advanced_row.connect('notify::active', _sync_advanced_sensitivity)
 
-            advanced_page.add(native_connect_group)
-            advanced_page.add(advanced_group)
+            ssh_settings_page.add(help_group)
+            ssh_settings_page.add(native_connect_group)
+            ssh_settings_page.add(advanced_group)
 
             # Ensure shortcut overview controls reflect current state
             self._set_shortcut_controls_enabled(not self._pass_through_enabled)
@@ -1230,6 +1248,7 @@ class PreferencesWindow(Gtk.Window):
             self.add_page_to_layout("File Management", "folder-symbolic", file_management_page)
             self.add_page_to_layout("Shortcuts", "preferences-desktop-keyboard-shortcuts-symbolic", shortcuts_page)
             self.add_page_to_layout("Groups", "folder-open-symbolic", groups_page)
+            self.add_page_to_layout("SSH", "network-workgroup-symbolic", ssh_settings_page)
             self.add_page_to_layout("Advanced", "applications-system-symbolic", advanced_page)
             
             logger.info("Preferences window initialized")
