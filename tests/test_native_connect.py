@@ -8,21 +8,22 @@ from sshpilot import config as config_module
 
 class DummyConfig:
     def __init__(self):
-        self._ssh_config = {
-            'apply_advanced': True,
-            'batch_mode': True,
-            'connection_timeout': 15,
-            'connection_attempts': 4,
-            'keepalive_interval': 30,
-            'keepalive_count_max': 2,
-            'strict_host_key_checking': 'no',
-            'auto_add_host_keys': False,
-            'exit_on_forward_failure': True,
-            'compression': False,
+        self._settings = {
+            'ssh.apply_advanced': True,
+            'ssh.batch_mode': True,
+            'ssh.connection_timeout': 15,
+            'ssh.connection_attempts': 4,
+            'ssh.keepalive_interval': 30,
+            'ssh.keepalive_count_max': 2,
+            'ssh.strict_host_key_checking': 'no',
+            'ssh.exit_on_forward_failure': True,
+            'ssh.compression': False,
+            'ssh.verbosity': 2,
+            'ssh.debug_enabled': True,
         }
 
-    def get_ssh_config(self):
-        return self._ssh_config
+    def get_setting(self, key, default=None):
+        return self._settings.get(key, default)
 
 
 def run_native_connect(connection: Connection) -> bool:
@@ -67,6 +68,9 @@ def test_native_connect_includes_advanced_options(monkeypatch):
             for idx in range(len(advanced_section) - 1)
         )
 
+    def has_option(value: str) -> bool:
+        return has_option_pair(value)
+
     assert has_option_pair('BatchMode=yes')
     assert has_option_pair('ConnectTimeout=15')
     assert has_option_pair('ConnectionAttempts=4')
@@ -76,6 +80,10 @@ def test_native_connect_includes_advanced_options(monkeypatch):
     assert has_option_pair('ExitOnForwardFailure=yes')
     assert has_option_pair('Compression=yes')
     assert has_option_pair('UserKnownHostsFile=/tmp/custom_known_hosts')
+    assert has_option_pair('LogLevel=DEBUG2')
+    assert not has_option_pair('LogLevel=DEBUG')
+
+    assert advanced_section.count('-v') == 2
 
     assert has_option('ConnectTimeout=15')
     assert has_option('ConnectionAttempts=4')
