@@ -4,6 +4,7 @@ Handles SSH connections, configuration, and secure password storage
 """
 
 import os
+import stat
 import asyncio
 import logging
 import configparser
@@ -977,16 +978,40 @@ class ConnectionManager(GObject.Object):
             self.ssh_config_path = os.path.join(base, 'ssh_config')
             self.known_hosts_path = os.path.join(base, 'known_hosts')
             os.makedirs(base, exist_ok=True)
+            self._ensure_secure_permissions(base, 0o700)
             for path in (self.ssh_config_path, self.known_hosts_path):
                 if not os.path.exists(path):
                     open(path, 'a').close()
+                self._ensure_secure_permissions(path, 0o600)
         else:
             ssh_dir = get_ssh_dir()
+            os.makedirs(ssh_dir, exist_ok=True)
+            self._ensure_secure_permissions(ssh_dir, 0o700)
             self.ssh_config_path = os.path.join(ssh_dir, 'config')
             self.known_hosts_path = os.path.join(ssh_dir, 'known_hosts')
+            if os.path.exists(self.ssh_config_path):
+                self._ensure_secure_permissions(self.ssh_config_path, 0o600)
 
         # Reload SSH config to reflect new paths
         self.load_ssh_config()
+
+    def _ensure_secure_permissions(self, path: str, mode: int):
+        """Best effort at applying restrictive permissions to files/directories."""
+        try:
+            current_mode = stat.S_IMODE(os.stat(path).st_mode)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            logger.debug("Unable to stat %s for permission fix: %s", path, exc)
+            return
+
+        if current_mode == mode:
+            return
+
+        try:
+            os.chmod(path, mode)
+        except Exception as exc:
+            logger.debug("Unable to set permissions on %s: %s", path, exc)
 
     def _post_init_slow_path(self):
         """Run slower initialization steps after UI is responsive."""
@@ -1050,12 +1075,19 @@ class ConnectionManager(GObject.Object):
             existing_by_nickname = {conn.nickname: conn for conn in self.connections}
             self.connections = []
             self.rules = []
+            parent_dir = os.path.dirname(self.ssh_config_path)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
+                self._ensure_secure_permissions(parent_dir, 0o700)
             if not os.path.exists(self.ssh_config_path):
                 logger.info("SSH config file not found, creating empty one")
                 os.makedirs(os.path.dirname(self.ssh_config_path), exist_ok=True)
-                with open(self.ssh_config_path, 'w') as f:
+                with open(self.ssh_config_path, 'w', encoding='utf-8') as f:
                     f.write("# SSH configuration file\n")
+                self._ensure_secure_permissions(self.ssh_config_path, 0o600)
                 return
+            else:
+                self._ensure_secure_permissions(self.ssh_config_path, 0o600)
             config_files = resolve_ssh_config_files(self.ssh_config_path)
             for cfg_file in config_files:
                 current_hosts: List[str] = []
