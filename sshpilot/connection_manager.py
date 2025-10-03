@@ -267,12 +267,17 @@ class Connection:
             apply_adv = bool(ssh_cfg.get('apply_advanced', False))
             connect_timeout = int(ssh_cfg.get('connection_timeout', 10)) if apply_adv else None
             connection_attempts = int(ssh_cfg.get('connection_attempts', 1)) if apply_adv else None
-            strict_host = str(ssh_cfg.get('strict_host_key_checking', '')) if apply_adv else ''
+            strict_host = ''
+            if apply_adv:
+                raw_strict_host = ssh_cfg.get('strict_host_key_checking', '')
+                if isinstance(raw_strict_host, str):
+                    strict_host = raw_strict_host.strip()
+                elif raw_strict_host is not None:
+                    strict_host = str(raw_strict_host).strip()
             batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
             compression = bool(ssh_cfg.get('compression', False)) if apply_adv else False
             verbosity = int(ssh_cfg.get('verbosity', 0))
             debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
-            auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
             exit_on_forward_failure = bool(ssh_cfg.get('exit_on_forward_failure', True))
 
             # Apply advanced args only when user explicitly enabled them
@@ -290,13 +295,6 @@ class Connection:
             if exit_on_forward_failure:
                 ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
             ssh_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
-
-            # Apply default host key behavior when not explicitly set
-            try:
-                if (not strict_host) and auto_add_host_keys:
-                    ssh_cmd.extend(['-o', 'StrictHostKeyChecking=accept-new'])
-            except Exception:
-                pass
 
             # Apply verbosity flags
             try:
@@ -540,9 +538,14 @@ class Connection:
                 safe_int(keepalive_count_value, 3) if apply_adv else None
             )
             strict_host_value = safe_get_setting(
-                'ssh.strict_host_key_checking', 'accept-new'
+                'ssh.strict_host_key_checking', ''
             )
-            strict_host = str(strict_host_value).strip() if apply_adv else ''
+            strict_host = ''
+            if apply_adv:
+                if isinstance(strict_host_value, str):
+                    strict_host = strict_host_value.strip()
+                elif strict_host_value is not None:
+                    strict_host = str(strict_host_value).strip()
             compression = bool(safe_get_setting('ssh.compression', False)) if apply_adv else False
             exit_on_forward_failure = bool(
                 safe_get_setting('ssh.exit_on_forward_failure', True)
@@ -565,8 +568,6 @@ class Connection:
             def append_option(option_key: str, option_value: Union[str, int]) -> None:
                 ssh_options.extend(['-o', f'{option_key}={option_value}'])
 
-            strict_host_applied = False
-
             if apply_adv:
                 if batch_mode and not using_password:
                     append_option('BatchMode', 'yes')
@@ -580,14 +581,8 @@ class Connection:
                     append_option('ServerAliveCountMax', keepalive_count)
                 if strict_host:
                     append_option('StrictHostKeyChecking', strict_host)
-                    strict_host_applied = True
                 if compression:
                     append_option('Compression', 'yes')
-
-            if not strict_host_applied:
-                strict_host_default = str(strict_host_value).strip()
-                if strict_host_default == 'accept-new':
-                    append_option('StrictHostKeyChecking', 'accept-new')
 
             if exit_on_forward_failure:
                 append_option('ExitOnForwardFailure', 'yes')
@@ -756,7 +751,14 @@ class Connection:
             connection_attempts = int(ssh_cfg.get('connection_attempts', 1))
             keepalive_interval = int(ssh_cfg.get('keepalive_interval', 30))
             keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3))
-            strict_host = str(ssh_cfg.get('strict_host_key_checking', 'accept-new'))
+            apply_adv = bool(ssh_cfg.get('apply_advanced', False))
+            raw_strict_host = ssh_cfg.get('strict_host_key_checking', '')
+            strict_host = ''
+            if apply_adv:
+                if isinstance(raw_strict_host, str):
+                    strict_host = raw_strict_host.strip()
+                elif raw_strict_host is not None:
+                    strict_host = str(raw_strict_host).strip()
             batch_mode = bool(ssh_cfg.get('batch_mode', True))
             exit_on_forward_failure = bool(ssh_cfg.get('exit_on_forward_failure', True))
 

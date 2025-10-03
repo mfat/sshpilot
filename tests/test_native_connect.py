@@ -26,6 +26,18 @@ class DummyConfig:
         return self._settings.get(key, default)
 
 
+class DisabledAdvancedConfig:
+    def __init__(self):
+        self._settings = {
+            'ssh.apply_advanced': False,
+            'ssh.strict_host_key_checking': 'accept-new',
+            'ssh.exit_on_forward_failure': True,
+        }
+
+    def get_setting(self, key, default=None):
+        return self._settings.get(key, default)
+
+
 def run_native_connect(connection: Connection) -> bool:
     loop = asyncio.new_event_loop()
     old_loop = None
@@ -123,4 +135,24 @@ def test_native_connect_logs_raw_command(monkeypatch, caplog):
     ]
 
     assert any(expected_command in message for message in messages)
+
+
+def test_native_connect_excludes_strict_host_key_checking_when_advanced_disabled(monkeypatch):
+    monkeypatch.setattr(config_module, 'Config', DisabledAdvancedConfig)
+
+    connection = Connection(
+        {
+            'hostname': 'example.com',
+            'nickname': 'example',
+            'username': 'alice',
+        }
+    )
+
+    assert run_native_connect(connection) is True
+
+    assert all(
+        not str(option).startswith('StrictHostKeyChecking=')
+        for option in connection.ssh_cmd
+        if isinstance(option, str)
+    )
 
