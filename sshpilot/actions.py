@@ -1,7 +1,7 @@
 """Action handlers for MainWindow and registration helper."""
 
 import logging
-from gi.repository import Gio, Gtk, Adw, GLib
+from gi.repository import Gio, Gtk, Adw, GLib, Gdk
 from gettext import gettext as _
 
 from .preferences import (
@@ -280,11 +280,60 @@ class WindowActions:
                 body=_('Enter a name for the new group:'),
             )
 
+            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            content_box.set_margin_start(20)
+            content_box.set_margin_end(20)
+            content_box.set_margin_top(20)
+            content_box.set_margin_bottom(20)
+
             entry = Gtk.Entry()
             entry.set_placeholder_text(_('e.g., Work Servers'))
             entry.set_activates_default(True)
             entry.set_hexpand(True)
-            dialog.set_extra_child(entry)
+            content_box.append(entry)
+
+            color_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            color_row.set_hexpand(True)
+            color_label = Gtk.Label(label=_("Group color"))
+            color_label.set_xalign(0)
+            color_label.set_hexpand(True)
+            color_row.append(color_label)
+
+            color_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            color_button = Gtk.ColorButton()
+            color_button.set_use_alpha(True)
+            color_button.set_title(_("Select group color"))
+            default_rgba = Gdk.RGBA()
+            default_rgba.red = default_rgba.green = default_rgba.blue = 0
+            default_rgba.alpha = 0
+            color_button.set_rgba(default_rgba)
+            color_controls.append(color_button)
+
+            color_selected = False
+
+            def mark_color_selected(_button):
+                nonlocal color_selected
+                color_selected = True
+
+            color_button.connect('color-set', mark_color_selected)
+
+            def reset_color_selection() -> None:
+                nonlocal color_selected
+                color_selected = False
+                cleared = Gdk.RGBA()
+                cleared.red = cleared.green = cleared.blue = 0
+                cleared.alpha = 0
+                color_button.set_rgba(cleared)
+
+            clear_color_button = Gtk.Button(label=_("Clear"))
+            clear_color_button.add_css_class('flat')
+            clear_color_button.connect('clicked', lambda _btn: reset_color_selection())
+            color_controls.append(clear_color_button)
+
+            color_row.append(color_controls)
+            content_box.append(color_row)
+
+            dialog.set_extra_child(content_box)
 
             dialog.add_response('cancel', _('Cancel'))
             dialog.add_response('create', _('Create'))
@@ -296,7 +345,11 @@ class WindowActions:
                 if response == 'create':
                     name = entry.get_text().strip()
                     if name:
-                        self.group_manager.create_group(name)
+                        selected_color = None
+                        rgba_value = color_button.get_rgba()
+                        if color_selected and rgba_value.alpha > 0:
+                            selected_color = rgba_value.to_string()
+                        self.group_manager.create_group(name, color=selected_color)
                         self.rebuild_connection_list()
                     else:
                         error_dialog = Adw.MessageDialog(
@@ -556,6 +609,47 @@ class WindowActions:
             create_box.append(self.create_group_button)
 
             create_section_box.append(create_box)
+
+            color_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            color_row.set_hexpand(True)
+            color_label = Gtk.Label(label=_("Group color"))
+            color_label.set_xalign(0)
+            color_label.set_hexpand(True)
+            color_row.append(color_label)
+
+            color_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            color_button = Gtk.ColorButton()
+            color_button.set_use_alpha(True)
+            color_button.set_title(_("Select group color"))
+            initial_rgba = Gdk.RGBA()
+            initial_rgba.red = initial_rgba.green = initial_rgba.blue = 0
+            initial_rgba.alpha = 0
+            color_button.set_rgba(initial_rgba)
+            color_controls.append(color_button)
+
+            color_selected = False
+
+            def mark_color_selected(_button):
+                nonlocal color_selected
+                color_selected = True
+
+            color_button.connect('color-set', mark_color_selected)
+
+            def reset_color_selection() -> None:
+                nonlocal color_selected
+                color_selected = False
+                cleared = Gdk.RGBA()
+                cleared.red = cleared.green = cleared.blue = 0
+                cleared.alpha = 0
+                color_button.set_rgba(cleared)
+
+            clear_color_button = Gtk.Button(label=_("Clear"))
+            clear_color_button.add_css_class('flat')
+            clear_color_button.connect('clicked', lambda _btn: reset_color_selection())
+            color_controls.append(clear_color_button)
+
+            color_row.append(color_controls)
+            create_section_box.append(color_row)
             content_box.append(create_section_box)
 
             separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
@@ -609,7 +703,11 @@ class WindowActions:
                 if group_name:
                     try:
                         # Create the new group
-                        new_group_id = self.group_manager.create_group(group_name)
+                        selected_color = None
+                        rgba_value = color_button.get_rgba()
+                        if color_selected and rgba_value.alpha > 0:
+                            selected_color = rgba_value.to_string()
+                        new_group_id = self.group_manager.create_group(group_name, color=selected_color)
                         # Move the connection to the new group
                         self.group_manager.move_connection(connection_nickname, new_group_id)
                         # Rebuild the connection list
@@ -649,8 +747,9 @@ class WindowActions:
                         error_dialog.connect('response', on_error_response)
                         error_dialog.present()
                         
-                        # Clear the entry and focus it for retry
+                        # Clear the entry, reset color, and focus it for retry
                         self.create_group_entry.set_text("")
+                        reset_color_selection()
                         self.create_group_entry.grab_focus()
             
             self.create_group_entry.connect('changed', on_entry_changed)
