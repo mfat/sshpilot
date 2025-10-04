@@ -1022,6 +1022,21 @@ class PreferencesWindow(Gtk.Window):
 
             advanced_page.add(operation_group)
 
+            # Application behavior group
+            behavior_group = Adw.PreferencesGroup(title="Application Behavior")
+            
+            # Confirm before disconnecting
+            self.confirm_disconnect_switch = Adw.SwitchRow()
+            self.confirm_disconnect_switch.set_title("Confirm before disconnecting")
+            self.confirm_disconnect_switch.set_subtitle("Show a confirmation dialog when disconnecting from a host")
+            self.confirm_disconnect_switch.set_active(
+                self.config.get_setting('confirm-disconnect', True)
+            )
+            self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
+            behavior_group.add(self.confirm_disconnect_switch)
+            
+            advanced_page.add(behavior_group)
+
             # File management preferences moved to dedicated page
 
             ssh_settings_page = Adw.PreferencesPage()
@@ -1153,15 +1168,6 @@ class PreferencesWindow(Gtk.Window):
             self.debug_enabled_row.set_active(bool(self.config.get_setting('ssh.debug_enabled', False)))
             advanced_group.add(self.debug_enabled_row)
 
-            # Confirm before disconnecting
-            self.confirm_disconnect_switch = Adw.SwitchRow()
-            self.confirm_disconnect_switch.set_title("Confirm before disconnecting")
-            self.confirm_disconnect_switch.set_subtitle("Show a confirmation dialog when disconnecting from a host")
-            self.confirm_disconnect_switch.set_active(
-                self.config.get_setting('confirm-disconnect', True)
-            )
-            self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
-            advanced_group.add(self.confirm_disconnect_switch)
 
             # Reset button
             # Add spacing before reset button
