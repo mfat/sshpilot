@@ -273,6 +273,8 @@ class Connection:
 
             connect_timeout = _coerce_int(ssh_cfg.get('connection_timeout'), None)
             connection_attempts = _coerce_int(ssh_cfg.get('connection_attempts'), None)
+            keepalive_interval = _coerce_int(ssh_cfg.get('keepalive_interval'), None)
+            keepalive_count = _coerce_int(ssh_cfg.get('keepalive_count_max'), None)
             strict_host = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
             batch_mode = bool(ssh_cfg.get('batch_mode', False))
             compression = bool(ssh_cfg.get('compression', False))
@@ -298,6 +300,10 @@ class Connection:
                 ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
             if connection_attempts is not None:
                 ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+            if keepalive_interval is not None:
+                ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
+            if keepalive_count is not None:
+                ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
             if strict_host:
                 ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
             if compression:
