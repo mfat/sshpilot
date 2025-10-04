@@ -1118,18 +1118,16 @@ class AsyncSFTPManager(GObject.GObject):
             except (TypeError, ValueError):
                 return default
 
-        apply_advanced = bool(ssh_cfg.get("apply_advanced", False))
         keepalive_interval = 0
         keepalive_count_max = 0
-        if apply_advanced:
-            keepalive_interval = max(
-                0,
-                _coerce_int(ssh_cfg.get("keepalive_interval", 60), 60),
-            )
-            keepalive_count_max = max(
-                0,
-                _coerce_int(ssh_cfg.get("keepalive_count_max", 3), 3),
-            )
+        keepalive_interval = max(
+            0,
+            _coerce_int(ssh_cfg.get("keepalive_interval", 60), 60),
+        )
+        keepalive_count_max = max(
+            0,
+            _coerce_int(ssh_cfg.get("keepalive_count_max", 3), 3),
+        )
 
         with self._lock:
             self._keepalive_interval = keepalive_interval

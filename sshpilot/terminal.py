@@ -640,15 +640,21 @@ class TerminalWidget(Gtk.Box):
                     ssh_cfg = self.config.get_ssh_config() if hasattr(self.config, 'get_ssh_config') else {}
                 except Exception:
                     ssh_cfg = {}
-                apply_adv = bool(ssh_cfg.get('apply_advanced', False))
-                connect_timeout = int(ssh_cfg.get('connection_timeout', 10)) if apply_adv else None
-                connection_attempts = int(ssh_cfg.get('connection_attempts', 1)) if apply_adv else None
-                keepalive_interval = int(ssh_cfg.get('keepalive_interval', 30)) if apply_adv else None
-                keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3)) if apply_adv else None
-                strict_host = str(ssh_cfg.get('strict_host_key_checking', '')) if apply_adv else ''
+
+                def _coerce_int(value, default=None):
+                    try:
+                        return int(str(value))
+                    except (TypeError, ValueError):
+                        return default
+
+                connect_timeout = _coerce_int(ssh_cfg.get('connection_timeout'), None)
+                connection_attempts = _coerce_int(ssh_cfg.get('connection_attempts'), None)
+                keepalive_interval = _coerce_int(ssh_cfg.get('keepalive_interval'), None)
+                keepalive_count = _coerce_int(ssh_cfg.get('keepalive_count_max'), None)
+                strict_host = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
                 auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
-                batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
-                compression = bool(ssh_cfg.get('compression', False)) if apply_adv else False
+                batch_mode = bool(ssh_cfg.get('batch_mode', False))
+                compression = bool(ssh_cfg.get('compression', False))
 
                 # Determine auth method from connection and retrieve any saved password
                 try:
@@ -671,23 +677,22 @@ class TerminalWidget(Gtk.Box):
 
                 using_password = password_auth_selected or has_saved_password
 
-                # Apply advanced args only when user explicitly enabled them
-                if apply_adv:
-                    # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
-                    if batch_mode and not using_password:
-                        ensure_option('BatchMode=yes')
-                    if connect_timeout is not None:
-                        ensure_option(f'ConnectTimeout={connect_timeout}')
-                    if connection_attempts is not None:
-                        ensure_option(f'ConnectionAttempts={connection_attempts}')
-                    if keepalive_interval is not None:
-                        ensure_option(f'ServerAliveInterval={keepalive_interval}')
-                    if keepalive_count is not None:
-                        ensure_option(f'ServerAliveCountMax={keepalive_count}')
-                    if strict_host:
-                        ensure_option(f'StrictHostKeyChecking={strict_host}')
-                    if compression:
-                        ensure_flag('-C')
+                # Apply advanced args according to stored preferences
+                # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
+                if batch_mode and not using_password:
+                    ensure_option('BatchMode=yes')
+                if connect_timeout is not None:
+                    ensure_option(f'ConnectTimeout={connect_timeout}')
+                if connection_attempts is not None:
+                    ensure_option(f'ConnectionAttempts={connection_attempts}')
+                if keepalive_interval is not None:
+                    ensure_option(f'ServerAliveInterval={keepalive_interval}')
+                if keepalive_count is not None:
+                    ensure_option(f'ServerAliveCountMax={keepalive_count}')
+                if strict_host:
+                    ensure_option(f'StrictHostKeyChecking={strict_host}')
+                if compression:
+                    ensure_flag('-C')
 
                 # Default to accepting new host keys non-interactively on fresh installs
                 try:

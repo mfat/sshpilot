@@ -1032,8 +1032,7 @@ class PreferencesWindow(Gtk.Window):
             help_row = Adw.ActionRow()
             help_row.set_title("Custom SSH Options")
             help_row.set_subtitle(
-                "These settings override values from your ~/.ssh/config when enabled. "
-                "Turn on \"Use custom connection options\" to apply them."
+                "These settings override values from your ~/.ssh/config."
             )
             if hasattr(help_row, "set_activatable"):
                 help_row.set_activatable(False)
@@ -1042,14 +1041,6 @@ class PreferencesWindow(Gtk.Window):
             help_group.add(help_row)
 
             advanced_group = Adw.PreferencesGroup(title="SSH Settings")
-
-
-            # Use custom options toggle
-            self.apply_advanced_row = Adw.SwitchRow()
-            self.apply_advanced_row.set_title("Use custom connection options")
-            self.apply_advanced_row.set_subtitle("Enable and edit the options below")
-            self.apply_advanced_row.set_active(bool(self.config.get_setting('ssh.apply_advanced', False)))
-            advanced_group.add(self.apply_advanced_row)
 
 
             native_connect_group = Adw.PreferencesGroup(title="Connection Method")
@@ -1160,33 +1151,6 @@ class PreferencesWindow(Gtk.Window):
             reset_row.add_suffix(reset_btn)
             
             advanced_group.add(reset_row)
-
-            # Disable/enable advanced controls based on toggle
-            def _sync_advanced_sensitivity(row=None, *_):
-                enabled = bool(self.apply_advanced_row.get_active())
-                for w in [
-                    self.connect_timeout_row,
-                    self.connection_attempts_row,
-                    self.keepalive_interval_row,
-                    self.keepalive_count_row,
-                    self.strict_host_row,
-                    self.batch_mode_row,
-                    self.compression_row,
-                    self.verbosity_row,
-                    self.debug_enabled_row,
-                ]:
-                    try:
-                        w.set_sensitive(enabled)
-                    except Exception:
-                        pass
-
-                # When the toggle is switched off by the user, immediately
-                # restore all advanced options to their defaults.
-                if row is not None and not enabled:
-                    self._apply_default_advanced_settings(update_toggle=False)
-
-            _sync_advanced_sensitivity()
-            self.apply_advanced_row.connect('notify::active', _sync_advanced_sensitivity)
 
             ssh_settings_page.add(help_group)
             ssh_settings_page.add(advanced_group)
@@ -1766,7 +1730,6 @@ class PreferencesWindow(Gtk.Window):
     def save_advanced_ssh_settings(self):
         """Persist advanced SSH settings from the preferences UI"""
         try:
-            apply_advanced_enabled = False
             native_value = False
             connect_timeout = None
             connection_attempts = None
@@ -1778,9 +1741,6 @@ class PreferencesWindow(Gtk.Window):
             verbosity_value = 0
             debug_enabled = False
 
-            if hasattr(self, 'apply_advanced_row'):
-                apply_advanced_enabled = bool(self.apply_advanced_row.get_active())
-                self.config.set_setting('ssh.apply_advanced', apply_advanced_enabled)
             if hasattr(self, 'native_connect_row'):
                 native_value = bool(self.native_connect_row.get_active())
                 self.config.set_setting('ssh.native_connect', native_value)
@@ -1825,40 +1785,37 @@ class PreferencesWindow(Gtk.Window):
                 self.config.set_setting('ssh.debug_enabled', debug_enabled)
 
             overrides: List[str] = []
-            if apply_advanced_enabled:
-                if batch_mode_enabled:
-                    overrides.extend(['-o', 'BatchMode=yes'])
-                if connect_timeout is not None:
-                    overrides.extend(['-o', f'ConnectTimeout={connect_timeout}'])
-                if connection_attempts is not None:
-                    overrides.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
-                if keepalive_interval is not None:
-                    overrides.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
-                if keepalive_count is not None:
-                    overrides.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
-                if strict_host_value:
-                    overrides.extend(['-o', f'StrictHostKeyChecking={strict_host_value}'])
-                if compression_enabled:
-                    overrides.append('-C')
+            if batch_mode_enabled:
+                overrides.extend(['-o', 'BatchMode=yes'])
+            if connect_timeout is not None:
+                overrides.extend(['-o', f'ConnectTimeout={connect_timeout}'])
+            if connection_attempts is not None:
+                overrides.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+            if keepalive_interval is not None:
+                overrides.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
+            if keepalive_count is not None:
+                overrides.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
+            if strict_host_value:
+                overrides.extend(['-o', f'StrictHostKeyChecking={strict_host_value}'])
+            if compression_enabled:
+                overrides.append('-C')
 
-                safe_verbosity = max(0, min(3, verbosity_value))
-                for _ in range(safe_verbosity):
-                    overrides.append('-v')
+            safe_verbosity = max(0, min(3, verbosity_value))
+            for _ in range(safe_verbosity):
+                overrides.append('-v')
 
-                log_level = None
-                if safe_verbosity == 1:
-                    log_level = 'VERBOSE'
-                elif safe_verbosity == 2:
-                    log_level = 'DEBUG2'
-                elif safe_verbosity >= 3:
-                    log_level = 'DEBUG3'
-                elif debug_enabled:
-                    log_level = 'DEBUG'
+            log_level = None
+            if safe_verbosity == 1:
+                log_level = 'VERBOSE'
+            elif safe_verbosity == 2:
+                log_level = 'DEBUG2'
+            elif safe_verbosity >= 3:
+                log_level = 'DEBUG3'
+            elif debug_enabled:
+                log_level = 'DEBUG'
 
-                if log_level:
-                    overrides.extend(['-o', f'LogLevel={log_level}'])
-            else:
-                overrides = []
+            if log_level:
+                overrides.extend(['-o', f'LogLevel={log_level}'])
 
             self.config.set_setting('ssh.ssh_overrides', overrides)
             if getattr(self, 'force_internal_file_manager_row', None) is not None:
@@ -1880,17 +1837,10 @@ class PreferencesWindow(Gtk.Window):
         except Exception as e:
             logger.error(f"Failed to save advanced SSH settings: {e}")
 
-    def _apply_default_advanced_settings(self, update_toggle=True):
+    def _apply_default_advanced_settings(self):
         """Restore advanced SSH settings to defaults and update the UI."""
         try:
             defaults = self.config.get_default_config().get('ssh', {})
-            # Persist defaults and ensure advanced options are disabled
-            self.config.set_setting('ssh.apply_advanced', False)
-            self.config.set_setting('ssh.ssh_overrides', [])
-
-            if update_toggle and hasattr(self, 'apply_advanced_row'):
-                self.apply_advanced_row.set_active(False)
-
 
             if hasattr(self, 'connect_timeout_row'):
                 self.config.set_setting('ssh.connection_timeout', defaults.get('connection_timeout'))
@@ -1934,13 +1884,15 @@ class PreferencesWindow(Gtk.Window):
             if getattr(self, 'open_file_manager_externally_row', None) is not None:
                 self.open_file_manager_externally_row.set_active(default_open_external)
             self._update_external_file_manager_row()
+
+            self.save_advanced_ssh_settings()
         except Exception as e:
             logger.error(f"Failed to apply default advanced SSH settings: {e}")
 
     def on_reset_advanced_ssh(self, *args):
         """Reset only advanced SSH keys to defaults and update UI."""
         try:
-            self._apply_default_advanced_settings(update_toggle=True)
+            self._apply_default_advanced_settings()
         except Exception as e:
             logger.error(f"Failed to reset advanced SSH settings: {e}")
 

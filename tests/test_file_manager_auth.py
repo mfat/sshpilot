@@ -427,7 +427,6 @@ def test_async_sftp_manager_configures_keepalive(monkeypatch):
         connection_manager=None,
         ssh_config={
             "auto_add_host_keys": True,
-            "apply_advanced": True,
             "keepalive_interval": 5,
             "keepalive_count_max": 2,
         },

@@ -1133,7 +1133,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`__init__(parent_window, config)`** — Handles init.
 
-- **`_apply_default_advanced_settings(update_toggle=True)`** — Restore advanced SSH settings to defaults and update the UI.
+- **`_apply_default_advanced_settings()`** — Restore advanced SSH settings to defaults and update the UI.
 
 - **`_is_internal_file_manager_enabled()`** — Return ``True`` when the application uses the built-in file manager.
 
