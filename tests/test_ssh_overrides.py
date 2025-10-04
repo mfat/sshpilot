@@ -149,3 +149,58 @@ def test_native_connect_appends_stored_overrides(monkeypatch):
 
     assert result is True
     assert connection.ssh_cmd == ['ssh', '-o', 'ConnectTimeout=10', '-C', 'example.com']
+
+
+def test_dynamic_forwarding_uses_configured_keepalive(monkeypatch):
+    executed_commands = []
+
+    async def fake_exec(*cmd, **kwargs):
+        executed_commands.append(list(cmd))
+
+        class DummyProcess:
+            def __init__(self):
+                self.stdout = kwargs.get('stdout')
+                self.stderr = kwargs.get('stderr')
+                self.returncode = 0
+
+            async def communicate(self):
+                return b'', b''
+
+            def terminate(self):
+                return None
+
+            async def wait(self):
+                return self.returncode
+
+        return DummyProcess()
+
+    class ForwardConfig:
+        def get_ssh_config(self):
+            return {
+                'connection_timeout': 15,
+                'connection_attempts': 2,
+                'keepalive_interval': 42,
+                'keepalive_count_max': 7,
+                'batch_mode': True,
+                'strict_host_key_checking': 'yes',
+            }
+
+    monkeypatch.setattr('sshpilot.config.Config', lambda: ForwardConfig())
+    monkeypatch.setattr('sshpilot.connection_manager.asyncio.create_subprocess_exec', fake_exec)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        connection = Connection({'host': 'example.com', 'username': 'user'})
+        loop.run_until_complete(connection.start_dynamic_forwarding('127.0.0.1', 9000))
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
+
+    assert executed_commands, 'Dynamic forwarding should invoke ssh'
+    ssh_cmd = executed_commands[0]
+
+    assert ssh_cmd.count('ServerAliveInterval=42') == 1
+    assert ssh_cmd.count('ServerAliveCountMax=7') == 1
+    assert 'ServerAliveInterval=30' not in ssh_cmd
+    assert 'ServerAliveCountMax=3' not in ssh_cmd
