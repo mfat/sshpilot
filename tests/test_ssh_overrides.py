@@ -126,13 +126,13 @@ def test_apply_default_clears_overrides():
     ]
 
 
-def test_native_connect_appends_stored_overrides(monkeypatch):
+def test_native_connect_appends_overrides_even_when_native_disabled(monkeypatch):
     overrides = ['-o', 'ConnectTimeout=10', '-C']
 
     class NativeConfig:
         def get_ssh_config(self):
             return {
-                'native_connect': True,
+                'native_connect': False,
                 'ssh_overrides': overrides,
             }
 
