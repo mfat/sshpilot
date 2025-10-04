@@ -131,9 +131,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
         # Ensure native connect preference is propagated to the connection manager
         try:
-            native_cfg = bool(self.config.get_setting('ssh.native_connect', False))
+            native_cfg = bool(self.config.get_setting('ssh.native_connect', True))
         except Exception:
-            native_cfg = False
+            native_cfg = True
         app_native = None
         if app is not None and hasattr(app, 'native_connect_enabled'):
             app_native = bool(app.native_connect_enabled)

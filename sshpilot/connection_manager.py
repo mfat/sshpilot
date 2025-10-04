@@ -985,9 +985,9 @@ class ConnectionManager(GObject.Object):
         self.ssh_config_path = ''
         self.known_hosts_path = ''
         try:
-            self.native_connect_enabled = bool(self.config.get_setting('ssh.native_connect', False))
+            self.native_connect_enabled = bool(self.config.get_setting('ssh.native_connect', True))
         except Exception:
-            self.native_connect_enabled = False
+            self.native_connect_enabled = True
 
         # Initialize SSH config paths
         self.set_isolated_mode(isolated_mode)

@@ -103,9 +103,9 @@ class SshPilotApplication(Adw.Application):
 
             # Update native connect state from configuration when not overridden
             try:
-                native_cfg = bool(cfg.get_setting('ssh.native_connect', False))
+                native_cfg = bool(cfg.get_setting('ssh.native_connect', True))
             except Exception:
-                native_cfg = False
+                native_cfg = True
             if self.native_connect_override is None:
                 self.native_connect_enabled = native_cfg
             elif self.native_connect_enabled is False and native_cfg:
