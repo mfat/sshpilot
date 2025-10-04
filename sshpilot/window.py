@@ -240,20 +240,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Check startup behavior setting and show appropriate view
         try:
-            startup_behavior = self.config.get_setting('app-startup-behavior', 'terminal')
+            startup_behavior = self.config.get_setting('app-startup-behavior', 'welcome')
         except Exception as e:
             logger.error(f"Error handling startup behavior: {e}")
-            startup_behavior = 'terminal'
+            startup_behavior = 'welcome'
 
         # On startup, focus the appropriate widget based on preference
-        if startup_behavior == 'welcome':
-            # Delay focus to ensure the UI is fully set up
-            try:
-                GLib.timeout_add(100, self._focus_connection_list_first_row)
-            except Exception:
-                pass
-        else:
-            # Default to terminal behavior for unknown preferences
+        if startup_behavior == 'terminal':
+            # Show terminal when explicitly requested
             try:
                 GLib.idle_add(self.terminal_manager.show_local_terminal)
             except Exception as e:
@@ -276,6 +270,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             # Queue terminal focus operation to avoid race conditions
             self._queue_focus_operation(_focus_terminal_when_ready)
+        else:
+            # Delay focus to ensure the UI is fully set up
+            try:
+                GLib.timeout_add(100, self._focus_connection_list_first_row)
+            except Exception:
+                pass
 
         # Mark startup as complete after a short delay to allow all initialization to finish
         GLib.timeout_add(500, self._on_startup_complete)

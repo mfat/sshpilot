@@ -754,12 +754,12 @@ class PreferencesWindow(Gtk.Window):
             # Make them behave like radio buttons
             self.welcome_startup_radio.set_group(self.terminal_startup_radio)
 
-            # Set current preference (default to terminal)
-            startup_behavior = self.config.get_setting('app-startup-behavior', 'terminal')
-            if startup_behavior == 'welcome':
-                self.welcome_startup_radio.set_active(True)
-            else:
+            # Set current preference (default to welcome/start page)
+            startup_behavior = self.config.get_setting('app-startup-behavior', 'welcome')
+            if startup_behavior == 'terminal':
                 self.terminal_startup_radio.set_active(True)
+            else:
+                self.welcome_startup_radio.set_active(True)
 
             # Connect radio button changes
             self.terminal_startup_radio.connect('toggled', self.on_startup_behavior_changed)
