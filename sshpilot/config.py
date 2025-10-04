@@ -197,6 +197,9 @@ class Config(GObject.Object):
             'file_manager': {
                 'force_internal': False,
                 'open_externally': False,
+                'sftp_keepalive_interval': 30,
+                'sftp_keepalive_count_max': 5,
+                'sftp_connect_timeout': 20,
             },
             'security': {
                 'store_passwords': True,
@@ -687,6 +690,44 @@ class Config(GObject.Object):
 
         return config
 
+    def get_file_manager_config(self) -> Dict[str, Any]:
+        """Return configuration relevant to the built-in SFTP file manager."""
+
+        defaults = self.get_default_config().get('file_manager', {})
+
+        def _get_bool(key: str) -> bool:
+            value = self.get_setting(f'file_manager.{key}', defaults.get(key, False))
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                lowered = value.strip().lower()
+                if lowered in {'1', 'true', 'yes', 'on'}:
+                    return True
+                if lowered in {'0', 'false', 'no', 'off'}:
+                    return False
+            return bool(value)
+
+        def _get_non_negative_int(key: str) -> int:
+            default_value = int(defaults.get(key, 0))
+            raw_value = self.get_setting(f'file_manager.{key}', default_value)
+            if raw_value in (None, ''):
+                return default_value
+            try:
+                coerced = int(raw_value)
+            except (TypeError, ValueError):
+                return default_value
+            if coerced < 0:
+                return default_value
+            return coerced
+
+        return {
+            'force_internal': _get_bool('force_internal'),
+            'open_externally': _get_bool('open_externally'),
+            'sftp_keepalive_interval': _get_non_negative_int('sftp_keepalive_interval'),
+            'sftp_keepalive_count_max': _get_non_negative_int('sftp_keepalive_count_max'),
+            'sftp_connect_timeout': _get_non_negative_int('sftp_connect_timeout'),
+        }
+
     def get_security_config(self) -> Dict[str, Any]:
         """Get security configuration"""
         return {
@@ -810,20 +851,54 @@ class Config(GObject.Object):
             terminal_cfg['encoding'] = 'UTF-8'
             updated = True
 
+        file_manager_defaults = self.get_default_config().get('file_manager', {})
         file_manager_cfg = config.get('file_manager')
         if not isinstance(file_manager_cfg, dict):
-            config['file_manager'] = {
-                'force_internal': False,
-                'open_externally': False,
-            }
+            config['file_manager'] = file_manager_defaults.copy()
             updated = True
         else:
             if 'force_internal' not in file_manager_cfg:
-                file_manager_cfg['force_internal'] = False
+                file_manager_cfg['force_internal'] = bool(
+                    file_manager_defaults.get('force_internal', False)
+                )
                 updated = True
+            elif not isinstance(file_manager_cfg['force_internal'], bool):
+                file_manager_cfg['force_internal'] = bool(file_manager_cfg['force_internal'])
+                updated = True
+
             if 'open_externally' not in file_manager_cfg:
-                file_manager_cfg['open_externally'] = False
+                file_manager_cfg['open_externally'] = bool(
+                    file_manager_defaults.get('open_externally', False)
+                )
                 updated = True
+            elif not isinstance(file_manager_cfg['open_externally'], bool):
+                file_manager_cfg['open_externally'] = bool(file_manager_cfg['open_externally'])
+                updated = True
+
+            def _ensure_non_negative_int(key: str) -> None:
+                nonlocal updated
+                default_value = file_manager_defaults.get(key, 0)
+                value = file_manager_cfg.get(key, default_value)
+                try:
+                    coerced = int(value)
+                except (TypeError, ValueError):
+                    coerced = default_value
+                if coerced < 0:
+                    coerced = default_value
+                if file_manager_cfg.get(key) != coerced:
+                    file_manager_cfg[key] = coerced
+                    updated = True
+
+            for int_key in (
+                'sftp_keepalive_interval',
+                'sftp_keepalive_count_max',
+                'sftp_connect_timeout',
+            ):
+                if int_key not in file_manager_cfg:
+                    file_manager_cfg[int_key] = int(file_manager_defaults.get(int_key, 0))
+                    updated = True
+                else:
+                    _ensure_non_negative_int(int_key)
 
         ui_cfg = config.get('ui')
         if not isinstance(ui_cfg, dict):

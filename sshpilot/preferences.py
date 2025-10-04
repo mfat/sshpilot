@@ -4,7 +4,7 @@ import os
 import logging
 import subprocess
 import shutil
-from typing import List
+from typing import Any, Dict, List
 
 from .platform_utils import get_config_dir, is_flatpak, is_macos
 from .file_manager_integration import (
@@ -1195,6 +1195,9 @@ class PreferencesWindow(Gtk.Window):
             # File Management group
             if has_internal_file_manager():
                 file_manager_group = Adw.PreferencesGroup(title="File Manager Options")
+                file_manager_group.set_description(
+                    "These preferences only affect sshPilot's built-in SFTP file manager."
+                )
 
                 self.force_internal_file_manager_row = Adw.SwitchRow()
                 self.force_internal_file_manager_row.set_title("Always Use Built-in File Manager")
@@ -1223,6 +1226,83 @@ class PreferencesWindow(Gtk.Window):
                 )
 
                 file_manager_group.add(self.open_file_manager_externally_row)
+
+                file_manager_defaults = {}
+                try:
+                    defaults = self.config.get_default_config()
+                    file_manager_defaults = defaults.get('file_manager', {}) if isinstance(defaults, dict) else {}
+                except Exception:
+                    file_manager_defaults = {}
+
+                file_manager_config: Dict[str, Any] = {}
+                if hasattr(self.config, 'get_file_manager_config'):
+                    try:
+                        file_manager_config = self.config.get_file_manager_config() or {}
+                    except Exception as exc:
+                        logger.debug("Failed to read file manager configuration: %s", exc)
+                        file_manager_config = {}
+
+                def _fm_default_int(key: str, fallback: int = 0) -> int:
+                    value = 0
+                    if isinstance(file_manager_defaults, dict):
+                        try:
+                            value = int(file_manager_defaults.get(key, fallback))
+                        except (TypeError, ValueError):
+                            value = fallback
+                    else:
+                        value = fallback
+                    return value if value >= 0 else fallback
+
+                def _fm_config_int(key: str, fallback: int) -> int:
+                    if isinstance(file_manager_config, dict):
+                        try:
+                            value = int(file_manager_config.get(key, fallback))
+                        except (TypeError, ValueError):
+                            value = fallback
+                        if value < 0:
+                            return fallback
+                        return value
+                    return fallback
+
+                keepalive_interval_default = _fm_default_int('sftp_keepalive_interval', 0)
+                keepalive_interval_value = _fm_config_int('sftp_keepalive_interval', keepalive_interval_default)
+                keepalive_interval_value = max(0, min(keepalive_interval_value, 3600))
+
+                self.sftp_keepalive_interval_row = Adw.SpinRow.new_with_range(0, 3600, 5)
+                self.sftp_keepalive_interval_row.set_title("SFTP Keepalive Interval (seconds)")
+                self.sftp_keepalive_interval_row.set_subtitle(
+                    "How often the built-in file manager sends keepalives. "
+                    "Set to 0 to disable."
+                )
+                self.sftp_keepalive_interval_row.set_value(keepalive_interval_value)
+                file_manager_group.add(self.sftp_keepalive_interval_row)
+
+                keepalive_count_default = _fm_default_int('sftp_keepalive_count_max', 0)
+                keepalive_count_value = _fm_config_int('sftp_keepalive_count_max', keepalive_count_default)
+                keepalive_count_value = max(0, min(keepalive_count_value, 10))
+
+                self.sftp_keepalive_count_row = Adw.SpinRow.new_with_range(0, 10, 1)
+                self.sftp_keepalive_count_row.set_title("SFTP Keepalive Retry Limit")
+                self.sftp_keepalive_count_row.set_subtitle(
+                    "Number of failed keepalives tolerated by the built-in file "
+                    "manager before raising an error."
+                )
+                self.sftp_keepalive_count_row.set_value(keepalive_count_value)
+                file_manager_group.add(self.sftp_keepalive_count_row)
+
+                connect_timeout_default = _fm_default_int('sftp_connect_timeout', 0)
+                connect_timeout_value = _fm_config_int('sftp_connect_timeout', connect_timeout_default)
+                connect_timeout_value = max(0, min(connect_timeout_value, 600))
+
+                self.sftp_connect_timeout_row = Adw.SpinRow.new_with_range(0, 600, 1)
+                self.sftp_connect_timeout_row.set_title("SFTP Connection Timeout (seconds)")
+                self.sftp_connect_timeout_row.set_subtitle(
+                    "Time allowed for the built-in file manager to establish a "
+                    "session; 0 uses the Paramiko default."
+                )
+                self.sftp_connect_timeout_row.set_value(connect_timeout_value)
+                file_manager_group.add(self.sftp_connect_timeout_row)
+
                 self._update_external_file_manager_row()
                 file_management_page.add(file_manager_group)
             else:
@@ -1872,6 +1952,21 @@ class PreferencesWindow(Gtk.Window):
                     'file_manager.open_externally',
                     bool(self.open_file_manager_externally_row.get_active()),
                 )
+            if getattr(self, 'sftp_keepalive_interval_row', None) is not None:
+                interval_value = int(self.sftp_keepalive_interval_row.get_value())
+                if interval_value < 0:
+                    interval_value = 0
+                self.config.set_setting('file_manager.sftp_keepalive_interval', interval_value)
+            if getattr(self, 'sftp_keepalive_count_row', None) is not None:
+                keepalive_count_value = int(self.sftp_keepalive_count_row.get_value())
+                if keepalive_count_value < 0:
+                    keepalive_count_value = 0
+                self.config.set_setting('file_manager.sftp_keepalive_count_max', keepalive_count_value)
+            if getattr(self, 'sftp_connect_timeout_row', None) is not None:
+                connect_timeout_value = int(self.sftp_connect_timeout_row.get_value())
+                if connect_timeout_value < 0:
+                    connect_timeout_value = 0
+                self.config.set_setting('file_manager.sftp_connect_timeout', connect_timeout_value)
 
             manager = None
             if self.parent_window and hasattr(self.parent_window, 'connection_manager'):
@@ -1927,6 +2022,18 @@ class PreferencesWindow(Gtk.Window):
             self.config.set_setting('file_manager.open_externally', default_open_external)
             if getattr(self, 'open_file_manager_externally_row', None) is not None:
                 self.open_file_manager_externally_row.set_active(default_open_external)
+            keepalive_interval_default = int(file_manager_defaults.get('sftp_keepalive_interval', 0) or 0)
+            self.config.set_setting('file_manager.sftp_keepalive_interval', max(0, keepalive_interval_default))
+            if getattr(self, 'sftp_keepalive_interval_row', None) is not None:
+                self.sftp_keepalive_interval_row.set_value(max(0, keepalive_interval_default))
+            keepalive_count_default = int(file_manager_defaults.get('sftp_keepalive_count_max', 0) or 0)
+            self.config.set_setting('file_manager.sftp_keepalive_count_max', max(0, keepalive_count_default))
+            if getattr(self, 'sftp_keepalive_count_row', None) is not None:
+                self.sftp_keepalive_count_row.set_value(max(0, keepalive_count_default))
+            connect_timeout_default = int(file_manager_defaults.get('sftp_connect_timeout', 0) or 0)
+            self.config.set_setting('file_manager.sftp_connect_timeout', max(0, connect_timeout_default))
+            if getattr(self, 'sftp_connect_timeout_row', None) is not None:
+                self.sftp_connect_timeout_row.set_value(max(0, connect_timeout_default))
             self._update_external_file_manager_row()
 
             self.save_advanced_ssh_settings()
