@@ -1268,6 +1268,12 @@ class PreferencesWindow(Gtk.Window):
                 keepalive_interval_value = _fm_config_int('sftp_keepalive_interval', keepalive_interval_default)
                 keepalive_interval_value = max(0, min(keepalive_interval_value, 3600))
 
+                sftp_advanced_group = Adw.PreferencesGroup(title="Advanced SFTP Settings")
+                sftp_advanced_group.set_description(
+                    "Fine-tune options that only apply to sshPilot's built-in SFTP file manager."
+                )
+
+
                 self.sftp_keepalive_interval_row = Adw.SpinRow.new_with_range(0, 3600, 5)
                 self.sftp_keepalive_interval_row.set_title("SFTP Keepalive Interval (seconds)")
                 self.sftp_keepalive_interval_row.set_subtitle(
@@ -1275,7 +1281,8 @@ class PreferencesWindow(Gtk.Window):
                     "Set to 0 to disable."
                 )
                 self.sftp_keepalive_interval_row.set_value(keepalive_interval_value)
-                file_manager_group.add(self.sftp_keepalive_interval_row)
+                sftp_advanced_group.add(self.sftp_keepalive_interval_row)
+
 
                 keepalive_count_default = _fm_default_int('sftp_keepalive_count_max', 0)
                 keepalive_count_value = _fm_config_int('sftp_keepalive_count_max', keepalive_count_default)
@@ -1288,7 +1295,8 @@ class PreferencesWindow(Gtk.Window):
                     "manager before raising an error."
                 )
                 self.sftp_keepalive_count_row.set_value(keepalive_count_value)
-                file_manager_group.add(self.sftp_keepalive_count_row)
+                sftp_advanced_group.add(self.sftp_keepalive_count_row)
+
 
                 connect_timeout_default = _fm_default_int('sftp_connect_timeout', 0)
                 connect_timeout_value = _fm_config_int('sftp_connect_timeout', connect_timeout_default)
@@ -1301,10 +1309,12 @@ class PreferencesWindow(Gtk.Window):
                     "session; 0 uses the Paramiko default."
                 )
                 self.sftp_connect_timeout_row.set_value(connect_timeout_value)
-                file_manager_group.add(self.sftp_connect_timeout_row)
+                sftp_advanced_group.add(self.sftp_connect_timeout_row)
+
 
                 self._update_external_file_manager_row()
                 file_management_page.add(file_manager_group)
+                file_management_page.add(sftp_advanced_group)
             else:
                 # If no internal file manager, create empty page with message
                 no_file_manager_group = Adw.PreferencesGroup(title="File Manager")
