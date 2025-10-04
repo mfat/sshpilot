@@ -1273,6 +1273,7 @@ class PreferencesWindow(Gtk.Window):
                     "Fine-tune options that only apply to sshPilot's built-in SFTP file manager."
                 )
 
+
                 self.sftp_keepalive_interval_row = Adw.SpinRow.new_with_range(0, 3600, 5)
                 self.sftp_keepalive_interval_row.set_title("SFTP Keepalive Interval (seconds)")
                 self.sftp_keepalive_interval_row.set_subtitle(
@@ -1281,6 +1282,7 @@ class PreferencesWindow(Gtk.Window):
                 )
                 self.sftp_keepalive_interval_row.set_value(keepalive_interval_value)
                 sftp_advanced_group.add(self.sftp_keepalive_interval_row)
+
 
                 keepalive_count_default = _fm_default_int('sftp_keepalive_count_max', 0)
                 keepalive_count_value = _fm_config_int('sftp_keepalive_count_max', keepalive_count_default)
@@ -1295,6 +1297,7 @@ class PreferencesWindow(Gtk.Window):
                 self.sftp_keepalive_count_row.set_value(keepalive_count_value)
                 sftp_advanced_group.add(self.sftp_keepalive_count_row)
 
+
                 connect_timeout_default = _fm_default_int('sftp_connect_timeout', 0)
                 connect_timeout_value = _fm_config_int('sftp_connect_timeout', connect_timeout_default)
                 connect_timeout_value = max(0, min(connect_timeout_value, 600))
@@ -1307,6 +1310,7 @@ class PreferencesWindow(Gtk.Window):
                 )
                 self.sftp_connect_timeout_row.set_value(connect_timeout_value)
                 sftp_advanced_group.add(self.sftp_connect_timeout_row)
+
 
                 self._update_external_file_manager_row()
                 file_management_page.add(file_manager_group)
