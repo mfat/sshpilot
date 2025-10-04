@@ -672,8 +672,6 @@ class Connection:
                 '-D', forward_spec,  # Dynamic port forwarding (SOCKS)
                 '-f',  # Run in background
                 '-o', 'ExitOnForwardFailure=yes',  # Exit if forwarding fails
-                '-o', 'ServerAliveInterval=30',    # Keep connection alive
-                '-o', 'ServerAliveCountMax=3'      # Max missed keepalives before disconnect
             ])
             
             # Add username and host
