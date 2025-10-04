@@ -497,7 +497,6 @@ class Connection:
             except Exception:
                 ssh_cfg = {}
 
-            native_toggle = bool(ssh_cfg.get('native_connect', False))
             overrides = ssh_cfg.get('ssh_overrides', [])
             sanitized_overrides: List[str] = []
             if isinstance(overrides, (list, tuple)):
@@ -508,7 +507,7 @@ class Connection:
                     if flag:
                         sanitized_overrides.append(flag)
 
-            if native_toggle and sanitized_overrides:
+            if sanitized_overrides:
                 ssh_cmd.extend(sanitized_overrides)
 
             ssh_cmd.append(host_label)
