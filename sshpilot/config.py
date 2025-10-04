@@ -188,6 +188,7 @@ class Config(GObject.Object):
                 'keepalive_interval': 60,
                 'compression': False,
                 'auto_add_host_keys': True,
+                'batch_mode': False,
                 'verbosity': 0,
                 'debug_enabled': False,
                 'native_connect': False,
@@ -595,7 +596,7 @@ class Config(GObject.Object):
 
         defaults: Dict[str, Any] = {
             'auto_add_host_keys': True,
-            'batch_mode': True,
+            'batch_mode': False,
             'compression': False,
             'connection_attempts': 1,
             'connection_timeout': 30,
