@@ -571,6 +571,42 @@ class TerminalWidget(Gtk.Box):
             auth_method = 0
             resolved_for_connection = ''
 
+            def _resolve_host_for_connection() -> str:
+                if not hasattr(self, 'connection') or not self.connection:
+                    return ''
+                try:
+                    host_value = self.connection.get_effective_host()
+                except AttributeError:
+                    host_value = getattr(self.connection, 'hostname', '') or getattr(self.connection, 'host', '')
+                if not host_value:
+                    host_value = getattr(self.connection, 'nickname', '')
+                return host_value or ''
+
+            try:
+                resolved_for_connection = _resolve_host_for_connection()
+            except Exception:
+                resolved_for_connection = ''
+
+            try:
+                # In our UI: 0 = key-based, 1 = password
+                auth_method = getattr(self.connection, 'auth_method', 0)
+                password_auth_selected = (auth_method == 1)
+                # Try to fetch stored password regardless of auth method
+                password_value = getattr(self.connection, 'password', None)
+                if not password_value and hasattr(self, 'connection_manager') and self.connection_manager:
+                    lookup_host = resolved_for_connection or _resolve_host_for_connection()
+                    username_for_lookup = getattr(self.connection, 'username', None)
+                    password_value = self.connection_manager.get_password(
+                        lookup_host,
+                        username_for_lookup,
+                    )
+
+                has_saved_password = bool(password_value)
+            except Exception:
+                auth_method = 0
+                password_auth_selected = False
+                has_saved_password = False
+
             if native_mode_enabled and not ssh_cmd:
                 host_label = ''
                 try:
@@ -585,24 +621,16 @@ class TerminalWidget(Gtk.Box):
                     ssh_cmd = ['ssh']
 
             if not native_mode_enabled and not quick_connect_mode:
-                def _resolve_host_for_connection() -> str:
-                    if not hasattr(self, 'connection') or not self.connection:
-                        return ''
-                    try:
-                        host_value = self.connection.get_effective_host()
-                    except AttributeError:
-                        host_value = getattr(self.connection, 'hostname', '') or getattr(self.connection, 'host', '')
-                    if not host_value:
-                        host_value = getattr(self.connection, 'nickname', '')
-                    return host_value or ''
-
                 host_candidates = set()
-                try:
-                    resolved_for_connection = _resolve_host_for_connection()
-                    if resolved_for_connection:
-                        host_candidates.add(str(resolved_for_connection))
-                except Exception:
-                    resolved_for_connection = ''
+                if resolved_for_connection:
+                    host_candidates.add(str(resolved_for_connection))
+                else:
+                    try:
+                        resolved_for_connection = _resolve_host_for_connection()
+                        if resolved_for_connection:
+                            host_candidates.add(str(resolved_for_connection))
+                    except Exception:
+                        resolved_for_connection = ''
 
                 for attr in ('hostname', 'host', 'nickname'):
                     value = getattr(self.connection, attr, '')
@@ -658,25 +686,6 @@ class TerminalWidget(Gtk.Box):
                 auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
                 batch_mode = bool(ssh_cfg.get('batch_mode', False))
                 compression = bool(ssh_cfg.get('compression', False))
-
-                # Determine auth method from connection and retrieve any saved password
-                try:
-                    # In our UI: 0 = key-based, 1 = password
-                    auth_method = getattr(self.connection, 'auth_method', 0)
-                    password_auth_selected = (auth_method == 1)
-                    # Try to fetch stored password regardless of auth method
-                    password_value = getattr(self.connection, 'password', None)
-                    if (not password_value) and hasattr(self, 'connection_manager') and self.connection_manager:
-                        password_value = self.connection_manager.get_password(
-                            _resolve_host_for_connection(),
-                            self.connection.username,
-                        )
-
-                    has_saved_password = bool(password_value)
-                except Exception:
-                    auth_method = 0
-                    password_auth_selected = False
-                    has_saved_password = False
 
                 using_password = password_auth_selected or has_saved_password
 
