@@ -14,6 +14,7 @@ class DummyConfig:
                 'compression': False,
                 'verbosity': 0,
                 'debug_enabled': False,
+                'native_connect': True,
                 'ssh_overrides': [],
                 'strict_host_key_checking': 'accept-new',
             },
@@ -168,6 +169,22 @@ def test_native_connect_appends_overrides_even_when_native_disabled(monkeypatch)
 
     assert result is True
     assert connection.ssh_cmd == ['ssh', '-o', 'ConnectTimeout=10', '-C', 'example.com']
+
+
+def test_native_connect_enabled_by_default(tmp_path, monkeypatch):
+    from sshpilot.config import Config
+
+    monkeypatch.setattr('sshpilot.config.get_config_dir', lambda: str(tmp_path))
+
+    config = Config.__new__(Config)
+    config.use_gsettings = False
+    config.settings = None
+    config.config_file = str(tmp_path / 'config.json')
+    config.config_data = config.get_default_config()
+
+    ssh_config = config.get_ssh_config()
+
+    assert ssh_config['native_connect'] is True
 
 
 def test_dynamic_forwarding_uses_configured_keepalive(monkeypatch):

@@ -1063,15 +1063,15 @@ class PreferencesWindow(Gtk.Window):
             self.native_connect_row = Adw.SwitchRow()
             self.native_connect_row.set_title("Use native SSH Connection mode")
             self.native_connect_row.set_subtitle("Experimental alternative connection method")
-            native_active = False
+            native_active = True
             try:
                 app = self.parent_window.get_application() if self.parent_window else None
                 if app is not None and hasattr(app, 'native_connect_enabled'):
                     native_active = bool(app.native_connect_enabled)
                 else:
-                    native_active = bool(self.config.get_setting('ssh.native_connect', False))
+                    native_active = bool(self.config.get_setting('ssh.native_connect', True))
             except Exception:
-                native_active = bool(self.config.get_setting('ssh.native_connect', False))
+                native_active = bool(self.config.get_setting('ssh.native_connect', True))
             self.native_connect_row.set_active(native_active)
             native_connect_group.add(self.native_connect_row)
 
