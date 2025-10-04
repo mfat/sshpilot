@@ -554,18 +554,24 @@ class ConnectionRow(Gtk.ListBoxRow):
     
     def set_indentation(self, level: int):
         """Set indentation level for grouped connections"""
+        main_box = self.get_child()
+        if not main_box:
+            return
+
+        # The content box is the sibling that follows the top drop indicator
+        top_indicator = main_box.get_first_child()
+        content = top_indicator.get_next_sibling() if top_indicator else None
+        if not content:
+            return
+
+        global _DEFAULT_ROW_MARGIN_START
+        if _DEFAULT_ROW_MARGIN_START <= _MIN_VALID_MARGIN:
+            _DEFAULT_ROW_MARGIN_START = content.get_margin_start()
+
         if level > 0:
-            # Find the content box and set its margin
-            overlay = self.get_child()
-            if overlay and hasattr(overlay, 'get_child'):
-                main_box = overlay.get_child()
-                if main_box and hasattr(main_box, 'get_first_child'):
-                    # Skip the first child (top drop indicator) and get the content box
-                    top_indicator = main_box.get_first_child()
-                    if top_indicator and hasattr(top_indicator, 'get_next_sibling'):
-                        content = top_indicator.get_next_sibling()
-                        if content:
-                            content.set_margin_start(12 + (level * 20))
+            content.set_margin_start(_DEFAULT_ROW_MARGIN_START + (level * 20))
+        else:
+            content.set_margin_start(_DEFAULT_ROW_MARGIN_START)
 
     def _resolve_group_color(self) -> Optional[Gdk.RGBA]:
         manager = getattr(self, 'group_manager', None)
