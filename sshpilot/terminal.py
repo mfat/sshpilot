@@ -643,7 +643,10 @@ class TerminalWidget(Gtk.Box):
 
                 def _coerce_int(value, default=None):
                     try:
-                        return int(str(value))
+                        coerced = int(str(value))
+                        if coerced <= 0:
+                            return default
+                        return coerced
                     except (TypeError, ValueError):
                         return default
 

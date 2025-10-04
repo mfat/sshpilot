@@ -44,7 +44,10 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
 
     def _coerce_int(value, default=None):
         try:
-            return int(str(value))
+            coerced = int(str(value))
+            if coerced <= 0:
+                return default
+            return coerced
         except (TypeError, ValueError):
             return default
 

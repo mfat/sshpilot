@@ -184,8 +184,6 @@ class Config(GObject.Object):
             'connections_meta': {},  # per-connection metadata
             'shortcuts': {},  # action -> list of custom accelerators
             'ssh': {
-                'connection_timeout': 30,
-                'keepalive_interval': 60,
                 'compression': False,
                 'auto_add_host_keys': True,
                 'batch_mode': False,
@@ -194,6 +192,7 @@ class Config(GObject.Object):
                 'native_connect': False,
                 'use_isolated_config': False,
                 'ssh_overrides': [],
+                'strict_host_key_checking': 'accept-new',
             },
             'file_manager': {
                 'force_internal': False,
@@ -598,16 +597,19 @@ class Config(GObject.Object):
             'auto_add_host_keys': True,
             'batch_mode': False,
             'compression': False,
-            'connection_attempts': 1,
-            'connection_timeout': 30,
             'debug_enabled': False,
-            'keepalive_count_max': 3,
-            'keepalive_interval': 60,
             'native_connect': False,
             'strict_host_key_checking': 'accept-new',
             'use_isolated_config': False,
             'verbosity': 0,
             'ssh_overrides': [],
+        }
+
+        optional_int_keys = {
+            'connection_attempts',
+            'connection_timeout',
+            'keepalive_count_max',
+            'keepalive_interval',
         }
 
         bool_keys = {
@@ -617,13 +619,6 @@ class Config(GObject.Object):
             'debug_enabled',
             'native_connect',
             'use_isolated_config',
-        }
-        int_keys = {
-            'connection_attempts',
-            'connection_timeout',
-            'keepalive_count_max',
-            'keepalive_interval',
-            'verbosity',
         }
 
         config: Dict[str, Any] = {}
@@ -639,11 +634,9 @@ class Config(GObject.Object):
                     value = lowered in {'1', 'true', 'yes', 'on'}
                 else:
                     value = bool(value)
-            elif key in int_keys:
-                try:
-                    value = int(value)
-                except (TypeError, ValueError):
-                    value = default_value
+            elif key in optional_int_keys:
+                # handled separately after defaults loop
+                pass
             elif key == 'strict_host_key_checking':
                 if value is None:
                     value = default_value
@@ -669,6 +662,28 @@ class Config(GObject.Object):
                     value = []
 
             config[key] = value
+
+        for key in optional_int_keys:
+            raw_value = self.get_setting(f'ssh.{key}', None)
+            if raw_value in (None, ''):
+                config[key] = None
+                continue
+            try:
+                coerced = int(raw_value)
+            except (TypeError, ValueError):
+                config[key] = None
+                continue
+            if coerced <= 0:
+                config[key] = None
+            else:
+                config[key] = coerced
+
+        # verbosity remains treated as integer, defaulting to 0 when unset
+        verbosity_value = self.get_setting('ssh.verbosity', defaults['verbosity'])
+        try:
+            config['verbosity'] = int(verbosity_value)
+        except (TypeError, ValueError):
+            config['verbosity'] = defaults['verbosity']
 
         return config
 

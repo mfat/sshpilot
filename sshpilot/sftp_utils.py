@@ -301,8 +301,6 @@ def _verify_ssh_connection(user: str, host: str, port: Optional[int]) -> bool:
     ssh_cmd = [
         "ssh",
         "-o",
-        "ConnectTimeout=10",
-        "-o",
         "StrictHostKeyChecking=accept-new",
     ]
 
@@ -871,7 +869,7 @@ def _try_command_line_mount(
         sshfs_cmd.extend(
             [
                 "-o",
-                "reconnect,ServerAliveInterval=15,ServerAliveCountMax=3",
+                "reconnect",
                 f"{user}@{host}:/",
                 mount_point,
             ]

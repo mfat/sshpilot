@@ -1114,20 +1114,13 @@ class AsyncSFTPManager(GObject.GObject):
 
         def _coerce_int(value: Any, default: int) -> int:
             try:
-                return int(str(value))
+                coerced = int(str(value))
+                return coerced if coerced > 0 else default
             except (TypeError, ValueError):
                 return default
 
-        keepalive_interval = 0
-        keepalive_count_max = 0
-        keepalive_interval = max(
-            0,
-            _coerce_int(ssh_cfg.get("keepalive_interval", 60), 60),
-        )
-        keepalive_count_max = max(
-            0,
-            _coerce_int(ssh_cfg.get("keepalive_count_max", 3), 3),
-        )
+        keepalive_interval = max(0, _coerce_int(ssh_cfg.get("keepalive_interval"), 0))
+        keepalive_count_max = max(0, _coerce_int(ssh_cfg.get("keepalive_count_max"), 0))
 
         with self._lock:
             self._keepalive_interval = keepalive_interval
