@@ -41,16 +41,21 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
         ssh_cfg = config.get_ssh_config() if hasattr(config, 'get_ssh_config') else {}
     except Exception:
         ssh_cfg = {}
-    
-    apply_adv = bool(ssh_cfg.get('apply_advanced', False))
-    connect_timeout = int(ssh_cfg.get('connection_timeout', 10)) if apply_adv else None
-    connection_attempts = int(ssh_cfg.get('connection_attempts', 1)) if apply_adv else None
-    keepalive_interval = int(ssh_cfg.get('keepalive_interval', 30)) if apply_adv else None
-    keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3)) if apply_adv else None
-    strict_host = str(ssh_cfg.get('strict_host_key_checking', '')) if apply_adv else ''
+
+    def _coerce_int(value, default=None):
+        try:
+            return int(str(value))
+        except (TypeError, ValueError):
+            return default
+
+    connect_timeout = _coerce_int(ssh_cfg.get('connection_timeout'), None)
+    connection_attempts = _coerce_int(ssh_cfg.get('connection_attempts'), None)
+    keepalive_interval = _coerce_int(ssh_cfg.get('keepalive_interval'), None)
+    keepalive_count = _coerce_int(ssh_cfg.get('keepalive_count_max'), None)
+    strict_host = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
     auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
-    batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
-    compression = bool(ssh_cfg.get('compression', False)) if apply_adv else False
+    batch_mode = bool(ssh_cfg.get('batch_mode', False))
+    compression = bool(ssh_cfg.get('compression', False))
 
     # Determine auth method from connection and whether a password is available
     password_auth_selected = False
@@ -65,23 +70,22 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
         has_saved_password = False
     using_password = password_auth_selected or (not password_auth_selected and has_saved_password)
 
-    # Apply advanced args only when user explicitly enabled them (same as terminal.py)
-    if apply_adv:
-        # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
-        if batch_mode and not using_password:
-            options.extend(['-o', 'BatchMode=yes'])
-        if connect_timeout is not None:
-            options.extend(['-o', f'ConnectTimeout={connect_timeout}'])
-        if connection_attempts is not None:
-            options.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
-        if keepalive_interval is not None:
-            options.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
-        if keepalive_count is not None:
-            options.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
-        if strict_host:
-            options.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
-        if compression and not for_ssh_copy_id:
-            options.append('-C')
+    # Apply advanced args according to stored preferences (same as terminal.py)
+    # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
+    if batch_mode and not using_password:
+        options.extend(['-o', 'BatchMode=yes'])
+    if connect_timeout is not None:
+        options.extend(['-o', f'ConnectTimeout={connect_timeout}'])
+    if connection_attempts is not None:
+        options.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+    if keepalive_interval is not None:
+        options.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
+    if keepalive_count is not None:
+        options.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
+    if strict_host:
+        options.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
+    if compression and not for_ssh_copy_id:
+        options.append('-C')
 
     # Default to accepting new host keys non-interactively on fresh installs (same as terminal.py)
     try:

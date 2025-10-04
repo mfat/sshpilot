@@ -594,7 +594,6 @@ class Config(GObject.Object):
         """
 
         defaults: Dict[str, Any] = {
-            'apply_advanced': False,
             'auto_add_host_keys': True,
             'batch_mode': True,
             'compression': False,
@@ -611,7 +610,6 @@ class Config(GObject.Object):
         }
 
         bool_keys = {
-            'apply_advanced',
             'auto_add_host_keys',
             'batch_mode',
             'compression',
@@ -851,6 +849,9 @@ class Config(GObject.Object):
             config['ssh'] = default_ssh
             updated = True
             ssh_cfg = config['ssh']
+        elif 'apply_advanced' in ssh_cfg:
+            del ssh_cfg['apply_advanced']
+            updated = True
         if 'use_isolated_config' not in ssh_cfg:
             ssh_cfg['use_isolated_config'] = False
             updated = True

@@ -265,28 +265,43 @@ class Connection:
                 ssh_cfg = cfg.get_ssh_config()
             except Exception:
                 ssh_cfg = {}
-            apply_adv = bool(ssh_cfg.get('apply_advanced', False))
-            connect_timeout = int(ssh_cfg.get('connection_timeout', 10)) if apply_adv else None
-            connection_attempts = int(ssh_cfg.get('connection_attempts', 1)) if apply_adv else None
-            strict_host = str(ssh_cfg.get('strict_host_key_checking', '')) if apply_adv else ''
-            batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
-            compression = bool(ssh_cfg.get('compression', False)) if apply_adv else False
+            def _coerce_int(value, default=None):
+                try:
+                    return int(str(value))
+                except (TypeError, ValueError):
+                    return default
+
+            connect_timeout = _coerce_int(ssh_cfg.get('connection_timeout'), None)
+            connection_attempts = _coerce_int(ssh_cfg.get('connection_attempts'), None)
+            strict_host = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
+            batch_mode = bool(ssh_cfg.get('batch_mode', False))
+            compression = bool(ssh_cfg.get('compression', False))
             verbosity = int(ssh_cfg.get('verbosity', 0))
             debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
             auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
 
-            # Apply advanced args only when user explicitly enabled them
-            if apply_adv:
-                if batch_mode:
-                    ssh_cmd.extend(['-o', 'BatchMode=yes'])
-                if connect_timeout is not None:
-                    ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
-                if connection_attempts is not None:
-                    ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
-                if strict_host:
-                    ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
-                if compression:
-                    ssh_cmd.append('-C')
+            password_auth_selected = False
+            has_saved_password = False
+            try:
+                password_auth_selected = int(getattr(self, 'auth_method', 0) or 0) == 1
+            except Exception:
+                password_auth_selected = False
+            try:
+                has_saved_password = bool(getattr(self, 'password', '') or '')
+            except Exception:
+                has_saved_password = False
+            using_password = password_auth_selected or has_saved_password
+
+            if batch_mode and not using_password:
+                ssh_cmd.extend(['-o', 'BatchMode=yes'])
+            if connect_timeout is not None:
+                ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
+            if connection_attempts is not None:
+                ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+            if strict_host:
+                ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
+            if compression:
+                ssh_cmd.append('-C')
             ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
             ssh_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
 
@@ -482,7 +497,6 @@ class Connection:
             except Exception:
                 ssh_cfg = {}
 
-            apply_adv = bool(ssh_cfg.get('apply_advanced', False))
             native_toggle = bool(ssh_cfg.get('native_connect', False))
             overrides = ssh_cfg.get('ssh_overrides', [])
             sanitized_overrides: List[str] = []
@@ -494,7 +508,7 @@ class Connection:
                     if flag:
                         sanitized_overrides.append(flag)
 
-            if native_toggle and apply_adv and sanitized_overrides:
+            if native_toggle and sanitized_overrides:
                 ssh_cmd.extend(sanitized_overrides)
 
             ssh_cmd.append(host_label)

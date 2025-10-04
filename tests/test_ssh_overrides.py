@@ -76,7 +76,6 @@ def _build_preferences(**values):
     prefs = PreferencesWindow.__new__(PreferencesWindow)
     prefs.config = values.get('config', DummyConfig())
     prefs.parent_window = values.get('parent_window', None)
-    prefs.apply_advanced_row = values.get('apply_advanced_row', DummySwitchRow(True))
     prefs.native_connect_row = values.get('native_connect_row', DummySwitchRow(True))
     prefs.connect_timeout_row = values.get('connect_timeout_row', DummySpinRow(12))
     prefs.connection_attempts_row = values.get('connection_attempts_row', DummySpinRow(4))
@@ -117,8 +116,14 @@ def test_apply_default_clears_overrides():
 
     prefs._apply_default_advanced_settings()
 
-    assert prefs.config.settings['ssh.ssh_overrides'] == []
-    assert prefs.apply_advanced_row.get_active() is False
+    assert prefs.config.settings['ssh.ssh_overrides'] == [
+        '-o', 'BatchMode=yes',
+        '-o', 'ConnectTimeout=30',
+        '-o', 'ConnectionAttempts=1',
+        '-o', 'ServerAliveInterval=60',
+        '-o', 'ServerAliveCountMax=3',
+        '-o', 'StrictHostKeyChecking=accept-new',
+    ]
 
 
 def test_native_connect_appends_stored_overrides(monkeypatch):
@@ -127,7 +132,6 @@ def test_native_connect_appends_stored_overrides(monkeypatch):
     class NativeConfig:
         def get_ssh_config(self):
             return {
-                'apply_advanced': True,
                 'native_connect': True,
                 'ssh_overrides': overrides,
             }
