@@ -3452,12 +3452,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.tab_view.set_selected_page(page)
 
             self.active_terminals[connection] = target_term
-            try:
-                target_term.vte.grab_focus()
-            except Exception:
-                pass
+            GLib.timeout_add(50, lambda: self._grab_terminal_focus_safely(target_term))
         except Exception as e:
             logger.error(f"Failed to focus most recent tab for {getattr(connection, 'nickname', '')}: {e}")
+
+    def _grab_terminal_focus_safely(self, terminal):
+        """Safely grab focus for a terminal widget."""
+        try:
+            self.present()
+            self.tab_view.grab_focus()
+            for i in range(3):
+                GLib.timeout_add(50 * (i + 1), lambda: terminal.vte.grab_focus())
+        except Exception as e:
+            logger.debug(f"Failed to grab terminal focus: {e}")
 
 
     def _focus_most_recent_tab_or_open_new(self, connection: Connection):
@@ -3490,10 +3497,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 page = self.tab_view.get_page(target_term)
                 if page is not None:
                     self.tab_view.set_selected_page(page)
-                    # Update most-recent mapping
                     self.active_terminals[connection] = target_term
-                    # Give focus to the VTE terminal so user can start typing immediately
-                    target_term.vte.grab_focus()
+                    GLib.timeout_add(50, lambda: self._grab_terminal_focus_safely(target_term))
                     return
 
             # No existing tabs for this connection -> open a new one
