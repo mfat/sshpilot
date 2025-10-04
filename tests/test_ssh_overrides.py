@@ -14,7 +14,7 @@ class DummyConfig:
                 'keepalive_interval': 60,
                 'keepalive_count_max': 3,
                 'auto_add_host_keys': True,
-                'batch_mode': True,
+                'batch_mode': False,
                 'compression': False,
                 'verbosity': 0,
                 'debug_enabled': False,
@@ -82,7 +82,7 @@ def _build_preferences(**values):
     prefs.keepalive_interval_row = values.get('keepalive_interval_row', DummySpinRow(45))
     prefs.keepalive_count_row = values.get('keepalive_count_row', DummySpinRow(6))
     prefs.strict_host_row = values.get('strict_host_row', DummyComboRow(1))
-    prefs.batch_mode_row = values.get('batch_mode_row', DummySwitchRow(True))
+    prefs.batch_mode_row = values.get('batch_mode_row', DummySwitchRow(False))
     prefs.compression_row = values.get('compression_row', DummySwitchRow(True))
     prefs.verbosity_row = values.get('verbosity_row', DummySpinRow(2))
     prefs.debug_enabled_row = values.get('debug_enabled_row', DummySwitchRow(True))
@@ -92,7 +92,7 @@ def _build_preferences(**values):
 
 
 def test_save_advanced_ssh_settings_persists_overrides():
-    prefs = _build_preferences()
+    prefs = _build_preferences(batch_mode_row=DummySwitchRow(True))
     prefs.save_advanced_ssh_settings()
 
     overrides = prefs.config.settings.get('ssh.ssh_overrides')
@@ -117,7 +117,6 @@ def test_apply_default_clears_overrides():
     prefs._apply_default_advanced_settings()
 
     assert prefs.config.settings['ssh.ssh_overrides'] == [
-        '-o', 'BatchMode=yes',
         '-o', 'ConnectTimeout=30',
         '-o', 'ConnectionAttempts=1',
         '-o', 'ServerAliveInterval=60',
@@ -200,6 +199,7 @@ def test_dynamic_forwarding_uses_configured_keepalive(monkeypatch):
     assert executed_commands, 'Dynamic forwarding should invoke ssh'
     ssh_cmd = executed_commands[0]
 
+    assert ssh_cmd.count('BatchMode=yes') == 1
     assert ssh_cmd.count('ServerAliveInterval=42') == 1
     assert ssh_cmd.count('ServerAliveCountMax=7') == 1
     assert 'ServerAliveInterval=30' not in ssh_cmd

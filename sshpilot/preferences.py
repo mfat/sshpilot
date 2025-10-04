@@ -1104,7 +1104,7 @@ class PreferencesWindow(Gtk.Window):
             # BatchMode (non-interactive)
             self.batch_mode_row = Adw.SwitchRow()
             self.batch_mode_row.set_title("BatchMode (disable prompts)")
-            self.batch_mode_row.set_active(bool(self.config.get_setting('ssh.batch_mode', True)))
+            self.batch_mode_row.set_active(bool(self.config.get_setting('ssh.batch_mode', False)))
             advanced_group.add(self.batch_mode_row)
 
             # Compression
@@ -1862,8 +1862,8 @@ class PreferencesWindow(Gtk.Window):
                 self.config.set_setting('ssh.strict_host_key_checking', 'accept-new')
             self.config.set_setting('ssh.auto_add_host_keys', defaults.get('auto_add_host_keys'))
             if hasattr(self, 'batch_mode_row'):
-                self.config.set_setting('ssh.batch_mode', bool(defaults.get('batch_mode', True)))
-                self.batch_mode_row.set_active(bool(defaults.get('batch_mode', True)))
+                self.config.set_setting('ssh.batch_mode', bool(defaults.get('batch_mode', False)))
+                self.batch_mode_row.set_active(bool(defaults.get('batch_mode', False)))
             if hasattr(self, 'compression_row'):
                 self.config.set_setting('ssh.compression', bool(defaults.get('compression', False)))
                 self.compression_row.set_active(bool(defaults.get('compression', False)))

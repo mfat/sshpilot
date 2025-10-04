@@ -643,7 +643,7 @@ class Connection:
             keepalive_interval = int(ssh_cfg.get('keepalive_interval', 30))
             keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3))
             strict_host = str(ssh_cfg.get('strict_host_key_checking', 'accept-new'))
-            batch_mode = bool(ssh_cfg.get('batch_mode', True))
+            batch_mode = bool(ssh_cfg.get('batch_mode', False))
 
             # Robust non-interactive options to prevent hangs
             if batch_mode:
