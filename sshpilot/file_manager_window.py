@@ -954,6 +954,7 @@ class AsyncSFTPManager(GObject.GObject):
         resolved_host: str,
         resolved_port: int,
         base_username: str,
+        connect_timeout: Optional[int] = None,
     ) -> Tuple[Any, List[paramiko.SSHClient]]:
         """Create a socket by chaining SSH connections through jump hosts."""
 
@@ -1461,6 +1462,7 @@ class AsyncSFTPManager(GObject.GObject):
                     resolved_host=resolved_host,
                     resolved_port=resolved_port,
                     base_username=resolved_username,
+                    connect_timeout=connect_timeout,
                 )
                 logger.debug(
                     "File manager: using Paramiko ProxyJump chain via %s",
