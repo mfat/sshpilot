@@ -363,6 +363,9 @@ class PreferencesWindow(Gtk.Window):
         self._encoding_options = []
         self._encoding_codes = []
         self._suppress_encoding_config_handler = False
+        self._updating_connection_switches = False
+        self.native_connect_row = None
+        self.legacy_connect_row = None
 
         self._config_signal_id = None
 
@@ -1061,8 +1064,10 @@ class PreferencesWindow(Gtk.Window):
             native_connect_group = Adw.PreferencesGroup(title="Connection Method")
 
             self.native_connect_row = Adw.SwitchRow()
-            self.native_connect_row.set_title("Use native SSH Connection mode")
-            self.native_connect_row.set_subtitle("Experimental alternative connection method")
+            self.native_connect_row.set_title("Use native SSH connection mode")
+            self.native_connect_row.set_subtitle("Default SSH connection method")
+            self.legacy_connect_row = Adw.SwitchRow()
+            self.legacy_connect_row.set_title("Use legacy SSH connection mode")
             native_active = True
             try:
                 app = self.parent_window.get_application() if self.parent_window else None
@@ -1072,8 +1077,11 @@ class PreferencesWindow(Gtk.Window):
                     native_active = bool(self.config.get_setting('ssh.native_connect', True))
             except Exception:
                 native_active = bool(self.config.get_setting('ssh.native_connect', True))
-            self.native_connect_row.set_active(native_active)
+            self._set_connection_mode_switches(native_active)
+            self.native_connect_row.connect('notify::active', self.on_native_connection_mode_toggled)
+            self.legacy_connect_row.connect('notify::active', self.on_legacy_connection_mode_toggled)
             native_connect_group.add(self.native_connect_row)
+            native_connect_group.add(self.legacy_connect_row)
 
 
             # Connect timeout
@@ -1865,7 +1873,7 @@ class PreferencesWindow(Gtk.Window):
             verbosity_value = 0
             debug_enabled = False
 
-            if hasattr(self, 'native_connect_row'):
+            if getattr(self, 'native_connect_row', None) is not None:
                 native_value = bool(self.native_connect_row.get_active())
                 self.config.set_setting('ssh.native_connect', native_value)
                 try:
@@ -1991,6 +1999,36 @@ class PreferencesWindow(Gtk.Window):
                 manager.invalidate_cached_commands()
         except Exception as e:
             logger.error(f"Failed to save advanced SSH settings: {e}")
+
+    def _set_connection_mode_switches(self, native_active: bool) -> None:
+        """Synchronize native/legacy connection switches without recursion."""
+
+        self._updating_connection_switches = True
+        try:
+            if getattr(self, 'native_connect_row', None) is not None:
+                self.native_connect_row.set_active(bool(native_active))
+            if getattr(self, 'legacy_connect_row', None) is not None:
+                self.legacy_connect_row.set_active(not bool(native_active))
+        finally:
+            self._updating_connection_switches = False
+
+    def on_native_connection_mode_toggled(self, switch, *args):
+        """Ensure native mode toggle keeps legacy switch in sync."""
+
+        if self._updating_connection_switches:
+            return
+
+        native_active = bool(switch.get_active())
+        self._set_connection_mode_switches(native_active)
+
+    def on_legacy_connection_mode_toggled(self, switch, *args):
+        """Ensure legacy mode toggle keeps native switch in sync."""
+
+        if self._updating_connection_switches:
+            return
+
+        legacy_active = bool(switch.get_active())
+        self._set_connection_mode_switches(not legacy_active)
 
     def _apply_default_advanced_settings(self):
         """Restore advanced SSH settings to defaults and update the UI."""

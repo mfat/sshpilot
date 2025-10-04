@@ -99,6 +99,8 @@ def _build_preferences(**values):
     prefs.config = values.get('config', DummyConfig())
     prefs.parent_window = values.get('parent_window', None)
     prefs.native_connect_row = values.get('native_connect_row', DummySwitchRow(True))
+    prefs.legacy_connect_row = values.get('legacy_connect_row', DummySwitchRow(False))
+    prefs._updating_connection_switches = False
     prefs.connect_timeout_row = values.get('connect_timeout_row', DummySpinRow(12))
     prefs.connection_attempts_row = values.get('connection_attempts_row', DummySpinRow(4))
     prefs.keepalive_interval_row = values.get('keepalive_interval_row', DummySpinRow(45))
@@ -114,6 +116,52 @@ def _build_preferences(**values):
     prefs.sftp_keepalive_count_row = values.get('sftp_keepalive_count_row', DummySpinRow(5))
     prefs.sftp_connect_timeout_row = values.get('sftp_connect_timeout_row', DummySpinRow(20))
     return prefs
+
+
+def test_connection_mode_switches_are_mutually_exclusive():
+    prefs = _build_preferences(
+        native_connect_row=DummySwitchRow(True),
+        legacy_connect_row=DummySwitchRow(False),
+    )
+
+    prefs._set_connection_mode_switches(True)
+    assert prefs.native_connect_row.get_active() is True
+    assert prefs.legacy_connect_row.get_active() is False
+
+    prefs.native_connect_row.set_active(False)
+    prefs.on_native_connection_mode_toggled(prefs.native_connect_row, None)
+    assert prefs.native_connect_row.get_active() is False
+    assert prefs.legacy_connect_row.get_active() is True
+
+    prefs.native_connect_row.set_active(True)
+    prefs.on_native_connection_mode_toggled(prefs.native_connect_row, None)
+    assert prefs.native_connect_row.get_active() is True
+    assert prefs.legacy_connect_row.get_active() is False
+
+    prefs.legacy_connect_row.set_active(True)
+    prefs.on_legacy_connection_mode_toggled(prefs.legacy_connect_row, None)
+    assert prefs.native_connect_row.get_active() is False
+    assert prefs.legacy_connect_row.get_active() is True
+
+    prefs.legacy_connect_row.set_active(False)
+    prefs.on_legacy_connection_mode_toggled(prefs.legacy_connect_row, None)
+    assert prefs.native_connect_row.get_active() is True
+    assert prefs.legacy_connect_row.get_active() is False
+
+
+def test_save_advanced_settings_respects_legacy_toggle():
+    config = DummyConfig()
+    prefs = _build_preferences(
+        config=config,
+        native_connect_row=DummySwitchRow(True),
+        legacy_connect_row=DummySwitchRow(False),
+    )
+
+    prefs.legacy_connect_row.set_active(True)
+    prefs.on_legacy_connection_mode_toggled(prefs.legacy_connect_row, None)
+    prefs.save_advanced_ssh_settings()
+
+    assert config.settings['ssh.native_connect'] is False
 
 
 def test_save_advanced_ssh_settings_persists_overrides():
