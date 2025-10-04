@@ -20,6 +20,9 @@ class DummyConfig:
             'file_manager': {
                 'force_internal': False,
                 'open_externally': False,
+                'sftp_keepalive_interval': 30,
+                'sftp_keepalive_count_max': 5,
+                'sftp_connect_timeout': 20,
             },
         }
 
@@ -33,6 +36,27 @@ class DummyConfig:
         return {
             'ssh': dict(self.default_config['ssh']),
             'file_manager': dict(self.default_config['file_manager']),
+        }
+
+    def get_file_manager_config(self):
+        defaults = self.default_config['file_manager']
+
+        def _bool(setting_key, default):
+            return bool(self.settings.get(setting_key, default))
+
+        def _int(setting_key, default):
+            value = self.settings.get(setting_key, default)
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return int(default)
+
+        return {
+            'force_internal': _bool('file_manager.force_internal', defaults['force_internal']),
+            'open_externally': _bool('file_manager.open_externally', defaults['open_externally']),
+            'sftp_keepalive_interval': _int('file_manager.sftp_keepalive_interval', defaults['sftp_keepalive_interval']),
+            'sftp_keepalive_count_max': _int('file_manager.sftp_keepalive_count_max', defaults['sftp_keepalive_count_max']),
+            'sftp_connect_timeout': _int('file_manager.sftp_connect_timeout', defaults['sftp_connect_timeout']),
         }
 
 
@@ -85,6 +109,9 @@ def _build_preferences(**values):
     prefs.debug_enabled_row = values.get('debug_enabled_row', DummySwitchRow(True))
     prefs.force_internal_file_manager_row = values.get('force_internal_file_manager_row', None)
     prefs.open_file_manager_externally_row = values.get('open_file_manager_externally_row', None)
+    prefs.sftp_keepalive_interval_row = values.get('sftp_keepalive_interval_row', DummySpinRow(30))
+    prefs.sftp_keepalive_count_row = values.get('sftp_keepalive_count_row', DummySpinRow(5))
+    prefs.sftp_connect_timeout_row = values.get('sftp_connect_timeout_row', DummySpinRow(20))
     return prefs
 
 
