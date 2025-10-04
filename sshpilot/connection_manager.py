@@ -267,7 +267,10 @@ class Connection:
                 ssh_cfg = {}
             def _coerce_int(value, default=None):
                 try:
-                    return int(str(value))
+                    coerced = int(str(value))
+                    if coerced <= 0:
+                        return default
+                    return coerced
                 except (TypeError, ValueError):
                     return default
 
@@ -638,23 +641,34 @@ class Connection:
                 ssh_cfg = cfg.get_ssh_config()
             except Exception:
                 ssh_cfg = {}
-            connect_timeout = int(ssh_cfg.get('connection_timeout', 10))
-            connection_attempts = int(ssh_cfg.get('connection_attempts', 1))
-            keepalive_interval = int(ssh_cfg.get('keepalive_interval', 30))
-            keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3))
-            strict_host = str(ssh_cfg.get('strict_host_key_checking', 'accept-new'))
+            def _coerce_int(value):
+                try:
+                    coerced = int(value)
+                    return coerced if coerced > 0 else None
+                except (TypeError, ValueError):
+                    return None
+
+            connect_timeout = _coerce_int(ssh_cfg.get('connection_timeout'))
+            connection_attempts = _coerce_int(ssh_cfg.get('connection_attempts'))
+            keepalive_interval = _coerce_int(ssh_cfg.get('keepalive_interval'))
+            keepalive_count = _coerce_int(ssh_cfg.get('keepalive_count_max'))
+            strict_host = str(ssh_cfg.get('strict_host_key_checking', 'accept-new') or '').strip()
             batch_mode = bool(ssh_cfg.get('batch_mode', False))
 
             # Robust non-interactive options to prevent hangs
             if batch_mode:
                 ssh_cmd.extend(['-o', 'BatchMode=yes'])
-            ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
-            ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
-            ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
-            ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
+            if connect_timeout is not None:
+                ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
+            if connection_attempts is not None:
+                ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+            if keepalive_interval is not None:
+                ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
+            if keepalive_count is not None:
+                ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
             if strict_host:
                 ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
-            
+
             # Add key file if specified
             if self.keyfile and os.path.exists(self.keyfile):
                 logger.debug(f"Using SSH key: {self.keyfile}")

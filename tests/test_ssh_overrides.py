@@ -9,16 +9,13 @@ class DummyConfig:
         self.settings = {}
         self.default_config = {
             'ssh': {
-                'connection_timeout': 30,
-                'connection_attempts': 1,
-                'keepalive_interval': 60,
-                'keepalive_count_max': 3,
                 'auto_add_host_keys': True,
                 'batch_mode': False,
                 'compression': False,
                 'verbosity': 0,
                 'debug_enabled': False,
                 'ssh_overrides': [],
+                'strict_host_key_checking': 'accept-new',
             },
             'file_manager': {
                 'force_internal': False,
@@ -117,10 +114,6 @@ def test_apply_default_clears_overrides():
     prefs._apply_default_advanced_settings()
 
     assert prefs.config.settings['ssh.ssh_overrides'] == [
-        '-o', 'ConnectTimeout=30',
-        '-o', 'ConnectionAttempts=1',
-        '-o', 'ServerAliveInterval=60',
-        '-o', 'ServerAliveCountMax=3',
         '-o', 'StrictHostKeyChecking=accept-new',
     ]
 

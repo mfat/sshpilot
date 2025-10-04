@@ -1062,27 +1062,55 @@ class PreferencesWindow(Gtk.Window):
 
 
             # Connect timeout
-            self.connect_timeout_row = Adw.SpinRow.new_with_range(1, 120, 1)
+            self.connect_timeout_row = Adw.SpinRow.new_with_range(0, 120, 1)
             self.connect_timeout_row.set_title("Connect Timeout (s)")
-            self.connect_timeout_row.set_value(self.config.get_setting('ssh.connection_timeout', 10))
+            connect_timeout_value = self.config.get_setting('ssh.connection_timeout', None)
+            try:
+                connect_timeout_value = int(connect_timeout_value)
+            except (TypeError, ValueError):
+                connect_timeout_value = 0
+            if connect_timeout_value < 0:
+                connect_timeout_value = 0
+            self.connect_timeout_row.set_value(connect_timeout_value)
             advanced_group.add(self.connect_timeout_row)
 
             # Connection attempts
-            self.connection_attempts_row = Adw.SpinRow.new_with_range(1, 10, 1)
+            self.connection_attempts_row = Adw.SpinRow.new_with_range(0, 10, 1)
             self.connection_attempts_row.set_title("Connection Attempts")
-            self.connection_attempts_row.set_value(self.config.get_setting('ssh.connection_attempts', 1))
+            connection_attempts_value = self.config.get_setting('ssh.connection_attempts', None)
+            try:
+                connection_attempts_value = int(connection_attempts_value)
+            except (TypeError, ValueError):
+                connection_attempts_value = 0
+            if connection_attempts_value < 0:
+                connection_attempts_value = 0
+            self.connection_attempts_row.set_value(connection_attempts_value)
             advanced_group.add(self.connection_attempts_row)
 
             # Keepalive interval
             self.keepalive_interval_row = Adw.SpinRow.new_with_range(0, 300, 5)
             self.keepalive_interval_row.set_title("ServerAlive Interval (s)")
-            self.keepalive_interval_row.set_value(self.config.get_setting('ssh.keepalive_interval', 30))
+            keepalive_interval_value = self.config.get_setting('ssh.keepalive_interval', None)
+            try:
+                keepalive_interval_value = int(keepalive_interval_value)
+            except (TypeError, ValueError):
+                keepalive_interval_value = 0
+            if keepalive_interval_value < 0:
+                keepalive_interval_value = 0
+            self.keepalive_interval_row.set_value(keepalive_interval_value)
             advanced_group.add(self.keepalive_interval_row)
 
             # Keepalive count max
-            self.keepalive_count_row = Adw.SpinRow.new_with_range(1, 10, 1)
+            self.keepalive_count_row = Adw.SpinRow.new_with_range(0, 10, 1)
             self.keepalive_count_row.set_title("ServerAlive CountMax")
-            self.keepalive_count_row.set_value(self.config.get_setting('ssh.keepalive_count_max', 3))
+            keepalive_count_value = self.config.get_setting('ssh.keepalive_count_max', None)
+            try:
+                keepalive_count_value = int(keepalive_count_value)
+            except (TypeError, ValueError):
+                keepalive_count_value = 0
+            if keepalive_count_value < 0:
+                keepalive_count_value = 0
+            self.keepalive_count_row.set_value(keepalive_count_value)
             advanced_group.add(self.keepalive_count_row)
 
             # Strict host key checking
@@ -1755,16 +1783,32 @@ class PreferencesWindow(Gtk.Window):
                 if self.parent_window and hasattr(self.parent_window, 'connection_manager'):
                     self.parent_window.connection_manager.native_connect_enabled = native_value
             if hasattr(self, 'connect_timeout_row'):
-                connect_timeout = int(self.connect_timeout_row.get_value())
+                connect_timeout_value = int(self.connect_timeout_row.get_value())
+                if connect_timeout_value <= 0:
+                    connect_timeout = None
+                else:
+                    connect_timeout = connect_timeout_value
                 self.config.set_setting('ssh.connection_timeout', connect_timeout)
             if hasattr(self, 'connection_attempts_row'):
-                connection_attempts = int(self.connection_attempts_row.get_value())
+                connection_attempts_value = int(self.connection_attempts_row.get_value())
+                if connection_attempts_value <= 0:
+                    connection_attempts = None
+                else:
+                    connection_attempts = connection_attempts_value
                 self.config.set_setting('ssh.connection_attempts', connection_attempts)
             if hasattr(self, 'keepalive_interval_row'):
-                keepalive_interval = int(self.keepalive_interval_row.get_value())
+                keepalive_interval_value = int(self.keepalive_interval_row.get_value())
+                if keepalive_interval_value <= 0:
+                    keepalive_interval = None
+                else:
+                    keepalive_interval = keepalive_interval_value
                 self.config.set_setting('ssh.keepalive_interval', keepalive_interval)
             if hasattr(self, 'keepalive_count_row'):
-                keepalive_count = int(self.keepalive_count_row.get_value())
+                keepalive_count_value = int(self.keepalive_count_row.get_value())
+                if keepalive_count_value <= 0:
+                    keepalive_count = None
+                else:
+                    keepalive_count = keepalive_count_value
                 self.config.set_setting('ssh.keepalive_count_max', keepalive_count)
             if hasattr(self, 'strict_host_row'):
                 options = ["accept-new", "yes", "no", "ask"]
@@ -1843,17 +1887,17 @@ class PreferencesWindow(Gtk.Window):
             defaults = self.config.get_default_config().get('ssh', {})
 
             if hasattr(self, 'connect_timeout_row'):
-                self.config.set_setting('ssh.connection_timeout', defaults.get('connection_timeout'))
-                self.connect_timeout_row.set_value(int(defaults.get('connection_timeout', 30)))
+                self.config.set_setting('ssh.connection_timeout', None)
+                self.connect_timeout_row.set_value(0)
             if hasattr(self, 'connection_attempts_row'):
-                self.config.set_setting('ssh.connection_attempts', defaults.get('connection_attempts'))
-                self.connection_attempts_row.set_value(int(defaults.get('connection_attempts', 1)))
+                self.config.set_setting('ssh.connection_attempts', None)
+                self.connection_attempts_row.set_value(0)
             if hasattr(self, 'keepalive_interval_row'):
-                self.config.set_setting('ssh.keepalive_interval', defaults.get('keepalive_interval'))
-                self.keepalive_interval_row.set_value(int(defaults.get('keepalive_interval', 60)))
+                self.config.set_setting('ssh.keepalive_interval', None)
+                self.keepalive_interval_row.set_value(0)
             if hasattr(self, 'keepalive_count_row'):
-                self.config.set_setting('ssh.keepalive_count_max', defaults.get('keepalive_count_max'))
-                self.keepalive_count_row.set_value(int(defaults.get('keepalive_count_max', 3)))
+                self.config.set_setting('ssh.keepalive_count_max', None)
+                self.keepalive_count_row.set_value(0)
             if hasattr(self, 'strict_host_row'):
                 try:
                     self.strict_host_row.set_selected(["accept-new", "yes", "no", "ask"].index('accept-new'))

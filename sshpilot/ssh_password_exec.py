@@ -44,8 +44,6 @@ def run_ssh_with_password(host: str, user: str, password: str, *,
         ssh_opts += ["-o", "PreferredAuthentications=password"]
     ssh_opts += [
         "-o", "NumberOfPasswordPrompts=1",
-        "-o", "ServerAliveInterval=30",
-        "-o", "ServerAliveCountMax=3",
     ]
     if known_hosts_path:
         ssh_opts += ["-o", f"UserKnownHostsFile={known_hosts_path}",
