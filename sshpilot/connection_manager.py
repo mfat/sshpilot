@@ -990,6 +990,11 @@ class ConnectionManager(GObject.Object):
         except Exception:
             self.native_connect_enabled = True
 
+        # Track credential storage state
+        self.libsecret_available = False
+        self.secure_storage_backend = 'uninitialized'
+        self._keyring_backend_name: Optional[str] = None
+
         # Initialize SSH config paths
         self.set_isolated_mode(isolated_mode)
 
@@ -1001,6 +1006,20 @@ class ConnectionManager(GObject.Object):
         if identifier:
             return identifier
         return f"connection-{id(connection)}"
+
+    def _get_keyring_backend_name(self) -> str:
+        """Return a descriptive name for the active keyring backend."""
+
+        if self._keyring_backend_name:
+            return self._keyring_backend_name
+        if keyring is None:
+            return 'unavailable'
+        try:
+            backend = keyring.get_keyring()
+            self._keyring_backend_name = backend.__class__.__name__
+        except Exception:
+            self._keyring_backend_name = 'unavailable'
+        return self._keyring_backend_name
 
     def set_isolated_mode(self, isolated: bool):
         """Switch between standard and isolated SSH configuration"""
@@ -1054,23 +1073,31 @@ class ConnectionManager(GObject.Object):
             logger.debug(f"SSH key scan skipped/failed: {e}")
         
         # Initialize secure storage (can be slow)
+        self.secure_storage_backend = 'none'
         self.libsecret_available = False
         if not is_macos() and Secret is not None:
             try:
                 Secret.Service.get_sync(Secret.ServiceFlags.NONE)
                 self.libsecret_available = True
 
-                logger.info("Secure storage initialized")
+                self.secure_storage_backend = 'libsecret'
+                logger.info("Secure storage backend: libsecret (Secret Service)")
             except Exception as e:
-                logger.warning(f"Failed to initialize secure storage: {e}")
-        elif keyring is not None:
+                logger.warning(f"libsecret backend unavailable: {e}")
+        if not self.libsecret_available and keyring is not None:
             try:
                 backend = keyring.get_keyring()
-                logger.info("Using system keyring backend: %s", backend.__class__.__name__)
-            except Exception:
-                logger.info("Keyring module present but no usable backend; passwords will not be stored")
-        else:
-            logger.info("No secure storage backend available; password storage disabled")
+                backend_name = backend.__class__.__name__
+                self._keyring_backend_name = backend_name
+                self.secure_storage_backend = f"keyring:{backend_name}"
+                logger.info("Secure storage backend: keyring (%s)", backend_name)
+            except Exception as e:
+                logger.info(
+                    "Keyring module present but no usable backend; passwords will not be stored (%s)",
+                    e,
+                )
+        if self.secure_storage_backend == 'none':
+            logger.info("Secure storage backend: unavailable; password storage disabled")
         return False  # run once
 
     # No _ensure_collection needed with libsecret's high-level API
@@ -1601,12 +1628,22 @@ class ConnectionManager(GObject.Object):
 
         # Fallback to cross-platform keyring (macOS Keychain, etc.)
         if keyring is not None:
+            backend_name = self._get_keyring_backend_name()
             try:
                 keyring.set_password(_SERVICE_NAME, f"{username}@{host}", password)
-                logger.debug(f"Password stored for {username}@{host} via keyring")
+                logger.debug(
+                    "Password stored for %s@%s via keyring backend %s",
+                    username,
+                    host,
+                    backend_name,
+                )
                 return True
             except Exception as e:
-                logger.error(f"Failed to store password (keyring): {e}")
+                logger.error(
+                    "Failed to store password (keyring:%s): %s",
+                    backend_name,
+                    e,
+                )
         logger.warning("No secure storage backend available; password not stored")
         return False
 
@@ -1630,14 +1667,24 @@ class ConnectionManager(GObject.Object):
 
         # Fallback to keyring
         if keyring is not None:
+            backend_name = self._get_keyring_backend_name()
             try:
                 pw = keyring.get_password(_SERVICE_NAME, f"{username}@{host}")
                 if pw:
-                    logger.debug(f"Password retrieved for {username}@{host} via keyring")
+                    logger.debug(
+                        "Password retrieved for %s@%s via keyring backend %s",
+                        username,
+                        host,
+                        backend_name,
+                    )
                 return pw
             except Exception as e:
                 logger.error(
-                    f"Error retrieving password (keyring) for {username}@{host}: {e}"
+                    "Error retrieving password (keyring:%s) for %s@%s: %s",
+                    backend_name,
+                    username,
+                    host,
+                    e,
                 )
         return None
 
@@ -1659,11 +1706,24 @@ class ConnectionManager(GObject.Object):
 
         # Also attempt keyring cleanup so both stores are cleared if both were used
         if keyring is not None:
+            backend_name = self._get_keyring_backend_name()
             try:
                 keyring.delete_password(_SERVICE_NAME, f"{username}@{host}")
                 removed_any = True or removed_any
-            except Exception:
-                pass
+                logger.debug(
+                    "Password entry cleared via keyring backend %s for %s@%s",
+                    backend_name,
+                    username,
+                    host,
+                )
+            except Exception as e:
+                logger.debug(
+                    "Keyring backend %s failed to delete %s@%s: %s",
+                    backend_name,
+                    username,
+                    host,
+                    e,
+                )
         if removed_any:
             logger.debug(f"Deleted stored password for {username}@{host}")
         return removed_any
