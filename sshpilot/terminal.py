@@ -225,7 +225,7 @@ class TerminalWidget(Gtk.Box):
         self._is_quitting = False  # Flag to suppress signal handlers during quit
         self.last_error_message = None  # Store last SSH error for reporting
         self._fallback_timer_id = None  # GLib timeout ID for spawn fallback
-        
+
         # Job detection state
         self._job_status = "UNKNOWN"  # IDLE, RUNNING, PROMPT, UNKNOWN
         self._shell_pgid = None  # Store shell process group ID for shell-agnostic detection
@@ -1042,6 +1042,7 @@ class TerminalWidget(Gtk.Box):
                 from .askpass_utils import get_ssh_env_with_askpass
                 askpass_env = get_ssh_env_with_askpass()
                 env.update(askpass_env)
+                self._enable_askpass_log_forwarding(include_existing=True)
             env['TERM'] = env.get('TERM', 'xterm-256color')
             env['SHELL'] = env.get('SHELL', '/bin/bash')
             env['SSHPILOT_FLATPAK'] = '1'
@@ -1153,7 +1154,19 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.error(f"Fallback to interactive prompt failed: {e}")
             self._on_connection_failed(str(e))
-    
+
+    def _enable_askpass_log_forwarding(self, include_existing: bool = False) -> None:
+        """Start forwarding askpass log lines into the application logger."""
+
+        try:
+            from .askpass_utils import ensure_askpass_log_forwarder, forward_askpass_log_to_logger
+        except Exception as exc:
+            logger.debug(f"Unable to import askpass log forwarder: {exc}")
+            return
+
+        ensure_askpass_log_forwarder()
+        forward_askpass_log_to_logger(logger, include_existing=include_existing)
+
     def _on_spawn_complete(self, terminal, pid, error, user_data=None):
         """Called when terminal spawn is complete"""
         # Skip if terminal is quitting
@@ -2232,7 +2245,7 @@ class TerminalWidget(Gtk.Box):
     def _on_destroy(self, widget):
         """Handle widget destruction"""
         logger.debug(f"Terminal widget {self.session_id} being destroyed")
-        
+
         # Disconnect VTE signal handlers first to prevent callbacks on destroyed objects
         if hasattr(self, 'vte') and self.vte:
             try:
@@ -2552,7 +2565,7 @@ class TerminalWidget(Gtk.Box):
     def _handle_child_exit_cleanup(self, status):
         """Handle the actual cleanup work for child process exit (called from main thread)"""
         logger.debug(f"Starting exit cleanup for status {status}")
-        
+
         # Clean up process tracking immediately since the process has already exited
         try:
             # Skip getting PID since process is already dead - just clear our tracking

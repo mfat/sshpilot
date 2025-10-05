@@ -5,6 +5,8 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
+from typing import List
 
 try:
     import gi
@@ -35,6 +37,14 @@ _ASKPASS_SCRIPT = None
 
 _SCHEMA = None
 
+_ASKPASS_LOG_PATH = None
+_ASKPASS_LOG_OFFSET = 0
+_ASKPASS_LOG_INITIALIZED = False
+_ASKPASS_LOG_THREAD = None
+_ASKPASS_LOG_THREAD_STOP = threading.Event()
+_ASKPASS_LOG_THREAD_LOCK = threading.Lock()
+_ASKPASS_LOG_IO_LOCK = threading.Lock()
+
 
 def get_secret_schema() -> "Secret.Schema":
     """Return the shared Secret.Schema for stored secrets."""
@@ -54,6 +64,129 @@ def get_secret_schema() -> "Secret.Schema":
         )
     return _SCHEMA
 
+
+def get_askpass_log_path() -> str:
+    """Return the path to the askpass log file."""
+
+    global _ASKPASS_LOG_PATH
+    if _ASKPASS_LOG_PATH is None:
+        log_dir = (
+            os.environ.get("SSHPILOT_ASKPASS_LOG_DIR")
+            or os.environ.get("XDG_RUNTIME_DIR")
+            or tempfile.gettempdir()
+        )
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+        except Exception:
+            pass
+        _ASKPASS_LOG_PATH = os.path.join(log_dir, "sshpilot-askpass.log")
+    return _ASKPASS_LOG_PATH
+
+
+def read_new_askpass_log_lines(include_existing: bool = False) -> List[str]:
+    """Read newly appended askpass log lines.
+
+    Parameters
+    ----------
+    include_existing:
+        When True, the first call returns existing content in the log file.
+        When False, the first call skips any pre-existing content to avoid
+        replaying old entries.
+    """
+
+    global _ASKPASS_LOG_OFFSET, _ASKPASS_LOG_INITIALIZED
+
+    with _ASKPASS_LOG_IO_LOCK:
+        path = get_askpass_log_path()
+
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            _ASKPASS_LOG_OFFSET = 0
+            return []
+
+        if not _ASKPASS_LOG_INITIALIZED:
+            _ASKPASS_LOG_INITIALIZED = True
+            if not include_existing:
+                _ASKPASS_LOG_OFFSET = size
+                return []
+
+        if _ASKPASS_LOG_OFFSET > size:
+            # File was truncated; restart from beginning
+            _ASKPASS_LOG_OFFSET = 0
+
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                handle.seek(_ASKPASS_LOG_OFFSET)
+                data = handle.read()
+                _ASKPASS_LOG_OFFSET = handle.tell()
+        except OSError:
+            return []
+
+        if not data:
+            return []
+
+        return [line for line in data.splitlines() if line.strip()]
+
+
+def forward_askpass_log_to_logger(log, include_existing: bool = False) -> None:
+    """Forward askpass log lines into the main application logger."""
+
+    try:
+        lines = read_new_askpass_log_lines(include_existing=include_existing)
+    except Exception as exc:
+        log.debug(f"Unable to read askpass log: {exc}")
+        return
+
+    for line in lines:
+        log.info(f"ASKPASS: {line}")
+
+
+def _askpass_log_forwarder_loop() -> None:
+    """Background loop that forwards askpass logs to the module logger."""
+
+    forward_askpass_log_to_logger(logger, include_existing=True)
+
+    while not _ASKPASS_LOG_THREAD_STOP.wait(1.0):
+        forward_askpass_log_to_logger(logger)
+
+
+def ensure_askpass_log_forwarder() -> None:
+    """Ensure a background thread is forwarding askpass logs to the logger."""
+
+    global _ASKPASS_LOG_THREAD
+
+    with _ASKPASS_LOG_THREAD_LOCK:
+        if _ASKPASS_LOG_THREAD and _ASKPASS_LOG_THREAD.is_alive():
+            return
+
+        _ASKPASS_LOG_THREAD_STOP.clear()
+
+        thread = threading.Thread(
+            target=_askpass_log_forwarder_loop,
+            name="AskpassLogForwarder",
+            daemon=True,
+        )
+        try:
+            thread.start()
+            _ASKPASS_LOG_THREAD = thread
+            logger.debug(f"Started askpass log forwarder thread (log: {get_askpass_log_path()})")
+        except Exception as exc:
+            logger.debug(f"Failed to start askpass log forwarder: {exc}")
+
+
+def stop_askpass_log_forwarder() -> None:
+    """Stop the background askpass log forwarder thread."""
+
+    with _ASKPASS_LOG_THREAD_LOCK:
+        if not (_ASKPASS_LOG_THREAD and _ASKPASS_LOG_THREAD.is_alive()):
+            return
+
+        _ASKPASS_LOG_THREAD_STOP.set()
+        # Let the thread exit gracefully; no join to avoid blocking shutdown
+
+
+atexit.register(stop_askpass_log_forwarder)
 
 def store_passphrase(key_path: str, passphrase: str) -> bool:
     """Store a key passphrase using keyring (macOS) or libsecret (Linux)."""
@@ -403,6 +536,7 @@ def force_regenerate_askpass_script() -> str:
 
 def get_ssh_env_with_askpass(require: str = "prefer") -> dict:
     """Get SSH environment with askpass for passphrase handling"""
+    ensure_askpass_log_forwarder()
     env = os.environ.copy()
     env["SSH_ASKPASS"] = ensure_passphrase_askpass()
     env["SSH_ASKPASS_REQUIRE"] = require
