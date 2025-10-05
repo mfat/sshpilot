@@ -2434,8 +2434,8 @@ class ConnectionManager(GObject.Object):
             if not connected:
                 raise Exception("Failed to establish SSH connection")
             
-            # Set up port forwarding if needed
-            if connection.forwarding_rules:
+            # Set up port forwarding if needed (non-native mode only)
+            if connection.forwarding_rules and not use_native:
                 await connection.setup_forwarding()
             
             # Determine the tracking key used for keepalive management
