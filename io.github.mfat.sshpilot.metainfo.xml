@@ -55,16 +55,16 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/38e1a8a/screenshots/main-window-with-tabs.png</image>
-      <caption>Main Window with Tabs</caption>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/c8b8a73186c217a670c4dce8722b79ec3141ba01/screenshots/start-page.png</image>
+      <caption>Start Page</caption>
+    </screenshot>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/4b91305f6f195fca96d21f39e332e8e9c35f6f4a/screenshots/main.png</image>
+      <caption>Terminal</caption>
     </screenshot>
     <screenshot type="default">
       <image>https://raw.githubusercontent.com/mfat/sshpilot/38e1a8a/screenshots/tab-overview.png</image>
       <caption>Tab Overview</caption>
-    </screenshot>
-    <screenshot type="default">
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/38e1a8a/screenshots/start-page.png</image>
-      <caption>Start Page</caption>
     </screenshot>
     <screenshot type="default">
       <image>https://raw.githubusercontent.com/mfat/sshpilot/38e1a8a/screenshots/ssh-copy-id.png</image>
