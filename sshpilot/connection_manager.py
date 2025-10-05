@@ -19,9 +19,10 @@ from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
 from .platform_utils import is_macos, get_config_dir, get_ssh_dir
 
 try:
+    import gi
+    gi.require_version('Secret', '1')
     from gi.repository import Secret
 except Exception:
-
     Secret = None
 try:
     import keyring
