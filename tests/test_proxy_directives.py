@@ -233,6 +233,7 @@ def test_terminal_widget_prepares_key_in_default_mode(monkeypatch, tmp_path):
     assert all(arg != "IdentitiesOnly=yes" for arg in widget.vte.last_cmd)
 
 
+
 def test_native_mode_prepares_key_even_in_default_selection(tmp_path):
     loop = asyncio.get_event_loop()
     key_path = tmp_path / "id_rsa"
