@@ -509,23 +509,25 @@ class TerminalWidget(Gtk.Box):
         if not manager or not hasattr(manager, 'prepare_key_for_connection'):
             return
 
+        keyfile = getattr(connection, 'keyfile', '') or ''
+        if not keyfile or keyfile.startswith('Select key file'):
+            return
+
         try:
             key_select_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
         except Exception:
             key_select_mode = 0
-
-        if key_select_mode not in (1, 2):
-            return
-
-        keyfile = getattr(connection, 'keyfile', '') or ''
-        if not keyfile or keyfile.startswith('Select key file'):
-            return
 
         expanded_keyfile = os.path.expanduser(keyfile)
         key_path = expanded_keyfile if os.path.isfile(expanded_keyfile) else keyfile
         if not os.path.isfile(key_path):
             logger.debug("Explicit key not found on disk, skipping native preload: %s", keyfile)
             return
+
+        if key_select_mode == 0:
+            logger.debug(
+                "Preparing explicit key for native SSH connection while using default key selection"
+            )
 
         try:
             prepared = manager.prepare_key_for_connection(key_path)
@@ -758,26 +760,29 @@ class TerminalWidget(Gtk.Box):
                     except Exception:
                         pass
 
+                    keyfile_value = getattr(self.connection, 'keyfile', '') or ''
+                    has_explicit_key = bool(
+                        keyfile_value
+                        and not str(keyfile_value).startswith('Select key file')
+                        and os.path.isfile(keyfile_value)
+                    )
+
+                    if has_explicit_key and hasattr(self, 'connection_manager') and self.connection_manager:
+                        try:
+                            if hasattr(self.connection_manager, 'prepare_key_for_connection'):
+                                key_prepared = self.connection_manager.prepare_key_for_connection(keyfile_value)
+                                if key_prepared:
+                                    logger.debug(f"Key prepared for connection: {keyfile_value}")
+                                else:
+                                    logger.warning(f"Failed to prepare key for connection: {keyfile_value}")
+                        except Exception as e:
+                            logger.warning(f"Error preparing key for connection: {e}")
+
                     # Only add specific key when a dedicated key mode is selected
-                    if key_select_mode in (1, 2) and hasattr(self.connection, 'keyfile') and self.connection.keyfile and \
-                       os.path.isfile(self.connection.keyfile) and \
-                       not self.connection.keyfile.startswith('Select key file'):
-
-                        # Prepare key for connection (add to ssh-agent if needed)
-                        if hasattr(self, 'connection_manager') and self.connection_manager:
-                            try:
-                                if hasattr(self.connection_manager, 'prepare_key_for_connection'):
-                                    key_prepared = self.connection_manager.prepare_key_for_connection(self.connection.keyfile)
-                                    if key_prepared:
-                                        logger.debug(f"Key prepared for connection: {self.connection.keyfile}")
-                                    else:
-                                        logger.warning(f"Failed to prepare key for connection: {self.connection.keyfile}")
-                            except Exception as e:
-                                logger.warning(f"Error preparing key for connection: {e}")
-
-                        if self.connection.keyfile not in ssh_cmd:
-                            ssh_cmd.extend(['-i', self.connection.keyfile])
-                        logger.debug(f"Using SSH key: {self.connection.keyfile}")
+                    if has_explicit_key and key_select_mode in (1, 2):
+                        if keyfile_value not in ssh_cmd:
+                            ssh_cmd.extend(['-i', keyfile_value])
+                        logger.debug(f"Using SSH key: {keyfile_value}")
                         if key_select_mode == 1:
                             ensure_option('IdentitiesOnly=yes')
 
