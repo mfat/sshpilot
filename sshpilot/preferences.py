@@ -869,14 +869,7 @@ class PreferencesWindow(Gtk.Window):
             remember_size_switch.set_subtitle("Restore window size on startup")
             remember_size_switch.set_active(True)
             
-            # Auto focus terminal switch
-            auto_focus_switch = Adw.SwitchRow()
-            auto_focus_switch.set_title("Auto Focus Terminal")
-            auto_focus_switch.set_subtitle("Focus terminal when connecting")
-            auto_focus_switch.set_active(True)
-            
             window_group.add(remember_size_switch)
-            window_group.add(auto_focus_switch)
             interface_page.add(window_group)
 
             # Shortcuts page with inline editor
