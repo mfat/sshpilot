@@ -994,6 +994,7 @@ class ConnectionManager(GObject.Object):
         self.libsecret_available = False
         self.secure_storage_backend = 'uninitialized'
         self._keyring_backend_name: Optional[str] = None
+        self._keyring_used = False
 
         # Initialize SSH config paths
         self.set_isolated_mode(isolated_mode)
@@ -1020,6 +1021,23 @@ class ConnectionManager(GObject.Object):
         except Exception:
             self._keyring_backend_name = 'unavailable'
         return self._keyring_backend_name
+
+    def _should_use_keyring_fallback(self, *, force: bool = False) -> bool:
+        """Return True when we should consult the cross-platform keyring."""
+
+        if keyring is None:
+            return False
+        if force:
+            return True
+        if self.secure_storage_backend in ('uninitialized', 'none'):
+            return True
+        if self.secure_storage_backend.startswith('keyring'):
+            return True
+        if self._keyring_used:
+            return True
+        if is_macos():
+            return True
+        return False
 
     def set_isolated_mode(self, isolated: bool):
         """Switch between standard and isolated SSH configuration"""
@@ -1605,6 +1623,7 @@ class ConnectionManager(GObject.Object):
     def store_password(self, host: str, username: str, password: str):
         """Store password securely in system keyring"""
         # Prefer libsecret on Linux when available
+        libsecret_failed = False
         if not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
             try:
                 attributes = {
@@ -1625,9 +1644,10 @@ class ConnectionManager(GObject.Object):
                 return True
             except Exception as e:
                 logger.error(f"Failed to store password (libsecret): {e}")
+                libsecret_failed = True
 
         # Fallback to cross-platform keyring (macOS Keychain, etc.)
-        if keyring is not None:
+        if self._should_use_keyring_fallback(force=libsecret_failed):
             backend_name = self._get_keyring_backend_name()
             try:
                 keyring.set_password(_SERVICE_NAME, f"{username}@{host}", password)
@@ -1637,6 +1657,7 @@ class ConnectionManager(GObject.Object):
                     host,
                     backend_name,
                 )
+                self._keyring_used = True
                 return True
             except Exception as e:
                 logger.error(
@@ -1666,11 +1687,12 @@ class ConnectionManager(GObject.Object):
                 logger.error(f"Error retrieving password (libsecret) for {username}@{host}: {e}")
 
         # Fallback to keyring
-        if keyring is not None:
+        if self._should_use_keyring_fallback():
             backend_name = self._get_keyring_backend_name()
             try:
                 pw = keyring.get_password(_SERVICE_NAME, f"{username}@{host}")
                 if pw:
+                    self._keyring_used = True
                     logger.debug(
                         "Password retrieved for %s@%s via keyring backend %s",
                         username,
@@ -1679,13 +1701,23 @@ class ConnectionManager(GObject.Object):
                     )
                 return pw
             except Exception as e:
-                logger.error(
-                    "Error retrieving password (keyring:%s) for %s@%s: %s",
-                    backend_name,
-                    username,
-                    host,
-                    e,
-                )
+                message = str(e)
+                if 'kwallet' in message.lower():
+                    logger.debug(
+                        "Keyring backend %s unavailable during retrieval for %s@%s: %s",
+                        backend_name,
+                        username,
+                        host,
+                        e,
+                    )
+                else:
+                    logger.error(
+                        "Error retrieving password (keyring:%s) for %s@%s: %s",
+                        backend_name,
+                        username,
+                        host,
+                        e,
+                    )
         return None
 
     def delete_password(self, host: str, username: str) -> bool:
@@ -1705,7 +1737,7 @@ class ConnectionManager(GObject.Object):
                 logger.error(f"Error deleting password (libsecret) for {username}@{host}: {e}")
 
         # Also attempt keyring cleanup so both stores are cleared if both were used
-        if keyring is not None:
+        if self._should_use_keyring_fallback():
             backend_name = self._get_keyring_backend_name()
             try:
                 keyring.delete_password(_SERVICE_NAME, f"{username}@{host}")
