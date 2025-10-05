@@ -784,6 +784,9 @@ class ConnectionDialog(Adw.Window):
         self.validation_results: Dict[str, ValidationResult] = {}
         self._save_buttons = []
         
+        self._cached_key_passphrase: Optional[str] = None
+        self._last_key_select_use_specific: Optional[bool] = None
+
         self.setup_ui()
         GLib.idle_add(self.load_connection_data)
     
@@ -991,6 +994,17 @@ class ConnectionDialog(Adw.Window):
             use_specific = (combo_row.get_selected() == 1) if combo_row else False
         except Exception:
             use_specific = False
+
+        previous_state = getattr(self, '_last_key_select_use_specific', None)
+
+        # When leaving specific-key mode, remember the current passphrase before disabling fields
+        if previous_state and not use_specific:
+            try:
+                if hasattr(self, 'key_passphrase_row'):
+                    self._cached_key_passphrase = self.key_passphrase_row.get_text()
+            except Exception:
+                self._cached_key_passphrase = None
+
         # Enable/disable keyfile browse UI
         try:
             if hasattr(self, 'keyfile_btn'):
@@ -1006,8 +1020,40 @@ class ConnectionDialog(Adw.Window):
             if hasattr(self, 'key_only_row'):
                 self.key_only_row.set_visible(use_specific)
                 self.key_only_row.set_sensitive(use_specific)
+            if hasattr(self, 'key_passphrase_row'):
+                self.key_passphrase_row.set_sensitive(use_specific)
         except Exception:
             pass
+
+        # When re-entering specific-key mode, restore cached or stored passphrase after UI updates
+        if previous_state is not None and not previous_state and use_specific:
+            restored = False
+            cached_passphrase = getattr(self, '_cached_key_passphrase', None)
+            if hasattr(self, 'key_passphrase_row') and cached_passphrase is not None:
+                try:
+                    self.key_passphrase_row.set_text(cached_passphrase)
+                    restored = True
+                except Exception:
+                    restored = False
+
+            if not restored:
+                key_path = None
+                if hasattr(self, '_selected_keyfile_path') and self._selected_keyfile_path:
+                    key_path = self._selected_keyfile_path
+                elif hasattr(self, 'keyfile_row') and hasattr(self.keyfile_row, 'get_subtitle'):
+                    key_path = self.keyfile_row.get_subtitle() or None
+                if (not key_path) and self.is_editing and hasattr(self, 'connection') and self.connection:
+                    key_path = (
+                        getattr(self.connection, 'keyfile', None)
+                        or getattr(self.connection, 'private_key', None)
+                    )
+                if key_path:
+                    try:
+                        self._update_passphrase_for_key(key_path)
+                    except Exception:
+                        pass
+
+        self._last_key_select_use_specific = use_specific
         
     
     def validate_ssh_config_syntax(self, config_text):
