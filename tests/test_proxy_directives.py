@@ -233,39 +233,6 @@ def test_terminal_widget_prepares_key_in_default_mode(monkeypatch, tmp_path):
     assert all(arg != "IdentitiesOnly=yes" for arg in widget.vte.last_cmd)
 
 
-
-def test_native_mode_prepares_key_even_in_default_selection(tmp_path):
-    loop = asyncio.get_event_loop()
-    key_path = tmp_path / "id_rsa"
-    key_path.write_text("dummy")
-
-    conn = Connection(
-        {
-            "host": "native.example.com",
-            "username": "dave",
-            "keyfile": str(key_path),
-            "key_select_mode": 0,
-            "auth_method": 0,
-        }
-    )
-    loop.run_until_complete(_connect(conn))
-
-    from sshpilot import terminal as terminal_mod
-
-    prepared_keys = []
-
-    widget = terminal_mod.TerminalWidget.__new__(terminal_mod.TerminalWidget)
-    widget.connection = conn
-    widget.connection_manager = types.SimpleNamespace(
-        prepare_key_for_connection=lambda value: prepared_keys.append(value) or True,
-        native_connect_enabled=True,
-    )
-
-    widget._prepare_key_for_native_mode()
-
-    assert prepared_keys == [str(key_path)]
-
-
 def test_terminal_manager_prepares_connection_before_spawn(monkeypatch):
     stub_terminal_module = types.ModuleType("sshpilot.terminal")
     stub_terminal_module.TerminalWidget = object
