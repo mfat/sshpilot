@@ -1206,7 +1206,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Make sure the connection list is focusable and can receive key events
         self.connection_list.set_focusable(True)
         self.connection_list.set_can_focus(True)
-        self.connection_list.set_focus_on_click(True)
+        # Manage focus manually so double-click activation can hand control to the terminal
+        self.connection_list.set_focus_on_click(False)
         self.connection_list.set_activate_on_single_click(False)  # Require double-click to activate
         
         # Set connection list as the default focus widget for the sidebar
@@ -3218,7 +3219,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if current_page:
                 child = current_page.get_child()
                 if hasattr(child, 'vte'):
-                    child.vte.grab_focus()
+                    self._focus_terminal_widget(child)
         else:
             # Focus connection list with toast notification
             self.focus_connection_list()
@@ -3259,6 +3260,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             return
 
         if n_press == 1:  # Single click - just select
+            try:
+                self.connection_list.grab_focus()
+            except Exception:
+                pass
             try:
                 state = gesture.get_current_event_state()
             except Exception:
@@ -3338,10 +3343,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.tab_view.set_selected_page(page)
 
             self.active_terminals[connection] = target_term
-            try:
-                target_term.vte.grab_focus()
-            except Exception:
-                pass
+            self._focus_terminal_widget(target_term)
         except Exception as e:
             logger.error(f"Failed to focus most recent tab for {getattr(connection, 'nickname', '')}: {e}")
 
@@ -3379,7 +3381,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Update most-recent mapping
                     self.active_terminals[connection] = target_term
                     # Give focus to the VTE terminal so user can start typing immediately
-                    target_term.vte.grab_focus()
+                    self._focus_terminal_widget(target_term)
                     return
 
             # No existing tabs for this connection -> open a new one
@@ -3422,10 +3424,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self.tab_view.set_selected_page(page)
                     # Update most-recent mapping
                     self.active_terminals[connection] = next_term
-                    try:
-                        next_term.vte.grab_focus()
-                    except Exception:
-                        pass
+                    self._focus_terminal_widget(next_term)
                     return
 
             # No existing tabs for this connection -> open a new one
@@ -3436,6 +3435,32 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 pass
         except Exception as e:
             logger.error(f"Failed to cycle or open for {getattr(connection, 'nickname', '')}: {e}")
+
+    def _focus_terminal_widget(self, terminal: TerminalWidget) -> None:
+        """Request focus for a terminal widget, retrying on idle if needed."""
+
+        if terminal is None:
+            return
+
+        vte_widget = getattr(terminal, 'vte', None)
+        if vte_widget is None:
+            return
+
+        def _focus_attempt(_source=None) -> bool:
+            try:
+                vte_widget.grab_focus()
+            except Exception as focus_error:
+                logger.debug(f"Deferred terminal focus failed: {focus_error}")
+            return GLib.SOURCE_REMOVE
+
+        try:
+            vte_widget.grab_focus()
+        except Exception:
+            pass
+
+        GLib.idle_add(_focus_attempt, priority=GLib.PRIORITY_DEFAULT_IDLE)
+        GLib.timeout_add(150, _focus_attempt)
+        GLib.timeout_add(350, _focus_attempt)
 
     def on_tab_selected(self, tab_view: Adw.TabView, _pspec=None) -> None:
         """Update active terminal mapping when the user switches tabs."""
