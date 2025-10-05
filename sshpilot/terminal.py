@@ -568,7 +568,6 @@ class TerminalWidget(Gtk.Box):
             password_auth_selected = False
             has_saved_password = False
             password_value = None
-            has_saved_passphrase = False
             auth_method = 0
             resolved_for_connection = ''
 
@@ -607,34 +606,6 @@ class TerminalWidget(Gtk.Box):
                 auth_method = 0
                 password_auth_selected = False
                 has_saved_password = False
-
-            # Detect when we have a stored passphrase for the selected key
-            try:
-                if hasattr(self, 'connection_manager') and self.connection_manager:
-                    if hasattr(self.connection_manager, 'get_key_passphrase'):
-                        keyfile_attr = getattr(self.connection, 'keyfile', '') if hasattr(self.connection, 'keyfile') else ''
-                        keyfile_attr = keyfile_attr or ''
-                        if keyfile_attr and not str(keyfile_attr).startswith('Select key file'):
-                            expanded_keyfile = os.path.expanduser(str(keyfile_attr))
-                            candidate_paths = []
-                            for candidate in (expanded_keyfile, str(keyfile_attr)):
-                                if candidate and candidate not in candidate_paths:
-                                    candidate_paths.append(candidate)
-                            for key_path in candidate_paths:
-                                try:
-                                    passphrase = self.connection_manager.get_key_passphrase(key_path)
-                                except Exception as exc:
-                                    logger.debug(
-                                        "Failed to check stored passphrase for %s: %s",
-                                        key_path,
-                                        exc,
-                                    )
-                                    continue
-                                if passphrase:
-                                    has_saved_passphrase = True
-                                    break
-            except Exception as exc:
-                logger.debug(f"Error detecting stored key passphrase: {exc}")
 
             if native_mode_enabled and not ssh_cmd:
                 host_label = ''
@@ -1063,20 +1034,13 @@ class TerminalWidget(Gtk.Box):
                     env.pop("SSH_ASKPASS", None)
                     env.pop("SSH_ASKPASS_REQUIRE", None)
                     logger.warning("sshpass not available; falling back to interactive password prompt")
-            elif (password_auth_selected or auth_method == 0) and not has_saved_password and not has_saved_passphrase:
+            elif (password_auth_selected or auth_method == 0) and not has_saved_password:
                 # Password may be required but none saved - allow interactive prompt
                 logger.debug("No saved password - using interactive prompt if required")
             else:
                 # Use askpass for passphrase prompts (key-based auth)
-                if has_saved_passphrase:
-                    from .askpass_utils import get_ssh_env_with_forced_askpass
-
-                    askpass_env = get_ssh_env_with_forced_askpass()
-                    logger.debug("Stored key passphrase detected - forcing SSH_ASKPASS")
-                else:
-                    from .askpass_utils import get_ssh_env_with_askpass
-
-                    askpass_env = get_ssh_env_with_askpass()
+                from .askpass_utils import get_ssh_env_with_askpass
+                askpass_env = get_ssh_env_with_askpass()
                 env.update(askpass_env)
                 self._enable_askpass_log_forwarding(include_existing=True)
             env['TERM'] = env.get('TERM', 'xterm-256color')
