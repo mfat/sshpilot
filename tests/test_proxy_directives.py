@@ -148,6 +148,91 @@ def test_terminal_widget_uses_prepared_proxy_command(monkeypatch):
     assert cmd.count(conn.ssh_cmd[-1]) == 1
 
 
+def test_terminal_widget_prepares_key_in_default_mode(monkeypatch, tmp_path):
+    loop = asyncio.get_event_loop()
+    key_path = tmp_path / "id_ed25519"
+    key_path.write_text("dummy")
+
+    conn = Connection(
+        {
+            "host": "example.com",
+            "username": "carol",
+            "keyfile": str(key_path),
+            "key_select_mode": 0,
+            "auth_method": 0,
+        }
+    )
+    loop.run_until_complete(_connect(conn))
+
+    from sshpilot import terminal as terminal_mod
+
+    class DummyVte:
+        def __init__(self):
+            self.last_cmd = None
+
+        def spawn_async(self, *args):
+            self.last_cmd = list(args[2])
+
+        def grab_focus(self):
+            pass
+
+    prepared_keys = []
+
+    widget = terminal_mod.TerminalWidget.__new__(terminal_mod.TerminalWidget)
+    widget.connection = conn
+    widget.config = types.SimpleNamespace(get_ssh_config=lambda: {})
+    widget.connection_manager = types.SimpleNamespace(
+        get_password=lambda *a, **k: None,
+        prepare_key_for_connection=lambda value: prepared_keys.append(value) or True,
+        known_hosts_path="",
+    )
+    widget.vte = DummyVte()
+    widget.apply_theme = lambda *a, **k: None
+    widget._show_forwarding_error_dialog = lambda *a, **k: None
+    widget._set_connecting_overlay_visible = lambda *a, **k: None
+    widget._set_disconnected_banner_visible = lambda *a, **k: None
+    widget._on_connection_failed = lambda *a, **k: None
+    widget._on_spawn_complete = lambda *a, **k: None
+    widget._fallback_hide_spinner = lambda *a, **k: False
+    widget.connecting_bg = types.SimpleNamespace(set_visible=lambda *a, **k: None)
+    widget.connecting_box = types.SimpleNamespace(set_visible=lambda *a, **k: None)
+    widget._fallback_timer_id = None
+    widget._is_quitting = False
+
+    monkeypatch.setattr(
+        terminal_mod,
+        "get_port_checker",
+        lambda: types.SimpleNamespace(get_port_conflicts=lambda ports, addr: []),
+    )
+    monkeypatch.setattr(
+        terminal_mod.Vte,
+        "Pty",
+        types.SimpleNamespace(new_sync=lambda *a, **k: object()),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        terminal_mod.Vte,
+        "PtyFlags",
+        types.SimpleNamespace(DEFAULT=0),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        terminal_mod.GLib,
+        "SpawnFlags",
+        types.SimpleNamespace(DEFAULT=0),
+        raising=False,
+    )
+    monkeypatch.setattr(terminal_mod.GLib, "timeout_add_seconds", lambda *a, **k: 0, raising=False)
+    if not hasattr(terminal_mod.GLib, "source_remove"):
+        monkeypatch.setattr(terminal_mod.GLib, "source_remove", lambda *a, **k: None, raising=False)
+
+    widget._setup_ssh_terminal()
+
+    assert prepared_keys == [str(key_path)]
+    assert widget.vte.last_cmd is not None
+    assert all(arg != "IdentitiesOnly=yes" for arg in widget.vte.last_cmd)
+
+
 def test_terminal_manager_prepares_connection_before_spawn(monkeypatch):
     stub_terminal_module = types.ModuleType("sshpilot.terminal")
     stub_terminal_module.TerminalWidget = object
