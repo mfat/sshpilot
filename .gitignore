@@ -17,3 +17,5 @@ release.sh
 io.github.mfat.sshpilot.yaml
 python3-deps.yml
 sshpilot-launcher.sh
+scripts/generate_github_url.sh
+scripts/screenshot_url.sh
