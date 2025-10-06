@@ -2269,7 +2269,10 @@ class TerminalWidget(Gtk.Box):
             meta = bool(state & Gdk.ModifierType.META_MASK)
 
             if keyval in (Gdk.KEY_f, Gdk.KEY_F) and (primary or meta):
-                self._show_search_overlay(select_all=True)
+                if hasattr(self, 'search_revealer') and self.search_revealer.get_reveal_child():
+                    self._hide_search_overlay()
+                else:
+                    self._show_search_overlay(select_all=True)
                 return True
 
             if keyval in (Gdk.KEY_g, Gdk.KEY_G) and (primary or meta):
@@ -3126,6 +3129,10 @@ class TerminalWidget(Gtk.Box):
                     self._on_search_previous()
                 else:
                     self._on_search_next()
+                return True
+
+            if keyval in (Gdk.KEY_f, Gdk.KEY_F) and (primary or meta):
+                self._hide_search_overlay()
                 return True
 
             if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and shift:
