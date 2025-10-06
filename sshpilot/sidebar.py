@@ -129,16 +129,87 @@ def _get_color_class(rgba: Optional[Gdk.RGBA]) -> Optional[str]:
 
 def _set_tint_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
     try:
-        color_value = rgba.to_string()
+        base_color = rgba.to_string()
+
+        hover_rgba = Gdk.RGBA()
+        hover_rgba.red = rgba.red
+        hover_rgba.green = rgba.green
+        hover_rgba.blue = rgba.blue
+        hover_rgba.alpha = min(1.0, rgba.alpha + 0.12)
+        hover_color = hover_rgba.to_string()
+
+        active_rgba = Gdk.RGBA()
+        active_rgba.red = rgba.red
+        active_rgba.green = rgba.green
+        active_rgba.blue = rgba.blue
+        active_rgba.alpha = min(1.0, rgba.alpha + 0.18)
+        active_color = active_rgba.to_string()
     except Exception:
         logger.debug("Failed to convert RGBA to string", exc_info=True)
         return
 
     try:
+        selected_rgba = Gdk.RGBA()
+        selected_rgba.red = rgba.red
+        selected_rgba.green = rgba.green
+        selected_rgba.blue = rgba.blue
+        selected_rgba.alpha = min(1.0, max(rgba.alpha + 0.24, 0.55))
+        selected_color = selected_rgba.to_string()
+
+        selected_hover_rgba = Gdk.RGBA()
+        selected_hover_rgba.red = rgba.red
+        selected_hover_rgba.green = rgba.green
+        selected_hover_rgba.blue = rgba.blue
+        selected_hover_rgba.alpha = min(1.0, selected_rgba.alpha + 0.08)
+        selected_hover_color = selected_hover_rgba.to_string()
+
+        selected_active_rgba = Gdk.RGBA()
+        selected_active_rgba.red = rgba.red
+        selected_active_rgba.green = rgba.green
+        selected_active_rgba.blue = rgba.blue
+        selected_active_rgba.alpha = min(1.0, selected_rgba.alpha + 0.12)
+        selected_active_color = selected_active_rgba.to_string()
+
+        border_rgba = Gdk.RGBA()
+        border_rgba.red = rgba.red
+        border_rgba.green = rgba.green
+        border_rgba.blue = rgba.blue
+        border_rgba.alpha = 1.0
+        border_color = border_rgba.to_string()
+    except Exception:
+        logger.debug("Failed to derive selected tint colors", exc_info=True)
+        return
+
+    try:
         provider = Gtk.CssProvider()
         css_data = f"""
-        .tinted:not(:selected):not(:hover):not(:active) {{
-            background-color: {color_value};
+        .tinted {{
+            transition: background-color 0s ease;
+        }}
+
+        .tinted:not(:selected) {{
+            background-color: {base_color};
+        }}
+
+        .tinted:hover:not(:selected) {{
+            background-color: {hover_color};
+        }}
+
+        .tinted:active:not(:selected) {{
+            background-color: {active_color};
+        }}
+
+        .tinted:selected {{
+            background-color: {selected_color};
+            box-shadow: inset 0 0 0 1px {border_color};
+        }}
+
+        .tinted:selected:hover {{
+            background-color: {selected_hover_color};
+        }}
+
+        .tinted:selected:active {{
+            background-color: {selected_active_color};
         }}
         """
         provider.load_from_data(css_data.encode('utf-8'))

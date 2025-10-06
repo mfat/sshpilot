@@ -362,10 +362,32 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             .navigation-sidebar row.tinted {
               margin: 4px 8px;
               border-radius: 10px;
+              transition: background-color 0s ease;
             }
 
-            .navigation-sidebar row.tinted:not(:selected):not(:hover):not(:active) {
+            .navigation-sidebar row.tinted:not(:selected) {
               background-color: alpha(@accent_bg_color, 0.18);
+            }
+
+            .navigation-sidebar row.tinted:hover:not(:selected) {
+              background-color: alpha(@accent_bg_color, 0.24);
+            }
+
+            .navigation-sidebar row.tinted:active:not(:selected) {
+              background-color: alpha(@accent_bg_color, 0.30);
+            }
+
+            .navigation-sidebar row.tinted:selected {
+              background-color: alpha(@accent_bg_color, 0.36);
+              box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.65);
+            }
+
+            .navigation-sidebar row.tinted:selected:hover {
+              background-color: alpha(@accent_bg_color, 0.42);
+            }
+
+            .navigation-sidebar row.tinted:selected:active {
+              background-color: alpha(@accent_bg_color, 0.48);
             }
             
             /* Group drop target highlight */
