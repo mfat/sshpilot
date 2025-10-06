@@ -7,42 +7,11 @@ import logging
 from pathlib import Path
 from typing import Optional, List
 
-from paramiko import pkey
-from paramiko.ssh_exception import (
-    PasswordRequiredException,
-    SSHException,
-)
-
 from gi.repository import GObject
 
 from .platform_utils import get_ssh_dir
 
 logger = logging.getLogger(__name__)
-
-
-_IGNORED_KEY_FILENAMES = {"config", "known_hosts", "authorized_keys"}
-
-
-def _is_private_key(file_path: Path) -> bool:
-    """Return True if *file_path* looks like a private key."""
-
-    try:
-        if not file_path.is_file():
-            return False
-        name = file_path.name
-        if name.endswith(".pub"):
-            return False
-        if name in _IGNORED_KEY_FILENAMES:
-            return False
-        try:
-            pkey.load_private_key_file(str(file_path))
-            return True
-        except PasswordRequiredException:
-            return True
-        except (SSHException, ValueError):
-            return False
-    except OSError:
-        return False
 
 
 class SSHKey:
@@ -86,13 +55,19 @@ class KeyManager(GObject.Object):
             ssh_dir = self.ssh_dir or Path(get_ssh_dir())
             if not ssh_dir.exists():
                 return keys
-            seen: set[Path] = set()
+            # Recursively walk SSH directory for private keys that have a matching .pub
             for file_path in ssh_dir.rglob("*"):
-                if file_path in seen:
+                if not file_path.is_file():
                     continue
-                if _is_private_key(file_path):
+                name = file_path.name
+                if name.endswith(".pub"):
+                    continue
+                # skip very common non-key files
+                if name in ("config", "known_hosts", "authorized_keys"):
+                    continue
+                pub = file_path.with_suffix(file_path.suffix + ".pub")
+                if pub.exists():
                     keys.append(SSHKey(str(file_path)))
-                    seen.add(file_path)
         except Exception as e:
             logger.error("Failed to discover SSH keys: %s", e)
         return keys

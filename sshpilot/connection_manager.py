@@ -13,12 +13,10 @@ import subprocess
 import shlex
 import signal
 import re
-from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple, Union, Set
 
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
 from .platform_utils import is_macos, get_config_dir, get_ssh_dir
-from .key_manager import _is_private_key
 
 try:
     import gi
@@ -1692,30 +1690,25 @@ class ConnectionManager(GObject.Object):
 
     def load_ssh_keys(self):
         """Auto-detect SSH keys in configured SSH directories."""
-        search_dirs: List[Path] = []
+        search_dirs = []
         if getattr(self, 'isolated_mode', False):
-            search_dirs.append(Path(get_config_dir()))
-        search_dirs.append(Path(get_ssh_dir()))
+            search_dirs.append(get_config_dir())
+        search_dirs.append(get_ssh_dir())
 
         keys: List[str] = []
         seen = set()
-        for base_dir in search_dirs:
-            try:
-                ssh_path = base_dir if isinstance(base_dir, Path) else Path(base_dir)
-            except TypeError:
-                continue
-            if not ssh_path.exists():
+        for ssh_dir in search_dirs:
+            if not os.path.exists(ssh_dir):
                 continue
             try:
-                for file_path in ssh_path.rglob('*'):
-                    if not _is_private_key(file_path):
-                        continue
-                    key_str = str(file_path)
-                    if key_str not in seen:
-                        keys.append(key_str)
-                        seen.add(key_str)
+                for filename in os.listdir(ssh_dir):
+                    if filename.endswith('.pub'):
+                        private_key = os.path.join(ssh_dir, filename[:-4])
+                        if os.path.exists(private_key) and private_key not in seen:
+                            keys.append(private_key)
+                            seen.add(private_key)
             except Exception as e:
-                logger.error(f"Failed to load SSH keys from {ssh_path}: {e}")
+                logger.error(f"Failed to load SSH keys from {ssh_dir}: {e}")
 
         logger.info(f"Found {len(keys)} SSH keys: {keys}")
         return keys
