@@ -294,6 +294,9 @@ def download_file(
     extra_ssh_opts: Optional[List[str]] = None,
     use_publickey: bool = False,
     inherit_env: Optional[Dict[str, str]] = None,
+    saved_passphrase: Optional[str] = None,
+    keyfile: Optional[str] = None,
+    key_mode: Optional[int] = None,
 ) -> bool:
     """Download a remote file (or directory when ``recursive``) via SCP."""
     if not host or not remote_file or not local_path:
@@ -302,8 +305,54 @@ def download_file(
     target_user_host = user or ''
     remote_target_host = host
     env = (inherit_env or os.environ).copy()
-    env.pop('SSH_ASKPASS', None)
-    env.pop('SSH_ASKPASS_REQUIRE', None)
+
+    ssh_extra_opts: List[str] = list(extra_ssh_opts or [])
+    passphrase_auth = bool(saved_passphrase) and not password
+
+    if passphrase_auth:
+        try:
+            from .askpass_utils import (
+                get_ssh_env_with_forced_askpass,
+                get_scp_ssh_options,
+            )
+        except Exception:
+            get_ssh_env_with_forced_askpass = None  # type: ignore
+            get_scp_ssh_options = None  # type: ignore
+
+        if get_ssh_env_with_forced_askpass is not None:
+            try:
+                askpass_env = get_ssh_env_with_forced_askpass()
+                if isinstance(askpass_env, dict):
+                    env.update(askpass_env)
+            except Exception:
+                logger.debug('SCP: Unable to initialize askpass environment', exc_info=True)
+
+        if keyfile and '-i' not in ssh_extra_opts:
+            ssh_extra_opts.extend(['-i', keyfile])
+
+        if key_mode == 1 and 'IdentitiesOnly=yes' not in ' '.join(ssh_extra_opts):
+            ssh_extra_opts.extend(['-o', 'IdentitiesOnly=yes'])
+
+        if get_scp_ssh_options is not None:
+            try:
+                passphrase_opts = list(get_scp_ssh_options())
+            except Exception:
+                passphrase_opts = []
+            for idx in range(0, len(passphrase_opts) - 1, 2):
+                flag = passphrase_opts[idx]
+                value = passphrase_opts[idx + 1]
+                if not flag or not value:
+                    continue
+                already = False
+                for opt_idx in range(0, len(ssh_extra_opts) - 1, 2):
+                    if ssh_extra_opts[opt_idx] == flag and ssh_extra_opts[opt_idx + 1] == value:
+                        already = True
+                        break
+                if not already:
+                    ssh_extra_opts.extend([flag, value])
+    else:
+        env.pop('SSH_ASKPASS', None)
+        env.pop('SSH_ASKPASS_REQUIRE', None)
 
     if password:
         try:
@@ -316,7 +365,7 @@ def download_file(
                 direction='download',
                 port=port,
                 known_hosts_path=known_hosts_path,
-                extra_ssh_opts=extra_ssh_opts or [],
+                extra_ssh_opts=ssh_extra_opts,
                 inherit_env=env,
                 use_publickey=use_publickey,
             )
@@ -340,8 +389,8 @@ def download_file(
             argv += ['-o', f'UserKnownHostsFile={known_hosts_path}']
         else:
             argv += ['-o', 'StrictHostKeyChecking=accept-new']
-        if extra_ssh_opts:
-            argv.extend(extra_ssh_opts)
+        if ssh_extra_opts:
+            argv.extend(ssh_extra_opts)
         argv.extend(transfer_sources)
         argv.append(transfer_destination)
         completed = subprocess.run(
@@ -4473,6 +4522,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         extra_ssh_opts=ssh_extra_opts,
                         use_publickey=use_publickey_with_password,
                         inherit_env=base_env,
+                        saved_passphrase=profile.saved_passphrase,
+                        keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
+                        key_mode=profile.key_mode,
                     )
                     GLib.idle_add(_finish_download, success, destination_dir, remote_name)
 

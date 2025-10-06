@@ -1,6 +1,11 @@
+import sys
+import types
 from types import SimpleNamespace
 
-from sshpilot import window
+if 'cairo' not in sys.modules:
+    sys.modules['cairo'] = types.ModuleType('cairo')
+
+from sshpilot import askpass_utils, window
 
 
 class _DummyConfig:
@@ -114,3 +119,98 @@ def test_build_scp_argv_prefers_alias_and_proxy(monkeypatch, tmp_path):
     assert argv[argv.index('-F') + 1] == str(config_path)
     assert 'ProxyJump=bastion.example.org' in argv
     assert argv[-1] == 'alice@testbox:/remote/path'
+
+
+def test_download_file_with_passphrase_merges_env_and_opts(monkeypatch, tmp_path):
+    recorded = {}
+
+    def fake_run(argv, check, text, capture_output, env):
+        recorded['argv'] = argv
+        recorded['env'] = env
+
+        class _Result:
+            returncode = 0
+            stderr = ''
+
+        return _Result()
+
+    monkeypatch.setattr(window.subprocess, 'run', fake_run)
+
+    ask_env = {
+        'SSH_ASKPASS': '/tmp/fake-askpass',
+        'SSH_ASKPASS_REQUIRE': 'force',
+        'DISPLAY': ':42',
+    }
+    monkeypatch.setattr(askpass_utils, 'get_ssh_env_with_forced_askpass', lambda: ask_env)
+    monkeypatch.setattr(
+        askpass_utils,
+        'get_scp_ssh_options',
+        lambda: ['-o', 'PreferredAuthentications=publickey', '-o', 'IdentitiesOnly=yes'],
+    )
+
+    base_env = {
+        'BASE': '1',
+        'SSH_ASKPASS': 'old-value',
+        'SSH_ASKPASS_REQUIRE': 'old',
+    }
+
+    local_dir = tmp_path / 'downloads'
+    result = window.download_file(
+        'example.com',
+        'alice',
+        '/remote/file.txt',
+        str(local_dir),
+        port=2200,
+        known_hosts_path='/tmp/known_hosts',
+        extra_ssh_opts=['-i', '/tmp/id_test'],
+        inherit_env=base_env,
+        saved_passphrase='secret',
+        keyfile='/tmp/id_test',
+        key_mode=1,
+    )
+
+    assert result is True
+    assert recorded['argv'][0] == 'scp'
+    assert '-P' in recorded['argv'] and '2200' in recorded['argv']
+    assert 'IdentitiesOnly=yes' in recorded['argv']
+    assert 'PreferredAuthentications=publickey' in recorded['argv']
+    assert recorded['env']['SSH_ASKPASS'] == '/tmp/fake-askpass'
+    assert recorded['env']['SSH_ASKPASS_REQUIRE'] == 'force'
+    assert recorded['env']['BASE'] == '1'
+    assert base_env['SSH_ASKPASS'] == 'old-value'
+    assert base_env['SSH_ASKPASS_REQUIRE'] == 'old'
+
+
+def test_download_file_without_passphrase_strips_askpass(monkeypatch, tmp_path):
+    recorded = {}
+
+    def fake_run(argv, check, text, capture_output, env):
+        recorded['env'] = env
+
+        class _Result:
+            returncode = 0
+            stderr = ''
+
+        return _Result()
+
+    monkeypatch.setattr(window.subprocess, 'run', fake_run)
+
+    base_env = {
+        'SSH_ASKPASS': 'something',
+        'SSH_ASKPASS_REQUIRE': 'prefer',
+    }
+
+    result = window.download_file(
+        'example.com',
+        'bob',
+        '/remote/file.txt',
+        str(tmp_path / 'dest'),
+        extra_ssh_opts=None,
+        inherit_env=base_env,
+    )
+
+    assert result is True
+    assert 'SSH_ASKPASS' not in recorded['env']
+    assert 'SSH_ASKPASS_REQUIRE' not in recorded['env']
+    assert base_env['SSH_ASKPASS'] == 'something'
+    assert base_env['SSH_ASKPASS_REQUIRE'] == 'prefer'
