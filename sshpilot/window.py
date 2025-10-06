@@ -8,10 +8,12 @@ import copy
 import os
 import logging
 import math
+import posixpath
 import re
 import shlex
 import sys
 import time
+import shutil
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 
@@ -73,8 +75,271 @@ from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos, get_config_dir
 from .ssh_utils import ensure_writable_ssh_home
 from .scp_utils import assemble_scp_transfer_args
+from .ssh_password_exec import run_ssh_with_password, run_scp_with_password
 
 logger = logging.getLogger(__name__)
+
+
+def _format_ssh_target(host: str, user: str) -> str:
+    host_component = host or ''
+    if host_component and ':' in host_component and not (
+        host_component.startswith('[') and host_component.endswith(']')
+    ):
+        host_component = f'[{host_component}]'
+    return f'{user}@{host_component}' if user else host_component
+
+
+def _normalize_remote_path(path: str) -> str:
+    text = (path or '').strip()
+    if not text:
+        return '.'
+    if text in {'.', '/', '~'}:
+        return text
+    if text.startswith('~/'):
+        trimmed = text.rstrip('/')
+        return trimmed if trimmed else '~'
+    if text.startswith('/'):
+        normalized = posixpath.normpath(text)
+        return normalized if normalized.startswith('/') else f'/{normalized}'
+    normalized = posixpath.normpath(text)
+    return normalized or '.'
+
+
+def _remote_parent(path: str) -> Optional[str]:
+    normalized = _normalize_remote_path(path)
+    if normalized in {'.', '/'}:
+        return None
+    if normalized == '~':
+        return '/'
+    if normalized.startswith('~/'):
+        parent = normalized.rsplit('/', 1)[0]
+        return parent or '~'
+    parent = posixpath.dirname(normalized.rstrip('/'))
+    if not parent:
+        return '.'
+    if parent == normalized:
+        return None
+    return parent
+
+
+def _remote_join(base: str, child: str) -> str:
+    base_normalized = _normalize_remote_path(base)
+    child = (child or '').strip()
+    if child in {'', '.'}:
+        return base_normalized
+    if child == '..':
+        parent = _remote_parent(base_normalized)
+        return parent if parent is not None else base_normalized
+    if base_normalized in {'.', ''}:
+        return _normalize_remote_path(child)
+    if base_normalized == '~':
+        return _normalize_remote_path(f"~/{child.lstrip('/')}")
+    if base_normalized == '/':
+        return _normalize_remote_path(f"/{child.lstrip('/')}")
+    return _normalize_remote_path(f"{base_normalized.rstrip('/')}/{child}")
+
+
+def _quote_remote_path_for_shell(path: str) -> str:
+    normalized = _normalize_remote_path(path)
+    if normalized == '.':
+        return '.'
+    if normalized == '/':
+        return '/'
+    if normalized == '~':
+        return '$HOME'
+    if normalized.startswith('~/'):
+        remainder = normalized[2:]
+        if not remainder:
+            return '$HOME'
+        parts = [shlex.quote(seg) for seg in remainder.split('/')]
+        return '$HOME/' + '/'.join(parts)
+    return shlex.quote(normalized)
+
+
+def list_remote_files(
+    host: str,
+    user: str,
+    remote_path: str,
+    *,
+    port: int = 22,
+    password: Optional[str] = None,
+    known_hosts_path: Optional[str] = None,
+    extra_ssh_opts: Optional[List[str]] = None,
+    use_publickey: bool = False,
+    inherit_env: Optional[Dict[str, str]] = None,
+) -> Tuple[List[Tuple[str, bool]], Optional[str]]:
+    """List remote files via SSH for the provided path.
+
+    Returns (entries, error_message) where entries contain ``(name, is_directory)`` tuples.
+    """
+    if not host:
+        return [], _('Missing host information.')
+
+    target = _format_ssh_target(host, user)
+    safe_path = _normalize_remote_path(remote_path)
+
+    command_path = _quote_remote_path_for_shell(safe_path)
+    list_command = f"LC_ALL=C ls -1p --color=never -- {command_path}"
+    wrapped_command = (
+        "set -f; "
+        "printf '__SSHPILOT_BEGIN__\\n'; "
+        f"{list_command}; "
+        "status=$?; "
+        "printf '__SSHPILOT_STATUS__%s\\n' \"$status\"; "
+        "printf '__SSHPILOT_END__\\n'; "
+        "exit $status"
+    )
+
+    env = (inherit_env or os.environ).copy()
+    env.pop('SSH_ASKPASS', None)
+    env.pop('SSH_ASKPASS_REQUIRE', None)
+
+    try:
+        if password:
+            result = run_ssh_with_password(
+                host,
+                user,
+                password,
+                port=port,
+                argv_tail=['sh', '-lc', wrapped_command],
+                known_hosts_path=known_hosts_path,
+                extra_ssh_opts=extra_ssh_opts or [],
+                inherit_env=env,
+                use_publickey=use_publickey,
+            )
+        else:
+            sshbin = shutil.which('ssh') or '/usr/bin/ssh'
+            cmd = [sshbin, '-p', str(port)]
+            if extra_ssh_opts:
+                cmd.extend(extra_ssh_opts)
+            if known_hosts_path:
+                cmd += ['-o', f'UserKnownHostsFile={known_hosts_path}']
+            else:
+                cmd += ['-o', 'StrictHostKeyChecking=accept-new']
+            cmd.append(target)
+            cmd.extend(['sh', '-lc', wrapped_command])
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+                env=env,
+            )
+
+        stdout_lines = result.stdout.splitlines()
+        begin_idx = next((idx for idx, line in enumerate(stdout_lines)
+                          if line.strip() == '__SSHPILOT_BEGIN__'), None)
+        status_idx = next((idx for idx, line in enumerate(stdout_lines)
+                           if line.startswith('__SSHPILOT_STATUS__')), None)
+        if begin_idx is None or status_idx is None or status_idx < begin_idx:
+            logger.warning('SCP: Unexpected remote listing output for %s', safe_path)
+            stderr = result.stderr.strip() or _('Unable to parse remote listing output.')
+            return [], stderr
+        try:
+            status_line = stdout_lines[status_idx]
+            status_code = int(status_line.replace('__SSHPILOT_STATUS__', '').strip() or '0')
+        except ValueError:
+            status_code = result.returncode
+
+        listing_lines = stdout_lines[begin_idx + 1:status_idx]
+        if status_code != 0:
+            stderr = result.stderr.strip() or _('Failed to list remote directory.')
+            logger.warning('SCP: Remote list failed (%s): %s', safe_path, stderr)
+            return [], stderr
+        entries: List[Tuple[str, bool]] = []
+        for raw_line in listing_lines:
+            line = raw_line.rstrip()
+            if not line:
+                continue
+            is_dir = line.endswith('/')
+            name = line[:-1] if is_dir else line
+            entries.append((name, is_dir))
+        return entries, None
+    except Exception as exc:
+        logger.error('SCP: Error listing remote files: %s', exc)
+        return [], str(exc)
+
+
+def download_file(
+    host: str,
+    user: str,
+    remote_file: str,
+    local_path: str,
+    *,
+    recursive: bool = False,
+    port: int = 22,
+    password: Optional[str] = None,
+    known_hosts_path: Optional[str] = None,
+    extra_ssh_opts: Optional[List[str]] = None,
+    use_publickey: bool = False,
+    inherit_env: Optional[Dict[str, str]] = None,
+) -> bool:
+    """Download a remote file (or directory when ``recursive``) via SCP."""
+    if not host or not remote_file or not local_path:
+        return False
+
+    target_user_host = user or ''
+    remote_target_host = host
+    env = (inherit_env or os.environ).copy()
+    env.pop('SSH_ASKPASS', None)
+    env.pop('SSH_ASKPASS_REQUIRE', None)
+
+    if password:
+        try:
+            result = run_scp_with_password(
+                remote_target_host,
+                user,
+                password,
+                [remote_file],
+                local_path,
+                direction='download',
+                port=port,
+                known_hosts_path=known_hosts_path,
+                extra_ssh_opts=extra_ssh_opts or [],
+                inherit_env=env,
+                use_publickey=use_publickey,
+            )
+            return result.returncode == 0
+        except Exception as exc:
+            logger.error('SCP: Download failed for %s: %s', remote_file, exc)
+            return False
+
+    target = _format_ssh_target(remote_target_host, user)
+    try:
+        transfer_sources, transfer_destination = assemble_scp_transfer_args(
+            target,
+            [remote_file],
+            local_path,
+            'download',
+        )
+        argv = ['scp', '-P', str(port)]
+        if recursive:
+            argv.append('-r')
+        if known_hosts_path:
+            argv += ['-o', f'UserKnownHostsFile={known_hosts_path}']
+        else:
+            argv += ['-o', 'StrictHostKeyChecking=accept-new']
+        if extra_ssh_opts:
+            argv.extend(extra_ssh_opts)
+        argv.extend(transfer_sources)
+        argv.append(transfer_destination)
+        completed = subprocess.run(
+            argv,
+            check=False,
+            text=True,
+            capture_output=True,
+            env=env,
+        )
+        if completed.returncode != 0:
+            stderr = (completed.stderr or '').strip()
+            if stderr:
+                logger.error('SCP: Download stderr: %s', stderr)
+            return False
+        return True
+    except Exception as exc:
+        logger.error('SCP: Download failed for %s: %s', remote_file, exc)
+        return False
 
 
 def maybe_set_native_controls(header_bar: Gtk.HeaderBar, value: bool = False) -> None:
@@ -3746,81 +4011,440 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.error(f'Upload dialog failed: {e}')
 
     def _prompt_scp_download(self, connection):
-        """Ask the user for remote source paths and local destination for downloads."""
+        """Show a simple file picker that downloads selected remote files via scp."""
         try:
-            prompt = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_('Download files from server'),
-                body=_('Enter one or more remote paths (one per line) and the local destination directory. Files will be transferred using scp without a file chooser.')
-            )
-            prompt.add_response('cancel', _('Cancel'))
-            prompt.add_response('download', _('Download'))
-            prompt.set_default_response('download')
-            prompt.set_close_response('cancel')
+            host_value = _get_connection_host(connection) or _get_connection_alias(connection)
+            if not host_value:
+                msg = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_('Download unavailable'),
+                    body=_('No host information is available for this connection.'),
+                )
+                msg.add_response('ok', _('OK'))
+                msg.set_default_response('ok')
+                msg.set_close_response('ok')
+                msg.present()
+                return
 
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            username = getattr(connection, 'username', '') or ''
 
-            remote_label = Gtk.Label(label=_('Remote path(s) (one per line)'))
-            remote_label.set_halign(Gtk.Align.START)
-            remote_label.set_wrap(True)
-            box.append(remote_label)
-
-            remote_buffer = Gtk.TextBuffer()
-            remote_view = Gtk.TextView(buffer=remote_buffer)
-            remote_view.set_wrap_mode(Gtk.WrapMode.NONE)
             try:
-                remote_view.set_monospace(True)
+                port = int(getattr(connection, 'port', 22) or 22)
+            except Exception:
+                port = 22
+
+            known_hosts_path = None
+            saved_password = None
+            if hasattr(self, 'connection_manager') and self.connection_manager:
+                known_hosts_path = getattr(self.connection_manager, 'known_hosts_path', None)
+                try:
+                    saved_password = self.connection_manager.get_password(host_value, connection.username)
+                except Exception:
+                    saved_password = None
+
+            try:
+                default_download_dir = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
+            except Exception:
+                default_download_dir = None
+            if not default_download_dir:
+                try:
+                    default_download_dir = str(Path.home() / 'Downloads')
+                except Exception:
+                    default_download_dir = GLib.get_home_dir() or os.path.expanduser('~')
+
+            try:
+                auth_method = int(getattr(connection, 'auth_method', 0) or 0)
+            except Exception:
+                auth_method = 0
+            prefer_password = (auth_method == 1)
+            has_saved_password = bool(saved_password)
+            combined_auth = (auth_method == 0 and has_saved_password)
+
+            keyfile = getattr(connection, 'keyfile', '') or ''
+            try:
+                key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
+            except Exception:
+                key_mode = 0
+            try:
+                keyfile_ok = bool(keyfile) and os.path.isfile(keyfile)
+            except Exception:
+                keyfile_ok = False
+
+            ssh_extra_opts: List[str] = []
+            strict_val = ''
+            auto_add = True
+            try:
+                cfg = self.config if hasattr(self, 'config') else Config()
+                ssh_cfg = cfg.get_ssh_config() if hasattr(cfg, 'get_ssh_config') else {}
+                strict_val = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
+                auto_add = bool(ssh_cfg.get('auto_add_host_keys', True))
+            except Exception:
+                strict_val = ''
+                auto_add = True
+
+            if strict_val:
+                ssh_extra_opts += ['-o', f'StrictHostKeyChecking={strict_val}']
+            elif auto_add and not has_saved_password:
+                ssh_extra_opts += ['-o', 'StrictHostKeyChecking=accept-new']
+
+            if keyfile_ok and key_mode in (1, 2):
+                ssh_extra_opts += ['-i', keyfile]
+                if key_mode == 1:
+                    ssh_extra_opts += ['-o', 'IdentitiesOnly=yes']
+
+            if getattr(connection, 'pubkey_auth_no', False):
+                ssh_extra_opts += ['-o', 'PubkeyAuthentication=no']
+
+            if prefer_password:
+                ssh_extra_opts += ['-o', 'PreferredAuthentications=password']
+            elif combined_auth:
+                ssh_extra_opts += [
+                    '-o',
+                    'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
+                ]
+
+            use_publickey_with_password = combined_auth and not getattr(connection, 'pubkey_auth_no', False)
+            if prefer_password:
+                use_publickey_with_password = False
+
+            base_env = os.environ.copy()
+
+            dialog = Adw.Window()
+            dialog.set_transient_for(self)
+            dialog.set_modal(True)
+            try:
+                dialog.set_default_size(480, 420)
+            except Exception:
+                pass
+            try:
+                dialog.set_title(_('Download files from server'))
             except Exception:
                 pass
 
-            remote_scroller = Gtk.ScrolledWindow()
-            remote_scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-            remote_scroller.set_min_content_height(96)
-            remote_scroller.set_child(remote_view)
-            box.append(remote_scroller)
-
-            dest_row = Adw.EntryRow(title=_('Local destination'))
+            header = Adw.HeaderBar()
+            title_label = Gtk.Label(label=_('Download files'))
+            title_label.set_halign(Gtk.Align.START)
             try:
-                default_download_dir = Path.home() / 'Downloads'
-                dest_row.set_text(str(default_download_dir))
+                title_label.add_css_class('title-2')
             except Exception:
-                dest_row.set_text('~/')
-            box.append(dest_row)
+                pass
+            header.set_title_widget(title_label)
 
-            prompt.set_extra_child(box)
+            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            content_box.set_hexpand(True)
+            content_box.set_vexpand(True)
+            try:
+                content_box.set_margin_top(16)
+                content_box.set_margin_bottom(16)
+                content_box.set_margin_start(16)
+                content_box.set_margin_end(16)
+            except Exception:
+                pass
 
-            def _update_state(*_args):
-                start_iter = remote_buffer.get_start_iter()
-                end_iter = remote_buffer.get_end_iter()
-                remote_text = remote_buffer.get_text(start_iter, end_iter, False).strip()
-                has_remote = bool(self._parse_remote_sources_text(remote_text))
-                has_dest = bool(dest_row.get_text().strip())
+            paths_group = Adw.PreferencesGroup()
+            paths_group.set_title(_('Locations'))
+
+            remote_row = Adw.EntryRow(title=_('Remote directory'))
+            remote_row.set_text('~')
+            try:
+                remote_editable = remote_row.get_editable()
+                if remote_editable and hasattr(remote_editable, 'set_placeholder_text'):
+                    remote_editable.set_placeholder_text(_('Example: ~/ or /var/tmp'))
+            except Exception:
+                pass
+
+            refresh_button = Gtk.Button.new_from_icon_name('view-refresh-symbolic')
+            refresh_button.set_tooltip_text(_('Refresh remote listing'))
+            refresh_button.add_css_class('flat')
+            remote_row.add_suffix(refresh_button)
+            remote_row.set_show_apply_button(False)
+            paths_group.add(remote_row)
+
+            local_row = Adw.EntryRow(title=_('Local destination'))
+            local_row.set_text(str(default_download_dir))
+            try:
+                local_editable = local_row.get_editable()
+                if local_editable and hasattr(local_editable, 'set_placeholder_text'):
+                    local_editable.set_placeholder_text(_('Example: ~/Downloads'))
+            except Exception:
+                pass
+            local_row.set_show_apply_button(False)
+            paths_group.add(local_row)
+
+            paths_wrapper = Adw.Clamp()
+            paths_wrapper.set_child(paths_group)
+            content_box.append(paths_wrapper)
+
+            scroller = Gtk.ScrolledWindow()
+            scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            scroller.set_min_content_height(220)
+
+            list_box = Gtk.ListBox()
+            list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            list_box.set_hexpand(True)
+            list_box.set_vexpand(True)
+            scroller.set_child(list_box)
+            content_box.append(scroller)
+
+            status_label = Gtk.Label()
+            status_label.set_halign(Gtk.Align.START)
+            status_label.set_wrap(True)
+            content_box.append(status_label)
+
+            button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            button_box.set_halign(Gtk.Align.END)
+
+            cancel_button = Gtk.Button(label=_('Cancel'))
+            button_box.append(cancel_button)
+
+            download_button = Gtk.Button(label=_('Download'))
+            download_button.set_sensitive(False)
+            try:
+                download_button.add_css_class('suggested-action')
+            except Exception:
+                pass
+            button_box.append(download_button)
+
+            content_box.append(button_box)
+
+            root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            root_box.append(header)
+            root_box.append(content_box)
+            dialog.set_content(root_box)
+
+            def _clear_list():
+                child = list_box.get_first_child()
+                while child is not None:
+                    next_child = child.get_next_sibling()
+                    list_box.remove(child)
+                    child = next_child
+
+            def _on_rows_changed(_list, row):
+                if not row:
+                    download_button.set_sensitive(False)
+                    return
+                download_button.set_sensitive(getattr(row, 'remote_selectable', True))
+
+            list_box.connect('row-selected', _on_rows_changed)
+
+            def _finish_download(success: bool, destination: Path, remote_name: str):
+                list_box.set_sensitive(True)
+                refresh_button.set_sensitive(True)
+                selected_row = list_box.get_selected_row()
+                if selected_row is not None:
+                    download_button.set_sensitive(getattr(selected_row, 'remote_selectable', True))
+                if success:
+                    status_label.set_text(
+                        _('Downloaded {name} to {dest}').format(
+                            name=remote_name,
+                            dest=str(destination),
+                        )
+                    )
+                    if hasattr(self, 'toast_overlay'):
+                        toast = Adw.Toast.new(
+                            _('Downloaded {name} to {dest}').format(
+                                name=remote_name,
+                                dest=str(destination),
+                            )
+                        )
+                        toast.set_timeout(3)
+                        self.toast_overlay.add_toast(toast)
+                else:
+                    status_label.set_text(_('Download failed. Check the log for details.'))
+                return False
+
+            def _start_download(row: Optional[Gtk.ListBoxRow] = None):
+                selected_row = row or list_box.get_selected_row()
+                if not selected_row:
+                    return
+                remote_name = getattr(selected_row, 'remote_name', '')
+                if not remote_name:
+                    return
+                if not getattr(selected_row, 'remote_selectable', True):
+                    return
+
+                current_dir = _normalize_remote_path(remote_row.get_text())
+                if current_dir in ('.', ''):
+                    remote_path = remote_name
+                else:
+                    remote_path = _remote_join(current_dir, remote_name)
+
+                destination_text = local_row.get_text().strip()
+                if not destination_text:
+                    destination_text = str(default_download_dir)
                 try:
-                    prompt.set_response_enabled('download', has_remote and has_dest)
+                    destination_dir = Path(destination_text).expanduser()
+                except Exception:
+                    destination_dir = Path(destination_text)
+
+                try:
+                    destination_dir.mkdir(parents=True, exist_ok=True)
+                except Exception as exc:
+                    status_label.set_text(
+                        _('Cannot access {dest}: {error}').format(
+                            dest=str(destination_dir),
+                            error=str(exc),
+                        )
+                    )
+                    return
+
+                status_label.set_text(_('Downloading…'))
+                download_button.set_sensitive(False)
+                refresh_button.set_sensitive(False)
+                list_box.set_sensitive(False)
+
+                is_directory = bool(getattr(selected_row, 'remote_is_dir', False))
+
+                def _worker():
+                    success = download_file(
+                        host_value,
+                        username,
+                        remote_path,
+                        str(destination_dir),
+                        recursive=is_directory,
+                        port=port,
+                        password=saved_password,
+                        known_hosts_path=known_hosts_path,
+                        extra_ssh_opts=ssh_extra_opts,
+                        use_publickey=use_publickey_with_password,
+                        inherit_env=base_env,
+                    )
+                    GLib.idle_add(_finish_download, success, destination_dir, remote_name)
+
+                threading.Thread(target=_worker, daemon=True).start()
+
+            def _populate_list(entries: List[Tuple[str, bool]], directory: str, error_message: Optional[str]):
+                _clear_list()
+                current_dir = _normalize_remote_path(directory)
+
+                if error_message:
+                    status_label.set_text(error_message)
+                    download_button.set_sensitive(False)
+                    return
+
+                parent_dir = _remote_parent(current_dir)
+                if parent_dir is not None:
+                    parent_row = Gtk.ListBoxRow()
+                    parent_label = Gtk.Label(label='..')
+                    parent_label.set_halign(Gtk.Align.START)
+                    parent_label.set_hexpand(True)
+                    try:
+                        parent_label.add_css_class('monospace')
+                    except Exception:
+                        pass
+                    try:
+                        parent_label.add_css_class('dim-label')
+                    except Exception:
+                        pass
+                    parent_row.set_child(parent_label)
+                    try:
+                        parent_row.set_selectable(False)
+                        parent_row.set_activatable(True)
+                    except Exception:
+                        pass
+                    setattr(parent_row, 'remote_name', '..')
+                    setattr(parent_row, 'remote_is_dir', True)
+                    setattr(parent_row, 'remote_selectable', False)
+                    list_box.append(parent_row)
+
+                if not entries:
+                    status_label.set_text(
+                        _('No entries found for {path}.').format(path=current_dir)
+                    )
+                    download_button.set_sensitive(False)
+                    return
+
+                for entry_name, is_dir in entries:
+                    row = Gtk.ListBoxRow()
+                    display_name = f"{entry_name}/" if is_dir else entry_name
+                    label = Gtk.Label(label=display_name)
+                    label.set_halign(Gtk.Align.START)
+                    label.set_hexpand(True)
+                    try:
+                        label.add_css_class('monospace')
+                    except Exception:
+                        pass
+                    row.set_child(label)
+                    setattr(row, 'remote_name', entry_name)
+                    setattr(row, 'remote_is_dir', is_dir)
+                    setattr(row, 'remote_selectable', True)
+                    list_box.append(row)
+
+                status_label.set_text(_('Select an item to download.'))
+                try:
+                    candidate = list_box.get_first_child()
+                    while candidate is not None:
+                        if getattr(candidate, 'remote_selectable', True):
+                            list_box.select_row(candidate)
+                            break
+                        candidate = candidate.get_next_sibling()
                 except Exception:
                     pass
 
-            remote_buffer.connect('changed', _update_state)
-            dest_row.connect('notify::text', _update_state)
-            _update_state()
+            def _load_remote():
+                directory = remote_row.get_text().strip() or '.'
+                status_label.set_text(_('Loading…'))
+                refresh_button.set_sensitive(False)
+                list_box.set_sensitive(False)
+                download_button.set_sensitive(False)
 
-            def _on_response(dlg, response):
-                if response != 'download':
-                    dlg.close()
-                    return
-                start_iter = remote_buffer.get_start_iter()
-                end_iter = remote_buffer.get_end_iter()
-                remote_text = remote_buffer.get_text(start_iter, end_iter, False)
-                sources = self._parse_remote_sources_text(remote_text)
-                destination = dest_row.get_text().strip()
-                dlg.close()
-                if not sources or not destination:
-                    return
-                self._start_scp_transfer(connection, sources, destination, direction='download')
+                def _worker():
+                    files, error_message = list_remote_files(
+                        host_value,
+                        username,
+                        directory,
+                        port=port,
+                        password=saved_password,
+                        known_hosts_path=known_hosts_path,
+                        extra_ssh_opts=ssh_extra_opts,
+                        use_publickey=use_publickey_with_password,
+                        inherit_env=base_env,
+                    )
 
-            prompt.connect('response', _on_response)
-            prompt.present()
+                    def _update():
+                        _populate_list(files, directory, error_message)
+                        refresh_button.set_sensitive(True)
+                        list_box.set_sensitive(True)
+                        selected_row = list_box.get_selected_row()
+                        if selected_row is not None:
+                            download_button.set_sensitive(getattr(selected_row, 'remote_selectable', True))
+                        return False
+
+                    GLib.idle_add(_update, priority=GLib.PRIORITY_DEFAULT)
+
+                threading.Thread(target=_worker, daemon=True).start()
+
+            def _refresh():
+                _load_remote()
+
+            refresh_button.connect('clicked', lambda *_: _refresh())
+            remote_row.connect('activate', lambda *_: _refresh())
+            download_button.connect('clicked', lambda *_: _start_download())
+
+            def _on_row_activated(_box, row):
+                if not row:
+                    return
+                remote_name = getattr(row, 'remote_name', '')
+                if not remote_name:
+                    return
+                current_dir = remote_row.get_text().strip() or '.'
+                if remote_name == '..':
+                    parent = _remote_parent(current_dir)
+                    if parent is None:
+                        return
+                    remote_row.set_text(parent)
+                    _refresh()
+                elif getattr(row, 'remote_is_dir', False):
+                    new_dir = _remote_join(current_dir, remote_name)
+                    remote_row.set_text(new_dir)
+                    _refresh()
+
+            list_box.connect('row-activated', _on_row_activated)
+            cancel_button.connect('clicked', lambda *_: dialog.close())
+
+            dialog.present()
+            _load_remote()
         except Exception as e:
             logger.error(f'SCP download prompt failed: {e}')
 
@@ -4420,19 +5044,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             prompt.present()
         except Exception as e:
             logger.error(f'File selection failed: {e}')
-
-    def _parse_remote_sources_text(self, text: str) -> List[str]:
-        """Parse manual remote path input into a list of usable paths."""
-        stripped = (text or '').strip()
-        if not stripped:
-            return []
-        lines = [line.strip() for line in stripped.splitlines() if line.strip()]
-        if len(lines) > 1:
-            return lines
-        try:
-            return [token for token in shlex.split(stripped) if token]
-        except ValueError:
-            return [stripped]
 
     def _start_scp_transfer(self, connection, sources, destination, *, direction: str):
         """Run scp using the same terminal window layout as ssh-copy-id."""
