@@ -23,6 +23,74 @@ from gi.repository import Gtk, Gdk, Adw, Pango, PangoFT2, Vte, GLib
 
 logger = logging.getLogger(__name__)
 
+
+_GROUP_PREVIEW_CSS_INSTALLED = False
+
+
+def _install_group_display_preview_css():
+    global _GROUP_PREVIEW_CSS_INSTALLED
+    if _GROUP_PREVIEW_CSS_INSTALLED:
+        return
+
+    display = Gdk.Display.get_default()
+    if not display:
+        return
+
+    provider = Gtk.CssProvider()
+    css = """
+    .group-display-preview-container {
+        padding: 4px 0;
+    }
+
+    .group-display-preview-title {
+        font-weight: 600;
+    }
+
+    .group-display-preview-parent {
+        background-color: alpha(@accent_bg_color, 0.12);
+        border-radius: 8px;
+        padding: 8px 10px;
+    }
+
+    .group-display-preview-parent-title {
+        font-weight: 600;
+    }
+
+    .group-display-preview-parent-subtitle {
+        opacity: 0.7;
+        font-size: 0.9em;
+    }
+
+    .group-display-preview-row {
+        background-color: alpha(@accent_bg_color, 0.18);
+        border-radius: 10px;
+        padding: 8px 12px;
+        transition: background-color 0.15s ease-in-out;
+    }
+
+    .group-display-preview-row.active {
+        background-color: alpha(@accent_bg_color, 0.36);
+        box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.65);
+    }
+
+    .group-display-preview-row-title {
+        font-weight: 600;
+    }
+
+    .group-display-preview-row-subtitle {
+        opacity: 0.7;
+        font-size: 0.9em;
+    }
+    """
+    try:
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_display(
+            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        _GROUP_PREVIEW_CSS_INSTALLED = True
+    except Exception:
+        logger.debug("Failed to install group display preview CSS", exc_info=True)
+
 def macos_third_party_terminal_available() -> bool:
     """Check if a third-party terminal is available on macOS."""
     if not is_macos():
@@ -736,6 +804,105 @@ class PreferencesWindow(Gtk.Window):
             group_appearance_group.add(self.terminal_group_color_row)
 
             groups_page.add(group_appearance_group)
+
+            # Group display layout section (shown after appearance options)
+            group_layout_group = Adw.PreferencesGroup(title="Group Layout")
+
+            self._group_display_preview_rows = {}
+            _install_group_display_preview_css()
+
+            self._group_display_modes = ['fullwidth', 'nested']
+            self.group_display_toggle_row = Adw.ActionRow()
+            self.group_display_toggle_row.set_title("Group Display")
+            self.group_display_toggle_row.set_subtitle(
+                "Choose how grouped connections appear in the sidebar"
+            )
+            self.group_display_toggle_row.set_activatable(False)
+            try:
+                self.group_display_toggle_row.set_focusable(False)
+            except Exception:
+                pass
+
+            self.group_display_toggle_group = Adw.ToggleGroup.new()
+            self.group_display_toggle_group.set_orientation(Gtk.Orientation.HORIZONTAL)
+            self.group_display_toggle_group.add_css_class('linked')
+            self.group_display_toggle_group.set_hexpand(True)
+            try:
+                self.group_display_toggle_group.set_homogeneous(True)
+            except Exception:
+                pass
+
+            self.group_display_toggle_fullwidth = Adw.Toggle.new()
+            self.group_display_toggle_fullwidth.props.name = 'fullwidth'
+            self.group_display_toggle_fullwidth.set_label('Fullwidth')
+
+            self.group_display_toggle_nested = Adw.Toggle.new()
+            self.group_display_toggle_nested.props.name = 'nested'
+            self.group_display_toggle_nested.set_label('Nested')
+
+            self.group_display_toggle_group.add(self.group_display_toggle_fullwidth)
+            self.group_display_toggle_group.add(self.group_display_toggle_nested)
+            self.group_display_toggle_row.set_child(self.group_display_toggle_group)
+
+            current_display_mode = 'fullwidth'
+            try:
+                current_display_mode = str(
+                    self.config.get_setting('ui.group_row_display', 'fullwidth')
+                ).lower()
+            except Exception:
+                current_display_mode = 'fullwidth'
+            if current_display_mode not in self._group_display_modes:
+                current_display_mode = 'fullwidth'
+
+            self._group_display_toggle_sync = True
+            try:
+                self.group_display_toggle_group.set_active_name(current_display_mode)
+            finally:
+                self._group_display_toggle_sync = False
+
+            self.group_display_toggle_group.connect(
+                'notify::active-name', self.on_group_row_display_changed
+            )
+
+            group_layout_group.add(self.group_display_toggle_row)
+
+            # Preview showing both layout styles
+            self.group_display_preview_row = Adw.ActionRow()
+            self.group_display_preview_row.set_title("Layout Preview")
+            self.group_display_preview_row.set_activatable(False)
+            try:
+                self.group_display_preview_row.set_focusable(False)
+            except Exception:
+                pass
+
+            preview_stack = Gtk.Stack()
+            preview_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+            preview_stack.set_transition_duration(150)
+
+            preview_stack.set_margin_top(4)
+            preview_stack.set_margin_bottom(4)
+
+            preview_fullwidth_wrapper, preview_fullwidth_row = self._create_group_display_preview(
+                'fullwidth', 'Fullwidth'
+            )
+            preview_nested_wrapper, preview_nested_row = self._create_group_display_preview(
+                'nested', 'Nested'
+            )
+
+            preview_stack.add_named(preview_fullwidth_wrapper, 'fullwidth')
+            preview_stack.add_named(preview_nested_wrapper, 'nested')
+
+            self.group_display_preview_row.set_child(preview_stack)
+            self._group_display_preview_rows = {
+                'fullwidth': preview_fullwidth_row,
+                'nested': preview_nested_row,
+            }
+            self._group_display_preview_stack = preview_stack
+
+            self._update_group_display_preview(current_display_mode)
+
+            group_layout_group.add(self.group_display_preview_row)
+            groups_page.add(group_layout_group)
 
             # Create Interface preferences page
             interface_page = Adw.PreferencesPage()
@@ -1485,6 +1652,48 @@ class PreferencesWindow(Gtk.Window):
         if not getattr(self, '_config_signal_id', None):
             self._trigger_sidebar_refresh()
 
+    def on_group_row_display_changed(self, toggle_group, _param):
+        """Persist sidebar group display layout preference."""
+        if getattr(self, '_group_display_toggle_sync', False):
+            return
+
+        try:
+            active_name = toggle_group.get_active_name() or 'fullwidth'
+        except Exception:
+            active_name = 'fullwidth'
+
+        valid_modes = getattr(self, '_group_display_modes', ['fullwidth', 'nested'])
+        if active_name not in valid_modes:
+            active_name = 'fullwidth'
+
+        try:
+            current_value = str(
+                self.config.get_setting('ui.group_row_display', 'fullwidth')
+            ).lower()
+        except Exception:
+            current_value = 'fullwidth'
+
+        if current_value not in valid_modes:
+            current_value = 'fullwidth'
+
+        if current_value == active_name:
+            self._update_group_display_preview(active_name)
+            return
+
+        try:
+            self.config.set_setting('ui.group_row_display', active_name)
+        except Exception as exc:
+            logger.error(
+                "Failed to update group display preference: %s", exc
+            )
+            self._sync_group_display_toggle_group(current_value)
+            return
+
+        self._update_group_display_preview(active_name)
+
+        if not getattr(self, '_config_signal_id', None):
+            self._trigger_sidebar_refresh()
+
     def on_use_group_color_in_tab_toggled(self, switch_row, _param):
         if getattr(self, '_tab_color_sync', False):
             return
@@ -1573,6 +1782,128 @@ class PreferencesWindow(Gtk.Window):
                 "Failed to restyle terminals after preference change: %s", exc
             )
 
+    def _create_group_display_preview(self, mode: str, title: str):
+        """Create a small sample widget that illustrates the layout mode."""
+        wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        wrapper.add_css_class('group-display-preview-container')
+        wrapper.set_hexpand(True)
+
+        title_label = Gtk.Label(label=title)
+        title_label.set_halign(Gtk.Align.START)
+        title_label.set_xalign(0.0)
+        title_label.add_css_class('group-display-preview-title')
+        wrapper.append(title_label)
+
+        sample_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        sample_box.set_hexpand(True)
+
+        parent_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        parent_row.add_css_class('group-display-preview-parent')
+        parent_row.set_margin_start(0)
+        parent_row.set_margin_end(8)
+
+        parent_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+        parent_row.append(parent_icon)
+
+        parent_labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        parent_title = Gtk.Label(label='Production Servers')
+        parent_title.set_halign(Gtk.Align.START)
+        parent_title.set_xalign(0.0)
+        parent_title.add_css_class('group-display-preview-parent-title')
+
+        parent_sub = Gtk.Label(label='3 connections')
+        parent_sub.set_halign(Gtk.Align.START)
+        parent_sub.set_xalign(0.0)
+        parent_sub.add_css_class('group-display-preview-parent-subtitle')
+
+        parent_labels.append(parent_title)
+        parent_labels.append(parent_sub)
+        parent_row.append(parent_labels)
+
+        tinted = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        tinted.add_css_class('group-display-preview-row')
+        tinted.set_hexpand(True)
+        tinted.set_margin_top(2)
+        tinted.set_margin_bottom(2)
+        tinted.set_margin_end(8)
+
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        if mode == 'fullwidth':
+            tinted.set_margin_start(0)
+            content_box.set_margin_start(24)
+        else:  # nested mode shifts entire row
+            tinted.set_margin_start(24)
+            content_box.set_margin_start(0)
+
+        title_text = Gtk.Label(label='db-backups')
+        title_text.set_halign(Gtk.Align.START)
+        title_text.set_xalign(0.0)
+        title_text.add_css_class('group-display-preview-row-title')
+
+        subtitle_text = Gtk.Label(label='ops@example.com')
+        subtitle_text.set_halign(Gtk.Align.START)
+        subtitle_text.set_xalign(0.0)
+        subtitle_text.add_css_class('group-display-preview-row-subtitle')
+
+        content_box.append(title_text)
+        content_box.append(subtitle_text)
+
+        tinted.append(content_box)
+        sample_box.append(parent_row)
+        sample_box.append(tinted)
+        wrapper.append(sample_box)
+
+        return wrapper, tinted
+
+    def _update_group_display_preview(self, active_mode: str):
+        preview_map = getattr(self, '_group_display_preview_rows', None)
+        if not preview_map:
+            return
+
+        valid_modes = getattr(self, '_group_display_modes', ['fullwidth', 'nested'])
+        if active_mode not in valid_modes:
+            active_mode = valid_modes[0]
+
+        for mode, tinted in preview_map.items():
+            if not tinted:
+                continue
+            if mode == active_mode:
+                tinted.add_css_class('active')
+            else:
+                tinted.remove_css_class('active')
+
+        stack = getattr(self, '_group_display_preview_stack', None)
+        if stack:
+            try:
+                stack.set_visible_child_name(active_mode)
+            except Exception:
+                pass
+
+    def _sync_group_display_toggle_group(self, value):
+        if not hasattr(self, 'group_display_toggle_group') or self.group_display_toggle_group is None:
+            return
+
+        valid_modes = getattr(self, '_group_display_modes', ['fullwidth', 'nested'])
+        normalized = 'fullwidth'
+        try:
+            normalized = str(value).lower()
+        except Exception:
+            pass
+        if normalized not in valid_modes:
+            normalized = 'fullwidth'
+
+        if self.group_display_toggle_group.get_active_name() == normalized:
+            self._update_group_display_preview(normalized)
+            return
+
+        self._group_display_toggle_sync = True
+        try:
+            self.group_display_toggle_group.set_active_name(normalized)
+        finally:
+            self._group_display_toggle_sync = False
+
+        self._update_group_display_preview(normalized)
+
     def _sync_group_color_display_row(self, value):
         if not hasattr(self, 'group_color_display_row') or self.group_color_display_row is None:
             return
@@ -1626,6 +1957,9 @@ class PreferencesWindow(Gtk.Window):
     def _on_config_setting_changed(self, _config, key, value):
         if key == 'ui.group_color_display':
             self._sync_group_color_display_row(value)
+            self._trigger_sidebar_refresh()
+        elif key == 'ui.group_row_display':
+            self._sync_group_display_toggle_group(value)
             self._trigger_sidebar_refresh()
         elif key == 'ui.use_group_color_in_tab':
             self._sync_use_group_color_in_tab(value)

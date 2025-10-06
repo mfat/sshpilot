@@ -2282,9 +2282,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Add a connection row to the list with optional indentation"""
         row = ConnectionRow(connection, self.group_manager, self.config)
         
-        # Apply indentation for grouped connections
-        if indent_level > 0:
-            row.set_indentation(indent_level)
+        # Apply indentation preference for grouped connections
+        row.set_indentation(indent_level)
         
         self.connection_list.append(row)
         self.connection_rows[connection] = row
@@ -5219,6 +5218,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             for terms in self.connection_to_terminals.values():
                 for terminal in terms:
                     terminal.apply_theme()
+        elif key == 'ui.group_row_display':
+            normalized = 'fullwidth'
+            try:
+                normalized = str(value).lower()
+            except Exception:
+                pass
+            if normalized not in {'fullwidth', 'nested'}:
+                normalized = 'fullwidth'
+
+            for row in self.connection_rows.values():
+                if hasattr(row, 'refresh_group_display_mode'):
+                    row.refresh_group_display_mode(normalized)
 
     def on_window_size_changed(self, window, param):
         """Handle window size change"""
