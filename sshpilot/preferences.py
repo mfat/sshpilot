@@ -4,7 +4,7 @@ import os
 import logging
 import subprocess
 import shutil
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .platform_utils import get_config_dir, is_flatpak, is_macos
 from .file_manager_integration import (
@@ -447,8 +447,11 @@ class PreferencesWindow(Gtk.Window):
 
         self.connect('destroy', self._on_destroy)
 
+        # Use a consistent title for the window and header regardless of parent
+        self._base_header_title = "Preferences"
+
         # Set window properties with modern Adwaita structure
-        self.set_title("Preferences")
+        self.set_title(self._base_header_title)
         self.set_default_size(820, 600)  # Ensure wide enough to see the sidebar
         
         # Create custom layout with sidebar
@@ -532,16 +535,32 @@ class PreferencesWindow(Gtk.Window):
 
         # Store pages for later reference
         self.pages = {}
-    
+
+        # Ensure the header defaults to the base preferences title
+        self._update_header_title()
+
     def on_sidebar_row_selected(self, listbox, row):
         """Handle sidebar row selection"""
         if row is not None:
             page_name = row.get_name()
             self.content_stack.set_visible_child_name(page_name)
-            if isinstance(row, Adw.ActionRow) and self.header_title_label:
+            if isinstance(row, Adw.ActionRow):
                 title = row.get_title() or ""
-                self.header_title_label.set_label(title)
-    
+                self._update_header_title(title)
+
+    def _update_header_title(self, page_title: Optional[str] = None):
+        """Update the header and window title to reflect the active page."""
+        display_title = self._base_header_title
+        if page_title:
+            display_title = f"{self._base_header_title} · {page_title}"
+
+        header_label = getattr(self, "header_title_label", None)
+        if header_label:
+            header_label.set_label(display_title)
+
+        # Keep the window title in sync for platforms that show it prominently
+        self.set_title(display_title)
+
     def add_page_to_layout(self, title, icon_name, page):
         """Add a page to the custom layout"""
         # Create sidebar row
@@ -568,7 +587,7 @@ class PreferencesWindow(Gtk.Window):
             self.sidebar.select_row(row)
             if isinstance(row, Adw.ActionRow):
                 title = row.get_title() or ""
-                self.header_title_label.set_label(title)
+                self._update_header_title(title)
     
     def setup_preferences(self):
         """Set up preferences UI with current values"""
