@@ -5,7 +5,7 @@ import os
 import subprocess
 import logging
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 from gi.repository import GObject
 
@@ -31,6 +31,8 @@ class KeyManager(GObject.Object):
     Unified SSH key generation (single method) + discovery helper.
     Uses system `ssh-keygen` for portability and OpenSSH-compatible output.
     """
+    _SKIPPED_FILENAMES = {"config", "known_hosts", "authorized_keys"}
+
     __gsignals__ = {
         # Emitted after a key is generated successfully
         "key-generated": (GObject.SignalFlags.RUN_LAST, None, (object,)),
@@ -45,12 +47,58 @@ class KeyManager(GObject.Object):
                 os.chmod(self.ssh_dir, 0o700)
             except Exception:
                 pass
+        self._key_validation_cache: Dict[str, bool] = {}
+
+    def _is_private_key(self, file_path: Path) -> bool:
+        """Return True if the path looks like a private SSH key."""
+        name = file_path.name
+        if not file_path.is_file() or name.endswith(".pub") or name in self._SKIPPED_FILENAMES:
+            return False
+
+        key_path = str(file_path)
+        cached = self._key_validation_cache.get(key_path)
+        if cached is not None:
+            return cached
+
+        cmd = ["ssh-keygen", "-y", "-f", key_path, "-P", ""]
+        try:
+            completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        except FileNotFoundError:
+            raise
+        except Exception as exc:
+            logger.debug("Failed to run ssh-keygen for %s: %s", key_path, exc, exc_info=True)
+            self._key_validation_cache[key_path] = False
+            return False
+
+        stderr = completed.stderr or ""
+        stdout = completed.stdout or ""
+        stderr_lower = stderr.lower()
+
+        success = completed.returncode == 0
+        if not success and ("incorrect passphrase supplied" in stderr_lower or "load key" in stderr_lower):
+            success = True
+            logger.debug(
+                "ssh-keygen reported a protected key for %s: %s",
+                key_path,
+                stderr.strip() or stdout.strip() or "passphrase required",
+            )
+
+        if success:
+            self._key_validation_cache[key_path] = True
+            return True
+
+        message = stderr.strip() or stdout.strip() or f"ssh-keygen exited with {completed.returncode}"
+        logger.debug("ssh-keygen rejected %s: %s", key_path, message)
+        self._key_validation_cache[key_path] = False
+        return False
 
     # ---------------- Public API ----------------
 
     def discover_keys(self) -> List[SSHKey]:
-        """List keys that have a matching .pub next to the private key."""
+        """Discover known SSH keys within the configured SSH directory."""
         keys: List[SSHKey] = []
+        seen: set[str] = set()
+        fallback_to_pub = False
         try:
             ssh_dir = self.ssh_dir or Path(get_ssh_dir())
             if not ssh_dir.exists():
@@ -63,11 +111,35 @@ class KeyManager(GObject.Object):
                 if name.endswith(".pub"):
                     continue
                 # skip very common non-key files
-                if name in ("config", "known_hosts", "authorized_keys"):
+                if name in self._SKIPPED_FILENAMES:
                     continue
-                pub = file_path.with_suffix(file_path.suffix + ".pub")
-                if pub.exists():
-                    keys.append(SSHKey(str(file_path)))
+                if fallback_to_pub:
+                    pub = file_path.with_suffix(file_path.suffix + ".pub")
+                    if pub.exists():
+                        key_path = str(file_path)
+                        if key_path not in seen:
+                            keys.append(SSHKey(key_path))
+                            seen.add(key_path)
+                    continue
+
+                try:
+                    if self._is_private_key(file_path):
+                        key_path = str(file_path)
+                        if key_path not in seen:
+                            keys.append(SSHKey(key_path))
+                            seen.add(key_path)
+                except FileNotFoundError:
+                    fallback_to_pub = True
+                    logger.debug(
+                        "ssh-keygen not available; falling back to public-key discovery for %s",
+                        file_path,
+                    )
+                    pub = file_path.with_suffix(file_path.suffix + ".pub")
+                    if pub.exists():
+                        key_path = str(file_path)
+                        if key_path not in seen:
+                            keys.append(SSHKey(key_path))
+                            seen.add(key_path)
         except Exception as e:
             logger.error("Failed to discover SSH keys: %s", e)
         return keys
