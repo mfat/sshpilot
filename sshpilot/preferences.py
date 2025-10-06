@@ -452,7 +452,7 @@ class PreferencesWindow(Gtk.Window):
         self.set_default_size(820, 600)  # Ensure wide enough to see the sidebar
         
         # Create custom layout with sidebar
-        self.setup_custom_layout()
+        self.setup_navigation_layout()
         
         # Initialize the preferences UI
         self.setup_preferences()
@@ -463,30 +463,73 @@ class PreferencesWindow(Gtk.Window):
         # Save on close to persist advanced SSH settings
         self.connect('close-request', self.on_close_request)
     
-    def setup_custom_layout(self):
-        """Set up custom layout with sidebar and content area"""
-        # Create headerbar as the window's titlebar
-        self.headerbar = Adw.HeaderBar()
-        self.set_titlebar(self.headerbar)
-        
-        # Create content area
-        self.content_area = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        self.set_child(self.content_area)
-        
-        # Create sidebar
+    def setup_navigation_layout(self):
+        """Configure split view layout mirroring GNOME Settings."""
+        # Ensure client-side decorations remain but hide default headerbar
+        if not is_macos():
+            hidden_titlebar = Gtk.HeaderBar()
+            hidden_titlebar.set_show_title_buttons(False)
+            hidden_titlebar.set_visible(False)
+            hidden_titlebar.set_decoration_layout(":")
+            self.set_titlebar(hidden_titlebar)
+
+        # Main split view container
+        self.navigation_split_view = Adw.NavigationSplitView()
+        self.set_child(self.navigation_split_view)
+
+        # Sidebar list with navigation styling
         self.sidebar = Gtk.ListBox()
-        self.sidebar.set_size_request(200, -1)
+        self.sidebar.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.sidebar.set_activate_on_single_click(True)
         self.sidebar.add_css_class("navigation-sidebar")
-        self.content_area.append(self.sidebar)
-        
-        # Create content stack
+
+        sidebar_scroller = Gtk.ScrolledWindow()
+        sidebar_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sidebar_scroller.set_child(self.sidebar)
+        sidebar_page = Adw.NavigationPage.new(sidebar_scroller, "Preferences")
+        self.navigation_split_view.set_sidebar(sidebar_page)
+
+        # Stack for page content
         self.content_stack = Gtk.Stack()
-        self.content_stack.set_transition_type(Gtk.StackTransitionType.NONE)
-        self.content_area.append(self.content_stack)
-        
+        self.content_stack.set_hexpand(True)
+        self.content_stack.set_vexpand(True)
+        self.content_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+
+        content_scroller = Gtk.ScrolledWindow()
+        content_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        content_scroller.set_child(self.content_stack)
+        self.header_bar = Gtk.HeaderBar()
+        self.header_bar.add_css_class("flat")
+        self.header_title_label = Gtk.Label.new("")
+        self.header_title_label.add_css_class("title")
+        self.header_title_label.set_single_line_mode(True)
+        self.header_title_label.set_xalign(0.0)
+        self.header_bar.set_title_widget(self.header_title_label)
+
+        self.header_controls = None
+        try:
+            self.header_controls = Gtk.WindowControls.new(Gtk.PackType.END)
+        except AttributeError:
+            logger.debug("Gtk.WindowControls unavailable; skipping window buttons")
+        if self.header_controls:
+            self.header_bar.pack_end(self.header_controls)
+            self.header_bar.set_show_title_buttons(False)
+        else:
+            self.header_bar.set_show_title_buttons(True)
+
+        window_handle = Gtk.WindowHandle()
+        window_handle.set_child(self.header_bar)
+
+        self.content_toolbar_view = Adw.ToolbarView()
+        self.content_toolbar_view.add_top_bar(window_handle)
+        self.content_toolbar_view.set_content(content_scroller)
+
+        content_page = Adw.NavigationPage.new(self.content_toolbar_view, "Preferences")
+        self.navigation_split_view.set_content(content_page)
+
         # Connect sidebar selection to content stack
         self.sidebar.connect('row-selected', self.on_sidebar_row_selected)
-        
+
         # Store pages for later reference
         self.pages = {}
     
@@ -495,32 +538,37 @@ class PreferencesWindow(Gtk.Window):
         if row is not None:
             page_name = row.get_name()
             self.content_stack.set_visible_child_name(page_name)
+            if isinstance(row, Adw.ActionRow) and self.header_title_label:
+                title = row.get_title() or ""
+                self.header_title_label.set_label(title)
     
     def add_page_to_layout(self, title, icon_name, page):
         """Add a page to the custom layout"""
         # Create sidebar row
         row = Adw.ActionRow()
         row.set_title(title)
-        row.set_name(title.lower())
+        page_id = title.lower().replace(' ', '-')
+        row.set_name(page_id)
         
         # Add icon
-        icon = Gtk.Image()
-        icon.set_from_icon_name(icon_name)
-        icon.set_icon_size(Gtk.IconSize.LARGE)
+        icon = Gtk.Image.new_from_icon_name(icon_name)
         row.add_prefix(icon)
         
         # Add to sidebar
         self.sidebar.append(row)
         
         # Add page to stack
-        self.content_stack.add_named(page, title.lower())
+        self.content_stack.add_named(page, page_id)
         
         # Store reference
-        self.pages[title.lower()] = page
+        self.pages[page_id] = page
         
         # Select first page
         if len(self.pages) == 1:
             self.sidebar.select_row(row)
+            if isinstance(row, Adw.ActionRow):
+                title = row.get_title() or ""
+                self.header_title_label.set_label(title)
     
     def setup_preferences(self):
         """Set up preferences UI with current values"""
@@ -739,8 +787,8 @@ class PreferencesWindow(Gtk.Window):
             )
 
             color_display_options = Gtk.StringList()
-            color_display_options.append("Colored Background")
-            color_display_options.append("Color Badge")
+            color_display_options.append("Colored Rows")
+            color_display_options.append("Color Badges")
             self.group_color_display_row.set_model(color_display_options)
 
             current_mode = 'fill'
