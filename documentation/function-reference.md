@@ -360,6 +360,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_resolve_config_override_path()`** — Return an absolute path to the SSH config override, if any.
 
+- **`collect_identity_file_candidates(effective_cfg=None)`** — Return resolved identity file paths that exist on disk for this host.
+
 - **`_update_properties_from_data(data)`** — Update instance properties from data dictionary
 
 - **`connect()`** — Prepare SSH command for later use (no preflight echo).

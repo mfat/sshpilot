@@ -13,7 +13,7 @@ import subprocess
 import shlex
 import signal
 import re
-from typing import Dict, List, Optional, Any, Tuple, Union
+from typing import Dict, List, Optional, Any, Tuple, Union, Set
 
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
 from .platform_utils import is_macos, get_config_dir, get_ssh_dir
@@ -119,6 +119,9 @@ class Connection:
         self.source = data.get('source', '')
         self.config_root = data.get('config_root', '')
         self.isolated_config = bool(data.get('isolated_mode', False))
+
+        # Cache of identity files resolved for this connection (expanded paths)
+        self.resolved_identity_files: List[str] = []
 
         # Provide friendly accessor for UI components that wish to display
         # the originating config file for this connection.
@@ -238,6 +241,78 @@ class Connection:
             )
         return None
 
+    def collect_identity_file_candidates(
+        self,
+        effective_cfg: Optional[Dict[str, Union[str, List[str]]]] = None,
+    ) -> List[str]:
+        """Return resolved identity file paths that exist on disk for this host."""
+
+        candidates: List[str] = []
+        seen: Set[str] = set()
+
+        try:
+            key_mode = int(getattr(self, 'key_select_mode', 0) or 0)
+        except Exception:
+            key_mode = 0
+
+        keyfile_raw = getattr(self, 'keyfile', '') or ''
+        keyfile_value = str(keyfile_raw).strip()
+        if keyfile_value.lower().startswith('select key file'):
+            keyfile_value = ''
+
+        def _add_candidate(path: str):
+            if not path:
+                return
+            expanded = os.path.expanduser(path)
+            if os.path.isfile(expanded) and expanded not in seen:
+                candidates.append(expanded)
+                seen.add(expanded)
+
+        if key_mode in (1, 2):
+            _add_candidate(keyfile_value)
+            return candidates
+
+        if effective_cfg is None:
+            host_label = ''
+            try:
+                host_label = self.resolve_host_identifier()
+            except Exception:
+                host_label = ''
+            if not host_label:
+                try:
+                    host_label = self.get_effective_host()
+                except Exception:
+                    host_label = ''
+
+            if host_label:
+                config_override = None
+                try:
+                    config_override = self._resolve_config_override_path()
+                except Exception:
+                    config_override = None
+
+                try:
+                    if config_override:
+                        effective_cfg = get_effective_ssh_config(host_label, config_file=config_override)
+                    else:
+                        effective_cfg = get_effective_ssh_config(host_label)
+                except Exception:
+                    effective_cfg = {}
+            else:
+                effective_cfg = {}
+
+        cfg = effective_cfg or {}
+        cfg_ids = cfg.get('identityfile') if isinstance(cfg, dict) else None
+        if isinstance(cfg_ids, list):
+            for value in cfg_ids:
+                _add_candidate(value)
+        elif isinstance(cfg_ids, str):
+            _add_candidate(cfg_ids)
+
+        _add_candidate(keyfile_value)
+
+        return candidates
+
     @property
     def source_file(self) -> str:
         """Return path to the config file where this host is defined."""
@@ -246,6 +321,9 @@ class Connection:
     async def connect(self):
         """Prepare SSH command for later use (no preflight echo)."""
         try:
+            # Reset resolved identity cache on every connect preparation
+            self.resolved_identity_files = []
+
             quick_cmd = getattr(self, 'quick_connect_command', '')
             if isinstance(quick_cmd, str) and quick_cmd.strip():
                 try:
@@ -417,17 +495,24 @@ class Connection:
                                 identity_files.append(cfg_ids)
                         if self.keyfile and os.path.exists(self.keyfile):
                             identity_files.append(self.keyfile)
+                    resolved_identity_paths: List[str] = []
+                    seen_identity_paths: Set[str] = set()
+
                     for key_path in identity_files:
                         # Only add identity files that actually exist
                         expanded_path = os.path.expanduser(key_path)
                         if os.path.exists(expanded_path):
                             ssh_cmd.extend(['-i', key_path])
+                            if expanded_path not in seen_identity_paths:
+                                resolved_identity_paths.append(expanded_path)
+                                seen_identity_paths.add(expanded_path)
                         else:
                             logger.debug(f"Skipping non-existent identity file: {key_path}")
                         if key_mode == 1:
                             ssh_cmd.extend(['-o', 'IdentitiesOnly=yes'])
                         if self.key_passphrase:
                             logger.warning("Passphrase-protected keys may require additional setup")
+                    self.resolved_identity_files = resolved_identity_paths
                     cert_files: List[str] = []
                     if self.certificate:
                         cert_files.append(self.certificate)
@@ -478,6 +563,9 @@ class Connection:
     async def native_connect(self):
         """Prepare a minimal SSH command deferring to the user's SSH configuration."""
         try:
+            # Reset resolved identity cache when preparing native command
+            self.resolved_identity_files = []
+
             quick_cmd = getattr(self, 'quick_connect_command', '')
             if isinstance(quick_cmd, str) and quick_cmd.strip():
                 try:
@@ -521,6 +609,11 @@ class Connection:
                 ssh_cmd.extend(sanitized_overrides)
 
             ssh_cmd.append(host_label)
+
+            try:
+                self.resolved_identity_files = self.collect_identity_file_candidates()
+            except Exception:
+                self.resolved_identity_files = []
 
             self.ssh_cmd = ssh_cmd
             self.is_connected = True

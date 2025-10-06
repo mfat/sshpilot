@@ -18,7 +18,7 @@ import weakref
 import subprocess
 import pwd
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from .port_utils import get_port_checker
 from .platform_utils import is_macos
 
@@ -515,6 +515,37 @@ class TerminalWidget(Gtk.Box):
             key_select_mode = 0
 
         if key_select_mode not in (1, 2):
+            candidate_keys = self._resolve_native_identity_candidates()
+            first_candidate = None
+            for candidate in candidate_keys:
+                expanded = os.path.expanduser(candidate)
+                if os.path.isfile(expanded):
+                    first_candidate = expanded
+                    break
+
+            if not first_candidate:
+                logger.debug("No matching identity files found for native key preload")
+                return
+
+            try:
+                prepared = manager.prepare_key_for_connection(first_candidate)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to prepare first matching key for native SSH connection: %s",
+                    exc,
+                )
+                return
+
+            if prepared:
+                logger.debug(
+                    "Prepared first matching key for native SSH connection: %s",
+                    first_candidate,
+                )
+            else:
+                logger.warning(
+                    "Key could not be prepared for native SSH connection: %s",
+                    first_candidate,
+                )
             return
 
         keyfile = getattr(connection, 'keyfile', '') or ''
@@ -537,6 +568,41 @@ class TerminalWidget(Gtk.Box):
             logger.debug("Prepared key for native SSH connection: %s", key_path)
         else:
             logger.warning("Key could not be prepared for native SSH connection: %s", key_path)
+
+    def _resolve_native_identity_candidates(self) -> List[str]:
+        """Return identity file candidates for native SSH preload attempts."""
+
+        connection = getattr(self, 'connection', None)
+        if not connection:
+            return []
+
+        candidates: List[str] = []
+        try:
+            resolved = getattr(connection, 'resolved_identity_files', [])
+        except Exception:
+            resolved = []
+
+        if isinstance(resolved, (list, tuple)):
+            for value in resolved:
+                expanded = os.path.expanduser(str(value))
+                if os.path.isfile(expanded) and expanded not in candidates:
+                    candidates.append(expanded)
+
+        if candidates:
+            return candidates
+
+        if hasattr(connection, 'collect_identity_file_candidates'):
+            try:
+                fallback = connection.collect_identity_file_candidates()
+            except Exception:
+                fallback = []
+
+            for value in fallback:
+                expanded = os.path.expanduser(str(value))
+                if os.path.isfile(expanded) and expanded not in candidates:
+                    candidates.append(expanded)
+
+        return candidates
 
     def _setup_ssh_terminal(self):
         """Set up terminal with direct SSH command (called from main thread)"""
