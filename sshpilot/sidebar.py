@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 _COLOR_CSS_INSTALLED = False
 _DEFAULT_ROW_MARGIN_START = 0
+_DEFAULT_ROW_WIDGET_MARGIN_START = -1
 _MIN_VALID_MARGIN = 0
 
 
@@ -635,13 +636,20 @@ class ConnectionRow(Gtk.ListBoxRow):
         if not content:
             return
 
-        global _DEFAULT_ROW_MARGIN_START
+        global _DEFAULT_ROW_MARGIN_START, _DEFAULT_ROW_WIDGET_MARGIN_START
         if _DEFAULT_ROW_MARGIN_START <= _MIN_VALID_MARGIN:
             _DEFAULT_ROW_MARGIN_START = content.get_margin_start()
 
+        if _DEFAULT_ROW_WIDGET_MARGIN_START <= _MIN_VALID_MARGIN:
+            _DEFAULT_ROW_WIDGET_MARGIN_START = self.get_margin_start()
+            if _DEFAULT_ROW_WIDGET_MARGIN_START < _MIN_VALID_MARGIN:
+                _DEFAULT_ROW_WIDGET_MARGIN_START = 0
+
         if level > 0:
-            content.set_margin_start(_DEFAULT_ROW_MARGIN_START + (level * 20))
+            self.set_margin_start(_DEFAULT_ROW_WIDGET_MARGIN_START + (level * 20))
+            content.set_margin_start(_DEFAULT_ROW_MARGIN_START)
         else:
+            self.set_margin_start(_DEFAULT_ROW_WIDGET_MARGIN_START)
             content.set_margin_start(_DEFAULT_ROW_MARGIN_START)
 
     def _resolve_group_color(self) -> Optional[Gdk.RGBA]:
