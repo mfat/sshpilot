@@ -5010,7 +5010,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     error_details = None
                     if not ok:
                         try:
-                            content = term_widget.vte.get_text_range(0, 0, -1, -1, None)
+                            content_result = term_widget.vte.get_text_range(
+                                0,
+                                0,
+                                -1,
+                                -1,
+                                lambda *args: True,
+                            )
+                            content = content_result[0] if content_result else None
                             if content:
                                 # Look for common error patterns in the output
                                 content_lower = content.lower()
@@ -5026,7 +5033,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                                     error_details = 'Operation not permitted - check server permissions'
                                 else:
                                     # Extract the last few lines of output for context
-                                    lines = content.strip().split('\n')
+                                    stripped_content = content.strip() if content else ''
+                                    lines = stripped_content.split('\n') if stripped_content else []
                                     if lines:
                                         error_details = f"Error details: {lines[-1]}"
                         except Exception as e:
