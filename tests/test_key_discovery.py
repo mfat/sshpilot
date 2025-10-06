@@ -1,14 +1,44 @@
 import os
+import shutil
 import subprocess
 import textwrap
 
 import pytest
 from sshpilot.connection_manager import ConnectionManager
 
+def _generate_test_key(path):
+    """Create an SSH key pair for tests using Paramiko or ssh-keygen."""
+    private_path = path
+    public_path = path.with_suffix(path.suffix + ".pub")
 
-def _write_dummy_key(path):
-    path.write_text("dummy")
-    path.with_suffix(path.suffix + ".pub").write_text("dummy")
+    for key_path in (private_path, public_path):
+        if key_path.exists():
+            key_path.unlink()
+
+    try:
+        import paramiko  # type: ignore
+    except ImportError:  # pragma: no cover - handled via ssh-keygen fallback
+        paramiko = None  # type: ignore
+
+    if paramiko is not None:
+        if hasattr(paramiko, "Ed25519Key") and hasattr(paramiko.Ed25519Key, "generate"):
+            key = paramiko.Ed25519Key.generate()
+        else:
+            key = paramiko.RSAKey.generate(2048)
+        key.write_private_key_file(str(private_path))
+        with public_path.open("w", encoding="utf-8") as public_file:
+            public_file.write(f"{key.get_name()} {key.get_base64()}\n")
+        return
+
+    ssh_keygen = shutil.which("ssh-keygen")
+    if not ssh_keygen:
+        pytest.skip("ssh-keygen not available and Paramiko missing")
+
+    subprocess.run(
+        [ssh_keygen, "-t", "ed25519", "-f", str(private_path), "-N", ""],
+        check=True,
+        capture_output=True,
+    )
 
 
 def test_discover_keys_recurses(tmp_path):
@@ -23,12 +53,12 @@ def test_discover_keys_recurses(tmp_path):
     ssh_dir.mkdir()
 
     root_key = ssh_dir / "id_root"
-    _write_dummy_key(root_key)
+    _generate_test_key(root_key)
 
     nested_dir = ssh_dir / "nested"
     nested_dir.mkdir()
     nested_key = nested_dir / "id_nested"
-    _write_dummy_key(nested_key)
+    _generate_test_key(nested_key)
 
     script = textwrap.dedent(
         """
@@ -59,7 +89,7 @@ def test_connection_manager_loads_keys_standard(tmp_path, monkeypatch):
     ssh_dir = tmp_path / ".ssh"
     ssh_dir.mkdir()
     key = ssh_dir / "id_test"
-    _write_dummy_key(key)
+    _generate_test_key(key)
 
     monkeypatch.setenv("SSHPILOT_SSH_DIR", str(ssh_dir))
     cm = ConnectionManager.__new__(ConnectionManager)
@@ -72,12 +102,12 @@ def test_connection_manager_loads_keys_isolated(tmp_path, monkeypatch):
     home_ssh = tmp_path / ".ssh"
     home_ssh.mkdir()
     home_key = home_ssh / "id_home"
-    _write_dummy_key(home_key)
+    _generate_test_key(home_key)
 
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     config_key = config_dir / "id_iso"
-    _write_dummy_key(config_key)
+    _generate_test_key(config_key)
 
     cm = ConnectionManager.__new__(ConnectionManager)
     cm.isolated_mode = True
