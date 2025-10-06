@@ -284,6 +284,7 @@ class TerminalWidget(Gtk.Box):
         self.search_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
         self.search_revealer.set_halign(Gtk.Align.FILL)
         self.search_revealer.set_valign(Gtk.Align.START)
+        self.search_revealer.set_hexpand(True)
 
         search_banner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         search_banner.add_css_class('banner')
@@ -395,13 +396,12 @@ class TerminalWidget(Gtk.Box):
 
         self.overlay.add_overlay(self.connecting_bg)
         self.overlay.add_overlay(self.connecting_box)
-        self.overlay.add_overlay(self.search_revealer)
-        # Ensure the search banner does not cover terminal content
-        try:
-            if hasattr(self.overlay, 'set_measure_overlay'):
-                self.overlay.set_measure_overlay(self.search_revealer, True)
-        except Exception:
-            pass
+
+        self.terminal_stack = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.terminal_stack.set_hexpand(True)
+        self.terminal_stack.set_vexpand(True)
+        self.terminal_stack.append(self.search_revealer)
+        self.terminal_stack.append(self.overlay)
 
         # Disconnected banner with reconnect button at the bottom (separate panel below terminal)
         # Install CSS for a solid red background banner once
@@ -496,7 +496,7 @@ class TerminalWidget(Gtk.Box):
         self.container_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.container_box.set_hexpand(True)
         self.container_box.set_vexpand(True)
-        self.container_box.append(self.overlay)
+        self.container_box.append(self.terminal_stack)
         self.container_box.append(self.disconnected_banner)
 
         self.append(self.container_box)
