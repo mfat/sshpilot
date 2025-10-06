@@ -346,6 +346,28 @@ class TerminalWidget(Gtk.Box):
         search_banner.append(search_controls)
         self.search_revealer.set_child(search_banner)
 
+        # Install CSS for search banner to ensure solid background
+        try:
+            display = Gdk.Display.get_default()
+            if display and not getattr(display, '_sshpilot_search_banner_css_installed', False):
+                css_provider = Gtk.CssProvider()
+                css_provider.load_from_data(b"""
+                    .search-banner {
+                        background-color: @headerbar_bg_color;
+                        color: @headerbar_fg_color;
+                        border-bottom: 1px solid @borders;
+                    }
+                """)
+                Gtk.StyleContext.add_provider_for_display(
+                    display, css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                )
+                setattr(display, '_sshpilot_search_banner_css_installed', True)
+        except Exception:
+            pass
+
+        # Add the search-banner CSS class to ensure solid background
+        search_banner.add_css_class('search-banner')
+
         # Connecting overlay elements
         self.connecting_bg = Gtk.Box()
         self.connecting_bg.set_hexpand(True)
@@ -374,6 +396,12 @@ class TerminalWidget(Gtk.Box):
         self.overlay.add_overlay(self.connecting_bg)
         self.overlay.add_overlay(self.connecting_box)
         self.overlay.add_overlay(self.search_revealer)
+        # Ensure the search banner does not cover terminal content
+        try:
+            if hasattr(self.overlay, 'set_measure_overlay'):
+                self.overlay.set_measure_overlay(self.search_revealer, True)
+        except Exception:
+            pass
 
         # Disconnected banner with reconnect button at the bottom (separate panel below terminal)
         # Install CSS for a solid red background banner once
@@ -2276,9 +2304,9 @@ class TerminalWidget(Gtk.Box):
                 if hasattr(self.vte, 'remove_controller'):
                     self.vte.remove_controller(scroll)
             except Exception as exc:
-            logger.debug("Failed to remove scroll controller: %s", exc)
-        finally:
-            self._scroll_controller = None
+                logger.debug("Failed to remove scroll controller: %s", exc)
+            finally:
+                self._scroll_controller = None
 
         search_ctrl = getattr(self, '_search_key_controller', None)
         if search_ctrl is not None:
@@ -3030,10 +3058,10 @@ class TerminalWidget(Gtk.Box):
         try:
             if pattern_changed:
                 pattern = text if regex else re.escape(text)
-                flags = 0
-                if not case_sensitive:
-                    flags |= int(getattr(Vte.RegexFlags, 'CASELESS', 0))
-                search_regex = Vte.Regex.new_for_search(pattern, -1, flags)
+                # Use inline case-insensitive flag to avoid Vte.RegexFlags dependency
+                if not case_sensitive and not pattern.startswith("(?i)"):
+                    pattern = "(?i)" + pattern
+                search_regex = Vte.Regex.new_for_search(pattern, -1, 0)
                 self.vte.search_set_regex(search_regex, 0)
                 self.vte.search_set_wrap_around(True)
                 self._last_search_text = text
