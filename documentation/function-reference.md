@@ -1167,8 +1167,6 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`on_accent_color_changed(color_button)`** — Handle accent color change
 
-- **`on_app_color_changed(color_button)`** — Handle app color change
-
 - **`on_close_request(*args)`** — Persist settings when the preferences window closes
 
 - **`on_color_scheme_changed(combo_row, param)`** — Handle terminal color scheme change
@@ -1187,9 +1185,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`on_reset_advanced_ssh(*args)`** — Reset only advanced SSH keys to defaults and update UI.
 
-- **`on_reset_colors_clicked(button)`** — Reset color overrides to default
-
-- **`on_sidebar_color_changed(color_button)`** — Handle sidebar color change
+- **`on_reset_colors_clicked(button)`** — Reset accent color override to default
 
 - **`on_startup_behavior_changed(radio_button, *args)`** — Handle startup behavior radio button change
 

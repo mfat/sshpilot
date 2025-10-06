@@ -592,52 +592,29 @@ class SshPilotApplication(Adw.Application):
             import gi
             gi.require_version('Gtk', '4.0')
             from gi.repository import Gtk, Gdk
-            
-            # Get color overrides from config
-            app_color = config.get_setting('app-color-override', None)
+
             accent_color = config.get_setting('accent-color-override', None)
-            sidebar_color = config.get_setting('sidebar-color-override', None)
-            
-            # Build CSS with color overrides using proper Adwaita named colors
-            css_rules = []
-            
-            if app_color:
-                # Override all accent-related colors for comprehensive theming
-                css_rules.append(f"@define-color accent_bg_color {app_color};")
-                css_rules.append(f"@define-color accent_fg_color white;")
-                css_rules.append(f"@define-color accent_color {app_color};")
-                # Override selected colors (used for selected rows, list items, etc.)
-                css_rules.append(f"@define-color theme_selected_bg_color {app_color};")
-                css_rules.append(f"@define-color theme_selected_fg_color white;")
-                css_rules.append(f"@define-color theme_unfocused_selected_bg_color {app_color};")
-                css_rules.append(f"@define-color theme_unfocused_selected_fg_color white;")
-                # Override window background colors
-                css_rules.append(f"@define-color window_bg_color {app_color};")
-                css_rules.append(f"@define-color theme_bg_color {app_color};")
-                css_rules.append(f"@define-color theme_unfocused_bg_color {app_color};")
-                # Override sidebar colors
-                css_rules.append(f"@define-color sidebar_bg_color {app_color};")
-                css_rules.append(f"@define-color secondary_sidebar_bg_color {app_color};")
-            
-            if accent_color:
-                # Override accent colors regardless of app color
-                css_rules.append(f"@define-color accent_color {accent_color};")
-                css_rules.append(f"@define-color accent_bg_color {accent_color};")
-                css_rules.append(f"@define-color accent_fg_color white;")
-                css_rules.append(f"@define-color theme_selected_bg_color {accent_color};")
-                css_rules.append(f"@define-color theme_selected_fg_color white;")
-                css_rules.append(
-                    f"@define-color theme_unfocused_selected_bg_color {accent_color};"
-                )
-                css_rules.append(
-                    f"@define-color theme_unfocused_selected_fg_color white;"
-                )
-            
-            if sidebar_color:
-                # Override sidebar colors independently
-                css_rules.append(f"@define-color sidebar_bg_color {sidebar_color};")
-                css_rules.append(f"@define-color secondary_sidebar_bg_color {sidebar_color};")
-            
+
+            if not accent_color:
+                display = Gdk.Display.get_default()
+                if display and hasattr(display, '_color_override_provider'):
+                    Gtk.StyleContext.remove_provider_for_display(
+                        display,
+                        display._color_override_provider,
+                    )
+                    delattr(display, '_color_override_provider')
+                return
+
+            css_rules = [
+                f"@define-color accent_color {accent_color};",
+                f"@define-color accent_bg_color {accent_color};",
+                "@define-color accent_fg_color white;",
+                f"@define-color theme_selected_bg_color {accent_color};",
+                "@define-color theme_selected_fg_color white;",
+                f"@define-color theme_unfocused_selected_bg_color {accent_color};",
+                "@define-color theme_unfocused_selected_fg_color white;",
+            ]
+
             if css_rules:
                 # Add specific CSS rules for row selection
                 css_rules.append("")
@@ -661,19 +638,25 @@ class SshPilotApplication(Adw.Application):
                 provider = Gtk.CssProvider()
                 css = "\n".join(css_rules)
                 provider.load_from_data(css.encode('utf-8'))
-                
+
                 # Add provider to display
                 display = Gdk.Display.get_default()
                 if display:
+                    if hasattr(display, '_color_override_provider'):
+                        Gtk.StyleContext.remove_provider_for_display(
+                            display,
+                            display._color_override_provider,
+                        )
+                        delattr(display, '_color_override_provider')
                     Gtk.StyleContext.add_provider_for_display(
-                        display, 
-                        provider, 
+                        display,
+                        provider,
                         Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
                     )
                     # Store provider reference for cleanup
                     display._color_override_provider = provider
-                    logging.info("Applied color overrides on startup")
-                
+                    logging.info("Applied accent color override on startup")
+
         except Exception as e:
             logging.error(f"Failed to apply color overrides: {e}")
 
