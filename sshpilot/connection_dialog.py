@@ -1006,6 +1006,27 @@ class ConnectionDialog(Adw.Window):
             if hasattr(self, 'key_only_row'):
                 self.key_only_row.set_visible(use_specific)
                 self.key_only_row.set_sensitive(use_specific)
+
+            if use_specific:
+                key_path = getattr(self, '_selected_keyfile_path', None)
+                if not key_path:
+                    try:
+                        selected = self.key_dropdown.get_selected() if hasattr(self, 'key_dropdown') else -1
+                    except Exception:
+                        selected = -1
+                    if (
+                        hasattr(self, '_key_paths')
+                        and hasattr(self, 'key_dropdown')
+                        and 0 <= selected < len(self._key_paths)
+                    ):
+                        candidate_path = self._key_paths[selected]
+                        if candidate_path and candidate_path != "__BROWSE__":
+                            key_path = candidate_path
+                if key_path:
+                    self._update_passphrase_for_key(key_path)
+            else:
+                if hasattr(self, 'key_passphrase_row'):
+                    self.key_passphrase_row.set_text("")
         except Exception:
             pass
         
