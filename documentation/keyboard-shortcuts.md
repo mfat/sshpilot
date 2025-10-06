@@ -57,6 +57,10 @@ SSH Pilot is designed for efficient keyboard navigation. This guide covers all a
 
 | Action | Linux/Windows | macOS | Description |
 |--------|---------------|-------|-------------|
+| **Search Terminal** | `Ctrl+F` | `Cmd+F` | Show the in-terminal search banner |
+| **Find Next Match** | `Ctrl+G` or `Enter` | `Cmd+G` or `Enter` | Jump to the next highlighted search result |
+| **Find Previous Match** | `Ctrl+Shift+G` or `Shift+Enter` | `Cmd+Shift+G` or `Shift+Enter` | Jump to the previous highlighted search result |
+| **Dismiss Terminal Search** | `Escape` | `Escape` | Hide the terminal search banner |
 | **Copy** | `Ctrl+Shift+C` | `Cmd+C` | Copy selected text |
 | **Paste** | `Ctrl+Shift+V` | `Cmd+V` | Paste text |
 | **Select All** | `Ctrl+Shift+A` | `Cmd+A` | Select all terminal text |
