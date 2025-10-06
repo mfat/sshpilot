@@ -516,36 +516,44 @@ class TerminalWidget(Gtk.Box):
 
         if key_select_mode not in (1, 2):
             candidate_keys = self._resolve_native_identity_candidates()
-            first_candidate = None
+            attempted = False
+
             for candidate in candidate_keys:
                 expanded = os.path.expanduser(candidate)
-                if os.path.isfile(expanded):
-                    first_candidate = expanded
-                    break
+                if not os.path.isfile(expanded):
+                    logger.debug(
+                        "Identity candidate not found for native key preload: %s",
+                        candidate,
+                    )
+                    continue
 
-            if not first_candidate:
-                logger.debug("No matching identity files found for native key preload")
-                return
+                attempted = True
 
-            try:
-                prepared = manager.prepare_key_for_connection(first_candidate)
-            except Exception as exc:
-                logger.warning(
-                    "Failed to prepare first matching key for native SSH connection: %s",
-                    exc,
-                )
-                return
+                try:
+                    prepared = manager.prepare_key_for_connection(expanded)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to prepare key for native SSH connection (%s): %s",
+                        expanded,
+                        exc,
+                    )
+                    continue
 
-            if prepared:
-                logger.debug(
-                    "Prepared first matching key for native SSH connection: %s",
-                    first_candidate,
-                )
-            else:
+                if prepared:
+                    logger.debug(
+                        "Prepared key for native SSH connection: %s",
+                        expanded,
+                    )
+                    return
+
                 logger.warning(
                     "Key could not be prepared for native SSH connection: %s",
-                    first_candidate,
+                    expanded,
                 )
+
+            if not attempted:
+                logger.debug("No matching identity files found for native key preload")
+
             return
 
         keyfile = getattr(connection, 'keyfile', '') or ''
