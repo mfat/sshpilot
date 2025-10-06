@@ -10,6 +10,7 @@ from typing import Optional, List, Dict
 from gi.repository import GObject
 
 from .platform_utils import get_ssh_dir
+from .key_utils import _SKIPPED_FILENAMES as _SHARED_SKIPPED_FILENAMES, _is_private_key
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ class KeyManager(GObject.Object):
     Unified SSH key generation (single method) + discovery helper.
     Uses system `ssh-keygen` for portability and OpenSSH-compatible output.
     """
-    _SKIPPED_FILENAMES = {"config", "known_hosts", "authorized_keys"}
+    _SKIPPED_FILENAMES = _SHARED_SKIPPED_FILENAMES
 
     __gsignals__ = {
         # Emitted after a key is generated successfully
@@ -51,46 +52,11 @@ class KeyManager(GObject.Object):
 
     def _is_private_key(self, file_path: Path) -> bool:
         """Return True if the path looks like a private SSH key."""
-        name = file_path.name
-        if not file_path.is_file() or name.endswith(".pub") or name in self._SKIPPED_FILENAMES:
-            return False
-
-        key_path = str(file_path)
-        cached = self._key_validation_cache.get(key_path)
-        if cached is not None:
-            return cached
-
-        cmd = ["ssh-keygen", "-y", "-f", key_path, "-P", ""]
-        try:
-            completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        except FileNotFoundError:
-            raise
-        except Exception as exc:
-            logger.debug("Failed to run ssh-keygen for %s: %s", key_path, exc, exc_info=True)
-            self._key_validation_cache[key_path] = False
-            return False
-
-        stderr = completed.stderr or ""
-        stdout = completed.stdout or ""
-        stderr_lower = stderr.lower()
-
-        success = completed.returncode == 0
-        if not success and ("incorrect passphrase supplied" in stderr_lower or "load key" in stderr_lower):
-            success = True
-            logger.debug(
-                "ssh-keygen reported a protected key for %s: %s",
-                key_path,
-                stderr.strip() or stdout.strip() or "passphrase required",
-            )
-
-        if success:
-            self._key_validation_cache[key_path] = True
-            return True
-
-        message = stderr.strip() or stdout.strip() or f"ssh-keygen exited with {completed.returncode}"
-        logger.debug("ssh-keygen rejected %s: %s", key_path, message)
-        self._key_validation_cache[key_path] = False
-        return False
+        return _is_private_key(
+            file_path,
+            cache=self._key_validation_cache,
+            skipped_filenames=self._SKIPPED_FILENAMES,
+        )
 
     # ---------------- Public API ----------------
 

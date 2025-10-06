@@ -13,10 +13,12 @@ import subprocess
 import shlex
 import signal
 import re
+from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple, Union, Set
 
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
 from .platform_utils import is_macos, get_config_dir, get_ssh_dir
+from .key_utils import _is_private_key
 
 try:
     import gi
@@ -1696,19 +1698,66 @@ class ConnectionManager(GObject.Object):
         search_dirs.append(get_ssh_dir())
 
         keys: List[str] = []
-        seen = set()
+        seen: Set[str] = set()
+        validation_cache: Dict[str, bool] = {}
+        fallback_to_pub = False
         for ssh_dir in search_dirs:
             if not os.path.exists(ssh_dir):
                 continue
             try:
                 for filename in os.listdir(ssh_dir):
+                    file_path = Path(ssh_dir) / filename
+
                     if filename.endswith('.pub'):
-                        private_key = os.path.join(ssh_dir, filename[:-4])
-                        if os.path.exists(private_key) and private_key not in seen:
-                            keys.append(private_key)
-                            seen.add(private_key)
+                        if fallback_to_pub:
+                            private_key_path = file_path.with_suffix('')
+                            key_path = str(private_key_path)
+                            if private_key_path.exists() and key_path not in seen:
+                                keys.append(key_path)
+                                seen.add(key_path)
+                        continue
+
+                    if fallback_to_pub:
+                        pub_candidate = file_path.with_suffix(file_path.suffix + '.pub')
+                        if pub_candidate.exists():
+                            key_path = str(file_path)
+                            if key_path not in seen:
+                                keys.append(key_path)
+                                seen.add(key_path)
+                        continue
+
+                    try:
+                        if _is_private_key(file_path, cache=validation_cache):
+                            key_path = str(file_path)
+                            if key_path not in seen:
+                                keys.append(key_path)
+                                seen.add(key_path)
+                    except FileNotFoundError:
+                        fallback_to_pub = True
+                        logger.debug(
+                            "ssh-keygen not available; falling back to public-key discovery in %s",
+                            ssh_dir,
+                        )
+                        pub_candidate = file_path.with_suffix(file_path.suffix + '.pub')
+                        if pub_candidate.exists():
+                            key_path = str(file_path)
+                            if key_path not in seen:
+                                keys.append(key_path)
+                                seen.add(key_path)
+                    except Exception as exc:
+                        logger.debug(
+                            "Failed to validate potential key %s: %s",
+                            file_path,
+                            exc,
+                            exc_info=True,
+                        )
             except Exception as e:
-                logger.error(f"Failed to load SSH keys from {ssh_dir}: {e}")
+                logger.debug(
+                    "Failed to load SSH keys from %s: %s",
+                    ssh_dir,
+                    e,
+                    exc_info=True,
+                )
 
         logger.info(f"Found {len(keys)} SSH keys: {keys}")
         return keys
