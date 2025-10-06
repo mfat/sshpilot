@@ -50,15 +50,29 @@ def _is_private_key(
     stderr_lower = stderr.lower()
 
     success = completed.returncode == 0
-    if not success and (
-        "incorrect passphrase supplied" in stderr_lower or "load key" in stderr_lower
-    ):
-        success = True
-        logger.debug(
-            "ssh-keygen reported a protected key for %s: %s",
-            key_path,
-            stderr.strip() or stdout.strip() or "passphrase required",
+    if not success:
+        passphrase_hints = (
+            "incorrect passphrase",
+            "passphrase is required",
+            "passphrase required",
+            "no passphrase supplied",
+            "bad passphrase",
         )
+        if any(hint in stderr_lower for hint in passphrase_hints):
+            success = True
+            logger.debug(
+                "ssh-keygen reported a protected key for %s: %s",
+                key_path,
+                stderr.strip() or stdout.strip() or "passphrase required",
+            )
+        elif "passphrase" in stderr_lower:
+            # Future-proofing: log unexpected passphrase-related output but do not
+            # treat it as success.
+            logger.debug(
+                "ssh-keygen returned passphrase-related output for %s: %s",
+                key_path,
+                stderr.strip() or stdout.strip(),
+            )
 
     if success:
         if cache is not None:
