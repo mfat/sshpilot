@@ -248,9 +248,13 @@ class TerminalWidget(Gtk.Box):
         self.vte = Vte.Terminal()
         self._shortcut_controller = None
         self._scroll_controller = None
+        self._search_key_controller = None
         self._config_handler = None
         self._supported_encodings = None
         self._updating_encoding_config = False
+        self._last_search_text = ''
+        self._last_search_case_sensitive = False
+        self._last_search_regex = False
         try:
             self._pass_through_mode = bool(self.config.get_setting('terminal.pass_through_mode', False))
         except Exception:
@@ -273,6 +277,74 @@ class TerminalWidget(Gtk.Box):
         self.scrolled_window.set_child(self.vte)
         self.overlay = Gtk.Overlay()
         self.overlay.set_child(self.scrolled_window)
+
+        # Search overlay elements (revealer styled like other banners)
+        self.search_revealer = Gtk.Revealer()
+        self.search_revealer.set_reveal_child(False)
+        self.search_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.search_revealer.set_halign(Gtk.Align.FILL)
+        self.search_revealer.set_valign(Gtk.Align.START)
+
+        search_banner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        search_banner.add_css_class('banner')
+        search_banner.set_hexpand(True)
+
+        search_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        search_header.set_margin_start(12)
+        search_header.set_margin_end(12)
+        search_header.set_margin_top(8)
+        search_header.set_margin_bottom(4)
+
+        search_title = Gtk.Label(label=_("Search Terminal"))
+        search_title.set_xalign(0)
+        search_title.set_hexpand(True)
+        search_title.add_css_class('title-4')
+        search_header.append(search_title)
+
+        self.search_close_button = Gtk.Button()
+        self.search_close_button.set_icon_name('window-close-symbolic')
+        self.search_close_button.add_css_class('flat')
+        self.search_close_button.set_valign(Gtk.Align.CENTER)
+        self.search_close_button.connect('clicked', lambda *_: self._hide_search_overlay())
+        self.search_close_button.set_tooltip_text(_("Close terminal search"))
+        search_header.append(self.search_close_button)
+
+        search_banner.append(search_header)
+
+        search_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        search_controls.set_margin_start(12)
+        search_controls.set_margin_end(12)
+        search_controls.set_margin_bottom(8)
+
+        self.search_entry = Gtk.SearchEntry()
+        self.search_entry.set_placeholder_text(_("Search terminal history"))
+        self.search_entry.set_hexpand(True)
+        self.search_entry.connect('search-changed', self._on_search_entry_changed)
+        self.search_entry.connect('activate', self._on_search_entry_activate)
+        self.search_entry.connect('stop-search', self._on_search_entry_stop)
+
+        entry_key_controller = Gtk.EventControllerKey()
+        entry_key_controller.connect('key-pressed', self._on_search_entry_key_pressed)
+        self.search_entry.add_controller(entry_key_controller)
+
+        search_controls.append(self.search_entry)
+
+        self.search_prev_button = Gtk.Button()
+        self.search_prev_button.set_icon_name('go-up-symbolic')
+        self.search_prev_button.set_tooltip_text(_("Find previous match"))
+        self.search_prev_button.connect('clicked', self._on_search_previous)
+        self.search_prev_button.set_sensitive(False)
+        search_controls.append(self.search_prev_button)
+
+        self.search_next_button = Gtk.Button()
+        self.search_next_button.set_icon_name('go-down-symbolic')
+        self.search_next_button.set_tooltip_text(_("Find next match"))
+        self.search_next_button.connect('clicked', self._on_search_next)
+        self.search_next_button.set_sensitive(False)
+        search_controls.append(self.search_next_button)
+
+        search_banner.append(search_controls)
+        self.search_revealer.set_child(search_banner)
 
         # Connecting overlay elements
         self.connecting_bg = Gtk.Box()
@@ -301,6 +373,7 @@ class TerminalWidget(Gtk.Box):
 
         self.overlay.add_overlay(self.connecting_bg)
         self.overlay.add_overlay(self.connecting_box)
+        self.overlay.add_overlay(self.search_revealer)
 
         # Disconnected banner with reconnect button at the bottom (separate panel below terminal)
         # Install CSS for a solid red background banner once
@@ -1975,129 +2048,133 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Context menu setup failed: {e}")
 
     def _install_shortcuts(self):
-        """Install local shortcuts on the VTE widget for copy/paste/select-all."""
+        """Install custom keyboard shortcuts for terminal operations."""
         if getattr(self, '_pass_through_mode', False):
             logger.debug("Pass-through mode active; skipping custom terminal shortcuts")
             return
 
-        if getattr(self, '_shortcut_controller', None) is not None:
-            return
-
         try:
-            controller = Gtk.ShortcutController()
-            controller.set_scope(Gtk.ShortcutScope.LOCAL)
-            controller.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
+            controller = getattr(self, '_shortcut_controller', None)
+            if controller is None:
+                controller = Gtk.ShortcutController()
+                controller.set_scope(Gtk.ShortcutScope.LOCAL)
+                controller.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
 
-            def _schedule_vte_action(action, *action_args):
-                def _runner():
+                def _schedule_vte_action(action, *action_args):
+                    def _runner():
+                        try:
+                            action(*action_args)
+                        except Exception as exc:
+                            logger.debug("VTE shortcut action failed: %s", exc)
+                        return False
+
+                    GLib.idle_add(_runner)
+                    return True
+
+                def _cb_copy(widget, *args):
+                    if not self.vte.get_has_selection():
+                        return False
+                    return _schedule_vte_action(self.vte.copy_clipboard_format, Vte.Format.TEXT)
+
+                def _cb_paste(widget, *args):
+                    return _schedule_vte_action(self.vte.paste_clipboard)
+
+                def _cb_select_all(widget, *args):
+                    return _schedule_vte_action(self.vte.select_all)
+
+                if is_macos():
+                    # macOS: Use standard Cmd+C/V for copy/paste, Cmd+Shift+C/V for terminal-specific operations
+                    copy_trigger = "<Meta>c"
+                    paste_trigger = "<Meta>v"
+                    select_trigger = "<Meta>a"
+                else:
+                    # Linux/Windows: Use Ctrl+Shift+C/V for terminal copy/paste (standard for terminals)
+                    copy_trigger = "<Primary><Shift>c"
+                    paste_trigger = "<Primary><Shift>v"
+                    select_trigger = "<Primary><Shift>a"
+
+                controller.add_shortcut(Gtk.Shortcut.new(
+                    Gtk.ShortcutTrigger.parse_string(copy_trigger),
+                    Gtk.CallbackAction.new(_cb_copy)
+                ))
+                controller.add_shortcut(Gtk.Shortcut.new(
+                    Gtk.ShortcutTrigger.parse_string(paste_trigger),
+                    Gtk.CallbackAction.new(_cb_paste)
+                ))
+                controller.add_shortcut(Gtk.Shortcut.new(
+                    Gtk.ShortcutTrigger.parse_string(select_trigger),
+                    Gtk.CallbackAction.new(_cb_select_all)
+                ))
+
+                # Add zoom shortcuts
+                if is_macos():
+                    # macOS: Use Cmd+= (equals key), Cmd+-, and Cmd+0 for zoom
+                    # Note: On macOS, Cmd+Shift+= is the same as Cmd+=
+                    zoom_in_triggers = ["<Meta>equal"]
+                    zoom_out_triggers = ["<Meta>minus"]
+                    zoom_reset_trigger = "<Meta>0"
+                else:
+                    # Linux/Windows: Use Ctrl++, Ctrl+-, and Ctrl+0 for zoom
+                    # Support both regular keys and numeric keypad variants
+                    zoom_in_triggers = ["<Primary>equal", "<Primary>KP_Add"]
+                    zoom_out_triggers = ["<Primary>minus", "<Primary>KP_Subtract"]
+                    zoom_reset_trigger = "<Primary>0"
+
+                logger.debug(f"Setting up terminal zoom shortcuts: in={zoom_in_triggers}, out={zoom_out_triggers}, reset={zoom_reset_trigger}")
+
+                def _cb_zoom_in(widget, *args):
                     try:
-                        action(*action_args)
+                        self.zoom_in()
                     except Exception as exc:
-                        logger.debug("VTE shortcut action failed: %s", exc)
-                    return False
+                        logger.debug("Zoom in shortcut failed: %s", exc)
+                    return True
 
-                GLib.idle_add(_runner)
-                return True
+                def _cb_zoom_out(widget, *args):
+                    try:
+                        self.zoom_out()
+                    except Exception as exc:
+                        logger.debug("Zoom out shortcut failed: %s", exc)
+                    return True
 
-            def _cb_copy(widget, *args):
-                if not self.vte.get_has_selection():
-                    return False
-                return _schedule_vte_action(self.vte.copy_clipboard_format, Vte.Format.TEXT)
+                def _cb_reset_zoom(widget, *args):
+                    try:
+                        self.reset_zoom()
+                    except Exception as exc:
+                        logger.debug("Zoom reset shortcut failed: %s", exc)
+                    return True
 
-            def _cb_paste(widget, *args):
-                return _schedule_vte_action(self.vte.paste_clipboard)
+                # Add zoom in shortcuts (support both regular and keypad plus)
+                for trig in zoom_in_triggers:
+                    controller.add_shortcut(Gtk.Shortcut.new(
+                        Gtk.ShortcutTrigger.parse_string(trig),
+                        Gtk.CallbackAction.new(_cb_zoom_in)
+                    ))
 
-            def _cb_select_all(widget, *args):
-                return _schedule_vte_action(self.vte.select_all)
-            
-            if is_macos():
-                # macOS: Use standard Cmd+C/V for copy/paste, Cmd+Shift+C/V for terminal-specific operations
-                copy_trigger = "<Meta>c"
-                paste_trigger = "<Meta>v"
-                select_trigger = "<Meta>a"
-            else:
-                # Linux/Windows: Use Ctrl+Shift+C/V for terminal copy/paste (standard for terminals)
-                copy_trigger = "<Primary><Shift>c"
-                paste_trigger = "<Primary><Shift>v"
-                select_trigger = "<Primary><Shift>a"
-            
-            controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string(copy_trigger),
-                Gtk.CallbackAction.new(_cb_copy)
-            ))
-            controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string(paste_trigger),
-                Gtk.CallbackAction.new(_cb_paste)
-            ))
-            controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string(select_trigger),
-                Gtk.CallbackAction.new(_cb_select_all)
-            ))
-            
-            # Add zoom shortcuts
-            if is_macos():
-                # macOS: Use Cmd+= (equals key), Cmd+-, and Cmd+0 for zoom
-                # Note: On macOS, Cmd+Shift+= is the same as Cmd+=
-                zoom_in_triggers = ["<Meta>equal"]
-                zoom_out_triggers = ["<Meta>minus"]
-                zoom_reset_trigger = "<Meta>0"
-            else:
-                # Linux/Windows: Use Ctrl++, Ctrl+-, and Ctrl+0 for zoom
-                # Support both regular keys and numeric keypad variants
-                zoom_in_triggers = ["<Primary>equal", "<Primary>KP_Add"]
-                zoom_out_triggers = ["<Primary>minus", "<Primary>KP_Subtract"]
-                zoom_reset_trigger = "<Primary>0"
-            
-            logger.debug(f"Setting up terminal zoom shortcuts: in={zoom_in_triggers}, out={zoom_out_triggers}, reset={zoom_reset_trigger}")
-            
-            def _cb_zoom_in(widget, *args):
-                try:
-                    self.zoom_in()
-                except Exception as exc:
-                    logger.debug("Zoom in shortcut failed: %s", exc)
-                return True
+                # Add zoom out shortcuts (support both regular and keypad minus)
+                for trig in zoom_out_triggers:
+                    controller.add_shortcut(Gtk.Shortcut.new(
+                        Gtk.ShortcutTrigger.parse_string(trig),
+                        Gtk.CallbackAction.new(_cb_zoom_out)
+                    ))
 
-            def _cb_zoom_out(widget, *args):
-                try:
-                    self.zoom_out()
-                except Exception as exc:
-                    logger.debug("Zoom out shortcut failed: %s", exc)
-                return True
-
-            def _cb_reset_zoom(widget, *args):
-                try:
-                    self.reset_zoom()
-                except Exception as exc:
-                    logger.debug("Zoom reset shortcut failed: %s", exc)
-                return True
-            
-            # Add zoom in shortcuts (support both regular and keypad plus)
-            for trig in zoom_in_triggers:
                 controller.add_shortcut(Gtk.Shortcut.new(
-                    Gtk.ShortcutTrigger.parse_string(trig),
-                    Gtk.CallbackAction.new(_cb_zoom_in)
+                    Gtk.ShortcutTrigger.parse_string(zoom_reset_trigger),
+                    Gtk.CallbackAction.new(_cb_reset_zoom)
                 ))
-            
-            # Add zoom out shortcuts (support both regular and keypad minus)
-            for trig in zoom_out_triggers:
-                controller.add_shortcut(Gtk.Shortcut.new(
-                    Gtk.ShortcutTrigger.parse_string(trig),
-                    Gtk.CallbackAction.new(_cb_zoom_out)
-                ))
-            
-            controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string(zoom_reset_trigger),
-                Gtk.CallbackAction.new(_cb_reset_zoom)
-            ))
-            
-            self.vte.add_controller(controller)
-            self._shortcut_controller = controller
 
-            # Add mouse wheel zoom functionality
-            self._setup_mouse_wheel_zoom()
-            
+                self.vte.add_controller(controller)
+                self._shortcut_controller = controller
+
+            if getattr(self, '_shortcut_controller', None) is not None:
+                self._setup_mouse_wheel_zoom()
+
         except Exception as e:
             logger.debug(f"Failed to install shortcuts: {e}")
+
+        try:
+            self._ensure_search_key_controller()
+        except Exception:
+            pass
     
     def _setup_mouse_wheel_zoom(self):
         """Set up mouse wheel zoom functionality with Cmd+MouseWheel."""
@@ -2142,6 +2219,45 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.debug(f"Failed to setup mouse wheel zoom: {e}")
 
+    def _ensure_search_key_controller(self):
+        """Attach the search shortcut controller to the terminal if needed."""
+        if getattr(self, '_search_key_controller', None) is not None:
+            return
+
+        try:
+            controller = Gtk.EventControllerKey()
+            controller.connect('key-pressed', self._on_vte_search_key_pressed)
+            self.vte.add_controller(controller)
+            self._search_key_controller = controller
+            logger.debug("Search key controller installed")
+        except Exception as exc:
+            logger.debug("Failed to install search key controller: %s", exc)
+
+    def _on_vte_search_key_pressed(self, controller, keyval, keycode, state):
+        """Handle global terminal search shortcuts on the VTE widget."""
+        try:
+            shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
+            primary = bool(state & Gdk.ModifierType.CONTROL_MASK)
+            meta = bool(state & Gdk.ModifierType.META_MASK)
+
+            if keyval in (Gdk.KEY_f, Gdk.KEY_F) and (primary or meta):
+                self._show_search_overlay(select_all=True)
+                return True
+
+            if keyval in (Gdk.KEY_g, Gdk.KEY_G) and (primary or meta):
+                if shift:
+                    self._on_search_previous()
+                else:
+                    self._on_search_next()
+                return True
+
+            if keyval == Gdk.KEY_Escape and hasattr(self, 'search_revealer') and self.search_revealer.get_reveal_child():
+                self._hide_search_overlay()
+                return True
+        except Exception as exc:
+            logger.debug("Terminal search key handling failed: %s", exc)
+        return False
+
     def _remove_custom_shortcut_controllers(self):
         """Detach any custom shortcut or scroll controllers from the VTE widget."""
         ctrl = getattr(self, '_shortcut_controller', None)
@@ -2160,9 +2276,19 @@ class TerminalWidget(Gtk.Box):
                 if hasattr(self.vte, 'remove_controller'):
                     self.vte.remove_controller(scroll)
             except Exception as exc:
-                logger.debug("Failed to remove scroll controller: %s", exc)
+            logger.debug("Failed to remove scroll controller: %s", exc)
+        finally:
+            self._scroll_controller = None
+
+        search_ctrl = getattr(self, '_search_key_controller', None)
+        if search_ctrl is not None:
+            try:
+                if hasattr(self.vte, 'remove_controller'):
+                    self.vte.remove_controller(search_ctrl)
+            except Exception as exc:
+                logger.debug("Failed to remove search key controller: %s", exc)
             finally:
-                self._scroll_controller = None
+                self._search_key_controller = None
 
     def _apply_pass_through_mode(self, enabled: bool):
         """Enable or disable custom shortcut handling based on configuration."""
@@ -2826,25 +2952,202 @@ class TerminalWidget(Gtk.Box):
         """Reset and clear terminal"""
         self.vte.reset(True, False)
 
+    def _show_search_overlay(self, select_all: bool = False):
+        """Reveal the terminal search overlay and focus the search entry."""
+        try:
+            if not hasattr(self, 'search_revealer') or not self.search_revealer:
+                return
+            self.search_revealer.set_reveal_child(True)
+            if hasattr(self, 'search_entry') and self.search_entry:
+                if select_all:
+                    try:
+                        self.search_entry.select_region(0, -1)
+                    except Exception:
+                        pass
+                self.search_entry.grab_focus()
+                self._set_search_navigation_sensitive(bool(self.search_entry.get_text()))
+        except Exception as exc:
+            logger.debug("Failed to show search overlay: %s", exc)
+
+    def _hide_search_overlay(self):
+        """Hide the search overlay and return focus to the terminal."""
+        try:
+            if hasattr(self, 'search_revealer') and self.search_revealer:
+                self.search_revealer.set_reveal_child(False)
+            self._set_search_error_state(False)
+            if hasattr(self, 'vte') and self.vte:
+                self.vte.grab_focus()
+        except Exception as exc:
+            logger.debug("Failed to hide search overlay: %s", exc)
+
+    def _set_search_navigation_sensitive(self, active: bool):
+        """Enable or disable navigation buttons based on active search state."""
+        try:
+            for button in (getattr(self, 'search_prev_button', None), getattr(self, 'search_next_button', None)):
+                if button is not None:
+                    button.set_sensitive(bool(active))
+        except Exception as exc:
+            logger.debug("Failed to update search navigation sensitivity: %s", exc)
+
+    def _set_search_error_state(self, has_error: bool):
+        """Toggle error styling on the search entry when matches are not found."""
+        entry = getattr(self, 'search_entry', None)
+        if not entry:
+            return
+        try:
+            if has_error:
+                entry.add_css_class('error')
+            else:
+                entry.remove_css_class('error')
+        except Exception:
+            pass
+
+    def _clear_search_pattern(self):
+        """Clear any active search pattern from the terminal."""
+        self._last_search_text = ''
+        self._last_search_case_sensitive = False
+        self._last_search_regex = False
+        self._set_search_navigation_sensitive(False)
+        self._set_search_error_state(False)
+        try:
+            self.vte.search_set_regex(None, 0)
+        except Exception:
+            pass
+
+    def _update_search_pattern(self, text: str, *, case_sensitive: bool = False, regex: bool = False,
+                                move_forward: bool = True, update_entry: bool = False) -> bool:
+        """Apply or update the search pattern on the VTE widget."""
+        if not text:
+            self._clear_search_pattern()
+            return False
+
+        pattern_changed = (
+            text != self._last_search_text or
+            case_sensitive != self._last_search_case_sensitive or
+            regex != self._last_search_regex
+        )
+
+        try:
+            if pattern_changed:
+                pattern = text if regex else re.escape(text)
+                flags = 0
+                if not case_sensitive:
+                    flags |= int(getattr(Vte.RegexFlags, 'CASELESS', 0))
+                search_regex = Vte.Regex.new_for_search(pattern, -1, flags)
+                self.vte.search_set_regex(search_regex, 0)
+                self.vte.search_set_wrap_around(True)
+                self._last_search_text = text
+                self._last_search_case_sensitive = case_sensitive
+                self._last_search_regex = regex
+
+            self._set_search_navigation_sensitive(True)
+
+            if move_forward:
+                return self._run_search(True, update_entry=update_entry)
+
+            if update_entry:
+                self._set_search_error_state(False)
+
+            return True
+        except Exception as exc:
+            logger.error(f"Search failed: {exc}")
+            if update_entry:
+                self._set_search_error_state(True)
+            return False
+
+    def _run_search(self, forward: bool = True, *, update_entry: bool = False) -> bool:
+        """Execute search navigation in the requested direction."""
+        try:
+            found = self.vte.search_find_next() if forward else self.vte.search_find_previous()
+        except Exception as exc:
+            logger.error(f"Search navigation failed: {exc}")
+            found = False
+
+        if update_entry:
+            self._set_search_error_state(not found)
+
+        return bool(found)
+
+    def _on_search_entry_changed(self, entry):
+        """React to text edits in the search entry."""
+        text = entry.get_text() if entry else ''
+        if not text:
+            self._clear_search_pattern()
+            return
+        self._update_search_pattern(text, move_forward=True, update_entry=True)
+
+    def _on_search_entry_activate(self, entry):
+        """Handle Enter key in the search entry."""
+        self._on_search_next()
+
+    def _on_search_entry_stop(self, entry):
+        """Handle stop-search events (Escape or clear button)."""
+        if not entry.get_text():
+            self._clear_search_pattern()
+        self._hide_search_overlay()
+
+    def _on_search_entry_key_pressed(self, controller, keyval, keycode, state):
+        """Handle additional shortcuts while the search entry is focused."""
+        try:
+            shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
+            primary = bool(state & Gdk.ModifierType.CONTROL_MASK)
+            meta = bool(state & Gdk.ModifierType.META_MASK)
+
+            if keyval in (Gdk.KEY_g, Gdk.KEY_G) and (primary or meta):
+                if shift:
+                    self._on_search_previous()
+                else:
+                    self._on_search_next()
+                return True
+
+            if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and shift:
+                self._on_search_previous()
+                return True
+
+            if keyval == Gdk.KEY_Escape:
+                self._hide_search_overlay()
+                return True
+        except Exception as exc:
+            logger.debug("Search entry key handling failed: %s", exc)
+        return False
+
+    def _on_search_next(self, *_args):
+        """Navigate to the next search match."""
+        text = ''
+        if hasattr(self, 'search_entry') and self.search_entry:
+            text = self.search_entry.get_text()
+
+        if text:
+            if not self._update_search_pattern(text, move_forward=False, update_entry=True):
+                return False
+        elif not self._last_search_text:
+            return False
+
+        return self._run_search(True, update_entry=True)
+
+    def _on_search_previous(self, *_args):
+        """Navigate to the previous search match."""
+        text = ''
+        if hasattr(self, 'search_entry') and self.search_entry:
+            text = self.search_entry.get_text()
+
+        if text:
+            if not self._update_search_pattern(text, move_forward=False, update_entry=True):
+                return False
+        elif not self._last_search_text:
+            return False
+
+        return self._run_search(False, update_entry=True)
+
     def search_text(self, text, case_sensitive=False, regex=False):
         """Search for text in terminal"""
-        try:
-            # Create search regex
-            if regex:
-                search_regex = GLib.Regex.new(text, 0 if case_sensitive else GLib.RegexCompileFlags.CASELESS, 0)
-            else:
-                escaped_text = GLib.regex_escape_string(text)
-                search_regex = GLib.Regex.new(escaped_text, 0 if case_sensitive else GLib.RegexCompileFlags.CASELESS, 0)
-            
-            # Set search regex
-            self.vte.search_set_regex(search_regex, 0)
-            
-            # Find next match
-            return self.vte.search_find_next()
-            
-        except Exception as e:
-            logger.error(f"Search failed: {e}")
-            return False
+        return self._update_search_pattern(
+            text,
+            case_sensitive=case_sensitive,
+            regex=regex,
+            move_forward=True,
+            update_entry=False,
+        )
 
     def get_connection_info(self):
         """Get connection information"""
