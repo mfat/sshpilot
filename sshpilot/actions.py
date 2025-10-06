@@ -72,6 +72,8 @@ class WindowActions:
                 connection = getattr(row, 'connection', None) if row else None
             if connection is None:
                 return
+            if hasattr(self, '_return_to_tab_view_if_welcome'):
+                self._return_to_tab_view_if_welcome()
             self.terminal_manager.connect_to_host(connection, force_new=True)
         except Exception as e:
             logger.error(f"Failed to open new connection tab: {e}")
@@ -97,6 +99,8 @@ class WindowActions:
             row = self.connection_list.get_selected_row()
             if row and hasattr(row, 'connection'):
                 connection = row.connection
+                if hasattr(self, '_return_to_tab_view_if_welcome'):
+                    self._return_to_tab_view_if_welcome()
                 self.terminal_manager.connect_to_host(connection, force_new=True)
             else:
                 # If no connection is selected, show a message or fall back to new connection dialog

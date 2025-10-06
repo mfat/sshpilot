@@ -625,11 +625,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _on_connection_list_key_pressed(self, controller, keyval, keycode, state):
         """Handle key presses in the connection list"""
-        
+
         # Handle Enter key specifically
         if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
             selected_row = self.connection_list.get_selected_row()
             if selected_row and hasattr(selected_row, 'connection'):
+                self._return_to_tab_view_if_welcome()
                 connection = selected_row.connection
                 self._focus_most_recent_tab_or_open_new(connection)
                 return True  # Consume the event to prevent row-activated
@@ -2358,7 +2359,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.view_toggle_button.set_visible(True)
             else:
                 self.view_toggle_button.set_visible(False)  # Hide button when no tabs
-        
+
         logger.info("Showing welcome view")
 
     def _focus_connection_list_first_row(self):
@@ -2479,7 +2480,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             self.toast_overlay.add_toast(toast)
         except Exception as e:
             logger.error(f"Failed to toggle search entry: {e}")
-    
+
     def show_tab_view(self):
         """Show the tab view when connections are active"""
         # Re-apply terminal background when switching back to tabs
@@ -2495,8 +2496,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.view_toggle_button.set_icon_name('go-home-symbolic')
             self.view_toggle_button.set_tooltip_text('Show Start Page')
             self.view_toggle_button.set_visible(True)  # Show button when tabs are active
-        
+
         logger.info("Showing tab view")
+
+    def _return_to_tab_view_if_welcome(self):
+        """Switch back to tab view if the welcome view is currently visible."""
+        try:
+            if not hasattr(self, 'content_stack'):
+                return
+            if self.content_stack.get_visible_child_name() != "welcome":
+                return
+            if not hasattr(self, 'tab_view'):
+                return
+            if self.tab_view.get_n_pages() <= 0:
+                return
+            logger.debug("Leaving welcome view due to user interaction")
+            self.show_tab_view()
+        except Exception as exc:
+            logger.debug(f"Failed to return to tab view: {exc}")
 
     def show_connection_dialog(
             self,
@@ -3226,6 +3243,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _select_tab_relative(self, delta: int):
         """Select tab relative to current index, wrapping around."""
+        self._return_to_tab_view_if_welcome()
         try:
             n = self.tab_view.get_n_pages()
             if n <= 0:
@@ -3288,6 +3306,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def on_connection_activated(self, list_box, row):
         """Handle connection activation (Enter key)"""
+        self._return_to_tab_view_if_welcome()
         logger.debug(f"Connection activated - row: {row}, has connection: {hasattr(row, 'connection') if row else False}")
         if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
@@ -3300,6 +3319,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
     def on_connection_activate(self, list_box, row):
         """Handle connection activation (Enter key or double-click)"""
+        self._return_to_tab_view_if_welcome()
         if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
             return True  # Stop event propagation
@@ -3307,6 +3327,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
     def on_activate_connection(self, action, param):
         """Handle the activate-connection action"""
+        self._return_to_tab_view_if_welcome()
         row = self.connection_list.get_selected_row()
         if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
@@ -3352,6 +3373,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """If there are open tabs for this server, focus the most recent one.
         Otherwise open a new tab for the server.
         """
+        self._return_to_tab_view_if_welcome()
         try:
             # Check if there are open tabs for this connection
             terms_for_conn = []
@@ -3393,6 +3415,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """If there are open tabs for this server, cycle to the next one (wrap).
         Otherwise open a new tab for the server.
         """
+        self._return_to_tab_view_if_welcome()
         try:
             # Collect current pages in visual/tab order
             terms_for_conn = []
@@ -3464,6 +3487,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def on_tab_selected(self, tab_view: Adw.TabView, _pspec=None) -> None:
         """Update active terminal mapping when the user switches tabs."""
+        self._return_to_tab_view_if_welcome()
         try:
             page = tab_view.get_selected_page()
             if page is None:
