@@ -14,6 +14,7 @@ import shlex
 import sys
 import time
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 
@@ -137,6 +138,25 @@ def _remote_join(base: str, child: str) -> str:
     if base_normalized == '/':
         return _normalize_remote_path(f"/{child.lstrip('/')}")
     return _normalize_remote_path(f"{base_normalized.rstrip('/')}/{child}")
+
+
+@dataclass
+class SCPConnectionProfile:
+    alias: str
+    hostname: str
+    host: str
+    username: str
+    port: int
+    ssh_options: List[str]
+    saved_password: Optional[str]
+    saved_passphrase: Optional[str]
+    prefer_password: bool
+    combined_auth: bool
+    use_publickey_with_password: bool
+    key_mode: int
+    keyfile: str
+    keyfile_ok: bool
+    keyfile_expanded: str
 
 
 def _quote_remote_path_for_shell(path: str) -> str:
@@ -4010,11 +4030,200 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f'Upload dialog failed: {e}')
 
+    def _append_scp_option_pair(self, options: List[str], flag: str, value: Optional[str]) -> None:
+        """Append a flag/value pair to ``options`` if it is not already present."""
+        if not value:
+            return
+
+        option_value = str(value)
+        if flag == '-F':
+            expanded = os.path.abspath(os.path.expanduser(option_value))
+            if not os.path.exists(expanded):
+                return
+            option_value = expanded
+
+        for idx in range(len(options) - 1):
+            if options[idx] == flag and options[idx + 1] == option_value:
+                return
+
+        options.extend([flag, option_value])
+
+    def _extend_scp_options_from_connection(self, connection, options: List[str]) -> None:
+        """Augment ``options`` with connection-specific SSH arguments."""
+        try:
+            config_path = getattr(connection, 'config_root', '') or ''
+        except Exception:
+            config_path = ''
+        if not config_path and hasattr(self, 'connection_manager') and getattr(self.connection_manager, 'ssh_config_path', ''):
+            config_path = getattr(self.connection_manager, 'ssh_config_path', '')
+        if config_path:
+            self._append_scp_option_pair(options, '-F', config_path)
+
+        proxy_jump = []
+        try:
+            proxy_jump = list(getattr(connection, 'proxy_jump', []) or [])
+        except Exception:
+            proxy_jump = []
+        if proxy_jump:
+            hop_chain = ','.join(str(h).strip() for h in proxy_jump if str(h).strip())
+            if hop_chain:
+                self._append_scp_option_pair(options, '-o', f'ProxyJump={hop_chain}')
+
+        proxy_command = ''
+        try:
+            proxy_command = str(getattr(connection, 'proxy_command', '') or '').strip()
+        except Exception:
+            proxy_command = ''
+        if proxy_command:
+            self._append_scp_option_pair(options, '-o', f'ProxyCommand={proxy_command}')
+
+        if getattr(connection, 'forward_agent', False):
+            self._append_scp_option_pair(options, '-o', 'ForwardAgent=yes')
+
+        certificate_path = ''
+        try:
+            certificate_path = str(getattr(connection, 'certificate', '') or '').strip()
+        except Exception:
+            certificate_path = ''
+        if certificate_path:
+            expanded_cert = os.path.expanduser(certificate_path)
+            if os.path.isfile(expanded_cert):
+                self._append_scp_option_pair(options, '-o', f'CertificateFile={expanded_cert}')
+
+        extra_cfg = ''
+        try:
+            extra_cfg = str(getattr(connection, 'extra_ssh_config', '') or '')
+        except Exception:
+            extra_cfg = ''
+        if extra_cfg:
+            for line in extra_cfg.split('\n'):
+                stripped = line.strip()
+                if not stripped or stripped.startswith('#'):
+                    continue
+                self._append_scp_option_pair(options, '-o', stripped)
+
+    def _build_scp_connection_profile(self, connection) -> SCPConnectionProfile:
+        alias_value = _get_connection_alias(connection)
+        hostname_value = _get_connection_host(connection)
+        host_value = alias_value or hostname_value
+        if not host_value:
+            raise ValueError(_('No host information is available for this connection.'))
+
+        username = getattr(connection, 'username', '') or ''
+
+        try:
+            port = int(getattr(connection, 'port', 22) or 22)
+        except Exception:
+            port = 22
+
+        keyfile = getattr(connection, 'keyfile', '') or ''
+        try:
+            key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
+        except Exception:
+            key_mode = 0
+
+        expanded_keyfile = keyfile
+        if keyfile:
+            expanded_keyfile = os.path.expanduser(keyfile)
+            if not os.path.isabs(keyfile):
+                try:
+                    expanded_keyfile = os.path.realpath(expanded_keyfile)
+                except Exception:
+                    expanded_keyfile = os.path.expanduser(keyfile)
+        try:
+            keyfile_ok = bool(expanded_keyfile) and os.path.isfile(expanded_keyfile)
+        except Exception:
+            keyfile_ok = False
+
+        try:
+            auth_method = int(getattr(connection, 'auth_method', 0) or 0)
+        except Exception:
+            auth_method = 0
+        prefer_password = (auth_method == 1)
+
+        saved_password: Optional[str] = None
+        saved_passphrase: Optional[str] = None
+        combined_auth = False
+        connection_manager = getattr(self, 'connection_manager', None)
+        lookup_host = hostname_value or host_value
+        if connection_manager:
+            try:
+                saved_password = connection_manager.get_password(lookup_host, connection.username)
+            except Exception:
+                saved_password = None
+
+            if keyfile_ok and key_mode in (1, 2):
+                try:
+                    saved_passphrase = connection_manager.get_key_passphrase(expanded_keyfile)
+                except Exception:
+                    saved_passphrase = None
+                if not saved_passphrase and keyfile and keyfile != expanded_keyfile:
+                    try:
+                        saved_passphrase = connection_manager.get_key_passphrase(keyfile)
+                    except Exception:
+                        saved_passphrase = None
+
+        has_saved_password = bool(saved_password)
+        combined_auth = (auth_method == 0 and has_saved_password)
+        use_publickey_with_password = combined_auth and not getattr(connection, 'pubkey_auth_no', False)
+
+        ssh_options: List[str] = []
+        try:
+            cfg = self.config if hasattr(self, 'config') else Config()
+            ssh_cfg = cfg.get_ssh_config() if hasattr(cfg, 'get_ssh_config') else {}
+        except Exception:
+            ssh_cfg = {}
+
+        strict_val = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
+        auto_add = bool(ssh_cfg.get('auto_add_host_keys', True))
+
+        if strict_val:
+            ssh_options += ['-o', f'StrictHostKeyChecking={strict_val}']
+        elif auto_add and not has_saved_password:
+            ssh_options += ['-o', 'StrictHostKeyChecking=accept-new']
+
+        if getattr(connection, 'pubkey_auth_no', False):
+            ssh_options += ['-o', 'PubkeyAuthentication=no']
+
+        if keyfile_ok and key_mode in (1, 2):
+            ssh_options += ['-i', expanded_keyfile]
+            if key_mode == 1:
+                ssh_options += ['-o', 'IdentitiesOnly=yes']
+
+        self._extend_scp_options_from_connection(connection, ssh_options)
+
+        if prefer_password:
+            ssh_options += ['-o', 'PreferredAuthentications=password']
+        elif combined_auth:
+            ssh_options += [
+                '-o',
+                'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password',
+            ]
+
+        return SCPConnectionProfile(
+            alias=alias_value or '',
+            hostname=hostname_value or '',
+            host=host_value,
+            username=username,
+            port=port,
+            ssh_options=ssh_options,
+            saved_password=saved_password,
+            saved_passphrase=saved_passphrase,
+            prefer_password=prefer_password,
+            combined_auth=combined_auth,
+            use_publickey_with_password=use_publickey_with_password,
+            key_mode=key_mode,
+            keyfile=keyfile,
+            keyfile_ok=keyfile_ok,
+            keyfile_expanded=expanded_keyfile if keyfile_ok else '',
+        )
+
     def _prompt_scp_download(self, connection):
         """Show a simple file picker that downloads selected remote files via scp."""
         try:
-            host_value = _get_connection_host(connection) or _get_connection_alias(connection)
-            if not host_value:
+            try:
+                profile = self._build_scp_connection_profile(connection)
+            except ValueError:
                 msg = Adw.MessageDialog(
                     transient_for=self,
                     modal=True,
@@ -4027,21 +4236,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 msg.present()
                 return
 
-            username = getattr(connection, 'username', '') or ''
-
-            try:
-                port = int(getattr(connection, 'port', 22) or 22)
-            except Exception:
-                port = 22
+            alias_value = profile.alias
+            hostname_value = profile.hostname
+            host_value = profile.host
+            username = profile.username
+            port = profile.port
 
             known_hosts_path = None
             saved_password = None
             if hasattr(self, 'connection_manager') and self.connection_manager:
                 known_hosts_path = getattr(self.connection_manager, 'known_hosts_path', None)
+                saved_password = profile.saved_password
                 try:
-                    saved_password = self.connection_manager.get_password(host_value, connection.username)
+                    if profile.key_mode in (1, 2) and profile.keyfile_ok and profile.keyfile_expanded:
+                        self.connection_manager.prepare_key_for_connection(profile.keyfile_expanded)
                 except Exception:
-                    saved_password = None
+                    pass
 
             try:
                 default_download_dir = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
@@ -4053,59 +4263,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 except Exception:
                     default_download_dir = GLib.get_home_dir() or os.path.expanduser('~')
 
-            try:
-                auth_method = int(getattr(connection, 'auth_method', 0) or 0)
-            except Exception:
-                auth_method = 0
-            prefer_password = (auth_method == 1)
-            has_saved_password = bool(saved_password)
-            combined_auth = (auth_method == 0 and has_saved_password)
-
-            keyfile = getattr(connection, 'keyfile', '') or ''
-            try:
-                key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
-            except Exception:
-                key_mode = 0
-            try:
-                keyfile_ok = bool(keyfile) and os.path.isfile(keyfile)
-            except Exception:
-                keyfile_ok = False
-
-            ssh_extra_opts: List[str] = []
-            strict_val = ''
-            auto_add = True
-            try:
-                cfg = self.config if hasattr(self, 'config') else Config()
-                ssh_cfg = cfg.get_ssh_config() if hasattr(cfg, 'get_ssh_config') else {}
-                strict_val = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
-                auto_add = bool(ssh_cfg.get('auto_add_host_keys', True))
-            except Exception:
-                strict_val = ''
-                auto_add = True
-
-            if strict_val:
-                ssh_extra_opts += ['-o', f'StrictHostKeyChecking={strict_val}']
-            elif auto_add and not has_saved_password:
-                ssh_extra_opts += ['-o', 'StrictHostKeyChecking=accept-new']
-
-            if keyfile_ok and key_mode in (1, 2):
-                ssh_extra_opts += ['-i', keyfile]
-                if key_mode == 1:
-                    ssh_extra_opts += ['-o', 'IdentitiesOnly=yes']
-
-            if getattr(connection, 'pubkey_auth_no', False):
-                ssh_extra_opts += ['-o', 'PubkeyAuthentication=no']
-
-            if prefer_password:
-                ssh_extra_opts += ['-o', 'PreferredAuthentications=password']
-            elif combined_auth:
-                ssh_extra_opts += [
-                    '-o',
-                    'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
-                ]
-
-            use_publickey_with_password = combined_auth and not getattr(connection, 'pubkey_auth_no', False)
-            if prefer_password:
+            ssh_extra_opts = list(profile.ssh_options)
+            use_publickey_with_password = profile.use_publickey_with_password
+            if profile.prefer_password:
                 use_publickey_with_password = False
 
             base_env = os.environ.copy()
@@ -4184,6 +4344,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
             list_box.set_hexpand(True)
             list_box.set_vexpand(True)
+            try:
+                list_box.set_activate_on_single_click(False)
+            except Exception:
+                pass
             scroller.set_child(list_box)
             content_box.append(scroller)
 
@@ -4439,6 +4603,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     new_dir = _remote_join(current_dir, remote_name)
                     remote_row.set_text(new_dir)
                     _refresh()
+                else:
+                    list_box.select_row(row)
 
             list_box.connect('row-activated', _on_row_activated)
             cancel_button.connect('clicked', lambda *_: dialog.close())
@@ -5055,7 +5221,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _show_scp_terminal_window(self, connection, sources, destination, direction):
         try:
-            host_value = _get_connection_host(connection) or _get_connection_alias(connection)
+            alias_value = _get_connection_alias(connection)
+            hostname_value = _get_connection_host(connection)
+            host_value = alias_value or hostname_value
             target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
 
             if direction == 'upload':
@@ -5311,155 +5479,100 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         direction: str,
         known_hosts_path: Optional[str] = None,
     ):
-        argv = ['scp', '-v']
-        host_value = _get_connection_host(connection) or _get_connection_alias(connection)
+        profile = self._build_scp_connection_profile(connection)
+
+        host_value = profile.host
         scp_host = host_value
         if scp_host and ':' in scp_host and not (scp_host.startswith('[') and scp_host.endswith(']')):
             scp_host = f"[{scp_host}]"
-        target = f"{connection.username}@{scp_host}" if getattr(connection, 'username', '') else scp_host
+        username = profile.username
+        target = f"{username}@{scp_host}" if username else scp_host
         transfer_sources, transfer_destination = assemble_scp_transfer_args(
             target,
             sources,
             destination,
             direction,
         )
-        # Port
-        try:
-            if getattr(connection, 'port', 22) and connection.port != 22:
-                argv += ['-P', str(connection.port)]
-        except Exception:
-            pass
-        # Auth/SSH options similar to ssh-copy-id
-        try:
-            cfg = Config()
-            ssh_cfg = cfg.get_ssh_config() if hasattr(cfg, 'get_ssh_config') else {}
-            strict_val = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
-            auto_add = bool(ssh_cfg.get('auto_add_host_keys', True))
-            if strict_val:
-                argv += ['-o', f'StrictHostKeyChecking={strict_val}']
-            elif auto_add:
-                argv += ['-o', 'StrictHostKeyChecking=accept-new']
-        except Exception:
-            argv += ['-o', 'StrictHostKeyChecking=accept-new']
+        if hasattr(self, 'connection_manager') and self.connection_manager:
+            try:
+                if profile.key_mode in (1, 2) and profile.keyfile_ok and profile.keyfile_expanded:
+                    self.connection_manager.prepare_key_for_connection(profile.keyfile_expanded)
+            except Exception:
+                pass
+        port = profile.port
+        saved_password = profile.saved_password
+        saved_passphrase = profile.saved_passphrase
+        ssh_extra_opts = list(profile.ssh_options)
+
+        if saved_passphrase:
+            from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
+
+            askpass_env = get_ssh_env_with_forced_askpass()
+            if not hasattr(self, '_scp_askpass_env'):
+                self._scp_askpass_env = {}
+            self._scp_askpass_env.update(askpass_env)
+            logger.debug(f"SCP: Stored askpass environment for key passphrase: {list(askpass_env.keys())}")
+
+            passphrase_opts = get_scp_ssh_options()
+            for idx in range(0, len(passphrase_opts), 2):
+                flag = passphrase_opts[idx]
+                value = passphrase_opts[idx + 1] if idx + 1 < len(passphrase_opts) else None
+                self._append_scp_option_pair(ssh_extra_opts, flag, value)
 
         if known_hosts_path:
-            argv += ['-o', f'UserKnownHostsFile={known_hosts_path}']
-        # Prefer password if selected
-        prefer_password = False
-        key_mode = 0
-        keyfile = getattr(connection, 'keyfile', '') or ''
-        try:
-            auth_method = int(getattr(connection, 'auth_method', 0) or 0)
-            prefer_password = (auth_method == 1)
-        except Exception:
-            auth_method = 0
-            prefer_password = False
-        has_saved_password = bool(self.connection_manager.get_password(host_value, connection.username)) if hasattr(self, 'connection_manager') and self.connection_manager else False
-        combined_auth = (auth_method == 0 and has_saved_password)
-        try:
-            key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
-        except Exception:
-            key_mode = 0
-        try:
-            keyfile_ok = bool(keyfile) and os.path.isfile(keyfile)
-        except Exception:
-            keyfile_ok = False
-        # Handle authentication with saved credentials
-        if key_mode in (1, 2) and keyfile_ok:
-            argv += ['-i', keyfile]
-            if key_mode == 1:
-                argv += ['-o', 'IdentitiesOnly=yes']
+            ssh_extra_opts += ['-o', f'UserKnownHostsFile={known_hosts_path}']
 
-                # Try to get saved passphrase for the key
-                try:
-                    if hasattr(self, 'connection_manager') and self.connection_manager:
-                        saved_passphrase = self.connection_manager.get_key_passphrase(keyfile)
-                        if saved_passphrase:
-                            # Use the secure askpass script for passphrase authentication
-                            # This avoids storing passphrases in plain text temporary files
-                            from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
-                            askpass_env = get_ssh_env_with_forced_askpass()
-                            # Store for later use in the main execution
-                            if not hasattr(self, '_scp_askpass_env'):
-                                self._scp_askpass_env = {}
-                            self._scp_askpass_env.update(askpass_env)
-                            logger.debug(f"SCP: Stored askpass environment for key passphrase: {list(askpass_env.keys())}")
+        argv = ['scp', '-v']
+        if port and port != 22:
+            argv += ['-P', str(port)]
+        argv += ssh_extra_opts
 
-                            # Add SSH options to force public key authentication and prevent password fallback
-                            argv += get_scp_ssh_options()
-                except Exception as e:
-                    logger.debug(f"Failed to get saved passphrase for SCP: {e}")
+        self._scp_strip_askpass = False
+        if profile.prefer_password or profile.combined_auth:
+            if saved_password:
+                import shutil
 
-        elif prefer_password or combined_auth:
-            if prefer_password:
-                argv += ['-o', 'PreferredAuthentications=password']
-                if getattr(connection, 'pubkey_auth_no', False):
-                    argv += ['-o', 'PubkeyAuthentication=no']
+                sshpass_path = None
+                if os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
+                    sshpass_path = '/app/bin/sshpass'
+                    logger.debug("Found sshpass at /app/bin/sshpass")
+                elif shutil.which('sshpass'):
+                    sshpass_path = shutil.which('sshpass')
+                    logger.debug(f"Found sshpass in PATH: {sshpass_path}")
+                else:
+                    logger.debug("sshpass not found or not executable")
+
+                if sshpass_path:
+                    from .ssh_password_exec import _mk_priv_dir, _write_once_fifo
+                    import threading
+
+                    tmpdir = _mk_priv_dir()
+                    fifo = os.path.join(tmpdir, "pw.fifo")
+                    os.mkfifo(fifo, 0o600)
+
+                    t = threading.Thread(target=_write_once_fifo, args=(fifo, saved_password), daemon=True)
+                    t.start()
+
+                    argv = [sshpass_path, '-f', fifo] + argv
+                    logger.debug("Using sshpass with FIFO for SCP password authentication")
+
+                    def cleanup_tmpdir():
+                        try:
+                            shutil.rmtree(tmpdir, ignore_errors=True)
+                        except Exception:
+                            pass
+
+                    import atexit
+                    atexit.register(cleanup_tmpdir)
+                else:
+                    logger.warning("SCP: sshpass unavailable, falling back to interactive prompt")
+                    self._scp_strip_askpass = True
             else:
-                argv += [
-                    '-o',
-                    'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
-                ]
-            
-            # Try to get saved password
-            try:
-                if hasattr(self, 'connection_manager') and self.connection_manager:
-                    saved_password = self.connection_manager.get_password(host_value, connection.username)
-                    if saved_password:
-                        # Use sshpass for password authentication
-                        import shutil
-                        sshpass_path = None
-                        
-                        # Check if sshpass is available and executable
-                        if os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
-                            sshpass_path = '/app/bin/sshpass'
-                            logger.debug("Found sshpass at /app/bin/sshpass")
-                        elif shutil.which('sshpass'):
-                            sshpass_path = shutil.which('sshpass')
-                            logger.debug(f"Found sshpass in PATH: {sshpass_path}")
-                        else:
-                            logger.debug("sshpass not found or not executable")
-                        
-                        if sshpass_path:
-                            # Use the same approach as ssh_password_exec.py for consistency
-                            from .ssh_password_exec import _mk_priv_dir, _write_once_fifo
-                            import threading
-                            
-                            # Create private temp directory and FIFO
-                            tmpdir = _mk_priv_dir()
-                            fifo = os.path.join(tmpdir, "pw.fifo")
-                            os.mkfifo(fifo, 0o600)
-                            
-                            # Start writer thread that writes the password exactly once
-                            t = threading.Thread(target=_write_once_fifo, args=(fifo, saved_password), daemon=True)
-                            t.start()
-                            
-                            # Use sshpass with FIFO
-                            argv = [sshpass_path, "-f", fifo] + argv
-                            
-                            logger.debug("Using sshpass with FIFO for SCP password authentication")
-                            
-                            # Store tmpdir for cleanup (will be cleaned up when process exits)
-                            def cleanup_tmpdir():
-                                try:
-                                    import shutil
-                                    shutil.rmtree(tmpdir, ignore_errors=True)
-                                except Exception:
-                                    pass
-                            import atexit
-                            atexit.register(cleanup_tmpdir)
-                        else:
-                            # sshpass not available – allow interactive password prompt
-                            logger.warning("SCP: sshpass unavailable, falling back to interactive prompt")
-                            self._scp_strip_askpass = True
-                    else:
-                        # No saved password - will use interactive prompt
-                        logger.debug("SCP: Password auth selected but no saved password - using interactive prompt")
-            except Exception as e:
-                logger.debug(f"Failed to get saved password for SCP: {e}")
-        
-        for p in transfer_sources:
-            argv.append(p)
+                logger.debug("SCP: Password auth selected but no saved password - using interactive prompt")
+                self._scp_strip_askpass = True
+
+        for path in transfer_sources:
+            argv.append(path)
         argv.append(transfer_destination)
         return argv
 
