@@ -4414,20 +4414,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             remote_row.set_show_apply_button(False)
             paths_group.add(remote_row)
 
-            local_row = Adw.EntryRow(title=_('Local destination'))
-            local_row.set_text(str(default_download_dir))
-            try:
-                local_editable = local_row.get_editable()
-                if local_editable and hasattr(local_editable, 'set_placeholder_text'):
-                    local_editable.set_placeholder_text(_('Example: ~/Downloads'))
-            except Exception:
-                pass
-            picker_button = Gtk.Button.new_from_icon_name('folder-symbolic')
-            picker_button.set_tooltip_text(_('Choose destination folder'))
-            picker_button.add_css_class('flat')
-            local_row.add_suffix(picker_button)
-            local_row.set_show_apply_button(False)
-            paths_group.add(local_row)
 
             paths_wrapper = Adw.Clamp()
             paths_wrapper.set_child(paths_group)
@@ -4452,6 +4438,30 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             status_label.set_halign(Gtk.Align.START)
             status_label.set_wrap(True)
             content_box.append(status_label)
+
+            destination_group = Adw.PreferencesGroup()
+            destination_group.set_title(_('Destination'))
+
+            local_row = Adw.EntryRow(title=_('Local destination'))
+            local_row.set_text(str(default_download_dir))
+            try:
+                local_editable = local_row.get_editable()
+                if local_editable and hasattr(local_editable, 'set_placeholder_text'):
+                    local_editable.set_placeholder_text(_('Example: ~/Downloads'))
+            except Exception:
+                pass
+
+            picker_button = Gtk.Button.new_from_icon_name('folder-symbolic')
+            picker_button.set_tooltip_text(_('Choose destination folder'))
+            picker_button.add_css_class('flat')
+            local_row.add_suffix(picker_button)
+            local_row.set_show_apply_button(False)
+            destination_group.add(local_row)
+
+            destination_wrapper = Adw.Clamp()
+            destination_wrapper.set_child(destination_group)
+            content_box.append(destination_wrapper)
+
 
             def _open_destination_picker():
                 file_dialog = Gtk.FileDialog(title=_('Select destination folder'))
