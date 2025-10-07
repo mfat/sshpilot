@@ -3468,9 +3468,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_terminal = Gtk.ShortcutsGroup()
         terminal_actions = [
             ('local-terminal', _('Local Terminal')),
+            ('terminal-search', _('Search in Terminal')),
             ('broadcast-command', _('Broadcast Command')),
         ]
-        
+
         for action_name, title in terminal_actions:
             shortcuts = current_shortcuts.get(action_name)
             if shortcuts:
@@ -3565,6 +3566,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_terminal = Gtk.ShortcutsGroup()
         group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Local Terminal'), accelerator=f"{primary}<Shift>t"))
+        group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Search in Terminal'), accelerator=f"{primary}<Shift>f"))
         group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Broadcast Command'), accelerator=f"{primary}<Shift>b"))
         section.add_group(group_terminal)
@@ -3839,6 +3842,47 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         GLib.idle_add(_focus_attempt, priority=GLib.PRIORITY_DEFAULT_IDLE)
         GLib.timeout_add(150, _focus_attempt)
         GLib.timeout_add(350, _focus_attempt)
+
+    def _get_active_terminal_widget(self) -> Optional[TerminalWidget]:
+        """Return the TerminalWidget for the currently selected tab, if any."""
+        try:
+            page = self.tab_view.get_selected_page()
+        except Exception:
+            return None
+
+        if page is None:
+            return None
+
+        try:
+            child = page.get_child()
+        except Exception:
+            child = None
+
+        if isinstance(child, TerminalWidget):
+            return child
+        return None
+
+    def toggle_terminal_search_overlay(self, select_all: bool = False) -> None:
+        """Toggle the search overlay for the currently focused terminal tab."""
+        terminal = self._get_active_terminal_widget()
+        if terminal is None:
+            return
+
+        revealer = getattr(terminal, 'search_revealer', None)
+        is_revealed = False
+        if revealer is not None:
+            try:
+                is_revealed = bool(revealer.get_reveal_child())
+            except Exception as exc:
+                logger.debug('Failed to query terminal search revealer state: %s', exc)
+
+        try:
+            if is_revealed and hasattr(terminal, '_hide_search_overlay'):
+                terminal._hide_search_overlay()
+            elif hasattr(terminal, '_show_search_overlay'):
+                terminal._show_search_overlay(select_all=select_all)
+        except Exception as exc:
+            logger.debug('Failed to toggle terminal search overlay: %s', exc)
 
     def on_tab_selected(self, tab_view: Adw.TabView, _pspec=None) -> None:
         """Update active terminal mapping when the user switches tabs."""

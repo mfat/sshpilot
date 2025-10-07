@@ -50,6 +50,7 @@ ACTION_LABELS: Dict[str, str] = {
     'open-new-connection-tab': _('Open New Connection Tab'),
     'toggle-list': _('Focus Connection List'),
     'search': _('Search Connections'),
+    'terminal-search': _('Search in Terminal'),
     'new-key': _('Copy Key to Server'),
     'manage-files': _('Manage Files'),
     'edit-ssh-config': _('SSH Config Editor'),
@@ -266,7 +267,7 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             'edit-ssh-config',
             'quick-connect',
         ]
-        terminal_actions = ['local-terminal', 'broadcast-command']
+        terminal_actions = ['local-terminal', 'terminal-search', 'broadcast-command']
         tab_actions = ['tab-next', 'tab-prev', 'tab-close', 'tab-overview']
 
         for name in self._action_names:
