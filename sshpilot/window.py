@@ -4414,17 +4414,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             remote_row.set_show_apply_button(False)
             paths_group.add(remote_row)
 
-            local_row = Adw.EntryRow(title=_('Local destination'))
-            local_row.set_text(str(default_download_dir))
-            try:
-                local_editable = local_row.get_editable()
-                if local_editable and hasattr(local_editable, 'set_placeholder_text'):
-                    local_editable.set_placeholder_text(_('Example: ~/Downloads'))
-            except Exception:
-                pass
-            local_row.set_show_apply_button(False)
-            paths_group.add(local_row)
-
             paths_wrapper = Adw.Clamp()
             paths_wrapper.set_child(paths_group)
             content_box.append(paths_wrapper)
@@ -4448,6 +4437,76 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             status_label.set_halign(Gtk.Align.START)
             status_label.set_wrap(True)
             content_box.append(status_label)
+
+            destination_group = Adw.PreferencesGroup()
+            destination_group.set_title(_('Destination'))
+
+            local_row = Adw.EntryRow(title=_('Local destination'))
+            local_row.set_text(str(default_download_dir))
+            try:
+                local_editable = local_row.get_editable()
+                if local_editable and hasattr(local_editable, 'set_placeholder_text'):
+                    local_editable.set_placeholder_text(_('Example: ~/Downloads'))
+            except Exception:
+                pass
+
+            picker_button = Gtk.Button.new_from_icon_name('folder-symbolic')
+            picker_button.set_tooltip_text(_('Choose destination folder'))
+            picker_button.add_css_class('flat')
+            local_row.add_suffix(picker_button)
+            local_row.set_show_apply_button(False)
+            destination_group.add(local_row)
+
+            destination_wrapper = Adw.Clamp()
+            destination_wrapper.set_child(destination_group)
+            content_box.append(destination_wrapper)
+
+            def _open_destination_picker():
+                file_dialog = Gtk.FileDialog(title=_('Select destination folder'))
+                current_text = local_row.get_text().strip()
+                if current_text:
+                    try:
+                        expanded = os.path.expanduser(current_text)
+                        if os.path.isdir(expanded):
+                            file_dialog.set_initial_folder(Gio.File.new_for_path(expanded))
+                    except Exception:
+                        pass
+
+                def _on_destination_chosen(dialog: Gtk.FileDialog, result):
+                    nonlocal default_download_dir
+                    try:
+                        folder = dialog.select_folder_finish(result)
+                    except GLib.Error as err:
+                        dialog_error = getattr(Gtk, 'DialogError', None)
+                        if dialog_error is not None and err.matches(dialog_error, dialog_error.DISMISSED):
+                            return
+                        if err.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED):
+                            return
+                        logger.error(f'Destination chooser failed: {err.message}')
+                        status_label.set_text(
+                            _('Could not select destination: {error}').format(error=err.message)
+                        )
+                        return
+
+                    if not folder:
+                        return
+
+                    path = folder.get_path()
+                    if not path:
+                        return
+
+                    default_download_dir = path
+                    local_row.set_text(path)
+
+                try:
+                    file_dialog.select_folder(self, None, _on_destination_chosen)
+                except Exception as err:
+                    logger.error(f'Failed to present destination chooser: {err}')
+                    status_label.set_text(
+                        _('Could not open destination chooser: {error}').format(error=str(err))
+                    )
+
+            picker_button.connect('clicked', lambda *_: _open_destination_picker())
 
             button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
             button_box.set_halign(Gtk.Align.END)
