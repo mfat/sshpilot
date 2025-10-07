@@ -1,5 +1,6 @@
 """Regression tests for terminal pass-through shortcut handling."""
 
+import logging
 import sys
 import types
 
@@ -66,3 +67,40 @@ def test_pass_through_mode_allows_ctrl_shift_v(monkeypatch):
     assert installs == ['install']
     assert terminal._shortcut_controller == 'new-shortcut'
     assert terminal._pass_through_mode is False
+
+
+def test_prepare_key_native_mode_falls_back(monkeypatch, tmp_path, caplog):
+    """The native key preload should continue through candidates until one succeeds."""
+
+    terminal_cls = terminal_mod.TerminalWidget
+    terminal = terminal_cls.__new__(terminal_cls)
+
+    first_key = tmp_path / "first-key"
+    second_key = tmp_path / "second-key"
+    first_key.write_text("first")
+    second_key.write_text("second")
+
+    attempts = []
+
+    class DummyManager:
+        def prepare_key_for_connection(self, key_path):
+            attempts.append(key_path)
+            if key_path == str(first_key):
+                raise RuntimeError("boom")
+            if key_path == str(second_key):
+                return True
+            return False
+
+    terminal.connection_manager = DummyManager()
+    terminal.connection = types.SimpleNamespace(key_select_mode=0)
+    terminal._resolve_native_identity_candidates = lambda: [
+        str(first_key),
+        str(second_key),
+    ]
+
+    caplog.set_level(logging.WARNING)
+
+    terminal._prepare_key_for_native_mode()
+
+    assert attempts == [str(first_key), str(second_key)]
+    assert "boom" in caplog.text

@@ -954,6 +954,7 @@ class AsyncSFTPManager(GObject.GObject):
         resolved_host: str,
         resolved_port: int,
         base_username: str,
+        connect_timeout: Optional[int] = None,
     ) -> Tuple[Any, List[paramiko.SSHClient]]:
         """Create a socket by chaining SSH connections through jump hosts."""
 
@@ -1022,8 +1023,10 @@ class AsyncSFTPManager(GObject.GObject):
                 "port": hop["port"],
                 "allow_agent": allow_agent,
                 "look_for_keys": look_for_keys,
-                "timeout": 15,
             }
+
+            if connect_timeout is not None:
+                hop_kwargs["timeout"] = connect_timeout
 
             if upstream_sock is not None:
                 hop_kwargs["sock"] = upstream_sock
@@ -1100,36 +1103,69 @@ class AsyncSFTPManager(GObject.GObject):
             logger.debug("Unable to load system host keys: %s", exc)
 
         ssh_cfg: Dict[str, Any] = {}
+        file_manager_cfg: Dict[str, Any] = {}
+        cfg = None
+        try:
+            from .config import Config  # Lazy import to avoid circular dependency
+
+            cfg = Config()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Failed to initialise configuration for file manager: %s", exc)
+
         if self._ssh_config is not None:
             ssh_cfg = dict(self._ssh_config)
-        else:
+        elif cfg is not None:
             try:
-                from .config import Config  # Lazy import to avoid circular dependency
-
-                cfg = Config()
                 ssh_cfg = cfg.get_ssh_config() or {}
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("Failed to load SSH configuration for file manager: %s", exc)
                 ssh_cfg = {}
+        else:
+            ssh_cfg = {}
+
+        if cfg is not None and hasattr(cfg, 'get_file_manager_config'):
+            try:
+                file_manager_cfg = cfg.get_file_manager_config() or {}
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Failed to load file manager configuration: %s", exc)
+                file_manager_cfg = {}
+        elif isinstance(self._ssh_config, dict):
+            potential_cfg = self._ssh_config.get('file_manager')  # type: ignore[attr-defined]
+            if isinstance(potential_cfg, dict):
+                file_manager_cfg = dict(potential_cfg)
 
         def _coerce_int(value: Any, default: int) -> int:
             try:
-                return int(str(value))
+                coerced = int(str(value))
+                return coerced if coerced > 0 else default
             except (TypeError, ValueError):
                 return default
 
-        apply_advanced = bool(ssh_cfg.get("apply_advanced", False))
-        keepalive_interval = 0
-        keepalive_count_max = 0
-        if apply_advanced:
-            keepalive_interval = max(
-                0,
-                _coerce_int(ssh_cfg.get("keepalive_interval", 60), 60),
-            )
-            keepalive_count_max = max(
-                0,
-                _coerce_int(ssh_cfg.get("keepalive_count_max", 3), 3),
-            )
+        keepalive_interval = max(0, _coerce_int(ssh_cfg.get("keepalive_interval"), 0))
+        keepalive_count_max = max(0, _coerce_int(ssh_cfg.get("keepalive_count_max"), 0))
+
+        if isinstance(file_manager_cfg, dict):
+            fm_interval = file_manager_cfg.get("sftp_keepalive_interval")
+            if isinstance(fm_interval, int) and fm_interval >= 0:
+                keepalive_interval = fm_interval
+
+            fm_count = file_manager_cfg.get("sftp_keepalive_count_max")
+            if isinstance(fm_count, int) and fm_count >= 0:
+                keepalive_count_max = fm_count
+
+            fm_timeout = file_manager_cfg.get("sftp_connect_timeout")
+        else:
+            fm_timeout = None
+
+        connect_timeout: Optional[int]
+        if isinstance(fm_timeout, int) and fm_timeout > 0:
+            connect_timeout = fm_timeout
+        else:
+            connect_timeout = None
+
+        connection_timeout_override = max(0, _coerce_int(ssh_cfg.get("connection_timeout"), 0))
+        if connect_timeout is None and connection_timeout_override > 0:
+            connect_timeout = connection_timeout_override
 
         with self._lock:
             self._keepalive_interval = keepalive_interval
@@ -1426,6 +1462,7 @@ class AsyncSFTPManager(GObject.GObject):
                     resolved_host=resolved_host,
                     resolved_port=resolved_port,
                     base_username=resolved_username,
+                    connect_timeout=connect_timeout,
                 )
                 logger.debug(
                     "File manager: using Paramiko ProxyJump chain via %s",
@@ -1448,8 +1485,10 @@ class AsyncSFTPManager(GObject.GObject):
             "port": resolved_port,
             "allow_agent": allow_agent,
             "look_for_keys": look_for_keys,
-            "timeout": 15,
         }
+
+        if connect_timeout is not None:
+            connect_kwargs["timeout"] = connect_timeout
 
         if password:
             connect_kwargs["password"] = password

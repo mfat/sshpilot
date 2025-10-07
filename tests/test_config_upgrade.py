@@ -97,8 +97,7 @@ def test_get_ssh_config_defaults(tmp_path, monkeypatch):
     ssh_cfg = cfg.get_ssh_config()
 
     assert ssh_cfg['strict_host_key_checking'] == 'accept-new'
-    assert ssh_cfg['batch_mode'] is True
-    assert ssh_cfg['apply_advanced'] is False
+    assert ssh_cfg['batch_mode'] is False
 
 
 def test_get_ssh_config_respects_saved_values(tmp_path, monkeypatch):

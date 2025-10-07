@@ -4,6 +4,7 @@ import os
 import logging
 import subprocess
 import shutil
+from typing import Any, Dict, List, Optional
 
 from .platform_utils import get_config_dir, is_flatpak, is_macos
 from .file_manager_integration import (
@@ -21,6 +22,74 @@ gi.require_version('Vte', '3.91')
 from gi.repository import Gtk, Gdk, Adw, Pango, PangoFT2, Vte, GLib
 
 logger = logging.getLogger(__name__)
+
+
+_GROUP_PREVIEW_CSS_INSTALLED = False
+
+
+def _install_group_display_preview_css():
+    global _GROUP_PREVIEW_CSS_INSTALLED
+    if _GROUP_PREVIEW_CSS_INSTALLED:
+        return
+
+    display = Gdk.Display.get_default()
+    if not display:
+        return
+
+    provider = Gtk.CssProvider()
+    css = """
+    .group-display-preview-container {
+        padding: 4px 0;
+    }
+
+    .group-display-preview-title {
+        font-weight: 600;
+    }
+
+    .group-display-preview-parent {
+        background-color: alpha(@accent_bg_color, 0.12);
+        border-radius: 8px;
+        padding: 8px 10px;
+    }
+
+    .group-display-preview-parent-title {
+        font-weight: 600;
+    }
+
+    .group-display-preview-parent-subtitle {
+        opacity: 0.7;
+        font-size: 0.9em;
+    }
+
+    .group-display-preview-row {
+        background-color: alpha(@accent_bg_color, 0.18);
+        border-radius: 10px;
+        padding: 8px 12px;
+        transition: background-color 0.15s ease-in-out;
+    }
+
+    .group-display-preview-row.active {
+        background-color: alpha(@accent_bg_color, 0.36);
+        box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.65);
+    }
+
+    .group-display-preview-row-title {
+        font-weight: 600;
+    }
+
+    .group-display-preview-row-subtitle {
+        opacity: 0.7;
+        font-size: 0.9em;
+    }
+    """
+    try:
+        provider.load_from_data(css.encode('utf-8'))
+        Gtk.StyleContext.add_provider_for_display(
+            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        _GROUP_PREVIEW_CSS_INSTALLED = True
+    except Exception:
+        logger.debug("Failed to install group display preview CSS", exc_info=True)
 
 def macos_third_party_terminal_available() -> bool:
     """Check if a third-party terminal is available on macOS."""
@@ -362,6 +431,9 @@ class PreferencesWindow(Gtk.Window):
         self._encoding_options = []
         self._encoding_codes = []
         self._suppress_encoding_config_handler = False
+        self._updating_connection_switches = False
+        self.native_connect_row = None
+        self.legacy_connect_row = None
 
         self._config_signal_id = None
 
@@ -375,12 +447,15 @@ class PreferencesWindow(Gtk.Window):
 
         self.connect('destroy', self._on_destroy)
 
+        # Use a consistent title for the window and header regardless of parent
+        self._base_header_title = "Preferences"
+
         # Set window properties with modern Adwaita structure
-        self.set_title("Preferences")
+        self.set_title(self._base_header_title)
         self.set_default_size(820, 600)  # Ensure wide enough to see the sidebar
         
         # Create custom layout with sidebar
-        self.setup_custom_layout()
+        self.setup_navigation_layout()
         
         # Initialize the preferences UI
         self.setup_preferences()
@@ -391,64 +466,128 @@ class PreferencesWindow(Gtk.Window):
         # Save on close to persist advanced SSH settings
         self.connect('close-request', self.on_close_request)
     
-    def setup_custom_layout(self):
-        """Set up custom layout with sidebar and content area"""
-        # Create headerbar as the window's titlebar
-        self.headerbar = Adw.HeaderBar()
-        self.set_titlebar(self.headerbar)
-        
-        # Create content area
-        self.content_area = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        self.set_child(self.content_area)
-        
-        # Create sidebar
+    def setup_navigation_layout(self):
+        """Configure split view layout mirroring GNOME Settings."""
+        # Ensure client-side decorations remain but hide default headerbar
+        if not is_macos():
+            hidden_titlebar = Gtk.HeaderBar()
+            hidden_titlebar.set_show_title_buttons(False)
+            hidden_titlebar.set_visible(False)
+            hidden_titlebar.set_decoration_layout(":")
+            self.set_titlebar(hidden_titlebar)
+
+        # Main split view container
+        self.navigation_split_view = Adw.NavigationSplitView()
+        self.set_child(self.navigation_split_view)
+
+        # Sidebar list with navigation styling
         self.sidebar = Gtk.ListBox()
-        self.sidebar.set_size_request(200, -1)
+        self.sidebar.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.sidebar.set_activate_on_single_click(True)
         self.sidebar.add_css_class("navigation-sidebar")
-        self.content_area.append(self.sidebar)
-        
-        # Create content stack
+
+        sidebar_scroller = Gtk.ScrolledWindow()
+        sidebar_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sidebar_scroller.set_child(self.sidebar)
+        sidebar_page = Adw.NavigationPage.new(sidebar_scroller, "Preferences")
+        self.navigation_split_view.set_sidebar(sidebar_page)
+
+        # Stack for page content
         self.content_stack = Gtk.Stack()
-        self.content_stack.set_transition_type(Gtk.StackTransitionType.NONE)
-        self.content_area.append(self.content_stack)
-        
+        self.content_stack.set_hexpand(True)
+        self.content_stack.set_vexpand(True)
+        self.content_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+
+        content_scroller = Gtk.ScrolledWindow()
+        content_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        content_scroller.set_child(self.content_stack)
+        self.header_bar = Gtk.HeaderBar()
+        self.header_bar.add_css_class("flat")
+        self.header_title_label = Gtk.Label.new("")
+        self.header_title_label.add_css_class("title")
+        self.header_title_label.set_single_line_mode(True)
+        self.header_title_label.set_xalign(0.0)
+        self.header_bar.set_title_widget(self.header_title_label)
+
+        self.header_controls = None
+        try:
+            self.header_controls = Gtk.WindowControls.new(Gtk.PackType.END)
+        except AttributeError:
+            logger.debug("Gtk.WindowControls unavailable; skipping window buttons")
+        if self.header_controls:
+            self.header_bar.pack_end(self.header_controls)
+            self.header_bar.set_show_title_buttons(False)
+        else:
+            self.header_bar.set_show_title_buttons(True)
+
+        window_handle = Gtk.WindowHandle()
+        window_handle.set_child(self.header_bar)
+
+        self.content_toolbar_view = Adw.ToolbarView()
+        self.content_toolbar_view.add_top_bar(window_handle)
+        self.content_toolbar_view.set_content(content_scroller)
+
+        content_page = Adw.NavigationPage.new(self.content_toolbar_view, "Preferences")
+        self.navigation_split_view.set_content(content_page)
+
         # Connect sidebar selection to content stack
         self.sidebar.connect('row-selected', self.on_sidebar_row_selected)
-        
+
         # Store pages for later reference
         self.pages = {}
-    
+
+        # Ensure the header defaults to the base preferences title
+        self._update_header_title()
+
     def on_sidebar_row_selected(self, listbox, row):
         """Handle sidebar row selection"""
         if row is not None:
             page_name = row.get_name()
             self.content_stack.set_visible_child_name(page_name)
-    
+            if isinstance(row, Adw.ActionRow):
+                title = row.get_title() or ""
+                self._update_header_title(title)
+
+    def _update_header_title(self, page_title: Optional[str] = None):
+        """Update the header and window title to reflect the active page."""
+        display_title = self._base_header_title
+        if page_title:
+            display_title = f"{self._base_header_title} · {page_title}"
+
+        header_label = getattr(self, "header_title_label", None)
+        if header_label:
+            header_label.set_label(display_title)
+
+        # Keep the window title in sync for platforms that show it prominently
+        self.set_title(display_title)
+
     def add_page_to_layout(self, title, icon_name, page):
         """Add a page to the custom layout"""
         # Create sidebar row
         row = Adw.ActionRow()
         row.set_title(title)
-        row.set_name(title.lower())
+        page_id = title.lower().replace(' ', '-')
+        row.set_name(page_id)
         
         # Add icon
-        icon = Gtk.Image()
-        icon.set_from_icon_name(icon_name)
-        icon.set_icon_size(Gtk.IconSize.LARGE)
+        icon = Gtk.Image.new_from_icon_name(icon_name)
         row.add_prefix(icon)
         
         # Add to sidebar
         self.sidebar.append(row)
         
         # Add page to stack
-        self.content_stack.add_named(page, title.lower())
+        self.content_stack.add_named(page, page_id)
         
         # Store reference
-        self.pages[title.lower()] = page
+        self.pages[page_id] = page
         
         # Select first page
         if len(self.pages) == 1:
             self.sidebar.select_row(row)
+            if isinstance(row, Adw.ActionRow):
+                title = row.get_title() or ""
+                self._update_header_title(title)
     
     def setup_preferences(self):
         """Set up preferences UI with current values"""
@@ -667,8 +806,8 @@ class PreferencesWindow(Gtk.Window):
             )
 
             color_display_options = Gtk.StringList()
-            color_display_options.append("Colored Background")
-            color_display_options.append("Color Badge")
+            color_display_options.append("Colored Rows")
+            color_display_options.append("Color Badges")
             self.group_color_display_row.set_model(color_display_options)
 
             current_mode = 'fill'
@@ -733,6 +872,105 @@ class PreferencesWindow(Gtk.Window):
 
             groups_page.add(group_appearance_group)
 
+            # Group display layout section (shown after appearance options)
+            group_layout_group = Adw.PreferencesGroup(title="Group Layout")
+
+            self._group_display_preview_rows = {}
+            _install_group_display_preview_css()
+
+            self._group_display_modes = ['fullwidth', 'nested']
+            self.group_display_toggle_row = Adw.ActionRow()
+            self.group_display_toggle_row.set_title("Group Display")
+            self.group_display_toggle_row.set_subtitle(
+                "Choose how grouped connections appear in the sidebar"
+            )
+            self.group_display_toggle_row.set_activatable(False)
+            try:
+                self.group_display_toggle_row.set_focusable(False)
+            except Exception:
+                pass
+
+            self.group_display_toggle_group = Adw.ToggleGroup.new()
+            self.group_display_toggle_group.set_orientation(Gtk.Orientation.HORIZONTAL)
+            self.group_display_toggle_group.add_css_class('linked')
+            self.group_display_toggle_group.set_hexpand(True)
+            try:
+                self.group_display_toggle_group.set_homogeneous(True)
+            except Exception:
+                pass
+
+            self.group_display_toggle_fullwidth = Adw.Toggle.new()
+            self.group_display_toggle_fullwidth.props.name = 'fullwidth'
+            self.group_display_toggle_fullwidth.set_label('Fullwidth')
+
+            self.group_display_toggle_nested = Adw.Toggle.new()
+            self.group_display_toggle_nested.props.name = 'nested'
+            self.group_display_toggle_nested.set_label('Nested')
+
+            self.group_display_toggle_group.add(self.group_display_toggle_fullwidth)
+            self.group_display_toggle_group.add(self.group_display_toggle_nested)
+            self.group_display_toggle_row.set_child(self.group_display_toggle_group)
+
+            current_display_mode = 'fullwidth'
+            try:
+                current_display_mode = str(
+                    self.config.get_setting('ui.group_row_display', 'fullwidth')
+                ).lower()
+            except Exception:
+                current_display_mode = 'fullwidth'
+            if current_display_mode not in self._group_display_modes:
+                current_display_mode = 'fullwidth'
+
+            self._group_display_toggle_sync = True
+            try:
+                self.group_display_toggle_group.set_active_name(current_display_mode)
+            finally:
+                self._group_display_toggle_sync = False
+
+            self.group_display_toggle_group.connect(
+                'notify::active-name', self.on_group_row_display_changed
+            )
+
+            group_layout_group.add(self.group_display_toggle_row)
+
+            # Preview showing both layout styles
+            self.group_display_preview_row = Adw.ActionRow()
+            self.group_display_preview_row.set_title("Layout Preview")
+            self.group_display_preview_row.set_activatable(False)
+            try:
+                self.group_display_preview_row.set_focusable(False)
+            except Exception:
+                pass
+
+            preview_stack = Gtk.Stack()
+            preview_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+            preview_stack.set_transition_duration(150)
+
+            preview_stack.set_margin_top(4)
+            preview_stack.set_margin_bottom(4)
+
+            preview_fullwidth_wrapper, preview_fullwidth_row = self._create_group_display_preview(
+                'fullwidth', 'Fullwidth'
+            )
+            preview_nested_wrapper, preview_nested_row = self._create_group_display_preview(
+                'nested', 'Nested'
+            )
+
+            preview_stack.add_named(preview_fullwidth_wrapper, 'fullwidth')
+            preview_stack.add_named(preview_nested_wrapper, 'nested')
+
+            self.group_display_preview_row.set_child(preview_stack)
+            self._group_display_preview_rows = {
+                'fullwidth': preview_fullwidth_row,
+                'nested': preview_nested_row,
+            }
+            self._group_display_preview_stack = preview_stack
+
+            self._update_group_display_preview(current_display_mode)
+
+            group_layout_group.add(self.group_display_preview_row)
+            groups_page.add(group_layout_group)
+
             # Create Interface preferences page
             interface_page = Adw.PreferencesPage()
             interface_page.set_title("Interface")
@@ -750,12 +988,12 @@ class PreferencesWindow(Gtk.Window):
             # Make them behave like radio buttons
             self.welcome_startup_radio.set_group(self.terminal_startup_radio)
 
-            # Set current preference (default to terminal)
-            startup_behavior = self.config.get_setting('app-startup-behavior', 'terminal')
-            if startup_behavior == 'welcome':
-                self.welcome_startup_radio.set_active(True)
-            else:
+            # Set current preference (default to welcome/start page)
+            startup_behavior = self.config.get_setting('app-startup-behavior', 'welcome')
+            if startup_behavior == 'terminal':
                 self.terminal_startup_radio.set_active(True)
+            else:
+                self.welcome_startup_radio.set_active(True)
 
             # Connect radio button changes
             self.terminal_startup_radio.connect('toggled', self.on_startup_behavior_changed)
@@ -793,22 +1031,8 @@ class PreferencesWindow(Gtk.Window):
 
             # Color overrides section
             color_override_group = Adw.PreferencesGroup(title="Color Overrides")
-            color_override_group.set_description("Override default app colors")
-            
-            # App color override
-            self.app_color_row = Adw.ActionRow()
-            self.app_color_row.set_title("App Color")
-            self.app_color_row.set_subtitle("Override the primary app color")
+            color_override_group.set_description("Override the accent color")
 
-            self.app_color_button = Gtk.ColorButton()
-            self.app_color_button.set_use_alpha(False)
-            self.app_color_button.set_tooltip_text("Choose app color")
-            self.app_color_button.set_valign(Gtk.Align.CENTER)
-            self.app_color_button.set_size_request(60, 32)
-            self.app_color_button.connect('color-set', self.on_app_color_changed)
-            self.app_color_row.add_suffix(self.app_color_button)
-            color_override_group.add(self.app_color_row)
-            
             # Accent color override
             self.accent_color_row = Adw.ActionRow()
             self.accent_color_row.set_title("Accent Color")
@@ -823,24 +1047,10 @@ class PreferencesWindow(Gtk.Window):
             self.accent_color_row.add_suffix(self.accent_color_button)
             color_override_group.add(self.accent_color_row)
             
-            # Sidebar color override
-            self.sidebar_color_row = Adw.ActionRow()
-            self.sidebar_color_row.set_title("Sidebar Color")
-            self.sidebar_color_row.set_subtitle("Override the sidebar background color")
-
-            self.sidebar_color_button = Gtk.ColorButton()
-            self.sidebar_color_button.set_use_alpha(False)
-            self.sidebar_color_button.set_tooltip_text("Choose sidebar color")
-            self.sidebar_color_button.set_valign(Gtk.Align.CENTER)
-            self.sidebar_color_button.set_size_request(60, 32)
-            self.sidebar_color_button.connect('color-set', self.on_sidebar_color_changed)
-            self.sidebar_color_row.add_suffix(self.sidebar_color_button)
-            color_override_group.add(self.sidebar_color_row)
-            
             # Reset colors button
             reset_colors_row = Adw.ActionRow()
             reset_colors_row.set_title("Reset to Default")
-            reset_colors_row.set_subtitle("Remove color overrides and use system colors")
+            reset_colors_row.set_subtitle("Remove the accent override and use the system accent")
             
             reset_button = Gtk.Button()
             reset_button.set_label("Reset")
@@ -865,14 +1075,7 @@ class PreferencesWindow(Gtk.Window):
             remember_size_switch.set_subtitle("Restore window size on startup")
             remember_size_switch.set_active(True)
             
-            # Auto focus terminal switch
-            auto_focus_switch = Adw.SwitchRow()
-            auto_focus_switch.set_title("Auto Focus Terminal")
-            auto_focus_switch.set_subtitle("Focus terminal when connecting")
-            auto_focus_switch.set_active(True)
-            
             window_group.add(remember_size_switch)
-            window_group.add(auto_focus_switch)
             interface_page.add(window_group)
 
             # Shortcuts page with inline editor
@@ -1021,59 +1224,115 @@ class PreferencesWindow(Gtk.Window):
 
             advanced_page.add(operation_group)
 
+            # Application behavior group
+            behavior_group = Adw.PreferencesGroup(title="Application Behavior")
+            
+            # Confirm before disconnecting
+            self.confirm_disconnect_switch = Adw.SwitchRow()
+            self.confirm_disconnect_switch.set_title("Confirm before disconnecting")
+            self.confirm_disconnect_switch.set_subtitle("Show a confirmation dialog when disconnecting from a host")
+            self.confirm_disconnect_switch.set_active(
+                self.config.get_setting('confirm-disconnect', True)
+            )
+            self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
+            behavior_group.add(self.confirm_disconnect_switch)
+            
+            advanced_page.add(behavior_group)
+
             # File management preferences moved to dedicated page
 
+            ssh_settings_page = Adw.PreferencesPage()
+            ssh_settings_page.set_title("SSH")
+            ssh_settings_page.set_icon_name("network-workgroup-symbolic")
+
+            help_group = Adw.PreferencesGroup()
+            help_row = Adw.ActionRow()
+            help_row.set_title("Custom SSH Options")
+            help_row.set_subtitle(
+                "These settings override values from your ~/.ssh/config."
+            )
+            if hasattr(help_row, "set_activatable"):
+                help_row.set_activatable(False)
+            if hasattr(help_row, "set_selectable"):
+                help_row.set_selectable(False)
+            help_group.add(help_row)
+
             advanced_group = Adw.PreferencesGroup(title="SSH Settings")
-
-
-            # Use custom options toggle
-            self.apply_advanced_row = Adw.SwitchRow()
-            self.apply_advanced_row.set_title("Use custom connection options")
-            self.apply_advanced_row.set_subtitle("Enable and edit the options below")
-            self.apply_advanced_row.set_active(bool(self.config.get_setting('ssh.apply_advanced', False)))
-            advanced_group.add(self.apply_advanced_row)
 
 
             native_connect_group = Adw.PreferencesGroup(title="Connection Method")
 
             self.native_connect_row = Adw.SwitchRow()
-            self.native_connect_row.set_title("Use native SSH Connection mode")
-            self.native_connect_row.set_subtitle("Experimental alternative connection method")
-            native_active = False
+            self.native_connect_row.set_title("Use native SSH connection mode")
+            self.native_connect_row.set_subtitle("Default SSH connection method")
+            self.legacy_connect_row = Adw.SwitchRow()
+            self.legacy_connect_row.set_title("Use legacy SSH connection mode")
+            native_active = True
             try:
                 app = self.parent_window.get_application() if self.parent_window else None
                 if app is not None and hasattr(app, 'native_connect_enabled'):
                     native_active = bool(app.native_connect_enabled)
                 else:
-                    native_active = bool(self.config.get_setting('ssh.native_connect', False))
+                    native_active = bool(self.config.get_setting('ssh.native_connect', True))
             except Exception:
-                native_active = bool(self.config.get_setting('ssh.native_connect', False))
-            self.native_connect_row.set_active(native_active)
+                native_active = bool(self.config.get_setting('ssh.native_connect', True))
+            self._set_connection_mode_switches(native_active)
+            self.native_connect_row.connect('notify::active', self.on_native_connection_mode_toggled)
+            self.legacy_connect_row.connect('notify::active', self.on_legacy_connection_mode_toggled)
             native_connect_group.add(self.native_connect_row)
+            native_connect_group.add(self.legacy_connect_row)
 
 
             # Connect timeout
-            self.connect_timeout_row = Adw.SpinRow.new_with_range(1, 120, 1)
+            self.connect_timeout_row = Adw.SpinRow.new_with_range(0, 120, 1)
             self.connect_timeout_row.set_title("Connect Timeout (s)")
-            self.connect_timeout_row.set_value(self.config.get_setting('ssh.connection_timeout', 10))
+            connect_timeout_value = self.config.get_setting('ssh.connection_timeout', None)
+            try:
+                connect_timeout_value = int(connect_timeout_value)
+            except (TypeError, ValueError):
+                connect_timeout_value = 0
+            if connect_timeout_value < 0:
+                connect_timeout_value = 0
+            self.connect_timeout_row.set_value(connect_timeout_value)
             advanced_group.add(self.connect_timeout_row)
 
             # Connection attempts
-            self.connection_attempts_row = Adw.SpinRow.new_with_range(1, 10, 1)
+            self.connection_attempts_row = Adw.SpinRow.new_with_range(0, 10, 1)
             self.connection_attempts_row.set_title("Connection Attempts")
-            self.connection_attempts_row.set_value(self.config.get_setting('ssh.connection_attempts', 1))
+            connection_attempts_value = self.config.get_setting('ssh.connection_attempts', None)
+            try:
+                connection_attempts_value = int(connection_attempts_value)
+            except (TypeError, ValueError):
+                connection_attempts_value = 0
+            if connection_attempts_value < 0:
+                connection_attempts_value = 0
+            self.connection_attempts_row.set_value(connection_attempts_value)
             advanced_group.add(self.connection_attempts_row)
 
             # Keepalive interval
             self.keepalive_interval_row = Adw.SpinRow.new_with_range(0, 300, 5)
             self.keepalive_interval_row.set_title("ServerAlive Interval (s)")
-            self.keepalive_interval_row.set_value(self.config.get_setting('ssh.keepalive_interval', 30))
+            keepalive_interval_value = self.config.get_setting('ssh.keepalive_interval', None)
+            try:
+                keepalive_interval_value = int(keepalive_interval_value)
+            except (TypeError, ValueError):
+                keepalive_interval_value = 0
+            if keepalive_interval_value < 0:
+                keepalive_interval_value = 0
+            self.keepalive_interval_row.set_value(keepalive_interval_value)
             advanced_group.add(self.keepalive_interval_row)
 
             # Keepalive count max
-            self.keepalive_count_row = Adw.SpinRow.new_with_range(1, 10, 1)
+            self.keepalive_count_row = Adw.SpinRow.new_with_range(0, 10, 1)
             self.keepalive_count_row.set_title("ServerAlive CountMax")
-            self.keepalive_count_row.set_value(self.config.get_setting('ssh.keepalive_count_max', 3))
+            keepalive_count_value = self.config.get_setting('ssh.keepalive_count_max', None)
+            try:
+                keepalive_count_value = int(keepalive_count_value)
+            except (TypeError, ValueError):
+                keepalive_count_value = 0
+            if keepalive_count_value < 0:
+                keepalive_count_value = 0
+            self.keepalive_count_row.set_value(keepalive_count_value)
             advanced_group.add(self.keepalive_count_row)
 
             # Strict host key checking
@@ -1095,7 +1354,7 @@ class PreferencesWindow(Gtk.Window):
             # BatchMode (non-interactive)
             self.batch_mode_row = Adw.SwitchRow()
             self.batch_mode_row.set_title("BatchMode (disable prompts)")
-            self.batch_mode_row.set_active(bool(self.config.get_setting('ssh.batch_mode', True)))
+            self.batch_mode_row.set_active(bool(self.config.get_setting('ssh.batch_mode', False)))
             advanced_group.add(self.batch_mode_row)
 
             # Compression
@@ -1116,15 +1375,6 @@ class PreferencesWindow(Gtk.Window):
             self.debug_enabled_row.set_active(bool(self.config.get_setting('ssh.debug_enabled', False)))
             advanced_group.add(self.debug_enabled_row)
 
-            # Confirm before disconnecting
-            self.confirm_disconnect_switch = Adw.SwitchRow()
-            self.confirm_disconnect_switch.set_title("Confirm before disconnecting")
-            self.confirm_disconnect_switch.set_subtitle("Show a confirmation dialog when disconnecting from a host")
-            self.confirm_disconnect_switch.set_active(
-                self.config.get_setting('confirm-disconnect', True)
-            )
-            self.confirm_disconnect_switch.connect('notify::active', self.on_confirm_disconnect_changed)
-            advanced_group.add(self.confirm_disconnect_switch)
 
             # Reset button
             # Add spacing before reset button
@@ -1143,35 +1393,9 @@ class PreferencesWindow(Gtk.Window):
             
             advanced_group.add(reset_row)
 
-            # Disable/enable advanced controls based on toggle
-            def _sync_advanced_sensitivity(row=None, *_):
-                enabled = bool(self.apply_advanced_row.get_active())
-                for w in [
-                    self.connect_timeout_row,
-                    self.connection_attempts_row,
-                    self.keepalive_interval_row,
-                    self.keepalive_count_row,
-                    self.strict_host_row,
-                    self.batch_mode_row,
-                    self.compression_row,
-                    self.verbosity_row,
-                    self.debug_enabled_row,
-                ]:
-                    try:
-                        w.set_sensitive(enabled)
-                    except Exception:
-                        pass
-
-                # When the toggle is switched off by the user, immediately
-                # restore all advanced options to their defaults.
-                if row is not None and not enabled:
-                    self._apply_default_advanced_settings(update_toggle=False)
-
-            _sync_advanced_sensitivity()
-            self.apply_advanced_row.connect('notify::active', _sync_advanced_sensitivity)
-
-            advanced_page.add(native_connect_group)
-            advanced_page.add(advanced_group)
+            ssh_settings_page.add(help_group)
+            ssh_settings_page.add(advanced_group)
+            ssh_settings_page.add(native_connect_group)
 
             # Ensure shortcut overview controls reflect current state
             self._set_shortcut_controls_enabled(not self._pass_through_enabled)
@@ -1184,6 +1408,9 @@ class PreferencesWindow(Gtk.Window):
             # File Management group
             if has_internal_file_manager():
                 file_manager_group = Adw.PreferencesGroup(title="File Manager Options")
+                file_manager_group.set_description(
+                    "These preferences only affect sshPilot's built-in SFTP file manager."
+                )
 
                 self.force_internal_file_manager_row = Adw.SwitchRow()
                 self.force_internal_file_manager_row.set_title("Always Use Built-in File Manager")
@@ -1212,8 +1439,95 @@ class PreferencesWindow(Gtk.Window):
                 )
 
                 file_manager_group.add(self.open_file_manager_externally_row)
+
+                file_manager_defaults = {}
+                try:
+                    defaults = self.config.get_default_config()
+                    file_manager_defaults = defaults.get('file_manager', {}) if isinstance(defaults, dict) else {}
+                except Exception:
+                    file_manager_defaults = {}
+
+                file_manager_config: Dict[str, Any] = {}
+                if hasattr(self.config, 'get_file_manager_config'):
+                    try:
+                        file_manager_config = self.config.get_file_manager_config() or {}
+                    except Exception as exc:
+                        logger.debug("Failed to read file manager configuration: %s", exc)
+                        file_manager_config = {}
+
+                def _fm_default_int(key: str, fallback: int = 0) -> int:
+                    value = 0
+                    if isinstance(file_manager_defaults, dict):
+                        try:
+                            value = int(file_manager_defaults.get(key, fallback))
+                        except (TypeError, ValueError):
+                            value = fallback
+                    else:
+                        value = fallback
+                    return value if value >= 0 else fallback
+
+                def _fm_config_int(key: str, fallback: int) -> int:
+                    if isinstance(file_manager_config, dict):
+                        try:
+                            value = int(file_manager_config.get(key, fallback))
+                        except (TypeError, ValueError):
+                            value = fallback
+                        if value < 0:
+                            return fallback
+                        return value
+                    return fallback
+
+                keepalive_interval_default = _fm_default_int('sftp_keepalive_interval', 0)
+                keepalive_interval_value = _fm_config_int('sftp_keepalive_interval', keepalive_interval_default)
+                keepalive_interval_value = max(0, min(keepalive_interval_value, 3600))
+
+                sftp_advanced_group = Adw.PreferencesGroup(title="Advanced SFTP Settings")
+                sftp_advanced_group.set_description(
+                    "Fine-tune options that only apply to sshPilot's built-in SFTP file manager."
+                )
+
+
+                self.sftp_keepalive_interval_row = Adw.SpinRow.new_with_range(0, 3600, 5)
+                self.sftp_keepalive_interval_row.set_title("SFTP Keepalive Interval (seconds)")
+                self.sftp_keepalive_interval_row.set_subtitle(
+                    "How often the built-in file manager sends keepalives. "
+                    "Set to 0 to disable."
+                )
+                self.sftp_keepalive_interval_row.set_value(keepalive_interval_value)
+                sftp_advanced_group.add(self.sftp_keepalive_interval_row)
+
+
+                keepalive_count_default = _fm_default_int('sftp_keepalive_count_max', 0)
+                keepalive_count_value = _fm_config_int('sftp_keepalive_count_max', keepalive_count_default)
+                keepalive_count_value = max(0, min(keepalive_count_value, 10))
+
+                self.sftp_keepalive_count_row = Adw.SpinRow.new_with_range(0, 10, 1)
+                self.sftp_keepalive_count_row.set_title("SFTP Keepalive Retry Limit")
+                self.sftp_keepalive_count_row.set_subtitle(
+                    "Number of failed keepalives tolerated by the built-in file "
+                    "manager before raising an error."
+                )
+                self.sftp_keepalive_count_row.set_value(keepalive_count_value)
+                sftp_advanced_group.add(self.sftp_keepalive_count_row)
+
+
+                connect_timeout_default = _fm_default_int('sftp_connect_timeout', 0)
+                connect_timeout_value = _fm_config_int('sftp_connect_timeout', connect_timeout_default)
+                connect_timeout_value = max(0, min(connect_timeout_value, 600))
+
+                self.sftp_connect_timeout_row = Adw.SpinRow.new_with_range(0, 600, 1)
+                self.sftp_connect_timeout_row.set_title("SFTP Connection Timeout (seconds)")
+                self.sftp_connect_timeout_row.set_subtitle(
+                    "Time allowed for the built-in file manager to establish a "
+                    "session; 0 uses the Paramiko default."
+                )
+                self.sftp_connect_timeout_row.set_value(connect_timeout_value)
+                sftp_advanced_group.add(self.sftp_connect_timeout_row)
+
+
                 self._update_external_file_manager_row()
                 file_management_page.add(file_manager_group)
+                file_management_page.add(sftp_advanced_group)
             else:
                 # If no internal file manager, create empty page with message
                 no_file_manager_group = Adw.PreferencesGroup(title="File Manager")
@@ -1229,6 +1543,7 @@ class PreferencesWindow(Gtk.Window):
             self.add_page_to_layout("File Management", "folder-symbolic", file_management_page)
             self.add_page_to_layout("Shortcuts", "preferences-desktop-keyboard-shortcuts-symbolic", shortcuts_page)
             self.add_page_to_layout("Groups", "folder-open-symbolic", groups_page)
+            self.add_page_to_layout("SSH Options", "network-workgroup-symbolic", ssh_settings_page)
             self.add_page_to_layout("Advanced", "applications-system-symbolic", advanced_page)
             
             logger.info("Preferences window initialized")
@@ -1376,6 +1691,48 @@ class PreferencesWindow(Gtk.Window):
         if not getattr(self, '_config_signal_id', None):
             self._trigger_sidebar_refresh()
 
+    def on_group_row_display_changed(self, toggle_group, _param):
+        """Persist sidebar group display layout preference."""
+        if getattr(self, '_group_display_toggle_sync', False):
+            return
+
+        try:
+            active_name = toggle_group.get_active_name() or 'fullwidth'
+        except Exception:
+            active_name = 'fullwidth'
+
+        valid_modes = getattr(self, '_group_display_modes', ['fullwidth', 'nested'])
+        if active_name not in valid_modes:
+            active_name = 'fullwidth'
+
+        try:
+            current_value = str(
+                self.config.get_setting('ui.group_row_display', 'fullwidth')
+            ).lower()
+        except Exception:
+            current_value = 'fullwidth'
+
+        if current_value not in valid_modes:
+            current_value = 'fullwidth'
+
+        if current_value == active_name:
+            self._update_group_display_preview(active_name)
+            return
+
+        try:
+            self.config.set_setting('ui.group_row_display', active_name)
+        except Exception as exc:
+            logger.error(
+                "Failed to update group display preference: %s", exc
+            )
+            self._sync_group_display_toggle_group(current_value)
+            return
+
+        self._update_group_display_preview(active_name)
+
+        if not getattr(self, '_config_signal_id', None):
+            self._trigger_sidebar_refresh()
+
     def on_use_group_color_in_tab_toggled(self, switch_row, _param):
         if getattr(self, '_tab_color_sync', False):
             return
@@ -1464,6 +1821,128 @@ class PreferencesWindow(Gtk.Window):
                 "Failed to restyle terminals after preference change: %s", exc
             )
 
+    def _create_group_display_preview(self, mode: str, title: str):
+        """Create a small sample widget that illustrates the layout mode."""
+        wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        wrapper.add_css_class('group-display-preview-container')
+        wrapper.set_hexpand(True)
+
+        title_label = Gtk.Label(label=title)
+        title_label.set_halign(Gtk.Align.START)
+        title_label.set_xalign(0.0)
+        title_label.add_css_class('group-display-preview-title')
+        wrapper.append(title_label)
+
+        sample_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        sample_box.set_hexpand(True)
+
+        parent_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        parent_row.add_css_class('group-display-preview-parent')
+        parent_row.set_margin_start(0)
+        parent_row.set_margin_end(8)
+
+        parent_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+        parent_row.append(parent_icon)
+
+        parent_labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        parent_title = Gtk.Label(label='Production Servers')
+        parent_title.set_halign(Gtk.Align.START)
+        parent_title.set_xalign(0.0)
+        parent_title.add_css_class('group-display-preview-parent-title')
+
+        parent_sub = Gtk.Label(label='3 connections')
+        parent_sub.set_halign(Gtk.Align.START)
+        parent_sub.set_xalign(0.0)
+        parent_sub.add_css_class('group-display-preview-parent-subtitle')
+
+        parent_labels.append(parent_title)
+        parent_labels.append(parent_sub)
+        parent_row.append(parent_labels)
+
+        tinted = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        tinted.add_css_class('group-display-preview-row')
+        tinted.set_hexpand(True)
+        tinted.set_margin_top(2)
+        tinted.set_margin_bottom(2)
+        tinted.set_margin_end(8)
+
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        if mode == 'fullwidth':
+            tinted.set_margin_start(0)
+            content_box.set_margin_start(24)
+        else:  # nested mode shifts entire row
+            tinted.set_margin_start(24)
+            content_box.set_margin_start(0)
+
+        title_text = Gtk.Label(label='db-backups')
+        title_text.set_halign(Gtk.Align.START)
+        title_text.set_xalign(0.0)
+        title_text.add_css_class('group-display-preview-row-title')
+
+        subtitle_text = Gtk.Label(label='ops@example.com')
+        subtitle_text.set_halign(Gtk.Align.START)
+        subtitle_text.set_xalign(0.0)
+        subtitle_text.add_css_class('group-display-preview-row-subtitle')
+
+        content_box.append(title_text)
+        content_box.append(subtitle_text)
+
+        tinted.append(content_box)
+        sample_box.append(parent_row)
+        sample_box.append(tinted)
+        wrapper.append(sample_box)
+
+        return wrapper, tinted
+
+    def _update_group_display_preview(self, active_mode: str):
+        preview_map = getattr(self, '_group_display_preview_rows', None)
+        if not preview_map:
+            return
+
+        valid_modes = getattr(self, '_group_display_modes', ['fullwidth', 'nested'])
+        if active_mode not in valid_modes:
+            active_mode = valid_modes[0]
+
+        for mode, tinted in preview_map.items():
+            if not tinted:
+                continue
+            if mode == active_mode:
+                tinted.add_css_class('active')
+            else:
+                tinted.remove_css_class('active')
+
+        stack = getattr(self, '_group_display_preview_stack', None)
+        if stack:
+            try:
+                stack.set_visible_child_name(active_mode)
+            except Exception:
+                pass
+
+    def _sync_group_display_toggle_group(self, value):
+        if not hasattr(self, 'group_display_toggle_group') or self.group_display_toggle_group is None:
+            return
+
+        valid_modes = getattr(self, '_group_display_modes', ['fullwidth', 'nested'])
+        normalized = 'fullwidth'
+        try:
+            normalized = str(value).lower()
+        except Exception:
+            pass
+        if normalized not in valid_modes:
+            normalized = 'fullwidth'
+
+        if self.group_display_toggle_group.get_active_name() == normalized:
+            self._update_group_display_preview(normalized)
+            return
+
+        self._group_display_toggle_sync = True
+        try:
+            self.group_display_toggle_group.set_active_name(normalized)
+        finally:
+            self._group_display_toggle_sync = False
+
+        self._update_group_display_preview(normalized)
+
     def _sync_group_color_display_row(self, value):
         if not hasattr(self, 'group_color_display_row') or self.group_color_display_row is None:
             return
@@ -1518,6 +1997,9 @@ class PreferencesWindow(Gtk.Window):
         if key == 'ui.group_color_display':
             self._sync_group_color_display_row(value)
             self._trigger_sidebar_refresh()
+        elif key == 'ui.group_row_display':
+            self._sync_group_display_toggle_group(value)
+            self._trigger_sidebar_refresh()
         elif key == 'ui.use_group_color_in_tab':
             self._sync_use_group_color_in_tab(value)
             self._trigger_terminal_style_refresh()
@@ -1566,15 +2048,6 @@ class PreferencesWindow(Gtk.Window):
                 pass
             self._config_signal_id = None
 
-    def on_app_color_changed(self, color_button):
-        """Handle app color change"""
-        color = color_button.get_rgba()
-        color_str = color.to_string()
-        self.config.set_setting('app-color-override', color_str)
-        logger.info(f"App color changed to: {color_str}")
-        self.refresh_color_buttons()
-        self.apply_color_overrides()
-
     def on_accent_color_changed(self, color_button):
         """Handle accent color change"""
         color = color_button.get_rgba()
@@ -1584,47 +2057,21 @@ class PreferencesWindow(Gtk.Window):
         self.refresh_color_buttons()
         self.apply_color_overrides()
 
-    def on_sidebar_color_changed(self, color_button):
-        """Handle sidebar color change"""
-        color = color_button.get_rgba()
-        color_str = color.to_string()
-        self.config.set_setting('sidebar-color-override', color_str)
-        logger.info(f"Sidebar color changed to: {color_str}")
-        self.refresh_color_buttons()
-        self.apply_color_overrides()
-
     def on_reset_colors_clicked(self, button):
         """Reset color overrides to default"""
-        self.config.set_setting('app-color-override', None)
         self.config.set_setting('accent-color-override', None)
-        self.config.set_setting('sidebar-color-override', None)
-
         self.refresh_color_buttons()
-        logger.info("Color overrides reset to default")
+        logger.info("Accent color override reset to default")
         self.apply_color_overrides()
 
     def refresh_color_buttons(self):
         """Update color button appearance to reflect settings"""
-        self._set_color_button(
-            self.app_color_button,
-            self.app_color_row,
-            'app-color-override',
-            Gdk.RGBA(0.2, 0.5, 0.9, 1.0),
-            'Using system default',
-        )
         self._set_color_button(
             self.accent_color_button,
             self.accent_color_row,
             'accent-color-override',
             Gdk.RGBA(0.2, 0.5, 0.9, 1.0),
             'Using system accent color',
-        )
-        self._set_color_button(
-            self.sidebar_color_button,
-            self.sidebar_color_row,
-            'sidebar-color-override',
-            Gdk.RGBA(0.9, 0.9, 0.9, 1.0),
-            'Using system default',
         )
 
     def _set_color_button(self, button, row, setting_name, default_rgba, default_subtitle):
@@ -1643,51 +2090,23 @@ class PreferencesWindow(Gtk.Window):
     def apply_color_overrides(self):
         """Apply color overrides to the application"""
         try:
-            # Get color overrides from config
-            app_color = self.config.get_setting('app-color-override', None)
             accent_color = self.config.get_setting('accent-color-override', None)
-            sidebar_color = self.config.get_setting('sidebar-color-override', None)
-            
-            # Build CSS with color overrides using proper Adwaita named colors
-            css_rules = []
-            
-            if app_color:
-                # Override all accent-related colors for comprehensive theming
-                css_rules.append(f"@define-color accent_bg_color {app_color};")
-                css_rules.append(f"@define-color accent_fg_color white;")
-                css_rules.append(f"@define-color accent_color {app_color};")
-                # Override selected colors (used for selected rows, list items, etc.)
-                css_rules.append(f"@define-color theme_selected_bg_color {app_color};")
-                css_rules.append(f"@define-color theme_selected_fg_color white;")
-                css_rules.append(f"@define-color theme_unfocused_selected_bg_color {app_color};")
-                css_rules.append(f"@define-color theme_unfocused_selected_fg_color white;")
-                # Override window background colors
-                css_rules.append(f"@define-color window_bg_color {app_color};")
-                css_rules.append(f"@define-color theme_bg_color {app_color};")
-                css_rules.append(f"@define-color theme_unfocused_bg_color {app_color};")
-                # Override sidebar colors
-                css_rules.append(f"@define-color sidebar_bg_color {app_color};")
-                css_rules.append(f"@define-color secondary_sidebar_bg_color {app_color};")
-            
-            if accent_color:
-                # Override accent colors regardless of app color
-                css_rules.append(f"@define-color accent_color {accent_color};")
-                css_rules.append(f"@define-color accent_bg_color {accent_color};")
-                css_rules.append(f"@define-color accent_fg_color white;")
-                css_rules.append(f"@define-color theme_selected_bg_color {accent_color};")
-                css_rules.append(f"@define-color theme_selected_fg_color white;")
-                css_rules.append(
-                    f"@define-color theme_unfocused_selected_bg_color {accent_color};"
-                )
-                css_rules.append(
-                    f"@define-color theme_unfocused_selected_fg_color white;"
-                )
-            
-            if sidebar_color:
-                # Override sidebar colors independently
-                css_rules.append(f"@define-color sidebar_bg_color {sidebar_color};")
-                css_rules.append(f"@define-color secondary_sidebar_bg_color {sidebar_color};")
-            
+
+            if not accent_color:
+                self.remove_color_override_provider()
+                return
+
+            # Build CSS with accent color overrides
+            css_rules = [
+                f"@define-color accent_color {accent_color};",
+                f"@define-color accent_bg_color {accent_color};",
+                "@define-color accent_fg_color white;",
+                f"@define-color theme_selected_bg_color {accent_color};",
+                "@define-color theme_selected_fg_color white;",
+                f"@define-color theme_unfocused_selected_bg_color {accent_color};",
+                "@define-color theme_unfocused_selected_fg_color white;",
+            ]
+
             if css_rules:
                 # Add specific CSS rules for row selection
                 css_rules.append("")
@@ -1717,7 +2136,7 @@ class PreferencesWindow(Gtk.Window):
                 if display:
                     # Remove any existing color override provider first
                     self.remove_color_override_provider()
-                    
+
                     Gtk.StyleContext.add_provider_for_display(
                         display, 
                         provider, 
@@ -1725,7 +2144,7 @@ class PreferencesWindow(Gtk.Window):
                     )
                     # Store provider reference for cleanup
                     display._color_override_provider = provider
-                    logger.info("Applied color overrides")
+                    logger.info("Applied accent color override")
             else:
                 # Remove any existing color override provider
                 self.remove_color_override_provider()
@@ -1746,9 +2165,18 @@ class PreferencesWindow(Gtk.Window):
     def save_advanced_ssh_settings(self):
         """Persist advanced SSH settings from the preferences UI"""
         try:
-            if hasattr(self, 'apply_advanced_row'):
-                self.config.set_setting('ssh.apply_advanced', bool(self.apply_advanced_row.get_active()))
-            if hasattr(self, 'native_connect_row'):
+            native_value = False
+            connect_timeout = None
+            connection_attempts = None
+            keepalive_interval = None
+            keepalive_count = None
+            strict_host_value = ''
+            batch_mode_enabled = False
+            compression_enabled = False
+            verbosity_value = 0
+            debug_enabled = False
+
+            if getattr(self, 'native_connect_row', None) is not None:
                 native_value = bool(self.native_connect_row.get_active())
                 self.config.set_setting('ssh.native_connect', native_value)
                 try:
@@ -1762,26 +2190,85 @@ class PreferencesWindow(Gtk.Window):
                 if self.parent_window and hasattr(self.parent_window, 'connection_manager'):
                     self.parent_window.connection_manager.native_connect_enabled = native_value
             if hasattr(self, 'connect_timeout_row'):
-                self.config.set_setting('ssh.connection_timeout', int(self.connect_timeout_row.get_value()))
+                connect_timeout_value = int(self.connect_timeout_row.get_value())
+                if connect_timeout_value <= 0:
+                    connect_timeout = None
+                else:
+                    connect_timeout = connect_timeout_value
+                self.config.set_setting('ssh.connection_timeout', connect_timeout)
             if hasattr(self, 'connection_attempts_row'):
-                self.config.set_setting('ssh.connection_attempts', int(self.connection_attempts_row.get_value()))
+                connection_attempts_value = int(self.connection_attempts_row.get_value())
+                if connection_attempts_value <= 0:
+                    connection_attempts = None
+                else:
+                    connection_attempts = connection_attempts_value
+                self.config.set_setting('ssh.connection_attempts', connection_attempts)
             if hasattr(self, 'keepalive_interval_row'):
-                self.config.set_setting('ssh.keepalive_interval', int(self.keepalive_interval_row.get_value()))
+                keepalive_interval_value = int(self.keepalive_interval_row.get_value())
+                if keepalive_interval_value <= 0:
+                    keepalive_interval = None
+                else:
+                    keepalive_interval = keepalive_interval_value
+                self.config.set_setting('ssh.keepalive_interval', keepalive_interval)
             if hasattr(self, 'keepalive_count_row'):
-                self.config.set_setting('ssh.keepalive_count_max', int(self.keepalive_count_row.get_value()))
+                keepalive_count_value = int(self.keepalive_count_row.get_value())
+                if keepalive_count_value <= 0:
+                    keepalive_count = None
+                else:
+                    keepalive_count = keepalive_count_value
+                self.config.set_setting('ssh.keepalive_count_max', keepalive_count)
             if hasattr(self, 'strict_host_row'):
                 options = ["accept-new", "yes", "no", "ask"]
                 idx = self.strict_host_row.get_selected()
-                value = options[idx] if 0 <= idx < len(options) else 'accept-new'
-                self.config.set_setting('ssh.strict_host_key_checking', value)
+                strict_host_value = options[idx] if 0 <= idx < len(options) else 'accept-new'
+                self.config.set_setting('ssh.strict_host_key_checking', strict_host_value)
             if hasattr(self, 'batch_mode_row'):
-                self.config.set_setting('ssh.batch_mode', bool(self.batch_mode_row.get_active()))
+                batch_mode_enabled = bool(self.batch_mode_row.get_active())
+                self.config.set_setting('ssh.batch_mode', batch_mode_enabled)
             if hasattr(self, 'compression_row'):
-                self.config.set_setting('ssh.compression', bool(self.compression_row.get_active()))
+                compression_enabled = bool(self.compression_row.get_active())
+                self.config.set_setting('ssh.compression', compression_enabled)
             if hasattr(self, 'verbosity_row'):
-                self.config.set_setting('ssh.verbosity', int(self.verbosity_row.get_value()))
+                verbosity_value = int(self.verbosity_row.get_value())
+                self.config.set_setting('ssh.verbosity', verbosity_value)
             if hasattr(self, 'debug_enabled_row'):
-                self.config.set_setting('ssh.debug_enabled', bool(self.debug_enabled_row.get_active()))
+                debug_enabled = bool(self.debug_enabled_row.get_active())
+                self.config.set_setting('ssh.debug_enabled', debug_enabled)
+
+            overrides: List[str] = []
+            if batch_mode_enabled:
+                overrides.extend(['-o', 'BatchMode=yes'])
+            if connect_timeout is not None:
+                overrides.extend(['-o', f'ConnectTimeout={connect_timeout}'])
+            if connection_attempts is not None:
+                overrides.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+            if keepalive_interval is not None:
+                overrides.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
+            if keepalive_count is not None:
+                overrides.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
+            if strict_host_value:
+                overrides.extend(['-o', f'StrictHostKeyChecking={strict_host_value}'])
+            if compression_enabled:
+                overrides.append('-C')
+
+            safe_verbosity = max(0, min(3, verbosity_value))
+            for _ in range(safe_verbosity):
+                overrides.append('-v')
+
+            log_level = None
+            if safe_verbosity == 1:
+                log_level = 'VERBOSE'
+            elif safe_verbosity == 2:
+                log_level = 'DEBUG2'
+            elif safe_verbosity >= 3:
+                log_level = 'DEBUG3'
+            elif debug_enabled:
+                log_level = 'DEBUG'
+
+            if log_level:
+                overrides.extend(['-o', f'LogLevel={log_level}'])
+
+            self.config.set_setting('ssh.ssh_overrides', overrides)
             if getattr(self, 'force_internal_file_manager_row', None) is not None:
                 self.config.set_setting(
                     'file_manager.force_internal',
@@ -1792,32 +2279,77 @@ class PreferencesWindow(Gtk.Window):
                     'file_manager.open_externally',
                     bool(self.open_file_manager_externally_row.get_active()),
                 )
+            if getattr(self, 'sftp_keepalive_interval_row', None) is not None:
+                interval_value = int(self.sftp_keepalive_interval_row.get_value())
+                if interval_value < 0:
+                    interval_value = 0
+                self.config.set_setting('file_manager.sftp_keepalive_interval', interval_value)
+            if getattr(self, 'sftp_keepalive_count_row', None) is not None:
+                keepalive_count_value = int(self.sftp_keepalive_count_row.get_value())
+                if keepalive_count_value < 0:
+                    keepalive_count_value = 0
+                self.config.set_setting('file_manager.sftp_keepalive_count_max', keepalive_count_value)
+            if getattr(self, 'sftp_connect_timeout_row', None) is not None:
+                connect_timeout_value = int(self.sftp_connect_timeout_row.get_value())
+                if connect_timeout_value < 0:
+                    connect_timeout_value = 0
+                self.config.set_setting('file_manager.sftp_connect_timeout', connect_timeout_value)
+
+            manager = None
+            if self.parent_window and hasattr(self.parent_window, 'connection_manager'):
+                manager = self.parent_window.connection_manager
+            if manager and hasattr(manager, 'invalidate_cached_commands'):
+                manager.invalidate_cached_commands()
         except Exception as e:
             logger.error(f"Failed to save advanced SSH settings: {e}")
 
-    def _apply_default_advanced_settings(self, update_toggle=True):
+    def _set_connection_mode_switches(self, native_active: bool) -> None:
+        """Synchronize native/legacy connection switches without recursion."""
+
+        self._updating_connection_switches = True
+        try:
+            if getattr(self, 'native_connect_row', None) is not None:
+                self.native_connect_row.set_active(bool(native_active))
+            if getattr(self, 'legacy_connect_row', None) is not None:
+                self.legacy_connect_row.set_active(not bool(native_active))
+        finally:
+            self._updating_connection_switches = False
+
+    def on_native_connection_mode_toggled(self, switch, *args):
+        """Ensure native mode toggle keeps legacy switch in sync."""
+
+        if self._updating_connection_switches:
+            return
+
+        native_active = bool(switch.get_active())
+        self._set_connection_mode_switches(native_active)
+
+    def on_legacy_connection_mode_toggled(self, switch, *args):
+        """Ensure legacy mode toggle keeps native switch in sync."""
+
+        if self._updating_connection_switches:
+            return
+
+        legacy_active = bool(switch.get_active())
+        self._set_connection_mode_switches(not legacy_active)
+
+    def _apply_default_advanced_settings(self):
         """Restore advanced SSH settings to defaults and update the UI."""
         try:
             defaults = self.config.get_default_config().get('ssh', {})
-            # Persist defaults and ensure advanced options are disabled
-            self.config.set_setting('ssh.apply_advanced', False)
-
-            if update_toggle and hasattr(self, 'apply_advanced_row'):
-                self.apply_advanced_row.set_active(False)
-
 
             if hasattr(self, 'connect_timeout_row'):
-                self.config.set_setting('ssh.connection_timeout', defaults.get('connection_timeout'))
-                self.connect_timeout_row.set_value(int(defaults.get('connection_timeout', 30)))
+                self.config.set_setting('ssh.connection_timeout', None)
+                self.connect_timeout_row.set_value(0)
             if hasattr(self, 'connection_attempts_row'):
-                self.config.set_setting('ssh.connection_attempts', defaults.get('connection_attempts'))
-                self.connection_attempts_row.set_value(int(defaults.get('connection_attempts', 1)))
+                self.config.set_setting('ssh.connection_attempts', None)
+                self.connection_attempts_row.set_value(0)
             if hasattr(self, 'keepalive_interval_row'):
-                self.config.set_setting('ssh.keepalive_interval', defaults.get('keepalive_interval'))
-                self.keepalive_interval_row.set_value(int(defaults.get('keepalive_interval', 60)))
+                self.config.set_setting('ssh.keepalive_interval', None)
+                self.keepalive_interval_row.set_value(0)
             if hasattr(self, 'keepalive_count_row'):
-                self.config.set_setting('ssh.keepalive_count_max', defaults.get('keepalive_count_max'))
-                self.keepalive_count_row.set_value(int(defaults.get('keepalive_count_max', 3)))
+                self.config.set_setting('ssh.keepalive_count_max', None)
+                self.keepalive_count_row.set_value(0)
             if hasattr(self, 'strict_host_row'):
                 try:
                     self.strict_host_row.set_selected(["accept-new", "yes", "no", "ask"].index('accept-new'))
@@ -1826,8 +2358,8 @@ class PreferencesWindow(Gtk.Window):
                 self.config.set_setting('ssh.strict_host_key_checking', 'accept-new')
             self.config.set_setting('ssh.auto_add_host_keys', defaults.get('auto_add_host_keys'))
             if hasattr(self, 'batch_mode_row'):
-                self.config.set_setting('ssh.batch_mode', bool(defaults.get('batch_mode', True)))
-                self.batch_mode_row.set_active(bool(defaults.get('batch_mode', True)))
+                self.config.set_setting('ssh.batch_mode', bool(defaults.get('batch_mode', False)))
+                self.batch_mode_row.set_active(bool(defaults.get('batch_mode', False)))
             if hasattr(self, 'compression_row'):
                 self.config.set_setting('ssh.compression', bool(defaults.get('compression', False)))
                 self.compression_row.set_active(bool(defaults.get('compression', False)))
@@ -1847,14 +2379,28 @@ class PreferencesWindow(Gtk.Window):
             self.config.set_setting('file_manager.open_externally', default_open_external)
             if getattr(self, 'open_file_manager_externally_row', None) is not None:
                 self.open_file_manager_externally_row.set_active(default_open_external)
+            keepalive_interval_default = int(file_manager_defaults.get('sftp_keepalive_interval', 0) or 0)
+            self.config.set_setting('file_manager.sftp_keepalive_interval', max(0, keepalive_interval_default))
+            if getattr(self, 'sftp_keepalive_interval_row', None) is not None:
+                self.sftp_keepalive_interval_row.set_value(max(0, keepalive_interval_default))
+            keepalive_count_default = int(file_manager_defaults.get('sftp_keepalive_count_max', 0) or 0)
+            self.config.set_setting('file_manager.sftp_keepalive_count_max', max(0, keepalive_count_default))
+            if getattr(self, 'sftp_keepalive_count_row', None) is not None:
+                self.sftp_keepalive_count_row.set_value(max(0, keepalive_count_default))
+            connect_timeout_default = int(file_manager_defaults.get('sftp_connect_timeout', 0) or 0)
+            self.config.set_setting('file_manager.sftp_connect_timeout', max(0, connect_timeout_default))
+            if getattr(self, 'sftp_connect_timeout_row', None) is not None:
+                self.sftp_connect_timeout_row.set_value(max(0, connect_timeout_default))
             self._update_external_file_manager_row()
+
+            self.save_advanced_ssh_settings()
         except Exception as e:
             logger.error(f"Failed to apply default advanced SSH settings: {e}")
 
     def on_reset_advanced_ssh(self, *args):
         """Reset only advanced SSH keys to defaults and update UI."""
         try:
-            self._apply_default_advanced_settings(update_toggle=True)
+            self._apply_default_advanced_settings()
         except Exception as e:
             logger.error(f"Failed to reset advanced SSH settings: {e}")
 

@@ -10,6 +10,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 ### Class: `WindowActions`
 
+- **`_update_sidebar_accelerators()`** — Apply sidebar accelerators respecting pass-through settings.
+
 - **`on_broadcast_command_action(action, param=None)`** — Handle broadcast command action - shows dialog to input command
 
 - **`on_create_group_action(action, param=None)`** — Handle create group action
@@ -46,9 +48,13 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 ### Functions
 
+- **`_askpass_log_forwarder_loop()`** — Background loop that forwards askpass logs to the module logger.
+
 - **`clear_passphrase(key_path)`** — Remove a stored key passphrase using keyring (macOS) or libsecret (Linux).
 
 - **`connect_ssh_with_key(host, username, key_path, command=None)`** — Connect via SSH with proper key handling
+
+- **`ensure_askpass_log_forwarder()`** — Ensure a background thread is forwarding askpass logs to the logger.
 
 - **`ensure_askpass_script()`** — Ensure the askpass script is available for passphrase handling
 
@@ -57,6 +63,10 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`ensure_passphrase_askpass()`** — Ensure the askpass script exists and return its path
 
 - **`force_regenerate_askpass_script()`** — Force regeneration of the askpass script
+
+- **`forward_askpass_log_to_logger(log, include_existing=False)`** — Forward askpass log lines into the main application logger.
+
+- **`get_askpass_log_path()`** — Return the path to the askpass log file.
 
 - **`get_scp_ssh_options()`** — Get SSH options for SCP operations with passphrased keys
 
@@ -73,6 +83,10 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`lookup_passphrase(key_path)`** — Look up a key passphrase using keyring (macOS) or libsecret (Linux).
 
 - **`prepare_key_for_connection(key_path)`** — Prepare SSH key for connection by ensuring it's in ssh-agent
+
+- **`read_new_askpass_log_lines(include_existing=False)`** — Read newly appended askpass log lines.
+
+- **`stop_askpass_log_forwarder()`** — Stop the background askpass log forwarder thread.
 
 - **`store_passphrase(key_path, passphrase)`** — Store a key passphrase using keyring (macOS) or libsecret (Linux).
 
@@ -100,6 +114,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`get_default_config()`** — Get default configuration values
 
+- **`get_file_manager_config()`** — Return configuration relevant to the built-in SFTP file manager.
+
 - **`get_security_config()`** — Get security configuration
 
 - **`get_setting(key, default=None)`** — Get a setting value
@@ -112,7 +128,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`get_shortcut_overrides()`** — Return a mapping of action names to user-defined shortcut overrides.
 
-- **`get_ssh_config()`** — Get SSH configuration
+- **`get_ssh_config()`** — Get SSH configuration values with sensible defaults.
 
 - **`get_terminal_profile(theme_name=None)`** — Get terminal theme profile
 
@@ -362,6 +378,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_update_properties_from_data(data)`** — Update instance properties from data dictionary
 
+- **`collect_identity_file_candidates(effective_cfg=None)`** — Return resolved identity file paths that exist on disk for this host.
+
 - **`connect()`** — Prepare SSH command for later use (no preflight echo).
 
 - **`disconnect()`** — Close the SSH connection and clean up
@@ -388,6 +406,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`__init__(config, isolated_mode=False)`** — Handles init.
 
+- **`_ensure_secure_permissions(path, mode)`** — Best effort at applying restrictive permissions to files/directories.
+
 - **`_ensure_ssh_agent()`** — Ensure ssh-agent is running and export environment variables
 
 - **`_get_active_connection_key(connection)`** — Returns active connection key.
@@ -396,7 +416,11 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_get_active_connection_key(connection)`** — Return the dictionary key used to track active connection tasks.
 
+- **`_get_keyring_backend_name()`** — Return a descriptive name for the active keyring backend.
+
 - **`_post_init_slow_path()`** — Run slower initialization steps after UI is responsive.
+
+- **`_should_use_keyring_fallback(force=False)`** — Return True when we should consult the cross-platform keyring.
 
 - **`_split_host_block(original_host, new_data, target_path)`** — Remove *original_host* from its group and append a new block.
 
@@ -421,6 +445,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`get_key_passphrase(key_path)`** — Retrieve key passphrase from system keyring
 
 - **`get_password(host, username)`** — Retrieve password from system keyring
+
+- **`invalidate_cached_commands()`** — Clear cached SSH commands so future launches pick up new settings.
 
 - **`load_ssh_config()`** — Load connections from SSH config file
 
@@ -518,6 +544,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_save_doc(folder_path, doc_id)`** — Save document ID, display name, and actual path to JSON config.
 
+- **`_sftp_path_exists(sftp, path)`** — Return ``True`` if *path* exists on the remote SFTP server.
+
 - **`launch_file_manager_window(host, username, port=22, path='~', parent=None, transient_for_parent=True, nickname=None, connection=None, connection_manager=None, ssh_config=None)`** — Create and present the :class:`FileManagerWindow`.
 
 - **`stat_isdir(attr)`** — Return ``True`` when the attribute represents a directory.
@@ -528,9 +556,9 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`__init__(host, username, port=22, password=None, dispatcher=None, connection=None, connection_manager=None, ssh_config=None)`** — Handles init.
 
-- **`_connect_impl()`** — Connects impl and configures optional SSH keepalive handling when advanced preferences enable it.
+- **`_connect_impl()`** — Connects impl.
 
-- **`_create_proxy_jump_socket(jump_entries, config_override, policy, known_hosts_path, allow_agent, look_for_keys, key_filename, passphrase, resolved_host, resolved_port, base_username)`** — Create a socket by chaining SSH connections through jump hosts.
+- **`_create_proxy_jump_socket(jump_entries, config_override, policy, known_hosts_path, allow_agent, look_for_keys, key_filename, passphrase, resolved_host, resolved_port, base_username, connect_timeout=None)`** — Create a socket by chaining SSH connections through jump hosts.
 
 - **`_format_size(size_bytes)`** — Format file size for display
 
@@ -538,9 +566,13 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_select_host_key_policy(strict_host, auto_add)`** — Return an appropriate Paramiko host key policy based on settings.
 
+- **`_start_keepalive_worker()`** — Handles start keepalive worker.
+
+- **`_stop_keepalive_worker()`** — Handles stop keepalive worker.
+
 - **`_submit(func, on_success=None, on_error=None)`** — Handles submit.
 
-- **`close()`** — Handles close and shuts down the SFTP keepalive worker.
+- **`close()`** — Handles close.
 
 - **`connect_to_server()`** — Connects to server.
 
@@ -551,6 +583,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`listdir(path)`** — Handles listdir.
 
 - **`mkdir(path)`** — Handles mkdir.
+
+- **`path_exists(path)`** — Return a future that resolves to whether *path* exists remotely.
 
 - **`remove(path)`** — Handles remove.
 
@@ -579,8 +613,6 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_copy_remote_directory(sftp, source_path, destination_path)`** — Handles copy remote directory.
 
 - **`_copy_remote_file(sftp, source_path, destination_path)`** — Handles copy remote file.
-
-- **`_create_headerbar_menu(header_bar)`** — Create and add menu button to headerbar.
 
 - **`_ensure_remote_directory(sftp, path)`** — Handles ensure remote directory.
 
@@ -611,8 +643,6 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_on_progress(_manager, fraction, message)`** — Handles progress.
 
 - **`_on_request_operation(pane, action, payload, user_data=None)`** — Handles request operation.
-
-- **`_on_show_hidden_action(action, _parameter)`** — Handle show hidden files action from menu.
 
 - **`_on_window_resize(window, pspec)`** — Maintain proportional paned split when window is resized following GNOME HIG
 
@@ -680,6 +710,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_format_size(size_bytes)`** — Handles format size.
 
+- **`_get_file_manager_window()`** — Return the controlling FileManagerWindow if available.
+
 - **`_get_primary_selection_index()`** — Returns primary selection index.
 
 - **`_get_selected_indices()`** — Returns selected indices.
@@ -740,6 +772,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_on_sort_direction(descending)`** — Handle sort direction selection from menu.
 
+- **`_on_toolbar_show_hidden_toggled(_toolbar, show_hidden)`** — Handles toolbar show hidden toggled.
+
 - **`_on_typeahead_key_pressed(_controller, keyval, _keycode, state)`** — Handles typeahead key pressed.
 
 - **`_on_up_clicked(_button)`** — Handles up clicked.
@@ -798,7 +832,11 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`set_can_paste(can_paste)`** — Sets can paste.
 
+- **`set_file_manager_window(window)`** — Associate this pane with its owning file manager window.
+
 - **`set_partner_pane(partner)`** — Sets partner pane.
+
+- **`set_show_hidden(show_hidden, preserve_selection=True)`** — Update the hidden file visibility state and refresh entries.
 
 - **`show_entries(path, entries)`** — Shows entries.
 
@@ -814,9 +852,15 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_create_sort_split_button()`** — Creates sort split button.
 
+- **`_on_show_hidden_toggled(button)`** — Handles show hidden toggled.
+
 - **`_on_view_toggle_clicked(*_)`** — Handles view toggle clicked.
 
+- **`_update_show_hidden_icon(show_hidden)`** — Updates show hidden icon.
+
 - **`get_header_bar()`** — Get the actual header bar for toolbar view.
+
+- **`set_show_hidden_state(show_hidden)`** — Sets show hidden state.
 
 ### Class: `PathEntry`
 
@@ -899,7 +943,6 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_update_group_orders(groups_list, parent_id)`** — Update the order field for groups at a given level
 
 - **`create_group(name, parent_id=None, color=None)`** — Create a new group and return its ID
-- **`set_group_color(group_id, color)`** — Update a group's color and persist the change.
 
 - **`delete_group(group_id)`** — Delete a group and move its contents to parent or root
 
@@ -919,6 +962,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`reorder_group(source_group_id, target_group_id, position)`** — Reorder a group relative to another group at the same level
 
+- **`set_group_color(group_id, color)`** — Update a group's color and persist the change.
+
 - **`set_group_expanded(group_id, expanded)`** — Set whether a group is expanded
 
 
@@ -929,7 +974,9 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`__init__(ssh_dir=None)`** — Handles init.
 
-- **`discover_keys()`** — List keys that have a matching .pub next to the private key.
+- **`_is_private_key(file_path)`** — Return True if the path looks like a private SSH key.
+
+- **`discover_keys()`** — Discover known SSH keys within the configured SSH directory.
 
 - **`generate_key(key_name, key_type='ed25519', key_size=3072, comment=None, passphrase=None)`** — Single, unified generator using `ssh-keygen`.
 
@@ -938,6 +985,14 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`__init__(private_path)`** — Handles init.
 
 - **`__str__()`** — Handles str.
+
+
+
+## Module: `sshpilot.key_utils`
+
+### Functions
+
+- **`_is_private_key(file_path, cache=None, skipped_filenames=None)`** — Return ``True`` when *file_path* looks like a private SSH key.
 
 
 
@@ -972,6 +1027,12 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`__init__(verbose=False, isolated=False, native_connect=False)`** — Handles init.
 
 - **`_apply_shortcut_for_action(name)`** — Handles apply shortcut for action.
+
+- **`_on_config_setting_changed(_config, key, value)`** — Handles config setting changed.
+
+- **`_refresh_window_accelerators()`** — Notify windows to refresh accelerator state.
+
+- **`_update_accelerators_enabled_flag()`** — Update the exposed accelerator enabled flag considering focus state.
 
 - **`apply_color_overrides(config)`** — Apply color overrides to the application
 
@@ -1097,6 +1158,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 ### Functions
 
+- **`_install_group_display_preview_css()`** — Handles install group display preview css.
+
 - **`macos_third_party_terminal_available()`** — Check if a third-party terminal is available on macOS.
 
 - **`should_hide_external_terminal_options()`** — Check if external terminal options should be hidden.
@@ -1133,19 +1196,63 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`__init__(parent_window, config)`** — Handles init.
 
-- **`_apply_default_advanced_settings(update_toggle=True)`** — Restore advanced SSH settings to defaults and update the UI.
+- **`_apply_default_advanced_settings()`** — Restore advanced SSH settings to defaults and update the UI.
+
+- **`_collect_supported_encodings()`** — Handles collect supported encodings.
+
+- **`_create_group_display_preview(mode, title)`** — Create a small sample widget that illustrates the layout mode.
+
+- **`_handle_invalid_encoding_selection(requested, fallback)`** — Handles invalid encoding selection.
+
+- **`_initialize_encoding_selector(appearance_group)`** — Handles initialize encoding selector.
 
 - **`_is_internal_file_manager_enabled()`** — Return ``True`` when the application uses the built-in file manager.
+
+- **`_on_config_setting_changed(_config, key, value)`** — Handles config setting changed.
+
+- **`_on_destroy(*_args)`** — Handles destroy.
 
 - **`_populate_terminal_dropdown()`** — Populate the terminal dropdown with available terminals
 
 - **`_set_color_button(button, row, setting_name, default_rgba, default_subtitle)`** — Sets color button.
 
+- **`_set_connection_mode_switches(native_active)`** — Synchronize native/legacy connection switches without recursion.
+
+- **`_set_shortcut_controls_enabled(enabled)`** — Sets shortcut controls enabled.
+
 - **`_set_terminal_dropdown_selection(terminal_name)`** — Set the dropdown selection to the specified terminal
+
+- **`_show_toast(message)`** — Shows toast.
+
+- **`_sync_encoding_row_selection(encoding, notify_user=False)`** — Handles sync encoding row selection.
+
+- **`_sync_group_color_display_row(value)`** — Handles sync group color display row.
+
+- **`_sync_group_display_toggle_group(value)`** — Handles sync group display toggle group.
+
+- **`_sync_group_tab_color_switch(value)`** — Handles sync group tab color switch.
+
+- **`_sync_group_terminal_color_switch(value)`** — Handles sync group terminal color switch.
+
+- **`_sync_use_group_color_in_tab(value)`** — Handles sync use group color in tab.
+
+- **`_sync_use_group_color_in_terminal(value)`** — Handles sync use group color in terminal.
+
+- **`_trigger_sidebar_refresh()`** — Handles trigger sidebar refresh.
+
+- **`_trigger_terminal_style_refresh()`** — Handles trigger terminal style refresh.
+
+- **`_update_encoding_config_if_needed(target_code)`** — Updates encoding config if needed.
 
 - **`_update_external_file_manager_row()`** — Sync the external window preference with the current availability.
 
+- **`_update_group_display_preview(active_mode)`** — Updates group display preview.
+
+- **`_update_header_title(page_title=None)`** — Update the header and window title to reflect the active page.
+
 - **`_update_operation_mode_styles()`** — Visually de-emphasize the inactive operation mode
+
+- **`add_page_to_layout(title, icon_name, page)`** — Add a page to the custom layout
 
 - **`apply_color_overrides()`** — Apply color overrides to the application
 
@@ -1165,8 +1272,6 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`on_accent_color_changed(color_button)`** — Handle accent color change
 
-- **`on_app_color_changed(color_button)`** — Handle app color change
-
 - **`on_close_request(*args)`** — Persist settings when the preferences window closes
 
 - **`on_color_scheme_changed(combo_row, param)`** — Handle terminal color scheme change
@@ -1175,19 +1280,31 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`on_custom_terminal_path_changed(entry, *args)`** — Handle custom terminal path entry change
 
+- **`on_encoding_selection_changed(combo_row, _param)`** — Handles encoding selection changed.
+
 - **`on_font_button_clicked(button)`** — Handle font button click
 
 - **`on_force_internal_file_manager_changed(switch, *args)`** — Persist the preference for forcing the in-app file manager.
+
+- **`on_group_color_display_changed(combo_row, _param)`** — Persist sidebar group color display preference changes.
+
+- **`on_group_row_display_changed(toggle_group, _param)`** — Persist sidebar group display layout preference.
+
+- **`on_legacy_connection_mode_toggled(switch, *args)`** — Ensure legacy mode toggle keeps native switch in sync.
+
+- **`on_native_connection_mode_toggled(switch, *args)`** — Ensure native mode toggle keeps legacy switch in sync.
 
 - **`on_open_file_manager_externally_changed(switch, *args)`** — Persist whether the file manager should open in a separate window.
 
 - **`on_operation_mode_toggled(button)`** — Handle switching between default and isolated SSH modes
 
+- **`on_pass_through_mode_toggled(switch, _pspec)`** — Persist changes to the terminal pass-through preference.
+
 - **`on_reset_advanced_ssh(*args)`** — Reset only advanced SSH keys to defaults and update UI.
 
 - **`on_reset_colors_clicked(button)`** — Reset color overrides to default
 
-- **`on_sidebar_color_changed(color_button)`** — Handle sidebar color change
+- **`on_sidebar_row_selected(listbox, row)`** — Handle sidebar row selection
 
 - **`on_startup_behavior_changed(radio_button, *args)`** — Handle startup behavior radio button change
 
@@ -1197,6 +1314,10 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`on_theme_changed(combo_row, param)`** — Handle theme selection change
 
+- **`on_use_group_color_in_tab_toggled(switch_row, _param)`** — Handles use group color in tab toggled.
+
+- **`on_use_group_color_in_terminal_toggled(switch_row, _param)`** — Handles use group color in terminal toggled.
+
 - **`on_view_shortcuts_clicked(_button)`** — Open the standalone shortcuts window from preferences.
 
 - **`refresh_color_buttons()`** — Update color button appearance to reflect settings
@@ -1204,6 +1325,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`remove_color_override_provider()`** — Remove color override CSS provider
 
 - **`save_advanced_ssh_settings()`** — Persist advanced SSH settings from the preferences UI
+
+- **`setup_navigation_layout()`** — Configure split view layout mirroring GNOME Settings.
 
 - **`setup_preferences()`** — Set up preferences UI with current values
 
@@ -1335,11 +1458,15 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_on_close_request(*_args)`** — Handles close request.
 
+- **`_on_pass_through_switch_toggled(switch, _pspec)`** — Handles pass through switch toggled.
+
 ### Class: `ShortcutsPreferencesPage`
 
 - **`__init__(parent_widget, app=None, config=None, owner_window=None)`** — Handles init.
 
 - **`_add_group_widget(group)`** — Adds group widget.
+
+- **`_apply_pass_through_state_to_row(action_name)`** — Handles apply pass through state to row.
 
 - **`_apply_shortcuts()`** — Handles apply shortcuts.
 
@@ -1348,6 +1475,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_build_groups()`** — Builds groups.
 
 - **`_collect_actions()`** — Handles collect actions.
+
+- **`_create_pass_through_notice_widget()`** — Creates pass through notice widget.
 
 - **`_find_conflict(action_name, accelerator)`** — Handles find conflict.
 
@@ -1365,9 +1494,17 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_update_row_display(action_name)`** — Updates row display.
 
+- **`create_editor_widget()`** — Creates editor widget.
+
 - **`flush_changes()`** — Flush pending overrides to the application.
 
+- **`get_pass_through_notice_widget()`** — Returns pass through notice widget.
+
+- **`get_shortcuts_container()`** — Returns shortcuts container.
+
 - **`iter_groups()`** — Yield the preference groups managed by this page.
+
+- **`set_pass_through_enabled(enabled)`** — Sets pass through enabled.
 
 ### Class: `_ShortcutCaptureDialog`
 
@@ -1407,16 +1544,11 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 
 
-## Module: `sshpilot_dnd.logic`
-
-- **`hit_test_insertion(rows, pointer_y)`** — Return which row key and side the drop indicator should target for a pointer position.
-- **`reorder_connections_state(connection_to_group, group_connections, target_connection, dragged_connections, position)`** — Compute an immutable plan describing how connection orders and group membership change after a drop.
-- **`autoscroll_velocity(params)`** — Pure helper that scales autoscroll speed based on pointer depth inside the viewport margins.
-
-
 ## Module: `sshpilot.sidebar`
 
 ### Functions
+
+- **`_calculate_autoscroll_velocity(distance, margin, max_velocity)`** — Scale the autoscroll velocity based on how deep the pointer is in the margin.
 
 - **`_clear_drop_indicator(window)`** — Handles clear drop indicator.
 
@@ -1424,9 +1556,17 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_create_ungrouped_area(window)`** — Creates ungrouped area.
 
+- **`_fill_rgba(rgba)`** — Handles fill rgba.
+
+- **`_get_color_class(rgba)`** — Returns color class.
+
+- **`_get_color_display_mode(config)`** — Returns color display mode.
+
 - **`_get_target_group_at_position(window, x, y)`** — Returns target group at position.
 
 - **`_hide_ungrouped_area(window)`** — Handles hide ungrouped area.
+
+- **`_install_sidebar_color_css()`** — Handles install sidebar color css.
 
 - **`_move_group(window, group_id, target_parent_id)`** — Handles move group.
 
@@ -1435,6 +1575,10 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_on_connection_list_leave(window, target)`** — Handles connection list leave.
 
 - **`_on_connection_list_motion(window, target, x, y)`** — Handles connection list motion.
+
+- **`_parse_color(value)`** — Handles parse color.
+
+- **`_set_tint_card_color(row, rgba)`** — Sets tint card color.
 
 - **`_show_drop_indicator(window, row, position)`** — Shows drop indicator.
 
@@ -1454,9 +1598,15 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 ### Class: `ConnectionRow`
 
-- **`__init__(connection)`** — Handles init.
+- **`__init__(connection, group_manager, config)`** — Handles init.
+
+- **`_apply_group_color_style()`** — Handles apply group color style.
+
+- **`_apply_group_display_mode()`** — Handles apply group display mode.
 
 - **`_apply_host_label_text(include_port=None)`** — Handles apply host label text.
+
+- **`_get_group_display_mode()`** — Returns group display mode.
 
 - **`_install_pf_css()`** — Handles install pf css.
 
@@ -1466,6 +1616,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_on_drag_prepare(source, x, y)`** — Handles drag prepare.
 
+- **`_resolve_group_color()`** — Handles resolve group color.
+
 - **`_setup_drag_source()`** — Handles setup drag source.
 
 - **`_update_forwarding_indicators()`** — Updates forwarding indicators.
@@ -1473,6 +1625,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`apply_hide_hosts(hide)`** — Handles apply hide hosts.
 
 - **`hide_drop_indicators()`** — Hide all drop indicator lines
+
+- **`refresh_group_display_mode(new_mode=None)`** — Refresh indentation styling when the preference changes.
 
 - **`set_indentation(level)`** — Set indentation level for grouped connections
 
@@ -1492,6 +1646,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`__init__(group_info, group_manager, connections_dict=None)`** — Handles init.
 
+- **`_apply_group_color_style()`** — Handles apply group color style.
+
 - **`_on_double_click(gesture, n_press, x, y)`** — Handles double click.
 
 - **`_on_drag_begin(source, drag)`** — Handles drag begin.
@@ -1507,6 +1663,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_setup_drag_source()`** — Handles setup drag source.
 
 - **`_toggle_expand()`** — Toggles expand.
+
+- **`_update_color_badge(rgba)`** — Updates color badge.
 
 - **`_update_display()`** — Updates display.
 
@@ -1614,27 +1772,63 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 ### Class: `TerminalWidget`
 
-- **`__init__(connection, config, connection_manager)`** — Handles init.
+- **`__init__(connection, config, connection_manager, group_color=None)`** — Handles init.
+
+- **`_apply_pass_through_mode(enabled)`** — Enable or disable custom shortcut handling based on configuration.
+
+- **`_apply_terminal_encoding(encoding_value, update_config_on_fallback=True)`** — Handles apply terminal encoding.
+
+- **`_apply_terminal_encoding_idle(encoding_value)`** — Handles apply terminal encoding idle.
+
+- **`_calculate_luminance(rgba)`** — Handles calculate luminance.
 
 - **`_cleanup_process(pid)`** — Clean up a process by PID
+
+- **`_clear_search_pattern()`** — Clear any active search pattern from the terminal.
+
+- **`_clone_rgba(rgba)`** — Handles clone rgba.
 
 - **`_connect_ssh()`** — Connect to SSH host
 
 - **`_connect_ssh_thread()`** — SSH connection thread: directly spawn SSH and rely on its output for errors.
 
+- **`_contrast_color(rgba)`** — Handles contrast color.
+
+- **`_enable_askpass_log_forwarding(include_existing=False)`** — Start forwarding askpass log lines into the application logger.
+
+- **`_ensure_opaque(rgba)`** — Handles ensure opaque.
+
+- **`_ensure_search_key_controller()`** — Attach the search shortcut controller to the terminal if needed.
+
 - **`_fallback_hide_spinner()`** — Fallback method to hide spinner if spawn completion doesn't fire
 
 - **`_fallback_to_askpass(ssh_cmd, env_list)`** — Fallback when sshpass fails - allow interactive prompting
+
+- **`_get_contrast_color(background)`** — Returns contrast color.
+
+- **`_get_group_color_rgba()`** — Returns group color rgba.
+
+- **`_get_supported_encodings()`** — Returns supported encodings.
 
 - **`_get_terminal_pid()`** — Get the PID of the terminal's child process
 
 - **`_handle_child_exit_cleanup(status)`** — Handle the actual cleanup work for child process exit (called from main thread)
 
-- **`_install_shortcuts()`** — Install local shortcuts on the VTE widget for copy/paste/select-all
+- **`_hide_search_overlay()`** — Hide the search overlay and return focus to the terminal.
+
+- **`_install_shortcuts()`** — Install custom keyboard shortcuts for terminal operations.
 
 - **`_is_local_terminal()`** — Check if this is a local terminal (not SSH)
 
 - **`_is_terminal_idle_pty()`** — Shell-agnostic check using PTY FD and POSIX job control.
+
+- **`_mix_rgba(base, other, ratio)`** — Handles mix rgba.
+
+- **`_mix_with_white(rgba, ratio=0.35)`** — Handles mix with white.
+
+- **`_notify_invalid_encoding(requested, fallback)`** — Handles notify invalid encoding.
+
+- **`_on_config_setting_changed(_config, key, value)`** — Handles config setting changed.
 
 - **`_on_connection_established()`** — Handle successful SSH connection
 
@@ -1650,6 +1844,18 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_on_reconnect_clicked(*args)`** — User clicked reconnect on the banner
 
+- **`_on_search_entry_activate(entry)`** — Handle Enter key in the search entry.
+
+- **`_on_search_entry_changed(entry)`** — React to text edits in the search entry.
+
+- **`_on_search_entry_key_pressed(controller, keyval, keycode, state)`** — Handle additional shortcuts while the search entry is focused.
+
+- **`_on_search_entry_stop(entry)`** — Handle stop-search events (Escape or clear button).
+
+- **`_on_search_next(*_args)`** — Navigate to the next search match.
+
+- **`_on_search_previous(*_args)`** — Navigate to the previous search match.
+
 - **`_on_spawn_complete(terminal, pid, error, user_data=None)`** — Called when terminal spawn is complete
 
 - **`_on_ssh_disconnected(exc)`** — Called when SSH connection is lost
@@ -1660,15 +1866,31 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_on_termprops_changed(terminal, ids, user_data=None)`** — Handle terminal properties changes for job detection (local terminals only)
 
-- **`_on_vte_focus_changed(widget, _param)`** — Track focus changes on the embedded VTE widget.
+- **`_on_vte_search_key_pressed(controller, keyval, keycode, state)`** — Handle global terminal search shortcuts on the VTE widget.
+
+- **`_parse_group_color()`** — Handles parse group color.
+
+- **`_prepare_key_for_native_mode()`** — Ensure explicit keys are unlocked when native SSH mode is active.
+
+- **`_relative_luminance(rgba)`** — Handles relative luminance.
+
+- **`_remove_custom_shortcut_controllers()`** — Detach any custom shortcut or scroll controllers from the VTE widget.
+
+- **`_resolve_native_identity_candidates()`** — Return identity file candidates for native SSH preload attempts.
+
+- **`_run_search(forward=True, update_entry=False)`** — Execute search navigation in the requested direction.
 
 - **`_set_connecting_overlay_visible(visible)`** — Sets connecting overlay visible.
 
 - **`_set_disconnected_banner_visible(visible, message=None)`** — Sets disconnected banner visible.
 
+- **`_set_search_error_state(has_error)`** — Toggle error styling on the search entry when matches are not found.
+
+- **`_set_search_navigation_sensitive(active)`** — Enable or disable navigation buttons based on active search state.
+
 - **`_setup_context_menu()`** — Set up a robust per-terminal context menu and actions.
 
-- **`_setup_mouse_wheel_zoom()`** — Set up mouse wheel zoom functionality with Cmd+MouseWheel
+- **`_setup_mouse_wheel_zoom()`** — Set up mouse wheel zoom functionality with Cmd+MouseWheel.
 
 - **`_setup_process_group(spawn_data)`** — Setup function called after fork but before exec
 
@@ -1676,11 +1898,11 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_show_forwarding_error_dialog(message)`** — Shows forwarding error dialog.
 
-- **`_register_focus_hooks()`** — Register focus tracking hooks so the application can suspend accelerators.
+- **`_show_search_overlay(select_all=False)`** — Reveal the terminal search overlay and focus the search entry.
 
 - **`_terminate_process_tree(pid)`** — Terminate a process and all its children
 
-- **`_teardown_focus_hooks()`** — Remove focus tracking hooks and release any suspended accelerators.
+- **`_update_search_pattern(text, case_sensitive=False, regex=False, move_forward=True, update_entry=False)`** — Apply or update the search pattern on the VTE widget.
 
 - **`apply_theme(theme_name=None)`** — Apply terminal theme and font settings
 
@@ -1718,17 +1940,18 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`select_all()`** — Select all text in terminal
 
+- **`set_group_color(color)`** — Update the stored group color and refresh the theme if needed.
+
+- **`set_group_color(color_value, force=False)`** — Sets group color.
+
 - **`setup_local_shell()`** — Set up the terminal for local shell (not SSH)
 
 - **`setup_terminal()`** — Initialize the VTE terminal with appropriate settings.
-
 
 - **`zoom_in()`** — Zoom in the terminal font
 
 - **`zoom_out()`** — Zoom out the terminal font
 
-
-Application accelerators now remain available even while the terminal widget is focused unless the `terminal.pass_through_mode` preference is enabled, matching GNOME Terminal's pass-through behavior.
 
 
 ## Module: `sshpilot.terminal_manager`
@@ -1739,7 +1962,21 @@ Application accelerators now remain available even while the terminal widget is 
 
 - **`_add_terminal_tab(terminal_widget, title)`** — Adds terminal tab.
 
+- **`_apply_tab_css_color(page, rgba)`** — Apply CSS color to the tab view to color indicator icons
+
+- **`_apply_tab_group_color(page, color_value)`** — Handles apply tab group color.
+
+- **`_apply_tab_icon_color(page, rgba)`** — Apply color to tab icon by setting a colored icon
+
+- **`_clear_tab_group_color(page)`** — Handles clear tab group color.
+
+- **`_create_colored_tab_icon(rgba)`** — Create a simple colored icon for the tab indicator
+
+- **`_create_tab_color_icon(rgba)`** — Creates tab color icon.
+
 - **`_on_disconnect_confirmed(dialog, response_id, connection)`** — Handles disconnect confirmed.
+
+- **`_resolve_group_color(connection)`** — Handles resolve group color.
 
 - **`broadcast_command(command)`** — Handles broadcast command.
 
@@ -1756,6 +1993,8 @@ Application accelerators now remain available even while the terminal widget is 
 - **`on_terminal_disconnected(terminal)`** — Handles terminal disconnected.
 
 - **`on_terminal_title_changed(terminal, title)`** — Handles terminal title changed.
+
+- **`restyle_open_terminals()`** — Handles restyle open terminals.
 
 - **`show_local_terminal()`** — Shows local terminal.
 
@@ -1797,6 +2036,20 @@ Application accelerators now remain available even while the terminal widget is 
 
 ### Functions
 
+- **`_format_ssh_target(host, user)`** — Handles format ssh target.
+
+- **`_normalize_remote_path(path)`** — Handles normalize remote path.
+
+- **`_quote_remote_path_for_shell(path)`** — Handles quote remote path for shell.
+
+- **`_remote_join(base, child)`** — Handles remote join.
+
+- **`_remote_parent(path)`** — Handles remote parent.
+
+- **`download_file(host, user, remote_file, local_path, recursive=False, port=22, password=None, known_hosts_path=None, extra_ssh_opts=None, use_publickey=False, inherit_env=None)`** — Download a remote file (or directory when ``recursive``) via SCP.
+
+- **`list_remote_files(host, user, remote_path, port=22, password=None, known_hosts_path=None, extra_ssh_opts=None, use_publickey=False, inherit_env=None)`** — List remote files via SSH for the provided path.
+
 - **`maybe_set_native_controls(header_bar, value=False)`** — Safely set native controls on header bar, with fallback for older GTK versions.
 
 ### Class: `MainWindow`
@@ -1814,6 +2067,8 @@ Application accelerators now remain available even while the terminal widget is 
 - **`_build_shortcuts_window()`** — Builds shortcuts window.
 
 - **`_build_ssh_copy_id_argv(connection, ssh_key, force=False, known_hosts_path=None)`** — Construct argv for ssh-copy-id honoring saved UI auth preferences.
+
+- **`_cancel_broadcast_hide_timeout()`** — Cancel any pending hide timeout for the broadcast banner
 
 - **`_close_tab(tab_view, page)`** — Close the tab and clean up resources
 
@@ -1833,11 +2088,15 @@ Application accelerators now remain available even while the terminal widget is 
 
 - **`_error_dialog(heading, body, detail='')`** — Handles error dialog.
 
+- **`_focus_active_terminal_tab()`** — Focus the currently active terminal tab
+
 - **`_focus_connection_list_first_row()`** — Focus the connection list and ensure the first row is selected (startup only).
 
 - **`_focus_most_recent_tab(connection)`** — Focus the most recent tab for a connection if one exists.
 
 - **`_focus_most_recent_tab_or_open_new(connection)`** — If there are open tabs for this server, focus the most recent one.
+
+- **`_focus_terminal_widget(terminal)`** — Request focus for a terminal widget, retrying on idle if needed.
 
 - **`_generate_duplicate_nickname(base_nickname)`** — Generate a unique nickname for a duplicated connection.
 
@@ -1875,6 +2134,8 @@ Application accelerators now remain available even while the terminal widget is 
 
 - **`_on_ssh_config_editor_saved()`** — Handles ssh config editor saved.
 
+- **`_on_startup_complete()`** — Called when startup is complete - process any pending focus operations
+
 - **`_on_tab_close_confirmed(dialog, response_id, tab_view, page)`** — Handle response from tab close confirmation dialog
 
 - **`_on_tab_close_response(dialog, response_id)`** — Handle the response from the close confirmation dialog.
@@ -1889,15 +2150,15 @@ Application accelerators now remain available even while the terminal widget is 
 
 - **`_open_system_terminal(terminal_command, ssh_command)`** — Launch a terminal command with an SSH command.
 
-- **`_parse_remote_sources_text(text)`** — Parse manual remote path input into a list of usable paths.
-
 - **`_prompt_delete_connections(connections, neighbor_row=None)`** — Show a confirmation dialog for deleting one or more connections.
 
 - **`_prompt_group_edit_options(connection, block_info)`** — Present options when editing a grouped host
 
 - **`_prompt_reconnect(connection)`** — Show a dialog asking if user wants to reconnect with new settings
 
-- **`_prompt_scp_download(connection)`** — Ask the user for remote source paths and local destination for downloads.
+- **`_prompt_scp_download(connection)`** — Show a simple file picker that downloads selected remote files via scp.
+
+- **`_queue_focus_operation(focus_func)`** — Queue a focus operation to be executed after startup is complete
 
 - **`_rebuild_connections_list()`** — Rebuild the sidebar connections list from manager state, avoiding duplicates.
 
@@ -1911,7 +2172,13 @@ Application accelerators now remain available even while the terminal widget is 
 
 - **`_resolve_connection_list_event(x, y, scrolled_window=None)`** — Resolve the target row and viewport coordinates for a pointer event on the connection list.
 
+- **`_return_to_tab_view_if_welcome()`** — Switch back to tab view if the welcome view is currently visible.
+
 - **`_save_window_state()`** — Save window state before quitting
+
+- **`_schedule_broadcast_hide_timeout(timeout_ms=5000)`** — Schedule hiding the broadcast banner after a delay
+
+- **`_schedule_startup_tasks()`** — Schedule one-time startup behaviors such as focus and welcome state.
 
 - **`_select_only_row(row)`** — Select only the provided row, clearing any other selections.
 
@@ -1920,8 +2187,6 @@ Application accelerators now remain available even while the terminal widget is 
 - **`_set_content_widget(widget)`** — Sets content widget.
 
 - **`_set_sidebar_widget(widget)`** — Sets sidebar widget.
-
-- **`_setup_connection_list_interactions()`** — Set up event controllers for connection list interaction handling
 
 - **`_show_duplicate_connection_error(connection, error)`** — Display an error dialog when duplication fails.
 
@@ -1961,13 +2226,31 @@ Application accelerators now remain available even while the terminal widget is 
 
 - **`get_available_groups()`** — Get list of available groups for selection
 
+- **`hide_broadcast_banner()`** — Hide the broadcast banner
+
 - **`move_connection_to_group(connection_nickname, target_group_id=None)`** — Move a connection to a specific group
 
 - **`on_activate_connection(action, param)`** — Handle the activate-connection action
 
 - **`on_add_connection_clicked(button)`** — Handle add connection button click
 
-- **`on_broadcast_command_action(action, param=None)`** — Handle broadcast command action - shows dialog to input command
+- **`on_broadcast_banner_key_pressed(controller, keyval, keycode, state)`** — Handle key presses on the entire broadcast banner
+
+- **`on_broadcast_cancel_clicked(button)`** — Handle broadcast banner cancel button click
+
+- **`on_broadcast_command_action(action, param=None)`** — Handle broadcast command action - shows banner to input command
+
+- **`on_broadcast_entry_activate(entry)`** — Handle Enter key press in broadcast entry
+
+- **`on_broadcast_entry_changed(entry)`** — Track user edits to the broadcast entry
+
+- **`on_broadcast_entry_focus_enter(controller, *args)`** — Cancel hide timeout when the entry gains focus
+
+- **`on_broadcast_entry_focus_leave(controller, *args)`** — Schedule hiding when the entry loses focus
+
+- **`on_broadcast_entry_key_pressed(controller, keyval, keycode, state)`** — Handle key presses in broadcast entry
+
+- **`on_broadcast_send_clicked(button)`** — Handle broadcast banner send button click
 
 - **`on_close_request(window)`** — Handle window close request - MAIN ENTRY POINT
 
@@ -2072,6 +2355,8 @@ Application accelerators now remain available even while the terminal widget is 
 - **`setup_window()`** — Configure main window properties
 
 - **`show_about_dialog()`** — Show about dialog
+
+- **`show_broadcast_banner()`** — Show the broadcast banner
 
 - **`show_connection_dialog(connection=None, skip_group_warning=False, force_split_from_group=False, split_group_source=None, split_original_nickname=None)`** — Show connection dialog for adding/editing connections
 

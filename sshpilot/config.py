@@ -184,18 +184,22 @@ class Config(GObject.Object):
             'connections_meta': {},  # per-connection metadata
             'shortcuts': {},  # action -> list of custom accelerators
             'ssh': {
-                'connection_timeout': 30,
-                'keepalive_interval': 60,
                 'compression': False,
                 'auto_add_host_keys': True,
+                'batch_mode': False,
                 'verbosity': 0,
                 'debug_enabled': False,
-                'native_connect': False,
+                'native_connect': True,
                 'use_isolated_config': False,
+                'ssh_overrides': [],
+                'strict_host_key_checking': 'accept-new',
             },
             'file_manager': {
                 'force_internal': False,
                 'open_externally': False,
+                'sftp_keepalive_interval': 30,
+                'sftp_keepalive_count_max': 5,
+                'sftp_connect_timeout': 20,
             },
             'security': {
                 'store_passwords': True,
@@ -593,36 +597,31 @@ class Config(GObject.Object):
         """
 
         defaults: Dict[str, Any] = {
-            'apply_advanced': False,
             'auto_add_host_keys': True,
-            'batch_mode': True,
+            'batch_mode': False,
             'compression': False,
-            'connection_attempts': 1,
-            'connection_timeout': 30,
             'debug_enabled': False,
-            'keepalive_count_max': 3,
-            'keepalive_interval': 60,
-            'native_connect': False,
+            'native_connect': True,
             'strict_host_key_checking': 'accept-new',
             'use_isolated_config': False,
             'verbosity': 0,
+            'ssh_overrides': [],
+        }
+
+        optional_int_keys = {
+            'connection_attempts',
+            'connection_timeout',
+            'keepalive_count_max',
+            'keepalive_interval',
         }
 
         bool_keys = {
-            'apply_advanced',
             'auto_add_host_keys',
             'batch_mode',
             'compression',
             'debug_enabled',
             'native_connect',
             'use_isolated_config',
-        }
-        int_keys = {
-            'connection_attempts',
-            'connection_timeout',
-            'keepalive_count_max',
-            'keepalive_interval',
-            'verbosity',
         }
 
         config: Dict[str, Any] = {}
@@ -638,11 +637,9 @@ class Config(GObject.Object):
                     value = lowered in {'1', 'true', 'yes', 'on'}
                 else:
                     value = bool(value)
-            elif key in int_keys:
-                try:
-                    value = int(value)
-                except (TypeError, ValueError):
-                    value = default_value
+            elif key in optional_int_keys:
+                # handled separately after defaults loop
+                pass
             elif key == 'strict_host_key_checking':
                 if value is None:
                     value = default_value
@@ -656,10 +653,80 @@ class Config(GObject.Object):
                             value = 'accept-new' if normalized == 'accept-new' else normalized
                         else:
                             value = default_value
+            elif key == 'ssh_overrides':
+                if isinstance(value, (list, tuple)):
+                    coerced: List[str] = []
+                    for entry in value:
+                        if entry is None:
+                            continue
+                        coerced.append(str(entry))
+                    value = coerced
+                else:
+                    value = []
 
             config[key] = value
 
+        for key in optional_int_keys:
+            raw_value = self.get_setting(f'ssh.{key}', None)
+            if raw_value in (None, ''):
+                config[key] = None
+                continue
+            try:
+                coerced = int(raw_value)
+            except (TypeError, ValueError):
+                config[key] = None
+                continue
+            if coerced <= 0:
+                config[key] = None
+            else:
+                config[key] = coerced
+
+        # verbosity remains treated as integer, defaulting to 0 when unset
+        verbosity_value = self.get_setting('ssh.verbosity', defaults['verbosity'])
+        try:
+            config['verbosity'] = int(verbosity_value)
+        except (TypeError, ValueError):
+            config['verbosity'] = defaults['verbosity']
+
         return config
+
+    def get_file_manager_config(self) -> Dict[str, Any]:
+        """Return configuration relevant to the built-in SFTP file manager."""
+
+        defaults = self.get_default_config().get('file_manager', {})
+
+        def _get_bool(key: str) -> bool:
+            value = self.get_setting(f'file_manager.{key}', defaults.get(key, False))
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                lowered = value.strip().lower()
+                if lowered in {'1', 'true', 'yes', 'on'}:
+                    return True
+                if lowered in {'0', 'false', 'no', 'off'}:
+                    return False
+            return bool(value)
+
+        def _get_non_negative_int(key: str) -> int:
+            default_value = int(defaults.get(key, 0))
+            raw_value = self.get_setting(f'file_manager.{key}', default_value)
+            if raw_value in (None, ''):
+                return default_value
+            try:
+                coerced = int(raw_value)
+            except (TypeError, ValueError):
+                return default_value
+            if coerced < 0:
+                return default_value
+            return coerced
+
+        return {
+            'force_internal': _get_bool('force_internal'),
+            'open_externally': _get_bool('open_externally'),
+            'sftp_keepalive_interval': _get_non_negative_int('sftp_keepalive_interval'),
+            'sftp_keepalive_count_max': _get_non_negative_int('sftp_keepalive_count_max'),
+            'sftp_connect_timeout': _get_non_negative_int('sftp_connect_timeout'),
+        }
 
     def get_security_config(self) -> Dict[str, Any]:
         """Get security configuration"""
@@ -784,20 +851,54 @@ class Config(GObject.Object):
             terminal_cfg['encoding'] = 'UTF-8'
             updated = True
 
+        file_manager_defaults = self.get_default_config().get('file_manager', {})
         file_manager_cfg = config.get('file_manager')
         if not isinstance(file_manager_cfg, dict):
-            config['file_manager'] = {
-                'force_internal': False,
-                'open_externally': False,
-            }
+            config['file_manager'] = file_manager_defaults.copy()
             updated = True
         else:
             if 'force_internal' not in file_manager_cfg:
-                file_manager_cfg['force_internal'] = False
+                file_manager_cfg['force_internal'] = bool(
+                    file_manager_defaults.get('force_internal', False)
+                )
                 updated = True
+            elif not isinstance(file_manager_cfg['force_internal'], bool):
+                file_manager_cfg['force_internal'] = bool(file_manager_cfg['force_internal'])
+                updated = True
+
             if 'open_externally' not in file_manager_cfg:
-                file_manager_cfg['open_externally'] = False
+                file_manager_cfg['open_externally'] = bool(
+                    file_manager_defaults.get('open_externally', False)
+                )
                 updated = True
+            elif not isinstance(file_manager_cfg['open_externally'], bool):
+                file_manager_cfg['open_externally'] = bool(file_manager_cfg['open_externally'])
+                updated = True
+
+            def _ensure_non_negative_int(key: str) -> None:
+                nonlocal updated
+                default_value = file_manager_defaults.get(key, 0)
+                value = file_manager_cfg.get(key, default_value)
+                try:
+                    coerced = int(value)
+                except (TypeError, ValueError):
+                    coerced = default_value
+                if coerced < 0:
+                    coerced = default_value
+                if file_manager_cfg.get(key) != coerced:
+                    file_manager_cfg[key] = coerced
+                    updated = True
+
+            for int_key in (
+                'sftp_keepalive_interval',
+                'sftp_keepalive_count_max',
+                'sftp_connect_timeout',
+            ):
+                if int_key not in file_manager_cfg:
+                    file_manager_cfg[int_key] = int(file_manager_defaults.get(int_key, 0))
+                    updated = True
+                else:
+                    _ensure_non_negative_int(int_key)
 
         ui_cfg = config.get('ui')
         if not isinstance(ui_cfg, dict):
@@ -839,6 +940,9 @@ class Config(GObject.Object):
             config['ssh'] = default_ssh
             updated = True
             ssh_cfg = config['ssh']
+        elif 'apply_advanced' in ssh_cfg:
+            del ssh_cfg['apply_advanced']
+            updated = True
         if 'use_isolated_config' not in ssh_cfg:
             ssh_cfg['use_isolated_config'] = False
             updated = True

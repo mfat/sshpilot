@@ -30,6 +30,9 @@ logger = logging.getLogger(__name__)
 
 _COLOR_CSS_INSTALLED = False
 _DEFAULT_ROW_MARGIN_START = 0
+_DEFAULT_ROW_WIDGET_MARGIN_START = -1
+_GROUP_DISPLAY_OPTIONS = {"fullwidth", "nested"}
+_GROUP_ROW_INDENT_WIDTH = 20
 _MIN_VALID_MARGIN = 0
 
 
@@ -129,16 +132,87 @@ def _get_color_class(rgba: Optional[Gdk.RGBA]) -> Optional[str]:
 
 def _set_tint_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
     try:
-        color_value = rgba.to_string()
+        base_color = rgba.to_string()
+
+        hover_rgba = Gdk.RGBA()
+        hover_rgba.red = rgba.red
+        hover_rgba.green = rgba.green
+        hover_rgba.blue = rgba.blue
+        hover_rgba.alpha = min(1.0, rgba.alpha + 0.12)
+        hover_color = hover_rgba.to_string()
+
+        active_rgba = Gdk.RGBA()
+        active_rgba.red = rgba.red
+        active_rgba.green = rgba.green
+        active_rgba.blue = rgba.blue
+        active_rgba.alpha = min(1.0, rgba.alpha + 0.18)
+        active_color = active_rgba.to_string()
     except Exception:
         logger.debug("Failed to convert RGBA to string", exc_info=True)
         return
 
     try:
+        selected_rgba = Gdk.RGBA()
+        selected_rgba.red = rgba.red
+        selected_rgba.green = rgba.green
+        selected_rgba.blue = rgba.blue
+        selected_rgba.alpha = min(1.0, max(rgba.alpha + 0.24, 0.55))
+        selected_color = selected_rgba.to_string()
+
+        selected_hover_rgba = Gdk.RGBA()
+        selected_hover_rgba.red = rgba.red
+        selected_hover_rgba.green = rgba.green
+        selected_hover_rgba.blue = rgba.blue
+        selected_hover_rgba.alpha = min(1.0, selected_rgba.alpha + 0.08)
+        selected_hover_color = selected_hover_rgba.to_string()
+
+        selected_active_rgba = Gdk.RGBA()
+        selected_active_rgba.red = rgba.red
+        selected_active_rgba.green = rgba.green
+        selected_active_rgba.blue = rgba.blue
+        selected_active_rgba.alpha = min(1.0, selected_rgba.alpha + 0.12)
+        selected_active_color = selected_active_rgba.to_string()
+
+        border_rgba = Gdk.RGBA()
+        border_rgba.red = rgba.red
+        border_rgba.green = rgba.green
+        border_rgba.blue = rgba.blue
+        border_rgba.alpha = 1.0
+        border_color = border_rgba.to_string()
+    except Exception:
+        logger.debug("Failed to derive selected tint colors", exc_info=True)
+        return
+
+    try:
         provider = Gtk.CssProvider()
         css_data = f"""
-        .tinted:not(:selected):not(:hover):not(:active) {{
-            background-color: {color_value};
+        .tinted {{
+            transition: background-color 0s ease;
+        }}
+
+        .tinted:not(:selected) {{
+            background-color: {base_color};
+        }}
+
+        .tinted:hover:not(:selected) {{
+            background-color: {hover_color};
+        }}
+
+        .tinted:active:not(:selected) {{
+            background-color: {active_color};
+        }}
+
+        .tinted:selected {{
+            background-color: {selected_color};
+            box-shadow: inset 0 0 0 1px {border_color};
+        }}
+
+        .tinted:selected:hover {{
+            background-color: {selected_hover_color};
+        }}
+
+        .tinted:selected:active {{
+            background-color: {selected_active_color};
         }}
         """
         provider.load_from_data(css_data.encode('utf-8'))
@@ -477,6 +551,10 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.group_manager = group_manager
         self.config = config
         self._tint_provider = None
+        self._indent_level = 0
+        self._group_display_mode = None
+        self._row_margin_base = None
+        self._content_margin_base = None
 
         # Main container with drop indicators
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -487,6 +565,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         
         # Content container
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self._content_box = content
         content.set_margin_start(12)
         content.set_margin_end(12)
         content.set_margin_top(6)
@@ -528,18 +607,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.drop_indicator_bottom = DragIndicator()
         main_box.append(self.drop_indicator_bottom)
 
-        # Add pulse overlay to the main box
-        self._pulse = Gtk.Box()
-        self._pulse.add_css_class("pulse-highlight")
-        self._pulse.set_can_target(False)
-        self._pulse.set_hexpand(True)
-        self._pulse.set_vexpand(True)
-        
-        # Create overlay for pulse effect
-        overlay = Gtk.Overlay()
-        overlay.set_child(main_box)
-        overlay.add_overlay(self._pulse)
-        self.set_child(overlay)
+        # Set the main box as the child directly (no pulse overlay)
+        self.set_child(main_box)
 
         self.set_selectable(True)
 
@@ -547,7 +616,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._update_forwarding_indicators()
         self._setup_drag_source()
         self._apply_group_color_style()
-    
+
     def show_drop_indicator(self, top: bool):
         """Show drop indicator line"""
         self.hide_drop_indicators()
@@ -564,18 +633,97 @@ class ConnectionRow(Gtk.ListBoxRow):
     
     def set_indentation(self, level: int):
         """Set indentation level for grouped connections"""
-        if level > 0:
-            # Find the content box and set its margin
-            overlay = self.get_child()
-            if overlay and hasattr(overlay, 'get_child'):
-                main_box = overlay.get_child()
-                if main_box and hasattr(main_box, 'get_first_child'):
-                    # Skip the first child (top drop indicator) and get the content box
-                    top_indicator = main_box.get_first_child()
-                    if top_indicator and hasattr(top_indicator, 'get_next_sibling'):
-                        content = top_indicator.get_next_sibling()
-                        if content:
-                            content.set_margin_start(12 + (level * 20))
+        try:
+            self._indent_level = max(0, int(level or 0))
+        except Exception:
+            self._indent_level = 0
+
+        content = getattr(self, '_content_box', None)
+        if not content:
+            main_box = self.get_child()
+            if not main_box:
+                return
+
+            top_indicator = main_box.get_first_child()
+            content = top_indicator.get_next_sibling() if top_indicator else None
+            if not content:
+                return
+            self._content_box = content
+
+        global _DEFAULT_ROW_MARGIN_START, _DEFAULT_ROW_WIDGET_MARGIN_START
+
+        if self._content_margin_base is None or _DEFAULT_ROW_MARGIN_START <= _MIN_VALID_MARGIN:
+            _DEFAULT_ROW_MARGIN_START = content.get_margin_start()
+            self._content_margin_base = _DEFAULT_ROW_MARGIN_START
+        else:
+            self._content_margin_base = _DEFAULT_ROW_MARGIN_START
+
+        if self._row_margin_base is None or _DEFAULT_ROW_WIDGET_MARGIN_START <= _MIN_VALID_MARGIN:
+            _DEFAULT_ROW_WIDGET_MARGIN_START = self.get_margin_start()
+            if _DEFAULT_ROW_WIDGET_MARGIN_START < _MIN_VALID_MARGIN:
+                _DEFAULT_ROW_WIDGET_MARGIN_START = 0
+            self._row_margin_base = _DEFAULT_ROW_WIDGET_MARGIN_START
+        else:
+            self._row_margin_base = _DEFAULT_ROW_WIDGET_MARGIN_START
+
+        self._apply_group_display_mode()
+
+    def refresh_group_display_mode(self, new_mode: Optional[str] = None):
+        """Refresh indentation styling when the preference changes."""
+        if new_mode:
+            normalized = str(new_mode).lower()
+            if normalized in _GROUP_DISPLAY_OPTIONS:
+                self._group_display_mode = normalized
+        else:
+            # Force new lookup from config
+            self._group_display_mode = None
+
+        self._apply_group_display_mode()
+
+    def _get_group_display_mode(self) -> str:
+        if self._group_display_mode in _GROUP_DISPLAY_OPTIONS:
+            return self._group_display_mode
+
+        mode = 'fullwidth'
+        config = getattr(self, 'config', None)
+        if config:
+            try:
+                value = str(config.get_setting('ui.group_row_display', mode)).lower()
+                if value in _GROUP_DISPLAY_OPTIONS:
+                    mode = value
+            except Exception:
+                pass
+
+        self._group_display_mode = mode
+        return mode
+
+    def _apply_group_display_mode(self):
+        content = getattr(self, '_content_box', None)
+        if not content:
+            return
+
+        if self._content_margin_base is None:
+            self._content_margin_base = content.get_margin_start()
+
+        if self._row_margin_base is None:
+            self._row_margin_base = max(self.get_margin_start(), 0)
+
+        indent_level = getattr(self, '_indent_level', 0)
+        indent_px = max(0, indent_level) * _GROUP_ROW_INDENT_WIDTH
+
+        mode = self._get_group_display_mode()
+
+        if indent_px <= 0:
+            self.set_margin_start(self._row_margin_base)
+            content.set_margin_start(self._content_margin_base)
+            return
+
+        if mode == 'fullwidth':
+            self.set_margin_start(self._row_margin_base)
+            content.set_margin_start(self._content_margin_base + indent_px)
+        else:  # nested mode
+            self.set_margin_start(self._row_margin_base + indent_px)
+            content.set_margin_start(self._content_margin_base)
 
     def _resolve_group_color(self) -> Optional[Gdk.RGBA]:
         manager = getattr(self, 'group_manager', None)

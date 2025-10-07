@@ -347,6 +347,50 @@ def test_async_sftp_manager_builds_proxy_jump_chain(monkeypatch):
     assert proxy_channel.closed
 
 
+def test_async_sftp_manager_proxy_jump_timeout(monkeypatch):
+    module = _load_file_manager_module(monkeypatch)
+
+    module._fake_ssh_config.config_map.update(
+        {
+            "Router": {"hostname": "router.internal", "user": "gateway", "port": "2201"},
+        }
+    )
+
+    connection = types.SimpleNamespace(
+        hostname="example.com",
+        host="example.com",
+        username="alice",
+        auth_method=0,
+        key_select_mode=0,
+        proxy_jump=["Router"],
+    )
+
+    manager = module.AsyncSFTPManager(
+        "example.com",
+        "alice",
+        port=2222,
+        connection=connection,
+        connection_manager=None,
+        ssh_config={
+            "auto_add_host_keys": True,
+            "connection_timeout": 19,
+            "file_manager": {"sftp_connect_timeout": 25},
+        },
+    )
+
+    manager._connect_impl()
+
+    assert len(DummyClient.instances) == 2
+    target_client = DummyClient.instances[0]
+    jump_client = DummyClient.instances[1]
+
+    jump_kwargs = jump_client.connect_calls[-1]
+    assert jump_kwargs.get("timeout") == 25
+
+    target_kwargs = target_client.connect_calls[-1]
+    assert target_kwargs.get("timeout") == 25
+
+
 def test_async_sftp_manager_uses_effective_host_settings(monkeypatch):
     module = _load_file_manager_module(monkeypatch)
 
@@ -427,7 +471,6 @@ def test_async_sftp_manager_configures_keepalive(monkeypatch):
         connection_manager=None,
         ssh_config={
             "auto_add_host_keys": True,
-            "apply_advanced": True,
             "keepalive_interval": 5,
             "keepalive_count_max": 2,
         },

@@ -18,7 +18,7 @@ import weakref
 import subprocess
 import pwd
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from .port_utils import get_port_checker
 from .platform_utils import is_macos
 
@@ -225,7 +225,7 @@ class TerminalWidget(Gtk.Box):
         self._is_quitting = False  # Flag to suppress signal handlers during quit
         self.last_error_message = None  # Store last SSH error for reporting
         self._fallback_timer_id = None  # GLib timeout ID for spawn fallback
-        
+
         # Job detection state
         self._job_status = "UNKNOWN"  # IDLE, RUNNING, PROMPT, UNKNOWN
         self._shell_pgid = None  # Store shell process group ID for shell-agnostic detection
@@ -248,9 +248,13 @@ class TerminalWidget(Gtk.Box):
         self.vte = Vte.Terminal()
         self._shortcut_controller = None
         self._scroll_controller = None
+        self._search_key_controller = None
         self._config_handler = None
         self._supported_encodings = None
         self._updating_encoding_config = False
+        self._last_search_text = ''
+        self._last_search_case_sensitive = False
+        self._last_search_regex = False
         try:
             self._pass_through_mode = bool(self.config.get_setting('terminal.pass_through_mode', False))
         except Exception:
@@ -273,6 +277,97 @@ class TerminalWidget(Gtk.Box):
         self.scrolled_window.set_child(self.vte)
         self.overlay = Gtk.Overlay()
         self.overlay.set_child(self.scrolled_window)
+
+        # Search overlay elements (revealer styled like other banners)
+        self.search_revealer = Gtk.Revealer()
+        self.search_revealer.set_reveal_child(False)
+        self.search_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.search_revealer.set_halign(Gtk.Align.FILL)
+        self.search_revealer.set_valign(Gtk.Align.START)
+        self.search_revealer.set_hexpand(True)
+
+        search_banner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        search_banner.add_css_class('banner')
+        search_banner.set_hexpand(True)
+
+        search_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        search_header.set_margin_start(12)
+        search_header.set_margin_end(12)
+        search_header.set_margin_top(8)
+        search_header.set_margin_bottom(4)
+
+        search_title = Gtk.Label(label=_("Search Terminal"))
+        search_title.set_xalign(0)
+        search_title.set_hexpand(True)
+        search_title.add_css_class('title-4')
+        search_header.append(search_title)
+
+        self.search_close_button = Gtk.Button()
+        self.search_close_button.set_icon_name('window-close-symbolic')
+        self.search_close_button.add_css_class('flat')
+        self.search_close_button.set_valign(Gtk.Align.CENTER)
+        self.search_close_button.connect('clicked', lambda *_: self._hide_search_overlay())
+        self.search_close_button.set_tooltip_text(_("Close terminal search"))
+        search_header.append(self.search_close_button)
+
+        search_banner.append(search_header)
+
+        search_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        search_controls.set_margin_start(12)
+        search_controls.set_margin_end(12)
+        search_controls.set_margin_bottom(8)
+
+        self.search_entry = Gtk.SearchEntry()
+        self.search_entry.set_placeholder_text(_("Search terminal history"))
+        self.search_entry.set_hexpand(True)
+        self.search_entry.connect('search-changed', self._on_search_entry_changed)
+        self.search_entry.connect('activate', self._on_search_entry_activate)
+        self.search_entry.connect('stop-search', self._on_search_entry_stop)
+
+        entry_key_controller = Gtk.EventControllerKey()
+        entry_key_controller.connect('key-pressed', self._on_search_entry_key_pressed)
+        self.search_entry.add_controller(entry_key_controller)
+
+        search_controls.append(self.search_entry)
+
+        self.search_prev_button = Gtk.Button()
+        self.search_prev_button.set_icon_name('go-up-symbolic')
+        self.search_prev_button.set_tooltip_text(_("Find previous match"))
+        self.search_prev_button.connect('clicked', self._on_search_previous)
+        self.search_prev_button.set_sensitive(False)
+        search_controls.append(self.search_prev_button)
+
+        self.search_next_button = Gtk.Button()
+        self.search_next_button.set_icon_name('go-down-symbolic')
+        self.search_next_button.set_tooltip_text(_("Find next match"))
+        self.search_next_button.connect('clicked', self._on_search_next)
+        self.search_next_button.set_sensitive(False)
+        search_controls.append(self.search_next_button)
+
+        search_banner.append(search_controls)
+        self.search_revealer.set_child(search_banner)
+
+        # Install CSS for search banner to ensure solid background
+        try:
+            display = Gdk.Display.get_default()
+            if display and not getattr(display, '_sshpilot_search_banner_css_installed', False):
+                css_provider = Gtk.CssProvider()
+                css_provider.load_from_data(b"""
+                    .search-banner {
+                        background-color: @headerbar_bg_color;
+                        color: @headerbar_fg_color;
+                        border-bottom: 1px solid @borders;
+                    }
+                """)
+                Gtk.StyleContext.add_provider_for_display(
+                    display, css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                )
+                setattr(display, '_sshpilot_search_banner_css_installed', True)
+        except Exception:
+            pass
+
+        # Add the search-banner CSS class to ensure solid background
+        search_banner.add_css_class('search-banner')
 
         # Connecting overlay elements
         self.connecting_bg = Gtk.Box()
@@ -301,6 +396,12 @@ class TerminalWidget(Gtk.Box):
 
         self.overlay.add_overlay(self.connecting_bg)
         self.overlay.add_overlay(self.connecting_box)
+
+        self.terminal_stack = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.terminal_stack.set_hexpand(True)
+        self.terminal_stack.set_vexpand(True)
+        self.terminal_stack.append(self.search_revealer)
+        self.terminal_stack.append(self.overlay)
 
         # Disconnected banner with reconnect button at the bottom (separate panel below terminal)
         # Install CSS for a solid red background banner once
@@ -395,7 +496,7 @@ class TerminalWidget(Gtk.Box):
         self.container_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.container_box.set_hexpand(True)
         self.container_box.set_vexpand(True)
-        self.container_box.append(self.overlay)
+        self.container_box.append(self.terminal_stack)
         self.container_box.append(self.disconnected_banner)
 
         self.append(self.container_box)
@@ -498,7 +599,120 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.error(f"SSH connection failed: {e}")
             GLib.idle_add(self._on_connection_failed, str(e))
-    
+
+    def _prepare_key_for_native_mode(self):
+        """Ensure explicit keys are unlocked when native SSH mode is active."""
+        connection = getattr(self, 'connection', None)
+        if not connection:
+            return
+
+        manager = getattr(self, 'connection_manager', None)
+        if not manager or not hasattr(manager, 'prepare_key_for_connection'):
+            return
+
+        try:
+            key_select_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
+        except Exception:
+            key_select_mode = 0
+
+        if key_select_mode not in (1, 2):
+            candidate_keys = self._resolve_native_identity_candidates()
+            attempted = False
+
+            for candidate in candidate_keys:
+                expanded = os.path.expanduser(candidate)
+                if not os.path.isfile(expanded):
+                    logger.debug(
+                        "Identity candidate not found for native key preload: %s",
+                        candidate,
+                    )
+                    continue
+
+                attempted = True
+
+                try:
+                    prepared = manager.prepare_key_for_connection(expanded)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to prepare key for native SSH connection (%s): %s",
+                        expanded,
+                        exc,
+                    )
+                    continue
+
+                if prepared:
+                    logger.debug(
+                        "Prepared key for native SSH connection: %s",
+                        expanded,
+                    )
+                    return
+
+                logger.warning(
+                    "Key could not be prepared for native SSH connection: %s",
+                    expanded,
+                )
+
+            if not attempted:
+                logger.debug("No matching identity files found for native key preload")
+
+            return
+
+        keyfile = getattr(connection, 'keyfile', '') or ''
+        if not keyfile or keyfile.startswith('Select key file'):
+            return
+
+        expanded_keyfile = os.path.expanduser(keyfile)
+        key_path = expanded_keyfile if os.path.isfile(expanded_keyfile) else keyfile
+        if not os.path.isfile(key_path):
+            logger.debug("Explicit key not found on disk, skipping native preload: %s", keyfile)
+            return
+
+        try:
+            prepared = manager.prepare_key_for_connection(key_path)
+        except Exception as exc:
+            logger.warning("Failed to prepare key for native SSH connection: %s", exc)
+            return
+
+        if prepared:
+            logger.debug("Prepared key for native SSH connection: %s", key_path)
+        else:
+            logger.warning("Key could not be prepared for native SSH connection: %s", key_path)
+
+    def _resolve_native_identity_candidates(self) -> List[str]:
+        """Return identity file candidates for native SSH preload attempts."""
+
+        connection = getattr(self, 'connection', None)
+        if not connection:
+            return []
+
+        candidates: List[str] = []
+        try:
+            resolved = getattr(connection, 'resolved_identity_files', [])
+        except Exception:
+            resolved = []
+
+        if isinstance(resolved, (list, tuple)):
+            for value in resolved:
+                expanded = os.path.expanduser(str(value))
+                if os.path.isfile(expanded) and expanded not in candidates:
+                    candidates.append(expanded)
+
+        if candidates:
+            return candidates
+
+        if hasattr(connection, 'collect_identity_file_candidates'):
+            try:
+                fallback = connection.collect_identity_file_candidates()
+            except Exception:
+                fallback = []
+
+            for value in fallback:
+                expanded = os.path.expanduser(str(value))
+                if os.path.isfile(expanded) and expanded not in candidates:
+                    candidates.append(expanded)
+
+        return candidates
+
     def _setup_ssh_terminal(self):
         """Set up terminal with direct SSH command (called from main thread)"""
         try:
@@ -525,11 +739,48 @@ class TerminalWidget(Gtk.Box):
             quick_connect_mode = bool(getattr(self.connection, 'quick_connect_command', ''))
             if native_mode_enabled:
                 quick_connect_mode = False
+                self._prepare_key_for_native_mode()
             password_auth_selected = False
             has_saved_password = False
             password_value = None
             auth_method = 0
             resolved_for_connection = ''
+
+            def _resolve_host_for_connection() -> str:
+                if not hasattr(self, 'connection') or not self.connection:
+                    return ''
+                try:
+                    host_value = self.connection.get_effective_host()
+                except AttributeError:
+                    host_value = getattr(self.connection, 'hostname', '') or getattr(self.connection, 'host', '')
+                if not host_value:
+                    host_value = getattr(self.connection, 'nickname', '')
+                return host_value or ''
+
+            try:
+                resolved_for_connection = _resolve_host_for_connection()
+            except Exception:
+                resolved_for_connection = ''
+
+            try:
+                # In our UI: 0 = key-based, 1 = password
+                auth_method = getattr(self.connection, 'auth_method', 0)
+                password_auth_selected = (auth_method == 1)
+                # Try to fetch stored password regardless of auth method
+                password_value = getattr(self.connection, 'password', None)
+                if not password_value and hasattr(self, 'connection_manager') and self.connection_manager:
+                    lookup_host = resolved_for_connection or _resolve_host_for_connection()
+                    username_for_lookup = getattr(self.connection, 'username', None)
+                    password_value = self.connection_manager.get_password(
+                        lookup_host,
+                        username_for_lookup,
+                    )
+
+                has_saved_password = bool(password_value)
+            except Exception:
+                auth_method = 0
+                password_auth_selected = False
+                has_saved_password = False
 
             if native_mode_enabled and not ssh_cmd:
                 host_label = ''
@@ -545,24 +796,16 @@ class TerminalWidget(Gtk.Box):
                     ssh_cmd = ['ssh']
 
             if not native_mode_enabled and not quick_connect_mode:
-                def _resolve_host_for_connection() -> str:
-                    if not hasattr(self, 'connection') or not self.connection:
-                        return ''
-                    try:
-                        host_value = self.connection.get_effective_host()
-                    except AttributeError:
-                        host_value = getattr(self.connection, 'hostname', '') or getattr(self.connection, 'host', '')
-                    if not host_value:
-                        host_value = getattr(self.connection, 'nickname', '')
-                    return host_value or ''
-
                 host_candidates = set()
-                try:
-                    resolved_for_connection = _resolve_host_for_connection()
-                    if resolved_for_connection:
-                        host_candidates.add(str(resolved_for_connection))
-                except Exception:
-                    resolved_for_connection = ''
+                if resolved_for_connection:
+                    host_candidates.add(str(resolved_for_connection))
+                else:
+                    try:
+                        resolved_for_connection = _resolve_host_for_connection()
+                        if resolved_for_connection:
+                            host_candidates.add(str(resolved_for_connection))
+                    except Exception:
+                        resolved_for_connection = ''
 
                 for attr in ('hostname', 'host', 'nickname'):
                     value = getattr(self.connection, attr, '')
@@ -600,54 +843,43 @@ class TerminalWidget(Gtk.Box):
                     ssh_cfg = self.config.get_ssh_config() if hasattr(self.config, 'get_ssh_config') else {}
                 except Exception:
                     ssh_cfg = {}
-                apply_adv = bool(ssh_cfg.get('apply_advanced', False))
-                connect_timeout = int(ssh_cfg.get('connection_timeout', 10)) if apply_adv else None
-                connection_attempts = int(ssh_cfg.get('connection_attempts', 1)) if apply_adv else None
-                keepalive_interval = int(ssh_cfg.get('keepalive_interval', 30)) if apply_adv else None
-                keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3)) if apply_adv else None
-                strict_host = str(ssh_cfg.get('strict_host_key_checking', '')) if apply_adv else ''
+
+                def _coerce_int(value, default=None):
+                    try:
+                        coerced = int(str(value))
+                        if coerced <= 0:
+                            return default
+                        return coerced
+                    except (TypeError, ValueError):
+                        return default
+
+                connect_timeout = _coerce_int(ssh_cfg.get('connection_timeout'), None)
+                connection_attempts = _coerce_int(ssh_cfg.get('connection_attempts'), None)
+                keepalive_interval = _coerce_int(ssh_cfg.get('keepalive_interval'), None)
+                keepalive_count = _coerce_int(ssh_cfg.get('keepalive_count_max'), None)
+                strict_host = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
                 auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
-                batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
-                compression = bool(ssh_cfg.get('compression', False)) if apply_adv else False
-
-                # Determine auth method from connection and retrieve any saved password
-                try:
-                    # In our UI: 0 = key-based, 1 = password
-                    auth_method = getattr(self.connection, 'auth_method', 0)
-                    password_auth_selected = (auth_method == 1)
-                    # Try to fetch stored password regardless of auth method
-                    password_value = getattr(self.connection, 'password', None)
-                    if (not password_value) and hasattr(self, 'connection_manager') and self.connection_manager:
-                        password_value = self.connection_manager.get_password(
-                            _resolve_host_for_connection(),
-                            self.connection.username,
-                        )
-
-                    has_saved_password = bool(password_value)
-                except Exception:
-                    auth_method = 0
-                    password_auth_selected = False
-                    has_saved_password = False
+                batch_mode = bool(ssh_cfg.get('batch_mode', False))
+                compression = bool(ssh_cfg.get('compression', False))
 
                 using_password = password_auth_selected or has_saved_password
 
-                # Apply advanced args only when user explicitly enabled them
-                if apply_adv:
-                    # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
-                    if batch_mode and not using_password:
-                        ensure_option('BatchMode=yes')
-                    if connect_timeout is not None:
-                        ensure_option(f'ConnectTimeout={connect_timeout}')
-                    if connection_attempts is not None:
-                        ensure_option(f'ConnectionAttempts={connection_attempts}')
-                    if keepalive_interval is not None:
-                        ensure_option(f'ServerAliveInterval={keepalive_interval}')
-                    if keepalive_count is not None:
-                        ensure_option(f'ServerAliveCountMax={keepalive_count}')
-                    if strict_host:
-                        ensure_option(f'StrictHostKeyChecking={strict_host}')
-                    if compression:
-                        ensure_flag('-C')
+                # Apply advanced args according to stored preferences
+                # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
+                if batch_mode and not using_password:
+                    ensure_option('BatchMode=yes')
+                if connect_timeout is not None:
+                    ensure_option(f'ConnectTimeout={connect_timeout}')
+                if connection_attempts is not None:
+                    ensure_option(f'ConnectionAttempts={connection_attempts}')
+                if keepalive_interval is not None:
+                    ensure_option(f'ServerAliveInterval={keepalive_interval}')
+                if keepalive_count is not None:
+                    ensure_option(f'ServerAliveCountMax={keepalive_count}')
+                if strict_host:
+                    ensure_option(f'StrictHostKeyChecking={strict_host}')
+                if compression:
+                    ensure_flag('-C')
 
                 # Default to accepting new host keys non-interactively on fresh installs
                 try:
@@ -701,26 +933,29 @@ class TerminalWidget(Gtk.Box):
                     except Exception:
                         pass
 
+                    keyfile_value = getattr(self.connection, 'keyfile', '') or ''
+                    has_explicit_key = bool(
+                        keyfile_value
+                        and not str(keyfile_value).startswith('Select key file')
+                        and os.path.isfile(keyfile_value)
+                    )
+
+                    if has_explicit_key and hasattr(self, 'connection_manager') and self.connection_manager:
+                        try:
+                            if hasattr(self.connection_manager, 'prepare_key_for_connection'):
+                                key_prepared = self.connection_manager.prepare_key_for_connection(keyfile_value)
+                                if key_prepared:
+                                    logger.debug(f"Key prepared for connection: {keyfile_value}")
+                                else:
+                                    logger.warning(f"Failed to prepare key for connection: {keyfile_value}")
+                        except Exception as e:
+                            logger.warning(f"Error preparing key for connection: {e}")
+
                     # Only add specific key when a dedicated key mode is selected
-                    if key_select_mode in (1, 2) and hasattr(self.connection, 'keyfile') and self.connection.keyfile and \
-                       os.path.isfile(self.connection.keyfile) and \
-                       not self.connection.keyfile.startswith('Select key file'):
-
-                        # Prepare key for connection (add to ssh-agent if needed)
-                        if hasattr(self, 'connection_manager') and self.connection_manager:
-                            try:
-                                if hasattr(self.connection_manager, 'prepare_key_for_connection'):
-                                    key_prepared = self.connection_manager.prepare_key_for_connection(self.connection.keyfile)
-                                    if key_prepared:
-                                        logger.debug(f"Key prepared for connection: {self.connection.keyfile}")
-                                    else:
-                                        logger.warning(f"Failed to prepare key for connection: {self.connection.keyfile}")
-                            except Exception as e:
-                                logger.warning(f"Error preparing key for connection: {e}")
-
-                        if self.connection.keyfile not in ssh_cmd:
-                            ssh_cmd.extend(['-i', self.connection.keyfile])
-                        logger.debug(f"Using SSH key: {self.connection.keyfile}")
+                    if has_explicit_key and key_select_mode in (1, 2):
+                        if keyfile_value not in ssh_cmd:
+                            ssh_cmd.extend(['-i', keyfile_value])
+                        logger.debug(f"Using SSH key: {keyfile_value}")
                         if key_select_mode == 1:
                             ensure_option('IdentitiesOnly=yes')
 
@@ -985,6 +1220,7 @@ class TerminalWidget(Gtk.Box):
                 from .askpass_utils import get_ssh_env_with_askpass
                 askpass_env = get_ssh_env_with_askpass()
                 env.update(askpass_env)
+                self._enable_askpass_log_forwarding(include_existing=True)
             env['TERM'] = env.get('TERM', 'xterm-256color')
             env['SHELL'] = env.get('SHELL', '/bin/bash')
             env['SSHPILOT_FLATPAK'] = '1'
@@ -1096,7 +1332,19 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.error(f"Fallback to interactive prompt failed: {e}")
             self._on_connection_failed(str(e))
-    
+
+    def _enable_askpass_log_forwarding(self, include_existing: bool = False) -> None:
+        """Start forwarding askpass log lines into the application logger."""
+
+        try:
+            from .askpass_utils import ensure_askpass_log_forwarder, forward_askpass_log_to_logger
+        except Exception as exc:
+            logger.debug(f"Unable to import askpass log forwarder: {exc}")
+            return
+
+        ensure_askpass_log_forwarder()
+        forward_askpass_log_to_logger(logger, include_existing=include_existing)
+
     def _on_spawn_complete(self, terminal, pid, error, user_data=None):
         """Called when terminal spawn is complete"""
         # Skip if terminal is quitting
@@ -1828,129 +2076,133 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Context menu setup failed: {e}")
 
     def _install_shortcuts(self):
-        """Install local shortcuts on the VTE widget for copy/paste/select-all."""
+        """Install custom keyboard shortcuts for terminal operations."""
         if getattr(self, '_pass_through_mode', False):
             logger.debug("Pass-through mode active; skipping custom terminal shortcuts")
             return
 
-        if getattr(self, '_shortcut_controller', None) is not None:
-            return
-
         try:
-            controller = Gtk.ShortcutController()
-            controller.set_scope(Gtk.ShortcutScope.LOCAL)
-            controller.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
+            controller = getattr(self, '_shortcut_controller', None)
+            if controller is None:
+                controller = Gtk.ShortcutController()
+                controller.set_scope(Gtk.ShortcutScope.LOCAL)
+                controller.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
 
-            def _schedule_vte_action(action, *action_args):
-                def _runner():
+                def _schedule_vte_action(action, *action_args):
+                    def _runner():
+                        try:
+                            action(*action_args)
+                        except Exception as exc:
+                            logger.debug("VTE shortcut action failed: %s", exc)
+                        return False
+
+                    GLib.idle_add(_runner)
+                    return True
+
+                def _cb_copy(widget, *args):
+                    if not self.vte.get_has_selection():
+                        return False
+                    return _schedule_vte_action(self.vte.copy_clipboard_format, Vte.Format.TEXT)
+
+                def _cb_paste(widget, *args):
+                    return _schedule_vte_action(self.vte.paste_clipboard)
+
+                def _cb_select_all(widget, *args):
+                    return _schedule_vte_action(self.vte.select_all)
+
+                if is_macos():
+                    # macOS: Use standard Cmd+C/V for copy/paste, Cmd+Shift+C/V for terminal-specific operations
+                    copy_trigger = "<Meta>c"
+                    paste_trigger = "<Meta>v"
+                    select_trigger = "<Meta>a"
+                else:
+                    # Linux/Windows: Use Ctrl+Shift+C/V for terminal copy/paste (standard for terminals)
+                    copy_trigger = "<Primary><Shift>c"
+                    paste_trigger = "<Primary><Shift>v"
+                    select_trigger = "<Primary><Shift>a"
+
+                controller.add_shortcut(Gtk.Shortcut.new(
+                    Gtk.ShortcutTrigger.parse_string(copy_trigger),
+                    Gtk.CallbackAction.new(_cb_copy)
+                ))
+                controller.add_shortcut(Gtk.Shortcut.new(
+                    Gtk.ShortcutTrigger.parse_string(paste_trigger),
+                    Gtk.CallbackAction.new(_cb_paste)
+                ))
+                controller.add_shortcut(Gtk.Shortcut.new(
+                    Gtk.ShortcutTrigger.parse_string(select_trigger),
+                    Gtk.CallbackAction.new(_cb_select_all)
+                ))
+
+                # Add zoom shortcuts
+                if is_macos():
+                    # macOS: Use Cmd+= (equals key), Cmd+-, and Cmd+0 for zoom
+                    # Note: On macOS, Cmd+Shift+= is the same as Cmd+=
+                    zoom_in_triggers = ["<Meta>equal"]
+                    zoom_out_triggers = ["<Meta>minus"]
+                    zoom_reset_trigger = "<Meta>0"
+                else:
+                    # Linux/Windows: Use Ctrl++, Ctrl+-, and Ctrl+0 for zoom
+                    # Support both regular keys and numeric keypad variants
+                    zoom_in_triggers = ["<Primary>equal", "<Primary>KP_Add"]
+                    zoom_out_triggers = ["<Primary>minus", "<Primary>KP_Subtract"]
+                    zoom_reset_trigger = "<Primary>0"
+
+                logger.debug(f"Setting up terminal zoom shortcuts: in={zoom_in_triggers}, out={zoom_out_triggers}, reset={zoom_reset_trigger}")
+
+                def _cb_zoom_in(widget, *args):
                     try:
-                        action(*action_args)
+                        self.zoom_in()
                     except Exception as exc:
-                        logger.debug("VTE shortcut action failed: %s", exc)
-                    return False
+                        logger.debug("Zoom in shortcut failed: %s", exc)
+                    return True
 
-                GLib.idle_add(_runner)
-                return True
+                def _cb_zoom_out(widget, *args):
+                    try:
+                        self.zoom_out()
+                    except Exception as exc:
+                        logger.debug("Zoom out shortcut failed: %s", exc)
+                    return True
 
-            def _cb_copy(widget, *args):
-                if not self.vte.get_has_selection():
-                    return False
-                return _schedule_vte_action(self.vte.copy_clipboard_format, Vte.Format.TEXT)
+                def _cb_reset_zoom(widget, *args):
+                    try:
+                        self.reset_zoom()
+                    except Exception as exc:
+                        logger.debug("Zoom reset shortcut failed: %s", exc)
+                    return True
 
-            def _cb_paste(widget, *args):
-                return _schedule_vte_action(self.vte.paste_clipboard)
+                # Add zoom in shortcuts (support both regular and keypad plus)
+                for trig in zoom_in_triggers:
+                    controller.add_shortcut(Gtk.Shortcut.new(
+                        Gtk.ShortcutTrigger.parse_string(trig),
+                        Gtk.CallbackAction.new(_cb_zoom_in)
+                    ))
 
-            def _cb_select_all(widget, *args):
-                return _schedule_vte_action(self.vte.select_all)
-            
-            if is_macos():
-                # macOS: Use standard Cmd+C/V for copy/paste, Cmd+Shift+C/V for terminal-specific operations
-                copy_trigger = "<Meta>c"
-                paste_trigger = "<Meta>v"
-                select_trigger = "<Meta>a"
-            else:
-                # Linux/Windows: Use Ctrl+Shift+C/V for terminal copy/paste (standard for terminals)
-                copy_trigger = "<Primary><Shift>c"
-                paste_trigger = "<Primary><Shift>v"
-                select_trigger = "<Primary><Shift>a"
-            
-            controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string(copy_trigger),
-                Gtk.CallbackAction.new(_cb_copy)
-            ))
-            controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string(paste_trigger),
-                Gtk.CallbackAction.new(_cb_paste)
-            ))
-            controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string(select_trigger),
-                Gtk.CallbackAction.new(_cb_select_all)
-            ))
-            
-            # Add zoom shortcuts
-            if is_macos():
-                # macOS: Use Cmd+= (equals key), Cmd+-, and Cmd+0 for zoom
-                # Note: On macOS, Cmd+Shift+= is the same as Cmd+=
-                zoom_in_triggers = ["<Meta>equal"]
-                zoom_out_triggers = ["<Meta>minus"]
-                zoom_reset_trigger = "<Meta>0"
-            else:
-                # Linux/Windows: Use Ctrl++, Ctrl+-, and Ctrl+0 for zoom
-                # Support both regular keys and numeric keypad variants
-                zoom_in_triggers = ["<Primary>equal", "<Primary>KP_Add"]
-                zoom_out_triggers = ["<Primary>minus", "<Primary>KP_Subtract"]
-                zoom_reset_trigger = "<Primary>0"
-            
-            logger.debug(f"Setting up terminal zoom shortcuts: in={zoom_in_triggers}, out={zoom_out_triggers}, reset={zoom_reset_trigger}")
-            
-            def _cb_zoom_in(widget, *args):
-                try:
-                    self.zoom_in()
-                except Exception as exc:
-                    logger.debug("Zoom in shortcut failed: %s", exc)
-                return True
+                # Add zoom out shortcuts (support both regular and keypad minus)
+                for trig in zoom_out_triggers:
+                    controller.add_shortcut(Gtk.Shortcut.new(
+                        Gtk.ShortcutTrigger.parse_string(trig),
+                        Gtk.CallbackAction.new(_cb_zoom_out)
+                    ))
 
-            def _cb_zoom_out(widget, *args):
-                try:
-                    self.zoom_out()
-                except Exception as exc:
-                    logger.debug("Zoom out shortcut failed: %s", exc)
-                return True
-
-            def _cb_reset_zoom(widget, *args):
-                try:
-                    self.reset_zoom()
-                except Exception as exc:
-                    logger.debug("Zoom reset shortcut failed: %s", exc)
-                return True
-            
-            # Add zoom in shortcuts (support both regular and keypad plus)
-            for trig in zoom_in_triggers:
                 controller.add_shortcut(Gtk.Shortcut.new(
-                    Gtk.ShortcutTrigger.parse_string(trig),
-                    Gtk.CallbackAction.new(_cb_zoom_in)
+                    Gtk.ShortcutTrigger.parse_string(zoom_reset_trigger),
+                    Gtk.CallbackAction.new(_cb_reset_zoom)
                 ))
-            
-            # Add zoom out shortcuts (support both regular and keypad minus)
-            for trig in zoom_out_triggers:
-                controller.add_shortcut(Gtk.Shortcut.new(
-                    Gtk.ShortcutTrigger.parse_string(trig),
-                    Gtk.CallbackAction.new(_cb_zoom_out)
-                ))
-            
-            controller.add_shortcut(Gtk.Shortcut.new(
-                Gtk.ShortcutTrigger.parse_string(zoom_reset_trigger),
-                Gtk.CallbackAction.new(_cb_reset_zoom)
-            ))
-            
-            self.vte.add_controller(controller)
-            self._shortcut_controller = controller
 
-            # Add mouse wheel zoom functionality
-            self._setup_mouse_wheel_zoom()
-            
+                self.vte.add_controller(controller)
+                self._shortcut_controller = controller
+
+            if getattr(self, '_shortcut_controller', None) is not None:
+                self._setup_mouse_wheel_zoom()
+
         except Exception as e:
             logger.debug(f"Failed to install shortcuts: {e}")
+
+        try:
+            self._ensure_search_key_controller()
+        except Exception:
+            pass
     
     def _setup_mouse_wheel_zoom(self):
         """Set up mouse wheel zoom functionality with Cmd+MouseWheel."""
@@ -1995,6 +2247,48 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.debug(f"Failed to setup mouse wheel zoom: {e}")
 
+    def _ensure_search_key_controller(self):
+        """Attach the search shortcut controller to the terminal if needed."""
+        if getattr(self, '_search_key_controller', None) is not None:
+            return
+
+        try:
+            controller = Gtk.EventControllerKey()
+            controller.connect('key-pressed', self._on_vte_search_key_pressed)
+            self.vte.add_controller(controller)
+            self._search_key_controller = controller
+            logger.debug("Search key controller installed")
+        except Exception as exc:
+            logger.debug("Failed to install search key controller: %s", exc)
+
+    def _on_vte_search_key_pressed(self, controller, keyval, keycode, state):
+        """Handle global terminal search shortcuts on the VTE widget."""
+        try:
+            shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
+            primary = bool(state & Gdk.ModifierType.CONTROL_MASK)
+            meta = bool(state & Gdk.ModifierType.META_MASK)
+
+            if keyval in (Gdk.KEY_f, Gdk.KEY_F) and (primary or meta):
+                if hasattr(self, 'search_revealer') and self.search_revealer.get_reveal_child():
+                    self._hide_search_overlay()
+                else:
+                    self._show_search_overlay(select_all=True)
+                return True
+
+            if keyval in (Gdk.KEY_g, Gdk.KEY_G) and (primary or meta):
+                if shift:
+                    self._on_search_previous()
+                else:
+                    self._on_search_next()
+                return True
+
+            if keyval == Gdk.KEY_Escape and hasattr(self, 'search_revealer') and self.search_revealer.get_reveal_child():
+                self._hide_search_overlay()
+                return True
+        except Exception as exc:
+            logger.debug("Terminal search key handling failed: %s", exc)
+        return False
+
     def _remove_custom_shortcut_controllers(self):
         """Detach any custom shortcut or scroll controllers from the VTE widget."""
         ctrl = getattr(self, '_shortcut_controller', None)
@@ -2016,6 +2310,16 @@ class TerminalWidget(Gtk.Box):
                 logger.debug("Failed to remove scroll controller: %s", exc)
             finally:
                 self._scroll_controller = None
+
+        search_ctrl = getattr(self, '_search_key_controller', None)
+        if search_ctrl is not None:
+            try:
+                if hasattr(self.vte, 'remove_controller'):
+                    self.vte.remove_controller(search_ctrl)
+            except Exception as exc:
+                logger.debug("Failed to remove search key controller: %s", exc)
+            finally:
+                self._search_key_controller = None
 
     def _apply_pass_through_mode(self, enabled: bool):
         """Enable or disable custom shortcut handling based on configuration."""
@@ -2175,7 +2479,7 @@ class TerminalWidget(Gtk.Box):
     def _on_destroy(self, widget):
         """Handle widget destruction"""
         logger.debug(f"Terminal widget {self.session_id} being destroyed")
-        
+
         # Disconnect VTE signal handlers first to prevent callbacks on destroyed objects
         if hasattr(self, 'vte') and self.vte:
             try:
@@ -2495,7 +2799,7 @@ class TerminalWidget(Gtk.Box):
     def _handle_child_exit_cleanup(self, status):
         """Handle the actual cleanup work for child process exit (called from main thread)"""
         logger.debug(f"Starting exit cleanup for status {status}")
-        
+
         # Clean up process tracking immediately since the process has already exited
         try:
             # Skip getting PID since process is already dead - just clear our tracking
@@ -2679,25 +2983,206 @@ class TerminalWidget(Gtk.Box):
         """Reset and clear terminal"""
         self.vte.reset(True, False)
 
+    def _show_search_overlay(self, select_all: bool = False):
+        """Reveal the terminal search overlay and focus the search entry."""
+        try:
+            if not hasattr(self, 'search_revealer') or not self.search_revealer:
+                return
+            self.search_revealer.set_reveal_child(True)
+            if hasattr(self, 'search_entry') and self.search_entry:
+                if select_all:
+                    try:
+                        self.search_entry.select_region(0, -1)
+                    except Exception:
+                        pass
+                self.search_entry.grab_focus()
+                self._set_search_navigation_sensitive(bool(self.search_entry.get_text()))
+        except Exception as exc:
+            logger.debug("Failed to show search overlay: %s", exc)
+
+    def _hide_search_overlay(self):
+        """Hide the search overlay and return focus to the terminal."""
+        try:
+            if hasattr(self, 'search_revealer') and self.search_revealer:
+                self.search_revealer.set_reveal_child(False)
+            self._set_search_error_state(False)
+            if hasattr(self, 'vte') and self.vte:
+                self.vte.grab_focus()
+        except Exception as exc:
+            logger.debug("Failed to hide search overlay: %s", exc)
+
+    def _set_search_navigation_sensitive(self, active: bool):
+        """Enable or disable navigation buttons based on active search state."""
+        try:
+            for button in (getattr(self, 'search_prev_button', None), getattr(self, 'search_next_button', None)):
+                if button is not None:
+                    button.set_sensitive(bool(active))
+        except Exception as exc:
+            logger.debug("Failed to update search navigation sensitivity: %s", exc)
+
+    def _set_search_error_state(self, has_error: bool):
+        """Toggle error styling on the search entry when matches are not found."""
+        entry = getattr(self, 'search_entry', None)
+        if not entry:
+            return
+        try:
+            if has_error:
+                entry.add_css_class('error')
+            else:
+                entry.remove_css_class('error')
+        except Exception:
+            pass
+
+    def _clear_search_pattern(self):
+        """Clear any active search pattern from the terminal."""
+        self._last_search_text = ''
+        self._last_search_case_sensitive = False
+        self._last_search_regex = False
+        self._set_search_navigation_sensitive(False)
+        self._set_search_error_state(False)
+        try:
+            self.vte.search_set_regex(None, 0)
+        except Exception:
+            pass
+
+    def _update_search_pattern(self, text: str, *, case_sensitive: bool = False, regex: bool = False,
+                                move_forward: bool = True, update_entry: bool = False) -> bool:
+        """Apply or update the search pattern on the VTE widget."""
+        if not text:
+            self._clear_search_pattern()
+            return False
+
+        pattern_changed = (
+            text != self._last_search_text or
+            case_sensitive != self._last_search_case_sensitive or
+            regex != self._last_search_regex
+        )
+
+        try:
+            if pattern_changed:
+                pattern = text if regex else re.escape(text)
+                # Use inline case-insensitive flag to avoid Vte.RegexFlags dependency
+                if not case_sensitive and not pattern.startswith("(?i)"):
+                    pattern = "(?i)" + pattern
+                search_regex = Vte.Regex.new_for_search(pattern, -1, 0)
+                self.vte.search_set_regex(search_regex, 0)
+                self.vte.search_set_wrap_around(True)
+                self._last_search_text = text
+                self._last_search_case_sensitive = case_sensitive
+                self._last_search_regex = regex
+
+            self._set_search_navigation_sensitive(True)
+
+            if move_forward:
+                return self._run_search(True, update_entry=update_entry)
+
+            if update_entry:
+                self._set_search_error_state(False)
+
+            return True
+        except Exception as exc:
+            logger.error(f"Search failed: {exc}")
+            if update_entry:
+                self._set_search_error_state(True)
+            return False
+
+    def _run_search(self, forward: bool = True, *, update_entry: bool = False) -> bool:
+        """Execute search navigation in the requested direction."""
+        try:
+            found = self.vte.search_find_next() if forward else self.vte.search_find_previous()
+        except Exception as exc:
+            logger.error(f"Search navigation failed: {exc}")
+            found = False
+
+        if update_entry:
+            self._set_search_error_state(not found)
+
+        return bool(found)
+
+    def _on_search_entry_changed(self, entry):
+        """React to text edits in the search entry."""
+        text = entry.get_text() if entry else ''
+        if not text:
+            self._clear_search_pattern()
+            return
+        self._update_search_pattern(text, move_forward=True, update_entry=True)
+
+    def _on_search_entry_activate(self, entry):
+        """Handle Enter key in the search entry."""
+        self._on_search_next()
+
+    def _on_search_entry_stop(self, entry):
+        """Handle stop-search events (Escape or clear button)."""
+        if not entry.get_text():
+            self._clear_search_pattern()
+        self._hide_search_overlay()
+
+    def _on_search_entry_key_pressed(self, controller, keyval, keycode, state):
+        """Handle additional shortcuts while the search entry is focused."""
+        try:
+            shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
+            primary = bool(state & Gdk.ModifierType.CONTROL_MASK)
+            meta = bool(state & Gdk.ModifierType.META_MASK)
+
+            if keyval in (Gdk.KEY_g, Gdk.KEY_G) and (primary or meta):
+                if shift:
+                    self._on_search_previous()
+                else:
+                    self._on_search_next()
+                return True
+
+            if keyval in (Gdk.KEY_f, Gdk.KEY_F) and (primary or meta):
+                self._hide_search_overlay()
+                return True
+
+            if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and shift:
+                self._on_search_previous()
+                return True
+
+            if keyval == Gdk.KEY_Escape:
+                self._hide_search_overlay()
+                return True
+        except Exception as exc:
+            logger.debug("Search entry key handling failed: %s", exc)
+        return False
+
+    def _on_search_next(self, *_args):
+        """Navigate to the next search match."""
+        text = ''
+        if hasattr(self, 'search_entry') and self.search_entry:
+            text = self.search_entry.get_text()
+
+        if text:
+            if not self._update_search_pattern(text, move_forward=False, update_entry=True):
+                return False
+        elif not self._last_search_text:
+            return False
+
+        return self._run_search(True, update_entry=True)
+
+    def _on_search_previous(self, *_args):
+        """Navigate to the previous search match."""
+        text = ''
+        if hasattr(self, 'search_entry') and self.search_entry:
+            text = self.search_entry.get_text()
+
+        if text:
+            if not self._update_search_pattern(text, move_forward=False, update_entry=True):
+                return False
+        elif not self._last_search_text:
+            return False
+
+        return self._run_search(False, update_entry=True)
+
     def search_text(self, text, case_sensitive=False, regex=False):
         """Search for text in terminal"""
-        try:
-            # Create search regex
-            if regex:
-                search_regex = GLib.Regex.new(text, 0 if case_sensitive else GLib.RegexCompileFlags.CASELESS, 0)
-            else:
-                escaped_text = GLib.regex_escape_string(text)
-                search_regex = GLib.Regex.new(escaped_text, 0 if case_sensitive else GLib.RegexCompileFlags.CASELESS, 0)
-            
-            # Set search regex
-            self.vte.search_set_regex(search_regex, 0)
-            
-            # Find next match
-            return self.vte.search_find_next()
-            
-        except Exception as e:
-            logger.error(f"Search failed: {e}")
-            return False
+        return self._update_search_pattern(
+            text,
+            case_sensitive=case_sensitive,
+            regex=regex,
+            move_forward=True,
+            update_entry=False,
+        )
 
     def get_connection_info(self):
         """Get connection information"""

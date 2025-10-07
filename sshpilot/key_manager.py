@@ -5,11 +5,12 @@ import os
 import subprocess
 import logging
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 from gi.repository import GObject
 
 from .platform_utils import get_ssh_dir
+from .key_utils import _SKIPPED_FILENAMES as _SHARED_SKIPPED_FILENAMES, _is_private_key
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,8 @@ class KeyManager(GObject.Object):
     Unified SSH key generation (single method) + discovery helper.
     Uses system `ssh-keygen` for portability and OpenSSH-compatible output.
     """
+    _SKIPPED_FILENAMES = _SHARED_SKIPPED_FILENAMES
+
     __gsignals__ = {
         # Emitted after a key is generated successfully
         "key-generated": (GObject.SignalFlags.RUN_LAST, None, (object,)),
@@ -45,12 +48,23 @@ class KeyManager(GObject.Object):
                 os.chmod(self.ssh_dir, 0o700)
             except Exception:
                 pass
+        self._key_validation_cache: Dict[str, bool] = {}
+
+    def _is_private_key(self, file_path: Path) -> bool:
+        """Return True if the path looks like a private SSH key."""
+        return _is_private_key(
+            file_path,
+            cache=self._key_validation_cache,
+            skipped_filenames=self._SKIPPED_FILENAMES,
+        )
 
     # ---------------- Public API ----------------
 
     def discover_keys(self) -> List[SSHKey]:
-        """List keys that have a matching .pub next to the private key."""
+        """Discover known SSH keys within the configured SSH directory."""
         keys: List[SSHKey] = []
+        seen: set[str] = set()
+        fallback_to_pub = False
         try:
             ssh_dir = self.ssh_dir or Path(get_ssh_dir())
             if not ssh_dir.exists():
@@ -63,11 +77,35 @@ class KeyManager(GObject.Object):
                 if name.endswith(".pub"):
                     continue
                 # skip very common non-key files
-                if name in ("config", "known_hosts", "authorized_keys"):
+                if name in self._SKIPPED_FILENAMES:
                     continue
-                pub = file_path.with_suffix(file_path.suffix + ".pub")
-                if pub.exists():
-                    keys.append(SSHKey(str(file_path)))
+                if fallback_to_pub:
+                    pub = file_path.with_suffix(file_path.suffix + ".pub")
+                    if pub.exists():
+                        key_path = str(file_path)
+                        if key_path not in seen:
+                            keys.append(SSHKey(key_path))
+                            seen.add(key_path)
+                    continue
+
+                try:
+                    if self._is_private_key(file_path):
+                        key_path = str(file_path)
+                        if key_path not in seen:
+                            keys.append(SSHKey(key_path))
+                            seen.add(key_path)
+                except FileNotFoundError:
+                    fallback_to_pub = True
+                    logger.debug(
+                        "ssh-keygen not available; falling back to public-key discovery for %s",
+                        file_path,
+                    )
+                    pub = file_path.with_suffix(file_path.suffix + ".pub")
+                    if pub.exists():
+                        key_path = str(file_path)
+                        if key_path not in seen:
+                            keys.append(SSHKey(key_path))
+                            seen.add(key_path)
         except Exception as e:
             logger.error("Failed to discover SSH keys: %s", e)
         return keys

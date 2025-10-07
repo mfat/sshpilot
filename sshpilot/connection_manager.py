@@ -4,6 +4,7 @@ Handles SSH connections, configuration, and secure password storage
 """
 
 import os
+import stat
 import asyncio
 import logging
 import configparser
@@ -12,15 +13,18 @@ import subprocess
 import shlex
 import signal
 import re
-from typing import Dict, List, Optional, Any, Tuple, Union
+from pathlib import Path
+from typing import Dict, List, Optional, Any, Tuple, Union, Set
 
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
 from .platform_utils import is_macos, get_config_dir, get_ssh_dir
+from .key_utils import _is_private_key
 
 try:
+    import gi
+    gi.require_version('Secret', '1')
     from gi.repository import Secret
 except Exception:
-
     Secret = None
 try:
     import keyring
@@ -117,6 +121,9 @@ class Connection:
         self.source = data.get('source', '')
         self.config_root = data.get('config_root', '')
         self.isolated_config = bool(data.get('isolated_mode', False))
+
+        # Cache of identity files resolved for this connection (expanded paths)
+        self.resolved_identity_files: List[str] = []
 
         # Provide friendly accessor for UI components that wish to display
         # the originating config file for this connection.
@@ -236,6 +243,78 @@ class Connection:
             )
         return None
 
+    def collect_identity_file_candidates(
+        self,
+        effective_cfg: Optional[Dict[str, Union[str, List[str]]]] = None,
+    ) -> List[str]:
+        """Return resolved identity file paths that exist on disk for this host."""
+
+        candidates: List[str] = []
+        seen: Set[str] = set()
+
+        try:
+            key_mode = int(getattr(self, 'key_select_mode', 0) or 0)
+        except Exception:
+            key_mode = 0
+
+        keyfile_raw = getattr(self, 'keyfile', '') or ''
+        keyfile_value = str(keyfile_raw).strip()
+        if keyfile_value.lower().startswith('select key file'):
+            keyfile_value = ''
+
+        def _add_candidate(path: str):
+            if not path:
+                return
+            expanded = os.path.expanduser(path)
+            if os.path.isfile(expanded) and expanded not in seen:
+                candidates.append(expanded)
+                seen.add(expanded)
+
+        if key_mode in (1, 2):
+            _add_candidate(keyfile_value)
+            return candidates
+
+        if effective_cfg is None:
+            host_label = ''
+            try:
+                host_label = self.resolve_host_identifier()
+            except Exception:
+                host_label = ''
+            if not host_label:
+                try:
+                    host_label = self.get_effective_host()
+                except Exception:
+                    host_label = ''
+
+            if host_label:
+                config_override = None
+                try:
+                    config_override = self._resolve_config_override_path()
+                except Exception:
+                    config_override = None
+
+                try:
+                    if config_override:
+                        effective_cfg = get_effective_ssh_config(host_label, config_file=config_override)
+                    else:
+                        effective_cfg = get_effective_ssh_config(host_label)
+                except Exception:
+                    effective_cfg = {}
+            else:
+                effective_cfg = {}
+
+        cfg = effective_cfg or {}
+        cfg_ids = cfg.get('identityfile') if isinstance(cfg, dict) else None
+        if isinstance(cfg_ids, list):
+            for value in cfg_ids:
+                _add_candidate(value)
+        elif isinstance(cfg_ids, str):
+            _add_candidate(cfg_ids)
+
+        _add_candidate(keyfile_value)
+
+        return candidates
+
     @property
     def source_file(self) -> str:
         """Return path to the config file where this host is defined."""
@@ -244,6 +323,9 @@ class Connection:
     async def connect(self):
         """Prepare SSH command for later use (no preflight echo)."""
         try:
+            # Reset resolved identity cache on every connect preparation
+            self.resolved_identity_files = []
+
             quick_cmd = getattr(self, 'quick_connect_command', '')
             if isinstance(quick_cmd, str) and quick_cmd.strip():
                 try:
@@ -264,28 +346,52 @@ class Connection:
                 ssh_cfg = cfg.get_ssh_config()
             except Exception:
                 ssh_cfg = {}
-            apply_adv = bool(ssh_cfg.get('apply_advanced', False))
-            connect_timeout = int(ssh_cfg.get('connection_timeout', 10)) if apply_adv else None
-            connection_attempts = int(ssh_cfg.get('connection_attempts', 1)) if apply_adv else None
-            strict_host = str(ssh_cfg.get('strict_host_key_checking', '')) if apply_adv else ''
-            batch_mode = bool(ssh_cfg.get('batch_mode', False)) if apply_adv else False
-            compression = bool(ssh_cfg.get('compression', False)) if apply_adv else False
+            def _coerce_int(value, default=None):
+                try:
+                    coerced = int(str(value))
+                    if coerced <= 0:
+                        return default
+                    return coerced
+                except (TypeError, ValueError):
+                    return default
+
+            connect_timeout = _coerce_int(ssh_cfg.get('connection_timeout'), None)
+            connection_attempts = _coerce_int(ssh_cfg.get('connection_attempts'), None)
+            keepalive_interval = _coerce_int(ssh_cfg.get('keepalive_interval'), None)
+            keepalive_count = _coerce_int(ssh_cfg.get('keepalive_count_max'), None)
+            strict_host = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
+            batch_mode = bool(ssh_cfg.get('batch_mode', False))
+            compression = bool(ssh_cfg.get('compression', False))
             verbosity = int(ssh_cfg.get('verbosity', 0))
             debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
             auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
 
-            # Apply advanced args only when user explicitly enabled them
-            if apply_adv:
-                if batch_mode:
-                    ssh_cmd.extend(['-o', 'BatchMode=yes'])
-                if connect_timeout is not None:
-                    ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
-                if connection_attempts is not None:
-                    ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
-                if strict_host:
-                    ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
-                if compression:
-                    ssh_cmd.append('-C')
+            password_auth_selected = False
+            has_saved_password = False
+            try:
+                password_auth_selected = int(getattr(self, 'auth_method', 0) or 0) == 1
+            except Exception:
+                password_auth_selected = False
+            try:
+                has_saved_password = bool(getattr(self, 'password', '') or '')
+            except Exception:
+                has_saved_password = False
+            using_password = password_auth_selected or has_saved_password
+
+            if batch_mode and not using_password:
+                ssh_cmd.extend(['-o', 'BatchMode=yes'])
+            if connect_timeout is not None:
+                ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
+            if connection_attempts is not None:
+                ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+            if keepalive_interval is not None:
+                ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
+            if keepalive_count is not None:
+                ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
+            if strict_host:
+                ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
+            if compression:
+                ssh_cmd.append('-C')
             ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
             ssh_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
 
@@ -391,17 +497,24 @@ class Connection:
                                 identity_files.append(cfg_ids)
                         if self.keyfile and os.path.exists(self.keyfile):
                             identity_files.append(self.keyfile)
+                    resolved_identity_paths: List[str] = []
+                    seen_identity_paths: Set[str] = set()
+
                     for key_path in identity_files:
                         # Only add identity files that actually exist
                         expanded_path = os.path.expanduser(key_path)
                         if os.path.exists(expanded_path):
                             ssh_cmd.extend(['-i', key_path])
+                            if expanded_path not in seen_identity_paths:
+                                resolved_identity_paths.append(expanded_path)
+                                seen_identity_paths.add(expanded_path)
                         else:
                             logger.debug(f"Skipping non-existent identity file: {key_path}")
                         if key_mode == 1:
                             ssh_cmd.extend(['-o', 'IdentitiesOnly=yes'])
                         if self.key_passphrase:
                             logger.warning("Passphrase-protected keys may require additional setup")
+                    self.resolved_identity_files = resolved_identity_paths
                     cert_files: List[str] = []
                     if self.certificate:
                         cert_files.append(self.certificate)
@@ -452,6 +565,9 @@ class Connection:
     async def native_connect(self):
         """Prepare a minimal SSH command deferring to the user's SSH configuration."""
         try:
+            # Reset resolved identity cache when preparing native command
+            self.resolved_identity_files = []
+
             quick_cmd = getattr(self, 'quick_connect_command', '')
             if isinstance(quick_cmd, str) and quick_cmd.strip():
                 try:
@@ -474,7 +590,32 @@ class Connection:
             if config_override:
                 ssh_cmd.extend(['-F', config_override])
 
+            try:
+                from .config import Config  # avoid circular import at top level
+                cfg = Config()
+                ssh_cfg = cfg.get_ssh_config()
+            except Exception:
+                ssh_cfg = {}
+
+            overrides = ssh_cfg.get('ssh_overrides', [])
+            sanitized_overrides: List[str] = []
+            if isinstance(overrides, (list, tuple)):
+                for entry in overrides:
+                    if entry is None:
+                        continue
+                    flag = str(entry)
+                    if flag:
+                        sanitized_overrides.append(flag)
+
+            if sanitized_overrides:
+                ssh_cmd.extend(sanitized_overrides)
+
             ssh_cmd.append(host_label)
+
+            try:
+                self.resolved_identity_files = self.collect_identity_file_candidates()
+            except Exception:
+                self.resolved_identity_files = []
 
             self.ssh_cmd = ssh_cmd
             self.is_connected = True
@@ -596,23 +737,34 @@ class Connection:
                 ssh_cfg = cfg.get_ssh_config()
             except Exception:
                 ssh_cfg = {}
-            connect_timeout = int(ssh_cfg.get('connection_timeout', 10))
-            connection_attempts = int(ssh_cfg.get('connection_attempts', 1))
-            keepalive_interval = int(ssh_cfg.get('keepalive_interval', 30))
-            keepalive_count = int(ssh_cfg.get('keepalive_count_max', 3))
-            strict_host = str(ssh_cfg.get('strict_host_key_checking', 'accept-new'))
-            batch_mode = bool(ssh_cfg.get('batch_mode', True))
+            def _coerce_int(value):
+                try:
+                    coerced = int(value)
+                    return coerced if coerced > 0 else None
+                except (TypeError, ValueError):
+                    return None
+
+            connect_timeout = _coerce_int(ssh_cfg.get('connection_timeout'))
+            connection_attempts = _coerce_int(ssh_cfg.get('connection_attempts'))
+            keepalive_interval = _coerce_int(ssh_cfg.get('keepalive_interval'))
+            keepalive_count = _coerce_int(ssh_cfg.get('keepalive_count_max'))
+            strict_host = str(ssh_cfg.get('strict_host_key_checking', 'accept-new') or '').strip()
+            batch_mode = bool(ssh_cfg.get('batch_mode', False))
 
             # Robust non-interactive options to prevent hangs
             if batch_mode:
                 ssh_cmd.extend(['-o', 'BatchMode=yes'])
-            ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
-            ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
-            ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
-            ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
+            if connect_timeout is not None:
+                ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
+            if connection_attempts is not None:
+                ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
+            if keepalive_interval is not None:
+                ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
+            if keepalive_count is not None:
+                ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
             if strict_host:
                 ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
-            
+
             # Add key file if specified
             if self.keyfile and os.path.exists(self.keyfile):
                 logger.debug(f"Using SSH key: {self.keyfile}")
@@ -636,8 +788,6 @@ class Connection:
                 '-D', forward_spec,  # Dynamic port forwarding (SOCKS)
                 '-f',  # Run in background
                 '-o', 'ExitOnForwardFailure=yes',  # Exit if forwarding fails
-                '-o', 'ServerAliveInterval=30',    # Keep connection alive
-                '-o', 'ServerAliveCountMax=3'      # Max missed keepalives before disconnect
             ])
             
             # Add username and host
@@ -931,9 +1081,15 @@ class ConnectionManager(GObject.Object):
         self.ssh_config_path = ''
         self.known_hosts_path = ''
         try:
-            self.native_connect_enabled = bool(self.config.get_setting('ssh.native_connect', False))
+            self.native_connect_enabled = bool(self.config.get_setting('ssh.native_connect', True))
         except Exception:
-            self.native_connect_enabled = False
+            self.native_connect_enabled = True
+
+        # Track credential storage state
+        self.libsecret_available = False
+        self.secure_storage_backend = 'uninitialized'
+        self._keyring_backend_name: Optional[str] = None
+        self._keyring_used = False
 
         # Initialize SSH config paths
         self.set_isolated_mode(isolated_mode)
@@ -947,6 +1103,37 @@ class ConnectionManager(GObject.Object):
             return identifier
         return f"connection-{id(connection)}"
 
+    def _get_keyring_backend_name(self) -> str:
+        """Return a descriptive name for the active keyring backend."""
+
+        if self._keyring_backend_name:
+            return self._keyring_backend_name
+        if keyring is None:
+            return 'unavailable'
+        try:
+            backend = keyring.get_keyring()
+            self._keyring_backend_name = backend.__class__.__name__
+        except Exception:
+            self._keyring_backend_name = 'unavailable'
+        return self._keyring_backend_name
+
+    def _should_use_keyring_fallback(self, *, force: bool = False) -> bool:
+        """Return True when we should consult the cross-platform keyring."""
+
+        if keyring is None:
+            return False
+        if force:
+            return True
+        if self.secure_storage_backend in ('uninitialized', 'none'):
+            return True
+        if self.secure_storage_backend.startswith('keyring'):
+            return True
+        if self._keyring_used:
+            return True
+        if is_macos():
+            return True
+        return False
+
     def set_isolated_mode(self, isolated: bool):
         """Switch between standard and isolated SSH configuration"""
         self.isolated_mode = bool(isolated)
@@ -955,16 +1142,40 @@ class ConnectionManager(GObject.Object):
             self.ssh_config_path = os.path.join(base, 'ssh_config')
             self.known_hosts_path = os.path.join(base, 'known_hosts')
             os.makedirs(base, exist_ok=True)
+            self._ensure_secure_permissions(base, 0o700)
             for path in (self.ssh_config_path, self.known_hosts_path):
                 if not os.path.exists(path):
                     open(path, 'a').close()
+                self._ensure_secure_permissions(path, 0o600)
         else:
             ssh_dir = get_ssh_dir()
+            os.makedirs(ssh_dir, exist_ok=True)
+            self._ensure_secure_permissions(ssh_dir, 0o700)
             self.ssh_config_path = os.path.join(ssh_dir, 'config')
             self.known_hosts_path = os.path.join(ssh_dir, 'known_hosts')
+            if os.path.exists(self.ssh_config_path):
+                self._ensure_secure_permissions(self.ssh_config_path, 0o600)
 
         # Reload SSH config to reflect new paths
         self.load_ssh_config()
+
+    def _ensure_secure_permissions(self, path: str, mode: int):
+        """Best effort at applying restrictive permissions to files/directories."""
+        try:
+            current_mode = stat.S_IMODE(os.stat(path).st_mode)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            logger.debug("Unable to stat %s for permission fix: %s", path, exc)
+            return
+
+        if current_mode == mode:
+            return
+
+        try:
+            os.chmod(path, mode)
+        except Exception as exc:
+            logger.debug("Unable to set permissions on %s: %s", path, exc)
 
     def _post_init_slow_path(self):
         """Run slower initialization steps after UI is responsive."""
@@ -975,23 +1186,31 @@ class ConnectionManager(GObject.Object):
             logger.debug(f"SSH key scan skipped/failed: {e}")
         
         # Initialize secure storage (can be slow)
+        self.secure_storage_backend = 'none'
         self.libsecret_available = False
         if not is_macos() and Secret is not None:
             try:
                 Secret.Service.get_sync(Secret.ServiceFlags.NONE)
                 self.libsecret_available = True
 
-                logger.info("Secure storage initialized")
+                self.secure_storage_backend = 'libsecret'
+                logger.info("Secure storage backend: libsecret (Secret Service)")
             except Exception as e:
-                logger.warning(f"Failed to initialize secure storage: {e}")
-        elif keyring is not None:
+                logger.warning(f"libsecret backend unavailable: {e}")
+        if not self.libsecret_available and keyring is not None:
             try:
                 backend = keyring.get_keyring()
-                logger.info("Using system keyring backend: %s", backend.__class__.__name__)
-            except Exception:
-                logger.info("Keyring module present but no usable backend; passwords will not be stored")
-        else:
-            logger.info("No secure storage backend available; password storage disabled")
+                backend_name = backend.__class__.__name__
+                self._keyring_backend_name = backend_name
+                self.secure_storage_backend = f"keyring:{backend_name}"
+                logger.info("Secure storage backend: keyring (%s)", backend_name)
+            except Exception as e:
+                logger.info(
+                    "Keyring module present but no usable backend; passwords will not be stored (%s)",
+                    e,
+                )
+        if self.secure_storage_backend == 'none':
+            logger.info("Secure storage backend: unavailable; password storage disabled")
         return False  # run once
 
     # No _ensure_collection needed with libsecret's high-level API
@@ -1028,12 +1247,19 @@ class ConnectionManager(GObject.Object):
             existing_by_nickname = {conn.nickname: conn for conn in self.connections}
             self.connections = []
             self.rules = []
+            parent_dir = os.path.dirname(self.ssh_config_path)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
+                self._ensure_secure_permissions(parent_dir, 0o700)
             if not os.path.exists(self.ssh_config_path):
                 logger.info("SSH config file not found, creating empty one")
                 os.makedirs(os.path.dirname(self.ssh_config_path), exist_ok=True)
-                with open(self.ssh_config_path, 'w') as f:
+                with open(self.ssh_config_path, 'w', encoding='utf-8') as f:
                     f.write("# SSH configuration file\n")
+                self._ensure_secure_permissions(self.ssh_config_path, 0o600)
                 return
+            else:
+                self._ensure_secure_permissions(self.ssh_config_path, 0o600)
             config_files = resolve_ssh_config_files(self.ssh_config_path)
             for cfg_file in config_files:
                 current_hosts: List[str] = []
@@ -1472,19 +1698,66 @@ class ConnectionManager(GObject.Object):
         search_dirs.append(get_ssh_dir())
 
         keys: List[str] = []
-        seen = set()
+        seen: Set[str] = set()
+        validation_cache: Dict[str, bool] = {}
+        fallback_to_pub = False
         for ssh_dir in search_dirs:
             if not os.path.exists(ssh_dir):
                 continue
             try:
                 for filename in os.listdir(ssh_dir):
+                    file_path = Path(ssh_dir) / filename
+
                     if filename.endswith('.pub'):
-                        private_key = os.path.join(ssh_dir, filename[:-4])
-                        if os.path.exists(private_key) and private_key not in seen:
-                            keys.append(private_key)
-                            seen.add(private_key)
+                        if fallback_to_pub:
+                            private_key_path = file_path.with_suffix('')
+                            key_path = str(private_key_path)
+                            if private_key_path.exists() and key_path not in seen:
+                                keys.append(key_path)
+                                seen.add(key_path)
+                        continue
+
+                    if fallback_to_pub:
+                        pub_candidate = file_path.with_suffix(file_path.suffix + '.pub')
+                        if pub_candidate.exists():
+                            key_path = str(file_path)
+                            if key_path not in seen:
+                                keys.append(key_path)
+                                seen.add(key_path)
+                        continue
+
+                    try:
+                        if _is_private_key(file_path, cache=validation_cache):
+                            key_path = str(file_path)
+                            if key_path not in seen:
+                                keys.append(key_path)
+                                seen.add(key_path)
+                    except FileNotFoundError:
+                        fallback_to_pub = True
+                        logger.debug(
+                            "ssh-keygen not available; falling back to public-key discovery in %s",
+                            ssh_dir,
+                        )
+                        pub_candidate = file_path.with_suffix(file_path.suffix + '.pub')
+                        if pub_candidate.exists():
+                            key_path = str(file_path)
+                            if key_path not in seen:
+                                keys.append(key_path)
+                                seen.add(key_path)
+                    except Exception as exc:
+                        logger.debug(
+                            "Failed to validate potential key %s: %s",
+                            file_path,
+                            exc,
+                            exc_info=True,
+                        )
             except Exception as e:
-                logger.error(f"Failed to load SSH keys from {ssh_dir}: {e}")
+                logger.debug(
+                    "Failed to load SSH keys from %s: %s",
+                    ssh_dir,
+                    e,
+                    exc_info=True,
+                )
 
         logger.info(f"Found {len(keys)} SSH keys: {keys}")
         return keys
@@ -1492,6 +1765,7 @@ class ConnectionManager(GObject.Object):
     def store_password(self, host: str, username: str, password: str):
         """Store password securely in system keyring"""
         # Prefer libsecret on Linux when available
+        libsecret_failed = False
         if not is_macos() and self.libsecret_available and _SECRET_SCHEMA is not None:
             try:
                 attributes = {
@@ -1512,15 +1786,27 @@ class ConnectionManager(GObject.Object):
                 return True
             except Exception as e:
                 logger.error(f"Failed to store password (libsecret): {e}")
+                libsecret_failed = True
 
         # Fallback to cross-platform keyring (macOS Keychain, etc.)
-        if keyring is not None:
+        if self._should_use_keyring_fallback(force=libsecret_failed):
+            backend_name = self._get_keyring_backend_name()
             try:
                 keyring.set_password(_SERVICE_NAME, f"{username}@{host}", password)
-                logger.debug(f"Password stored for {username}@{host} via keyring")
+                logger.debug(
+                    "Password stored for %s@%s via keyring backend %s",
+                    username,
+                    host,
+                    backend_name,
+                )
+                self._keyring_used = True
                 return True
             except Exception as e:
-                logger.error(f"Failed to store password (keyring): {e}")
+                logger.error(
+                    "Failed to store password (keyring:%s): %s",
+                    backend_name,
+                    e,
+                )
         logger.warning("No secure storage backend available; password not stored")
         return False
 
@@ -1543,16 +1829,37 @@ class ConnectionManager(GObject.Object):
                 logger.error(f"Error retrieving password (libsecret) for {username}@{host}: {e}")
 
         # Fallback to keyring
-        if keyring is not None:
+        if self._should_use_keyring_fallback():
+            backend_name = self._get_keyring_backend_name()
             try:
                 pw = keyring.get_password(_SERVICE_NAME, f"{username}@{host}")
                 if pw:
-                    logger.debug(f"Password retrieved for {username}@{host} via keyring")
+                    self._keyring_used = True
+                    logger.debug(
+                        "Password retrieved for %s@%s via keyring backend %s",
+                        username,
+                        host,
+                        backend_name,
+                    )
                 return pw
             except Exception as e:
-                logger.error(
-                    f"Error retrieving password (keyring) for {username}@{host}: {e}"
-                )
+                message = str(e)
+                if 'kwallet' in message.lower():
+                    logger.debug(
+                        "Keyring backend %s unavailable during retrieval for %s@%s: %s",
+                        backend_name,
+                        username,
+                        host,
+                        e,
+                    )
+                else:
+                    logger.error(
+                        "Error retrieving password (keyring:%s) for %s@%s: %s",
+                        backend_name,
+                        username,
+                        host,
+                        e,
+                    )
         return None
 
     def delete_password(self, host: str, username: str) -> bool:
@@ -1572,12 +1879,25 @@ class ConnectionManager(GObject.Object):
                 logger.error(f"Error deleting password (libsecret) for {username}@{host}: {e}")
 
         # Also attempt keyring cleanup so both stores are cleared if both were used
-        if keyring is not None:
+        if self._should_use_keyring_fallback():
+            backend_name = self._get_keyring_backend_name()
             try:
                 keyring.delete_password(_SERVICE_NAME, f"{username}@{host}")
                 removed_any = True or removed_any
-            except Exception:
-                pass
+                logger.debug(
+                    "Password entry cleared via keyring backend %s for %s@%s",
+                    backend_name,
+                    username,
+                    host,
+                )
+            except Exception as e:
+                logger.debug(
+                    "Keyring backend %s failed to delete %s@%s: %s",
+                    backend_name,
+                    username,
+                    host,
+                    e,
+                )
         if removed_any:
             logger.debug(f"Deleted stored password for {username}@{host}")
         return removed_any
@@ -1648,6 +1968,17 @@ class ConnectionManager(GObject.Object):
         """Prepare SSH key for connection by adding it to ssh-agent"""
         from .askpass_utils import prepare_key_for_connection
         return prepare_key_for_connection(key_path)
+
+    def invalidate_cached_commands(self):
+        """Clear cached SSH commands so future launches pick up new settings."""
+        for connection in list(self.connections):
+            try:
+                if hasattr(connection, 'ssh_cmd'):
+                    connection.ssh_cmd = []
+                if getattr(connection, 'is_connected', False):
+                    connection.is_connected = False
+            except Exception as exc:
+                logger.debug("Failed to invalidate cached command for %s: %s", connection, exc)
 
     def format_ssh_config_entry(self, data: Dict[str, Any]) -> str:
         """Format connection data as SSH config entry"""
@@ -2245,8 +2576,8 @@ class ConnectionManager(GObject.Object):
             if not connected:
                 raise Exception("Failed to establish SSH connection")
             
-            # Set up port forwarding if needed
-            if connection.forwarding_rules:
+            # Set up port forwarding if needed (non-native mode only)
+            if connection.forwarding_rules and not use_native:
                 await connection.setup_forwarding()
             
             # Determine the tracking key used for keepalive management

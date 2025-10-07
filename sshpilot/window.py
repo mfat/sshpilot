@@ -8,10 +8,13 @@ import copy
 import os
 import logging
 import math
+import posixpath
 import re
 import shlex
 import sys
 import time
+import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 
@@ -73,8 +76,339 @@ from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos, get_config_dir
 from .ssh_utils import ensure_writable_ssh_home
 from .scp_utils import assemble_scp_transfer_args
+from .ssh_password_exec import run_ssh_with_password, run_scp_with_password
 
 logger = logging.getLogger(__name__)
+
+
+def _format_ssh_target(host: str, user: str) -> str:
+    host_component = host or ''
+    if host_component and ':' in host_component and not (
+        host_component.startswith('[') and host_component.endswith(']')
+    ):
+        host_component = f'[{host_component}]'
+    return f'{user}@{host_component}' if user else host_component
+
+
+def _normalize_remote_path(path: str) -> str:
+    text = (path or '').strip()
+    if not text:
+        return '.'
+    if text in {'.', '/', '~'}:
+        return text
+    if text.startswith('~/'):
+        trimmed = text.rstrip('/')
+        return trimmed if trimmed else '~'
+    if text.startswith('/'):
+        normalized = posixpath.normpath(text)
+        return normalized if normalized.startswith('/') else f'/{normalized}'
+    normalized = posixpath.normpath(text)
+    return normalized or '.'
+
+
+def _remote_parent(path: str) -> Optional[str]:
+    normalized = _normalize_remote_path(path)
+    if normalized in {'.', '/'}:
+        return None
+    if normalized == '~':
+        return '/'
+    if normalized.startswith('~/'):
+        parent = normalized.rsplit('/', 1)[0]
+        return parent or '~'
+    parent = posixpath.dirname(normalized.rstrip('/'))
+    if not parent:
+        return '.'
+    if parent == normalized:
+        return None
+    return parent
+
+
+def _remote_join(base: str, child: str) -> str:
+    base_normalized = _normalize_remote_path(base)
+    child = (child or '').strip()
+    if child in {'', '.'}:
+        return base_normalized
+    if child == '..':
+        parent = _remote_parent(base_normalized)
+        return parent if parent is not None else base_normalized
+    if base_normalized in {'.', ''}:
+        return _normalize_remote_path(child)
+    if base_normalized == '~':
+        return _normalize_remote_path(f"~/{child.lstrip('/')}")
+    if base_normalized == '/':
+        return _normalize_remote_path(f"/{child.lstrip('/')}")
+    return _normalize_remote_path(f"{base_normalized.rstrip('/')}/{child}")
+
+
+@dataclass
+class SCPConnectionProfile:
+    alias: str
+    hostname: str
+    host: str
+    username: str
+    port: int
+    ssh_options: List[str]
+    saved_password: Optional[str]
+    saved_passphrase: Optional[str]
+    prefer_password: bool
+    combined_auth: bool
+    use_publickey_with_password: bool
+    key_mode: int
+    keyfile: str
+    keyfile_ok: bool
+    keyfile_expanded: str
+
+
+def _quote_remote_path_for_shell(path: str) -> str:
+    normalized = _normalize_remote_path(path)
+    if normalized == '.':
+        return '.'
+    if normalized == '/':
+        return '/'
+    if normalized == '~':
+        return '$HOME'
+    if normalized.startswith('~/'):
+        remainder = normalized[2:]
+        if not remainder:
+            return '$HOME'
+        parts = [shlex.quote(seg) for seg in remainder.split('/')]
+        return '$HOME/' + '/'.join(parts)
+    return shlex.quote(normalized)
+
+
+def list_remote_files(
+    host: str,
+    user: str,
+    remote_path: str,
+    *,
+    port: int = 22,
+    password: Optional[str] = None,
+    known_hosts_path: Optional[str] = None,
+    extra_ssh_opts: Optional[List[str]] = None,
+    use_publickey: bool = False,
+    inherit_env: Optional[Dict[str, str]] = None,
+) -> Tuple[List[Tuple[str, bool]], Optional[str]]:
+    """List remote files via SSH for the provided path.
+
+    Returns (entries, error_message) where entries contain ``(name, is_directory)`` tuples.
+    """
+    if not host:
+        return [], _('Missing host information.')
+
+    target = _format_ssh_target(host, user)
+    safe_path = _normalize_remote_path(remote_path)
+
+    command_path = _quote_remote_path_for_shell(safe_path)
+    list_command = f"LC_ALL=C ls -1p --color=never -- {command_path}"
+    wrapped_command = (
+        "set -f; "
+        "printf '__SSHPILOT_BEGIN__\\n'; "
+        f"{list_command}; "
+        "status=$?; "
+        "printf '__SSHPILOT_STATUS__%s\\n' \"$status\"; "
+        "printf '__SSHPILOT_END__\\n'; "
+        "exit $status"
+    )
+
+    env = (inherit_env or os.environ).copy()
+    env.pop('SSH_ASKPASS', None)
+    env.pop('SSH_ASKPASS_REQUIRE', None)
+
+    try:
+        if password:
+            result = run_ssh_with_password(
+                host,
+                user,
+                password,
+                port=port,
+                argv_tail=['sh', '-lc', wrapped_command],
+                known_hosts_path=known_hosts_path,
+                extra_ssh_opts=extra_ssh_opts or [],
+                inherit_env=env,
+                use_publickey=use_publickey,
+            )
+        else:
+            sshbin = shutil.which('ssh') or '/usr/bin/ssh'
+            cmd = [sshbin, '-p', str(port)]
+            if extra_ssh_opts:
+                cmd.extend(extra_ssh_opts)
+            if known_hosts_path:
+                cmd += ['-o', f'UserKnownHostsFile={known_hosts_path}']
+            else:
+                cmd += ['-o', 'StrictHostKeyChecking=accept-new']
+            cmd.append(target)
+            cmd.extend(['sh', '-lc', wrapped_command])
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+                env=env,
+            )
+
+        stdout_lines = result.stdout.splitlines()
+        begin_idx = next((idx for idx, line in enumerate(stdout_lines)
+                          if line.strip() == '__SSHPILOT_BEGIN__'), None)
+        status_idx = next((idx for idx, line in enumerate(stdout_lines)
+                           if line.startswith('__SSHPILOT_STATUS__')), None)
+        if begin_idx is None or status_idx is None or status_idx < begin_idx:
+            logger.warning('SCP: Unexpected remote listing output for %s', safe_path)
+            stderr = result.stderr.strip() or _('Unable to parse remote listing output.')
+            return [], stderr
+        try:
+            status_line = stdout_lines[status_idx]
+            status_code = int(status_line.replace('__SSHPILOT_STATUS__', '').strip() or '0')
+        except ValueError:
+            status_code = result.returncode
+
+        listing_lines = stdout_lines[begin_idx + 1:status_idx]
+        if status_code != 0:
+            stderr = result.stderr.strip() or _('Failed to list remote directory.')
+            logger.warning('SCP: Remote list failed (%s): %s', safe_path, stderr)
+            return [], stderr
+        entries: List[Tuple[str, bool]] = []
+        for raw_line in listing_lines:
+            line = raw_line.rstrip()
+            if not line:
+                continue
+            is_dir = line.endswith('/')
+            name = line[:-1] if is_dir else line
+            entries.append((name, is_dir))
+        return entries, None
+    except Exception as exc:
+        logger.error('SCP: Error listing remote files: %s', exc)
+        return [], str(exc)
+
+
+def download_file(
+    host: str,
+    user: str,
+    remote_file: str,
+    local_path: str,
+    *,
+    recursive: bool = False,
+    port: int = 22,
+    password: Optional[str] = None,
+    known_hosts_path: Optional[str] = None,
+    extra_ssh_opts: Optional[List[str]] = None,
+    use_publickey: bool = False,
+    inherit_env: Optional[Dict[str, str]] = None,
+    saved_passphrase: Optional[str] = None,
+    keyfile: Optional[str] = None,
+    key_mode: Optional[int] = None,
+) -> bool:
+    """Download a remote file (or directory when ``recursive``) via SCP."""
+    if not host or not remote_file or not local_path:
+        return False
+
+    target_user_host = user or ''
+    remote_target_host = host
+    env = (inherit_env or os.environ).copy()
+
+    ssh_extra_opts: List[str] = list(extra_ssh_opts or [])
+    passphrase_auth = bool(saved_passphrase) and not password
+
+    if passphrase_auth:
+        try:
+            from .askpass_utils import (
+                get_ssh_env_with_forced_askpass,
+                get_scp_ssh_options,
+            )
+        except Exception:
+            get_ssh_env_with_forced_askpass = None  # type: ignore
+            get_scp_ssh_options = None  # type: ignore
+
+        if get_ssh_env_with_forced_askpass is not None:
+            try:
+                askpass_env = get_ssh_env_with_forced_askpass()
+                if isinstance(askpass_env, dict):
+                    env.update(askpass_env)
+            except Exception:
+                logger.debug('SCP: Unable to initialize askpass environment', exc_info=True)
+
+        if keyfile and '-i' not in ssh_extra_opts:
+            ssh_extra_opts.extend(['-i', keyfile])
+
+        if key_mode == 1 and 'IdentitiesOnly=yes' not in ' '.join(ssh_extra_opts):
+            ssh_extra_opts.extend(['-o', 'IdentitiesOnly=yes'])
+
+        if get_scp_ssh_options is not None:
+            try:
+                passphrase_opts = list(get_scp_ssh_options())
+            except Exception:
+                passphrase_opts = []
+            for idx in range(0, len(passphrase_opts) - 1, 2):
+                flag = passphrase_opts[idx]
+                value = passphrase_opts[idx + 1]
+                if not flag or not value:
+                    continue
+                already = False
+                for opt_idx in range(0, len(ssh_extra_opts) - 1, 2):
+                    if ssh_extra_opts[opt_idx] == flag and ssh_extra_opts[opt_idx + 1] == value:
+                        already = True
+                        break
+                if not already:
+                    ssh_extra_opts.extend([flag, value])
+    else:
+        env.pop('SSH_ASKPASS', None)
+        env.pop('SSH_ASKPASS_REQUIRE', None)
+
+    if password:
+        try:
+            result = run_scp_with_password(
+                remote_target_host,
+                user,
+                password,
+                [remote_file],
+                local_path,
+                direction='download',
+                port=port,
+                known_hosts_path=known_hosts_path,
+                extra_ssh_opts=ssh_extra_opts,
+                inherit_env=env,
+                use_publickey=use_publickey,
+            )
+            return result.returncode == 0
+        except Exception as exc:
+            logger.error('SCP: Download failed for %s: %s', remote_file, exc)
+            return False
+
+    target = _format_ssh_target(remote_target_host, user)
+    try:
+        transfer_sources, transfer_destination = assemble_scp_transfer_args(
+            target,
+            [remote_file],
+            local_path,
+            'download',
+        )
+        argv = ['scp', '-P', str(port)]
+        if recursive:
+            argv.append('-r')
+        if known_hosts_path:
+            argv += ['-o', f'UserKnownHostsFile={known_hosts_path}']
+        else:
+            argv += ['-o', 'StrictHostKeyChecking=accept-new']
+        if ssh_extra_opts:
+            argv.extend(ssh_extra_opts)
+        argv.extend(transfer_sources)
+        argv.append(transfer_destination)
+        completed = subprocess.run(
+            argv,
+            check=False,
+            text=True,
+            capture_output=True,
+            env=env,
+        )
+        if completed.returncode != 0:
+            stderr = (completed.stderr or '').strip()
+            if stderr:
+                logger.error('SCP: Download stderr: %s', stderr)
+            return False
+        return True
+    except Exception as exc:
+        logger.error('SCP: Download failed for %s: %s', remote_file, exc)
+        return False
 
 
 def maybe_set_native_controls(header_bar: Gtk.HeaderBar, value: bool = False) -> None:
@@ -131,9 +465,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
         # Ensure native connect preference is propagated to the connection manager
         try:
-            native_cfg = bool(self.config.get_setting('ssh.native_connect', False))
+            native_cfg = bool(self.config.get_setting('ssh.native_connect', True))
         except Exception:
-            native_cfg = False
+            native_cfg = True
         app_native = None
         if app is not None and hasattr(app, 'native_connect_enabled'):
             app_native = bool(app.native_connect_enabled)
@@ -240,20 +574,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         # Check startup behavior setting and show appropriate view
         try:
-            startup_behavior = self.config.get_setting('app-startup-behavior', 'terminal')
+            startup_behavior = self.config.get_setting('app-startup-behavior', 'welcome')
         except Exception as e:
             logger.error(f"Error handling startup behavior: {e}")
-            startup_behavior = 'terminal'
+            startup_behavior = 'welcome'
 
         # On startup, focus the appropriate widget based on preference
-        if startup_behavior == 'welcome':
-            # Delay focus to ensure the UI is fully set up
-            try:
-                GLib.timeout_add(100, self._focus_connection_list_first_row)
-            except Exception:
-                pass
-        else:
-            # Default to terminal behavior for unknown preferences
+        if startup_behavior == 'terminal':
+            # Show terminal when explicitly requested
             try:
                 GLib.idle_add(self.terminal_manager.show_local_terminal)
             except Exception as e:
@@ -276,6 +604,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             # Queue terminal focus operation to avoid race conditions
             self._queue_focus_operation(_focus_terminal_when_ready)
+        else:
+            # Delay focus to ensure the UI is fully set up
+            try:
+                GLib.timeout_add(100, self._focus_connection_list_first_row)
+            except Exception:
+                pass
 
         # Mark startup as complete after a short delay to allow all initialization to finish
         GLib.timeout_add(500, self._on_startup_complete)
@@ -319,17 +653,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 return
             provider = Gtk.CssProvider()
             css = """
-            /* Pulse highlight for selected rows */
-            .pulse-highlight {
-              background: alpha(@accent_bg_color, 0.5);
-              border-radius: 8px;
-              box-shadow: 0 0 0 0.5px alpha(@accent_bg_color, 0.28) inset;
-              opacity: 0;
-              transition: opacity 0.3s ease-in-out;
-            }
-            .pulse-highlight.on {
-              opacity: 1;
-            }
 
             /* optional: a subtle focus ring while the list is focused */
             row:selected:focus-within {
@@ -373,10 +696,32 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             .navigation-sidebar row.tinted {
               margin: 4px 8px;
               border-radius: 10px;
+              transition: background-color 0s ease;
             }
 
-            .navigation-sidebar row.tinted:not(:selected):not(:hover):not(:active) {
+            .navigation-sidebar row.tinted:not(:selected) {
               background-color: alpha(@accent_bg_color, 0.18);
+            }
+
+            .navigation-sidebar row.tinted:hover:not(:selected) {
+              background-color: alpha(@accent_bg_color, 0.24);
+            }
+
+            .navigation-sidebar row.tinted:active:not(:selected) {
+              background-color: alpha(@accent_bg_color, 0.30);
+            }
+
+            .navigation-sidebar row.tinted:selected {
+              background-color: alpha(@accent_bg_color, 0.36);
+              box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.65);
+            }
+
+            .navigation-sidebar row.tinted:selected:hover {
+              background-color: alpha(@accent_bg_color, 0.42);
+            }
+
+            .navigation-sidebar row.tinted:selected:active {
+              background-color: alpha(@accent_bg_color, 0.48);
             }
             
             /* Group drop target highlight */
@@ -387,18 +732,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                           0 2px 8px alpha(@accent_bg_color, 0.4);
               transform: scale(1.02);
               transition: all 0.2s ease-in-out;
-              animation: group-drop-pulse 1.5s ease-in-out infinite;
-            }
-            
-            @keyframes group-drop-pulse {
-              0%, 100% { 
-                box-shadow: 0 0 0 2px @accent_bg_color inset,
-                           0 2px 8px alpha(@accent_bg_color, 0.4);
-              }
-              50% { 
-                box-shadow: 0 0 0 3px @accent_bg_color inset,
-                           0 4px 12px alpha(@accent_bg_color, 0.6);
-              }
             }
             
             /* Drop target indicator styling */
@@ -643,71 +976,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
 
 
-    def pulse_selected_row(self, list_box: Gtk.ListBox, repeats=3, duration_ms=280):
-        """Pulse the selected row with highlight effect"""
-        row = list_box.get_selected_row() or (list_box.get_selected_rows()[0] if list_box.get_selected_rows() else None)
-        if not row:
-            return
-        if not hasattr(row, "_pulse"):
-            return
-        # Ensure it's realized so opacity changes render
-        if not row.get_mapped():
-            row.realize()
-        
-        # Use CSS-based pulse for now
-        pulse = row._pulse
-        cycle_duration = max(300, duration_ms // repeats)  # Minimum 300ms per cycle for faster pulses
-        
-        def do_cycle(count):
-            if count == 0:
-                return False
-            pulse.add_css_class("on")
-            # Keep the pulse visible for a shorter time for snappier effect
-            GLib.timeout_add(cycle_duration // 2, lambda: (
-                pulse.remove_css_class("on"),
-                # Add a shorter delay before the next pulse
-                GLib.timeout_add(cycle_duration // 2, lambda: do_cycle(count - 1)) or True
-            ) and False)
-            return False
 
-        GLib.idle_add(lambda: do_cycle(repeats))
 
-    def _test_css_pulse(self, action, param):
-        """Simple test to manually toggle CSS class"""
-        row = self.connection_list.get_selected_row()
-        if row and hasattr(row, "_pulse"):
-            pulse = row._pulse
-            pulse.add_css_class("on")
-            GLib.timeout_add(1000, lambda: (
-                pulse.remove_css_class("on")
-            ) or False)
-
-    def _setup_interaction_stop_pulse(self):
-        """Set up event controllers to stop pulse effect on user interaction"""
-        # Mouse click controller
-        click_ctl = Gtk.GestureClick()
-        click_ctl.connect("pressed", self._stop_pulse_on_interaction)
-        self.connection_list.add_controller(click_ctl)
-        
-        # Key controller
-        key_ctl = Gtk.EventControllerKey()
-        key_ctl.connect("key-pressed", self._on_connection_list_key_pressed)
-        self.connection_list.add_controller(key_ctl)
-        
-        # Scroll controller
-        scroll_ctl = Gtk.EventControllerScroll()
-        scroll_ctl.connect("scroll", self._stop_pulse_on_interaction)
-        self.connection_list.add_controller(scroll_ctl)
 
     def _on_connection_list_key_pressed(self, controller, keyval, keycode, state):
         """Handle key presses in the connection list"""
-        # Stop pulse effect on any key press
-        self._stop_pulse_on_interaction(controller)
-        
+
         # Handle Enter key specifically
         if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
             selected_row = self.connection_list.get_selected_row()
             if selected_row and hasattr(selected_row, 'connection'):
+                self._return_to_tab_view_if_welcome()
                 connection = selected_row.connection
                 self._focus_most_recent_tab_or_open_new(connection)
                 return True  # Consume the event to prevent row-activated
@@ -730,33 +1009,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             return False
         return False
 
-    def _stop_pulse_on_interaction(self, controller, *args):
-        """Stop any ongoing pulse effect when user interacts"""
-        # Stop pulse on any row that has the 'on' class
-        for row in self.connection_list:
-            if hasattr(row, "_pulse"):
-                pulse = row._pulse
-                if "on" in pulse.get_css_classes():
-                    pulse.remove_css_class("on")
 
-    def _wire_pulses(self):
-        """Wire pulse effects to trigger on focus-in only"""
-        # Track if this is the initial startup focus
-        self._is_initial_focus = True
-        
-        # When list gains keyboard focus (e.g., after Ctrl/⌘+L)
-        focus_ctl = Gtk.EventControllerFocus()
-        def on_focus_enter(*args):
-            # Don't pulse on initial startup focus
-            if self._is_initial_focus:
-                self._is_initial_focus = False
-                return
-            self.pulse_selected_row(self.connection_list, repeats=1, duration_ms=600)
-        focus_ctl.connect("enter", on_focus_enter)
-        self.connection_list.add_controller(focus_ctl)
-        
-        # Stop pulse effect when user interacts with the list
-        self._setup_interaction_stop_pulse()
         
         # Sidebar toggle action registered via register_window_actions
 
@@ -1302,8 +1555,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
         
-        # Wire pulse effects
-        self._wire_pulses()
         
         # Connect signals
         self.connection_list.connect('row-selected', self.on_connection_selected)  # For button sensitivity
@@ -1312,7 +1563,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Make sure the connection list is focusable and can receive key events
         self.connection_list.set_focusable(True)
         self.connection_list.set_can_focus(True)
-        self.connection_list.set_focus_on_click(True)
+        # Manage focus manually so double-click activation can hand control to the terminal
+        self.connection_list.set_focus_on_click(False)
         self.connection_list.set_activate_on_single_click(False)  # Require double-click to activate
         
         # Set connection list as the default focus widget for the sidebar
@@ -1336,8 +1588,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 try:
                     logger.debug("Simple right-click detected - showing context menu for selected row")
                     
-                    # Clear any existing pulse effects to prevent multiple highlights
-                    self._stop_pulse_on_interaction(None)
                     
                     # Try to detect the clicked row, but fall back to selected row if detection fails
                     row = None
@@ -1562,10 +1812,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if n_press != 1:
                     return
 
-                try:
-                    self._stop_pulse_on_interaction(None)
-                except Exception:
-                    pass
 
                 row, _, _ = self._resolve_connection_list_event(x, y)
 
@@ -2370,9 +2616,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Add a connection row to the list with optional indentation"""
         row = ConnectionRow(connection, self.group_manager, self.config)
         
-        # Apply indentation for grouped connections
-        if indent_level > 0:
-            row.set_indentation(indent_level)
+        # Apply indentation preference for grouped connections
+        row.set_indentation(indent_level)
         
         self.connection_list.append(row)
         self.connection_rows[connection] = row
@@ -2469,7 +2714,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.view_toggle_button.set_visible(True)
             else:
                 self.view_toggle_button.set_visible(False)  # Hide button when no tabs
-        
+
         logger.info("Showing welcome view")
 
     def _focus_connection_list_first_row(self):
@@ -2529,8 +2774,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 
                 self.connection_list.grab_focus()
                 
-                # Pulse the selected row
-                self.pulse_selected_row(self.connection_list, repeats=1, duration_ms=600)
                 
                 # Show toast notification
                 toast = Adw.Toast.new(
@@ -2592,7 +2835,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             self.toast_overlay.add_toast(toast)
         except Exception as e:
             logger.error(f"Failed to toggle search entry: {e}")
-    
+
     def show_tab_view(self):
         """Show the tab view when connections are active"""
         # Re-apply terminal background when switching back to tabs
@@ -2608,8 +2851,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.view_toggle_button.set_icon_name('go-home-symbolic')
             self.view_toggle_button.set_tooltip_text('Show Start Page')
             self.view_toggle_button.set_visible(True)  # Show button when tabs are active
-        
+
         logger.info("Showing tab view")
+
+    def _return_to_tab_view_if_welcome(self):
+        """Switch back to tab view if the welcome view is currently visible."""
+        try:
+            if not hasattr(self, 'content_stack'):
+                return
+            if self.content_stack.get_visible_child_name() != "welcome":
+                return
+            if not hasattr(self, 'tab_view'):
+                return
+            if self.tab_view.get_n_pages() <= 0:
+                return
+            logger.debug("Leaving welcome view due to user interaction")
+            self.show_tab_view()
+        except Exception as exc:
+            logger.debug(f"Failed to return to tab view: {exc}")
 
     def show_connection_dialog(
             self,
@@ -3209,9 +3468,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_terminal = Gtk.ShortcutsGroup()
         terminal_actions = [
             ('local-terminal', _('Local Terminal')),
+            ('terminal-search', _('Search in Terminal')),
             ('broadcast-command', _('Broadcast Command')),
         ]
-        
+
         for action_name, title in terminal_actions:
             shortcuts = current_shortcuts.get(action_name)
             if shortcuts:
@@ -3307,6 +3567,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Local Terminal'), accelerator=f"{primary}<Shift>t"))
         group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
+            title=_('Search in Terminal'), accelerator=f"{primary}<Shift>f"))
+        group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
             title=_('Broadcast Command'), accelerator=f"{primary}<Shift>b"))
         section.add_group(group_terminal)
 
@@ -3332,13 +3594,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if current_page:
                 child = current_page.get_child()
                 if hasattr(child, 'vte'):
-                    child.vte.grab_focus()
+                    self._focus_terminal_widget(child)
         else:
             # Focus connection list with toast notification
             self.focus_connection_list()
 
     def _select_tab_relative(self, delta: int):
         """Select tab relative to current index, wrapping around."""
+        self._return_to_tab_view_if_welcome()
         try:
             n = self.tab_view.get_n_pages()
             if n <= 0:
@@ -3374,6 +3637,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         if n_press == 1:  # Single click - just select
             try:
+                self.connection_list.grab_focus()
+            except Exception:
+                pass
+            try:
                 state = gesture.get_current_event_state()
             except Exception:
                 state = 0
@@ -3397,6 +3664,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def on_connection_activated(self, list_box, row):
         """Handle connection activation (Enter key)"""
+        self._return_to_tab_view_if_welcome()
         logger.debug(f"Connection activated - row: {row}, has connection: {hasattr(row, 'connection') if row else False}")
         if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
@@ -3409,6 +3677,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
     def on_connection_activate(self, list_box, row):
         """Handle connection activation (Enter key or double-click)"""
+        self._return_to_tab_view_if_welcome()
         if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
             return True  # Stop event propagation
@@ -3416,6 +3685,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
     def on_activate_connection(self, action, param):
         """Handle the activate-connection action"""
+        self._return_to_tab_view_if_welcome()
         row = self.connection_list.get_selected_row()
         if row and hasattr(row, 'connection'):
             self._cycle_connection_tabs_or_open(row.connection)
@@ -3452,10 +3722,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.tab_view.set_selected_page(page)
 
             self.active_terminals[connection] = target_term
-            try:
-                target_term.vte.grab_focus()
-            except Exception:
-                pass
+            self._focus_terminal_widget(target_term)
         except Exception as e:
             logger.error(f"Failed to focus most recent tab for {getattr(connection, 'nickname', '')}: {e}")
 
@@ -3464,6 +3731,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """If there are open tabs for this server, focus the most recent one.
         Otherwise open a new tab for the server.
         """
+        self._return_to_tab_view_if_welcome()
         try:
             # Check if there are open tabs for this connection
             terms_for_conn = []
@@ -3493,7 +3761,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     # Update most-recent mapping
                     self.active_terminals[connection] = target_term
                     # Give focus to the VTE terminal so user can start typing immediately
-                    target_term.vte.grab_focus()
+                    self._focus_terminal_widget(target_term)
                     return
 
             # No existing tabs for this connection -> open a new one
@@ -3505,6 +3773,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """If there are open tabs for this server, cycle to the next one (wrap).
         Otherwise open a new tab for the server.
         """
+        self._return_to_tab_view_if_welcome()
         try:
             # Collect current pages in visual/tab order
             terms_for_conn = []
@@ -3536,10 +3805,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     self.tab_view.set_selected_page(page)
                     # Update most-recent mapping
                     self.active_terminals[connection] = next_term
-                    try:
-                        next_term.vte.grab_focus()
-                    except Exception:
-                        pass
+                    self._focus_terminal_widget(next_term)
                     return
 
             # No existing tabs for this connection -> open a new one
@@ -3551,8 +3817,76 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f"Failed to cycle or open for {getattr(connection, 'nickname', '')}: {e}")
 
+    def _focus_terminal_widget(self, terminal: TerminalWidget) -> None:
+        """Request focus for a terminal widget, retrying on idle if needed."""
+
+        if terminal is None:
+            return
+
+        vte_widget = getattr(terminal, 'vte', None)
+        if vte_widget is None:
+            return
+
+        def _focus_attempt(_source=None) -> bool:
+            try:
+                vte_widget.grab_focus()
+            except Exception as focus_error:
+                logger.debug(f"Deferred terminal focus failed: {focus_error}")
+            return GLib.SOURCE_REMOVE
+
+        try:
+            vte_widget.grab_focus()
+        except Exception:
+            pass
+
+        GLib.idle_add(_focus_attempt, priority=GLib.PRIORITY_DEFAULT_IDLE)
+        GLib.timeout_add(150, _focus_attempt)
+        GLib.timeout_add(350, _focus_attempt)
+
+    def _get_active_terminal_widget(self) -> Optional[TerminalWidget]:
+        """Return the TerminalWidget for the currently selected tab, if any."""
+        try:
+            page = self.tab_view.get_selected_page()
+        except Exception:
+            return None
+
+        if page is None:
+            return None
+
+        try:
+            child = page.get_child()
+        except Exception:
+            child = None
+
+        if isinstance(child, TerminalWidget):
+            return child
+        return None
+
+    def toggle_terminal_search_overlay(self, select_all: bool = False) -> None:
+        """Toggle the search overlay for the currently focused terminal tab."""
+        terminal = self._get_active_terminal_widget()
+        if terminal is None:
+            return
+
+        revealer = getattr(terminal, 'search_revealer', None)
+        is_revealed = False
+        if revealer is not None:
+            try:
+                is_revealed = bool(revealer.get_reveal_child())
+            except Exception as exc:
+                logger.debug('Failed to query terminal search revealer state: %s', exc)
+
+        try:
+            if is_revealed and hasattr(terminal, '_hide_search_overlay'):
+                terminal._hide_search_overlay()
+            elif hasattr(terminal, '_show_search_overlay'):
+                terminal._show_search_overlay(select_all=select_all)
+        except Exception as exc:
+            logger.debug('Failed to toggle terminal search overlay: %s', exc)
+
     def on_tab_selected(self, tab_view: Adw.TabView, _pspec=None) -> None:
         """Update active terminal mapping when the user switches tabs."""
+        self._return_to_tab_view_if_welcome()
         try:
             page = tab_view.get_selected_page()
             if page is None:
@@ -3789,82 +4123,651 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f'Upload dialog failed: {e}')
 
-    def _prompt_scp_download(self, connection):
-        """Ask the user for remote source paths and local destination for downloads."""
+    def _append_scp_option_pair(self, options: List[str], flag: str, value: Optional[str]) -> None:
+        """Append a flag/value pair to ``options`` if it is not already present."""
+        if not value:
+            return
+
+        option_value = str(value)
+        if flag == '-F':
+            expanded = os.path.abspath(os.path.expanduser(option_value))
+            if not os.path.exists(expanded):
+                return
+            option_value = expanded
+
+        for idx in range(len(options) - 1):
+            if options[idx] == flag and options[idx + 1] == option_value:
+                return
+
+        options.extend([flag, option_value])
+
+    def _extend_scp_options_from_connection(self, connection, options: List[str]) -> None:
+        """Augment ``options`` with connection-specific SSH arguments."""
         try:
-            prompt = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_('Download files from server'),
-                body=_('Enter one or more remote paths (one per line) and the local destination directory. Files will be transferred using scp without a file chooser.')
-            )
-            prompt.add_response('cancel', _('Cancel'))
-            prompt.add_response('download', _('Download'))
-            prompt.set_default_response('download')
-            prompt.set_close_response('cancel')
+            config_path = getattr(connection, 'config_root', '') or ''
+        except Exception:
+            config_path = ''
+        if not config_path and hasattr(self, 'connection_manager') and getattr(self.connection_manager, 'ssh_config_path', ''):
+            config_path = getattr(self.connection_manager, 'ssh_config_path', '')
+        if config_path:
+            self._append_scp_option_pair(options, '-F', config_path)
 
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        proxy_jump = []
+        try:
+            proxy_jump = list(getattr(connection, 'proxy_jump', []) or [])
+        except Exception:
+            proxy_jump = []
+        if proxy_jump:
+            hop_chain = ','.join(str(h).strip() for h in proxy_jump if str(h).strip())
+            if hop_chain:
+                self._append_scp_option_pair(options, '-o', f'ProxyJump={hop_chain}')
 
-            remote_label = Gtk.Label(label=_('Remote path(s) (one per line)'))
-            remote_label.set_halign(Gtk.Align.START)
-            remote_label.set_wrap(True)
-            box.append(remote_label)
+        proxy_command = ''
+        try:
+            proxy_command = str(getattr(connection, 'proxy_command', '') or '').strip()
+        except Exception:
+            proxy_command = ''
+        if proxy_command:
+            self._append_scp_option_pair(options, '-o', f'ProxyCommand={proxy_command}')
 
-            remote_buffer = Gtk.TextBuffer()
-            remote_view = Gtk.TextView(buffer=remote_buffer)
-            remote_view.set_wrap_mode(Gtk.WrapMode.NONE)
-            try:
-                remote_view.set_monospace(True)
-            except Exception:
-                pass
+        if getattr(connection, 'forward_agent', False):
+            self._append_scp_option_pair(options, '-o', 'ForwardAgent=yes')
 
-            remote_scroller = Gtk.ScrolledWindow()
-            remote_scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-            remote_scroller.set_min_content_height(96)
-            remote_scroller.set_child(remote_view)
-            box.append(remote_scroller)
+        certificate_path = ''
+        try:
+            certificate_path = str(getattr(connection, 'certificate', '') or '').strip()
+        except Exception:
+            certificate_path = ''
+        if certificate_path:
+            expanded_cert = os.path.expanduser(certificate_path)
+            if os.path.isfile(expanded_cert):
+                self._append_scp_option_pair(options, '-o', f'CertificateFile={expanded_cert}')
 
-            dest_row = Adw.EntryRow(title=_('Local destination'))
-            try:
-                default_download_dir = Path.home() / 'Downloads'
-                dest_row.set_text(str(default_download_dir))
-            except Exception:
-                dest_row.set_text('~/')
-            box.append(dest_row)
+        extra_cfg = ''
+        try:
+            extra_cfg = str(getattr(connection, 'extra_ssh_config', '') or '')
+        except Exception:
+            extra_cfg = ''
+        if extra_cfg:
+            for line in extra_cfg.split('\n'):
+                stripped = line.strip()
+                if not stripped or stripped.startswith('#'):
+                    continue
+                self._append_scp_option_pair(options, '-o', stripped)
 
-            prompt.set_extra_child(box)
+    def _build_scp_connection_profile(self, connection) -> SCPConnectionProfile:
+        alias_value = _get_connection_alias(connection)
+        hostname_value = _get_connection_host(connection)
+        host_value = alias_value or hostname_value
+        if not host_value:
+            raise ValueError(_('No host information is available for this connection.'))
 
-            def _update_state(*_args):
-                start_iter = remote_buffer.get_start_iter()
-                end_iter = remote_buffer.get_end_iter()
-                remote_text = remote_buffer.get_text(start_iter, end_iter, False).strip()
-                has_remote = bool(self._parse_remote_sources_text(remote_text))
-                has_dest = bool(dest_row.get_text().strip())
+        username = getattr(connection, 'username', '') or ''
+
+        try:
+            port = int(getattr(connection, 'port', 22) or 22)
+        except Exception:
+            port = 22
+
+        keyfile = getattr(connection, 'keyfile', '') or ''
+        try:
+            key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
+        except Exception:
+            key_mode = 0
+
+        expanded_keyfile = keyfile
+        if keyfile:
+            expanded_keyfile = os.path.expanduser(keyfile)
+            if not os.path.isabs(keyfile):
                 try:
-                    prompt.set_response_enabled('download', has_remote and has_dest)
+                    expanded_keyfile = os.path.realpath(expanded_keyfile)
+                except Exception:
+                    expanded_keyfile = os.path.expanduser(keyfile)
+        try:
+            keyfile_ok = bool(expanded_keyfile) and os.path.isfile(expanded_keyfile)
+        except Exception:
+            keyfile_ok = False
+
+        try:
+            auth_method = int(getattr(connection, 'auth_method', 0) or 0)
+        except Exception:
+            auth_method = 0
+        prefer_password = (auth_method == 1)
+
+        saved_password: Optional[str] = None
+        saved_passphrase: Optional[str] = None
+        combined_auth = False
+        connection_manager = getattr(self, 'connection_manager', None)
+        lookup_host = hostname_value or host_value
+        if connection_manager:
+            try:
+                saved_password = connection_manager.get_password(lookup_host, connection.username)
+            except Exception:
+                saved_password = None
+
+            if keyfile_ok and key_mode in (1, 2):
+                try:
+                    saved_passphrase = connection_manager.get_key_passphrase(expanded_keyfile)
+                except Exception:
+                    saved_passphrase = None
+                if not saved_passphrase and keyfile and keyfile != expanded_keyfile:
+                    try:
+                        saved_passphrase = connection_manager.get_key_passphrase(keyfile)
+                    except Exception:
+                        saved_passphrase = None
+
+        has_saved_password = bool(saved_password)
+        combined_auth = (auth_method == 0 and has_saved_password)
+        use_publickey_with_password = combined_auth and not getattr(connection, 'pubkey_auth_no', False)
+
+        ssh_options: List[str] = []
+        try:
+            cfg = self.config if hasattr(self, 'config') else Config()
+            ssh_cfg = cfg.get_ssh_config() if hasattr(cfg, 'get_ssh_config') else {}
+        except Exception:
+            ssh_cfg = {}
+
+        strict_val = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
+        auto_add = bool(ssh_cfg.get('auto_add_host_keys', True))
+
+        if strict_val:
+            ssh_options += ['-o', f'StrictHostKeyChecking={strict_val}']
+        elif auto_add and not has_saved_password:
+            ssh_options += ['-o', 'StrictHostKeyChecking=accept-new']
+
+        if getattr(connection, 'pubkey_auth_no', False):
+            ssh_options += ['-o', 'PubkeyAuthentication=no']
+
+        if keyfile_ok and key_mode in (1, 2):
+            ssh_options += ['-i', expanded_keyfile]
+            if key_mode == 1:
+                ssh_options += ['-o', 'IdentitiesOnly=yes']
+
+        self._extend_scp_options_from_connection(connection, ssh_options)
+
+        if prefer_password:
+            ssh_options += ['-o', 'PreferredAuthentications=password']
+        elif combined_auth:
+            ssh_options += [
+                '-o',
+                'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password',
+            ]
+
+        return SCPConnectionProfile(
+            alias=alias_value or '',
+            hostname=hostname_value or '',
+            host=host_value,
+            username=username,
+            port=port,
+            ssh_options=ssh_options,
+            saved_password=saved_password,
+            saved_passphrase=saved_passphrase,
+            prefer_password=prefer_password,
+            combined_auth=combined_auth,
+            use_publickey_with_password=use_publickey_with_password,
+            key_mode=key_mode,
+            keyfile=keyfile,
+            keyfile_ok=keyfile_ok,
+            keyfile_expanded=expanded_keyfile if keyfile_ok else '',
+        )
+
+    def _prompt_scp_download(self, connection):
+        """Show a simple file picker that downloads selected remote files via scp."""
+        try:
+            try:
+                profile = self._build_scp_connection_profile(connection)
+            except ValueError:
+                msg = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading=_('Download unavailable'),
+                    body=_('No host information is available for this connection.'),
+                )
+                msg.add_response('ok', _('OK'))
+                msg.set_default_response('ok')
+                msg.set_close_response('ok')
+                msg.present()
+                return
+
+            alias_value = profile.alias
+            hostname_value = profile.hostname
+            host_value = profile.host
+            username = profile.username
+            port = profile.port
+
+            known_hosts_path = None
+            saved_password = None
+            if hasattr(self, 'connection_manager') and self.connection_manager:
+                known_hosts_path = getattr(self.connection_manager, 'known_hosts_path', None)
+                saved_password = profile.saved_password
+                try:
+                    if profile.key_mode in (1, 2) and profile.keyfile_ok and profile.keyfile_expanded:
+                        self.connection_manager.prepare_key_for_connection(profile.keyfile_expanded)
                 except Exception:
                     pass
 
-            remote_buffer.connect('changed', _update_state)
-            dest_row.connect('notify::text', _update_state)
-            _update_state()
+            try:
+                default_download_dir = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
+            except Exception:
+                default_download_dir = None
+            if not default_download_dir:
+                try:
+                    default_download_dir = str(Path.home() / 'Downloads')
+                except Exception:
+                    default_download_dir = GLib.get_home_dir() or os.path.expanduser('~')
 
-            def _on_response(dlg, response):
-                if response != 'download':
-                    dlg.close()
-                    return
-                start_iter = remote_buffer.get_start_iter()
-                end_iter = remote_buffer.get_end_iter()
-                remote_text = remote_buffer.get_text(start_iter, end_iter, False)
-                sources = self._parse_remote_sources_text(remote_text)
-                destination = dest_row.get_text().strip()
-                dlg.close()
-                if not sources or not destination:
-                    return
-                self._start_scp_transfer(connection, sources, destination, direction='download')
+            ssh_extra_opts = list(profile.ssh_options)
+            use_publickey_with_password = profile.use_publickey_with_password
+            if profile.prefer_password:
+                use_publickey_with_password = False
 
-            prompt.connect('response', _on_response)
-            prompt.present()
+            base_env = os.environ.copy()
+
+            dialog = Adw.Window()
+            dialog.set_transient_for(self)
+            dialog.set_modal(True)
+            try:
+                dialog.set_default_size(480, 420)
+            except Exception:
+                pass
+            try:
+                dialog.set_title(_('Download files from server'))
+            except Exception:
+                pass
+
+            header = Adw.HeaderBar()
+            title_label = Gtk.Label(label=_('Download files'))
+            title_label.set_halign(Gtk.Align.START)
+            try:
+                title_label.add_css_class('title-2')
+            except Exception:
+                pass
+            header.set_title_widget(title_label)
+
+            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+            content_box.set_hexpand(True)
+            content_box.set_vexpand(True)
+            try:
+                content_box.set_margin_top(16)
+                content_box.set_margin_bottom(16)
+                content_box.set_margin_start(16)
+                content_box.set_margin_end(16)
+            except Exception:
+                pass
+
+            paths_group = Adw.PreferencesGroup()
+            paths_group.set_title(_('Locations'))
+
+            remote_row = Adw.EntryRow(title=_('Remote directory'))
+            remote_row.set_text('~')
+            try:
+                remote_editable = remote_row.get_editable()
+                if remote_editable and hasattr(remote_editable, 'set_placeholder_text'):
+                    remote_editable.set_placeholder_text(_('Example: ~/ or /var/tmp'))
+            except Exception:
+                pass
+
+            refresh_button = Gtk.Button.new_from_icon_name('view-refresh-symbolic')
+            refresh_button.set_tooltip_text(_('Refresh remote listing'))
+            refresh_button.add_css_class('flat')
+            remote_row.add_suffix(refresh_button)
+            remote_row.set_show_apply_button(False)
+            paths_group.add(remote_row)
+
+
+            paths_wrapper = Adw.Clamp()
+            paths_wrapper.set_child(paths_group)
+            content_box.append(paths_wrapper)
+
+            scroller = Gtk.ScrolledWindow()
+            scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            scroller.set_min_content_height(220)
+
+            list_box = Gtk.ListBox()
+            list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            list_box.set_hexpand(True)
+            list_box.set_vexpand(True)
+            try:
+                list_box.set_activate_on_single_click(False)
+            except Exception:
+                pass
+            scroller.set_child(list_box)
+            content_box.append(scroller)
+
+            status_label = Gtk.Label()
+            status_label.set_halign(Gtk.Align.START)
+            status_label.set_wrap(True)
+            content_box.append(status_label)
+
+            destination_group = Adw.PreferencesGroup()
+            destination_group.set_title(_('Destination'))
+
+            local_row = Adw.EntryRow(title=_('Local destination'))
+            local_row.set_text(str(default_download_dir))
+            try:
+                local_editable = local_row.get_editable()
+                if local_editable and hasattr(local_editable, 'set_placeholder_text'):
+                    local_editable.set_placeholder_text(_('Example: ~/Downloads'))
+            except Exception:
+                pass
+
+            picker_button = Gtk.Button.new_from_icon_name('folder-symbolic')
+            picker_button.set_tooltip_text(_('Choose destination folder'))
+            picker_button.add_css_class('flat')
+            local_row.add_suffix(picker_button)
+            local_row.set_show_apply_button(False)
+            destination_group.add(local_row)
+
+            destination_wrapper = Adw.Clamp()
+            destination_wrapper.set_child(destination_group)
+            content_box.append(destination_wrapper)
+
+
+            def _open_destination_picker():
+                file_dialog = Gtk.FileDialog(title=_('Select destination folder'))
+                current_text = local_row.get_text().strip()
+                if current_text:
+                    try:
+                        expanded = os.path.expanduser(current_text)
+                        if os.path.isdir(expanded):
+                            file_dialog.set_initial_folder(Gio.File.new_for_path(expanded))
+                    except Exception:
+                        pass
+
+                def _on_destination_chosen(dialog: Gtk.FileDialog, result):
+                    nonlocal default_download_dir
+                    try:
+                        folder = dialog.select_folder_finish(result)
+                    except GLib.Error as err:
+                        dialog_error = getattr(Gtk, 'DialogError', None)
+                        if dialog_error is not None and err.matches(dialog_error, dialog_error.DISMISSED):
+                            return
+                        if err.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED):
+                            return
+                        logger.error(f'Destination chooser failed: {err.message}')
+                        status_label.set_text(
+                            _('Could not select destination: {error}').format(error=err.message)
+                        )
+                        return
+
+                    if not folder:
+                        return
+
+                    path = folder.get_path()
+                    if not path:
+                        return
+
+                    default_download_dir = path
+                    local_row.set_text(path)
+
+                try:
+                    file_dialog.select_folder(self, None, _on_destination_chosen)
+                except Exception as err:
+                    logger.error(f'Failed to present destination chooser: {err}')
+                    status_label.set_text(
+                        _('Could not open destination chooser: {error}').format(error=str(err))
+                    )
+
+            picker_button.connect('clicked', lambda *_: _open_destination_picker())
+
+            button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            button_box.set_halign(Gtk.Align.END)
+
+            cancel_button = Gtk.Button(label=_('Cancel'))
+            button_box.append(cancel_button)
+
+            download_button = Gtk.Button(label=_('Download'))
+            download_button.set_sensitive(False)
+            try:
+                download_button.add_css_class('suggested-action')
+            except Exception:
+                pass
+            button_box.append(download_button)
+
+            content_box.append(button_box)
+
+            root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            root_box.append(header)
+            root_box.append(content_box)
+            dialog.set_content(root_box)
+
+            def _clear_list():
+                child = list_box.get_first_child()
+                while child is not None:
+                    next_child = child.get_next_sibling()
+                    list_box.remove(child)
+                    child = next_child
+
+            def _on_rows_changed(_list, row):
+                if not row:
+                    download_button.set_sensitive(False)
+                    return
+                download_button.set_sensitive(getattr(row, 'remote_selectable', True))
+
+            list_box.connect('row-selected', _on_rows_changed)
+
+            def _finish_download(success: bool, destination: Path, remote_name: str):
+                list_box.set_sensitive(True)
+                refresh_button.set_sensitive(True)
+                selected_row = list_box.get_selected_row()
+                if selected_row is not None:
+                    download_button.set_sensitive(getattr(selected_row, 'remote_selectable', True))
+                if success:
+                    status_label.set_text(
+                        _('Downloaded {name} to {dest}').format(
+                            name=remote_name,
+                            dest=str(destination),
+                        )
+                    )
+                    if hasattr(self, 'toast_overlay'):
+                        toast = Adw.Toast.new(
+                            _('Downloaded {name} to {dest}').format(
+                                name=remote_name,
+                                dest=str(destination),
+                            )
+                        )
+                        toast.set_timeout(3)
+                        self.toast_overlay.add_toast(toast)
+                else:
+                    status_label.set_text(_('Download failed. Check the log for details.'))
+                return False
+
+            def _start_download(row: Optional[Gtk.ListBoxRow] = None):
+                selected_row = row or list_box.get_selected_row()
+                if not selected_row:
+                    return
+                remote_name = getattr(selected_row, 'remote_name', '')
+                if not remote_name:
+                    return
+                if not getattr(selected_row, 'remote_selectable', True):
+                    return
+
+                current_dir = _normalize_remote_path(remote_row.get_text())
+                if current_dir in ('.', ''):
+                    remote_path = remote_name
+                else:
+                    remote_path = _remote_join(current_dir, remote_name)
+
+                destination_text = local_row.get_text().strip()
+                if not destination_text:
+                    destination_text = str(default_download_dir)
+                try:
+                    destination_dir = Path(destination_text).expanduser()
+                except Exception:
+                    destination_dir = Path(destination_text)
+
+                try:
+                    destination_dir.mkdir(parents=True, exist_ok=True)
+                except Exception as exc:
+                    status_label.set_text(
+                        _('Cannot access {dest}: {error}').format(
+                            dest=str(destination_dir),
+                            error=str(exc),
+                        )
+                    )
+                    return
+
+                status_label.set_text(_('Downloading…'))
+                download_button.set_sensitive(False)
+                refresh_button.set_sensitive(False)
+                list_box.set_sensitive(False)
+
+                is_directory = bool(getattr(selected_row, 'remote_is_dir', False))
+
+                def _worker():
+                    success = download_file(
+                        host_value,
+                        username,
+                        remote_path,
+                        str(destination_dir),
+                        recursive=is_directory,
+                        port=port,
+                        password=saved_password,
+                        known_hosts_path=known_hosts_path,
+                        extra_ssh_opts=ssh_extra_opts,
+                        use_publickey=use_publickey_with_password,
+                        inherit_env=base_env,
+                        saved_passphrase=profile.saved_passphrase,
+                        keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
+                        key_mode=profile.key_mode,
+                    )
+                    GLib.idle_add(_finish_download, success, destination_dir, remote_name)
+
+                threading.Thread(target=_worker, daemon=True).start()
+
+            def _populate_list(entries: List[Tuple[str, bool]], directory: str, error_message: Optional[str]):
+                _clear_list()
+                current_dir = _normalize_remote_path(directory)
+
+                if error_message:
+                    status_label.set_text(error_message)
+                    download_button.set_sensitive(False)
+                    return
+
+                parent_dir = _remote_parent(current_dir)
+                if parent_dir is not None:
+                    parent_row = Gtk.ListBoxRow()
+                    parent_label = Gtk.Label(label='..')
+                    parent_label.set_halign(Gtk.Align.START)
+                    parent_label.set_hexpand(True)
+                    try:
+                        parent_label.add_css_class('monospace')
+                    except Exception:
+                        pass
+                    try:
+                        parent_label.add_css_class('dim-label')
+                    except Exception:
+                        pass
+                    parent_row.set_child(parent_label)
+                    try:
+                        parent_row.set_selectable(False)
+                        parent_row.set_activatable(True)
+                    except Exception:
+                        pass
+                    setattr(parent_row, 'remote_name', '..')
+                    setattr(parent_row, 'remote_is_dir', True)
+                    setattr(parent_row, 'remote_selectable', False)
+                    list_box.append(parent_row)
+
+                if not entries:
+                    status_label.set_text(
+                        _('No entries found for {path}.').format(path=current_dir)
+                    )
+                    download_button.set_sensitive(False)
+                    return
+
+                for entry_name, is_dir in entries:
+                    row = Gtk.ListBoxRow()
+                    display_name = f"{entry_name}/" if is_dir else entry_name
+                    label = Gtk.Label(label=display_name)
+                    label.set_halign(Gtk.Align.START)
+                    label.set_hexpand(True)
+                    try:
+                        label.add_css_class('monospace')
+                    except Exception:
+                        pass
+                    row.set_child(label)
+                    setattr(row, 'remote_name', entry_name)
+                    setattr(row, 'remote_is_dir', is_dir)
+                    setattr(row, 'remote_selectable', True)
+                    list_box.append(row)
+
+                status_label.set_text(_('Select an item to download.'))
+                try:
+                    candidate = list_box.get_first_child()
+                    while candidate is not None:
+                        if getattr(candidate, 'remote_selectable', True):
+                            list_box.select_row(candidate)
+                            break
+                        candidate = candidate.get_next_sibling()
+                except Exception:
+                    pass
+
+            def _load_remote():
+                directory = remote_row.get_text().strip() or '.'
+                status_label.set_text(_('Loading…'))
+                refresh_button.set_sensitive(False)
+                list_box.set_sensitive(False)
+                download_button.set_sensitive(False)
+
+                def _worker():
+                    files, error_message = list_remote_files(
+                        host_value,
+                        username,
+                        directory,
+                        port=port,
+                        password=saved_password,
+                        known_hosts_path=known_hosts_path,
+                        extra_ssh_opts=ssh_extra_opts,
+                        use_publickey=use_publickey_with_password,
+                        inherit_env=base_env,
+                    )
+
+                    def _update():
+                        _populate_list(files, directory, error_message)
+                        refresh_button.set_sensitive(True)
+                        list_box.set_sensitive(True)
+                        selected_row = list_box.get_selected_row()
+                        if selected_row is not None:
+                            download_button.set_sensitive(getattr(selected_row, 'remote_selectable', True))
+                        return False
+
+                    GLib.idle_add(_update, priority=GLib.PRIORITY_DEFAULT)
+
+                threading.Thread(target=_worker, daemon=True).start()
+
+            def _refresh():
+                _load_remote()
+
+            refresh_button.connect('clicked', lambda *_: _refresh())
+            remote_row.connect('activate', lambda *_: _refresh())
+            download_button.connect('clicked', lambda *_: _start_download())
+
+            def _on_row_activated(_box, row):
+                if not row:
+                    return
+                remote_name = getattr(row, 'remote_name', '')
+                if not remote_name:
+                    return
+                current_dir = remote_row.get_text().strip() or '.'
+                if remote_name == '..':
+                    parent = _remote_parent(current_dir)
+                    if parent is None:
+                        return
+                    remote_row.set_text(parent)
+                    _refresh()
+                elif getattr(row, 'remote_is_dir', False):
+                    new_dir = _remote_join(current_dir, remote_name)
+                    remote_row.set_text(new_dir)
+                    _refresh()
+                else:
+                    list_box.select_row(row)
+
+            list_box.connect('row-activated', _on_row_activated)
+            cancel_button.connect('clicked', lambda *_: dialog.close())
+
+            dialog.present()
+            _load_remote()
         except Exception as e:
             logger.error(f'SCP download prompt failed: {e}')
 
@@ -4212,7 +5115,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     error_details = None
                     if not ok:
                         try:
-                            content = term_widget.vte.get_text_range(0, 0, -1, -1, None)
+                            content_result = term_widget.vte.get_text_range(
+                                0,
+                                0,
+                                -1,
+                                -1,
+                                lambda *args: True,
+                            )
+                            content = content_result[0] if content_result else None
                             if content:
                                 # Look for common error patterns in the output
                                 content_lower = content.lower()
@@ -4228,7 +5138,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                                     error_details = 'Operation not permitted - check server permissions'
                                 else:
                                     # Extract the last few lines of output for context
-                                    lines = content.strip().split('\n')
+                                    stripped_content = content.strip() if content else ''
+                                    lines = stripped_content.split('\n') if stripped_content else []
                                     if lines:
                                         error_details = f"Error details: {lines[-1]}"
                         except Exception as e:
@@ -4465,19 +5376,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f'File selection failed: {e}')
 
-    def _parse_remote_sources_text(self, text: str) -> List[str]:
-        """Parse manual remote path input into a list of usable paths."""
-        stripped = (text or '').strip()
-        if not stripped:
-            return []
-        lines = [line.strip() for line in stripped.splitlines() if line.strip()]
-        if len(lines) > 1:
-            return lines
-        try:
-            return [token for token in shlex.split(stripped) if token]
-        except ValueError:
-            return [stripped]
-
     def _start_scp_transfer(self, connection, sources, destination, *, direction: str):
         """Run scp using the same terminal window layout as ssh-copy-id."""
         try:
@@ -4488,7 +5386,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _show_scp_terminal_window(self, connection, sources, destination, direction):
         try:
-            host_value = _get_connection_host(connection) or _get_connection_alias(connection)
+            alias_value = _get_connection_alias(connection)
+            hostname_value = _get_connection_host(connection)
+            host_value = alias_value or hostname_value
             target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
 
             if direction == 'upload':
@@ -4744,155 +5644,100 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         direction: str,
         known_hosts_path: Optional[str] = None,
     ):
-        argv = ['scp', '-v']
-        host_value = _get_connection_host(connection) or _get_connection_alias(connection)
+        profile = self._build_scp_connection_profile(connection)
+
+        host_value = profile.host
         scp_host = host_value
         if scp_host and ':' in scp_host and not (scp_host.startswith('[') and scp_host.endswith(']')):
             scp_host = f"[{scp_host}]"
-        target = f"{connection.username}@{scp_host}" if getattr(connection, 'username', '') else scp_host
+        username = profile.username
+        target = f"{username}@{scp_host}" if username else scp_host
         transfer_sources, transfer_destination = assemble_scp_transfer_args(
             target,
             sources,
             destination,
             direction,
         )
-        # Port
-        try:
-            if getattr(connection, 'port', 22) and connection.port != 22:
-                argv += ['-P', str(connection.port)]
-        except Exception:
-            pass
-        # Auth/SSH options similar to ssh-copy-id
-        try:
-            cfg = Config()
-            ssh_cfg = cfg.get_ssh_config() if hasattr(cfg, 'get_ssh_config') else {}
-            strict_val = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
-            auto_add = bool(ssh_cfg.get('auto_add_host_keys', True))
-            if strict_val:
-                argv += ['-o', f'StrictHostKeyChecking={strict_val}']
-            elif auto_add:
-                argv += ['-o', 'StrictHostKeyChecking=accept-new']
-        except Exception:
-            argv += ['-o', 'StrictHostKeyChecking=accept-new']
+        if hasattr(self, 'connection_manager') and self.connection_manager:
+            try:
+                if profile.key_mode in (1, 2) and profile.keyfile_ok and profile.keyfile_expanded:
+                    self.connection_manager.prepare_key_for_connection(profile.keyfile_expanded)
+            except Exception:
+                pass
+        port = profile.port
+        saved_password = profile.saved_password
+        saved_passphrase = profile.saved_passphrase
+        ssh_extra_opts = list(profile.ssh_options)
+
+        if saved_passphrase:
+            from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
+
+            askpass_env = get_ssh_env_with_forced_askpass()
+            if not hasattr(self, '_scp_askpass_env'):
+                self._scp_askpass_env = {}
+            self._scp_askpass_env.update(askpass_env)
+            logger.debug(f"SCP: Stored askpass environment for key passphrase: {list(askpass_env.keys())}")
+
+            passphrase_opts = get_scp_ssh_options()
+            for idx in range(0, len(passphrase_opts), 2):
+                flag = passphrase_opts[idx]
+                value = passphrase_opts[idx + 1] if idx + 1 < len(passphrase_opts) else None
+                self._append_scp_option_pair(ssh_extra_opts, flag, value)
 
         if known_hosts_path:
-            argv += ['-o', f'UserKnownHostsFile={known_hosts_path}']
-        # Prefer password if selected
-        prefer_password = False
-        key_mode = 0
-        keyfile = getattr(connection, 'keyfile', '') or ''
-        try:
-            auth_method = int(getattr(connection, 'auth_method', 0) or 0)
-            prefer_password = (auth_method == 1)
-        except Exception:
-            auth_method = 0
-            prefer_password = False
-        has_saved_password = bool(self.connection_manager.get_password(host_value, connection.username)) if hasattr(self, 'connection_manager') and self.connection_manager else False
-        combined_auth = (auth_method == 0 and has_saved_password)
-        try:
-            key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
-        except Exception:
-            key_mode = 0
-        try:
-            keyfile_ok = bool(keyfile) and os.path.isfile(keyfile)
-        except Exception:
-            keyfile_ok = False
-        # Handle authentication with saved credentials
-        if key_mode in (1, 2) and keyfile_ok:
-            argv += ['-i', keyfile]
-            if key_mode == 1:
-                argv += ['-o', 'IdentitiesOnly=yes']
+            ssh_extra_opts += ['-o', f'UserKnownHostsFile={known_hosts_path}']
 
-                # Try to get saved passphrase for the key
-                try:
-                    if hasattr(self, 'connection_manager') and self.connection_manager:
-                        saved_passphrase = self.connection_manager.get_key_passphrase(keyfile)
-                        if saved_passphrase:
-                            # Use the secure askpass script for passphrase authentication
-                            # This avoids storing passphrases in plain text temporary files
-                            from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
-                            askpass_env = get_ssh_env_with_forced_askpass()
-                            # Store for later use in the main execution
-                            if not hasattr(self, '_scp_askpass_env'):
-                                self._scp_askpass_env = {}
-                            self._scp_askpass_env.update(askpass_env)
-                            logger.debug(f"SCP: Stored askpass environment for key passphrase: {list(askpass_env.keys())}")
+        argv = ['scp', '-v']
+        if port and port != 22:
+            argv += ['-P', str(port)]
+        argv += ssh_extra_opts
 
-                            # Add SSH options to force public key authentication and prevent password fallback
-                            argv += get_scp_ssh_options()
-                except Exception as e:
-                    logger.debug(f"Failed to get saved passphrase for SCP: {e}")
+        self._scp_strip_askpass = False
+        if profile.prefer_password or profile.combined_auth:
+            if saved_password:
+                import shutil
 
-        elif prefer_password or combined_auth:
-            if prefer_password:
-                argv += ['-o', 'PreferredAuthentications=password']
-                if getattr(connection, 'pubkey_auth_no', False):
-                    argv += ['-o', 'PubkeyAuthentication=no']
+                sshpass_path = None
+                if os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
+                    sshpass_path = '/app/bin/sshpass'
+                    logger.debug("Found sshpass at /app/bin/sshpass")
+                elif shutil.which('sshpass'):
+                    sshpass_path = shutil.which('sshpass')
+                    logger.debug(f"Found sshpass in PATH: {sshpass_path}")
+                else:
+                    logger.debug("sshpass not found or not executable")
+
+                if sshpass_path:
+                    from .ssh_password_exec import _mk_priv_dir, _write_once_fifo
+                    import threading
+
+                    tmpdir = _mk_priv_dir()
+                    fifo = os.path.join(tmpdir, "pw.fifo")
+                    os.mkfifo(fifo, 0o600)
+
+                    t = threading.Thread(target=_write_once_fifo, args=(fifo, saved_password), daemon=True)
+                    t.start()
+
+                    argv = [sshpass_path, '-f', fifo] + argv
+                    logger.debug("Using sshpass with FIFO for SCP password authentication")
+
+                    def cleanup_tmpdir():
+                        try:
+                            shutil.rmtree(tmpdir, ignore_errors=True)
+                        except Exception:
+                            pass
+
+                    import atexit
+                    atexit.register(cleanup_tmpdir)
+                else:
+                    logger.warning("SCP: sshpass unavailable, falling back to interactive prompt")
+                    self._scp_strip_askpass = True
             else:
-                argv += [
-                    '-o',
-                    'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
-                ]
-            
-            # Try to get saved password
-            try:
-                if hasattr(self, 'connection_manager') and self.connection_manager:
-                    saved_password = self.connection_manager.get_password(host_value, connection.username)
-                    if saved_password:
-                        # Use sshpass for password authentication
-                        import shutil
-                        sshpass_path = None
-                        
-                        # Check if sshpass is available and executable
-                        if os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
-                            sshpass_path = '/app/bin/sshpass'
-                            logger.debug("Found sshpass at /app/bin/sshpass")
-                        elif shutil.which('sshpass'):
-                            sshpass_path = shutil.which('sshpass')
-                            logger.debug(f"Found sshpass in PATH: {sshpass_path}")
-                        else:
-                            logger.debug("sshpass not found or not executable")
-                        
-                        if sshpass_path:
-                            # Use the same approach as ssh_password_exec.py for consistency
-                            from .ssh_password_exec import _mk_priv_dir, _write_once_fifo
-                            import threading
-                            
-                            # Create private temp directory and FIFO
-                            tmpdir = _mk_priv_dir()
-                            fifo = os.path.join(tmpdir, "pw.fifo")
-                            os.mkfifo(fifo, 0o600)
-                            
-                            # Start writer thread that writes the password exactly once
-                            t = threading.Thread(target=_write_once_fifo, args=(fifo, saved_password), daemon=True)
-                            t.start()
-                            
-                            # Use sshpass with FIFO
-                            argv = [sshpass_path, "-f", fifo] + argv
-                            
-                            logger.debug("Using sshpass with FIFO for SCP password authentication")
-                            
-                            # Store tmpdir for cleanup (will be cleaned up when process exits)
-                            def cleanup_tmpdir():
-                                try:
-                                    import shutil
-                                    shutil.rmtree(tmpdir, ignore_errors=True)
-                                except Exception:
-                                    pass
-                            import atexit
-                            atexit.register(cleanup_tmpdir)
-                        else:
-                            # sshpass not available – allow interactive password prompt
-                            logger.warning("SCP: sshpass unavailable, falling back to interactive prompt")
-                            self._scp_strip_askpass = True
-                    else:
-                        # No saved password - will use interactive prompt
-                        logger.debug("SCP: Password auth selected but no saved password - using interactive prompt")
-            except Exception as e:
-                logger.debug(f"Failed to get saved password for SCP: {e}")
-        
-        for p in transfer_sources:
-            argv.append(p)
+                logger.debug("SCP: Password auth selected but no saved password - using interactive prompt")
+                self._scp_strip_askpass = True
+
+        for path in transfer_sources:
+            argv.append(path)
         argv.append(transfer_destination)
         return argv
 
@@ -5262,6 +6107,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             for terms in self.connection_to_terminals.values():
                 for terminal in terms:
                     terminal.apply_theme()
+        elif key == 'ui.group_row_display':
+            normalized = 'fullwidth'
+            try:
+                normalized = str(value).lower()
+            except Exception:
+                pass
+            if normalized not in {'fullwidth', 'nested'}:
+                normalized = 'fullwidth'
+
+            for row in self.connection_rows.values():
+                if hasattr(row, 'refresh_group_display_mode'):
+                    row.refresh_group_display_mode(normalized)
 
     def on_window_size_changed(self, window, param):
         """Handle window size change"""
@@ -6336,6 +7193,48 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             create_section_box.append(create_box)
 
+            # Color selector matching create group dialog
+            color_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            color_row.set_hexpand(True)
+            color_label = Gtk.Label(label=_("Group color"))
+            color_label.set_xalign(0)
+            color_label.set_hexpand(True)
+            color_row.append(color_label)
+
+            color_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            color_button = Gtk.ColorButton()
+            color_button.set_use_alpha(True)
+            color_button.set_title(_("Select group color"))
+            initial_rgba = Gdk.RGBA()
+            initial_rgba.red = initial_rgba.green = initial_rgba.blue = 0
+            initial_rgba.alpha = 0
+            color_button.set_rgba(initial_rgba)
+            color_controls.append(color_button)
+
+            color_selected = False
+
+            def mark_color_selected(_button):
+                nonlocal color_selected
+                color_selected = True
+
+            color_button.connect('color-set', mark_color_selected)
+
+            def reset_color_selection() -> None:
+                nonlocal color_selected
+                color_selected = False
+                cleared = Gdk.RGBA()
+                cleared.red = cleared.green = cleared.blue = 0
+                cleared.alpha = 0
+                color_button.set_rgba(cleared)
+
+            clear_color_button = Gtk.Button(label=_("Clear"))
+            clear_color_button.add_css_class('flat')
+            clear_color_button.connect('clicked', lambda _btn: reset_color_selection())
+            color_controls.append(clear_color_button)
+
+            color_row.append(color_controls)
+            create_section_box.append(color_row)
+
             # Add the create section to content area
             content_area.append(create_section_box)
             
@@ -6395,7 +7294,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 if group_name:
                     try:
                         # Create the new group
-                        new_group_id = self.group_manager.create_group(group_name)
+                        selected_color = None
+                        rgba_value = color_button.get_rgba()
+                        if color_selected and rgba_value.alpha > 0:
+                            selected_color = rgba_value.to_string()
+                        new_group_id = self.group_manager.create_group(group_name, color=selected_color)
                         # Move all selected connections to the new group
                         for nickname in connection_nicknames:
                             self.group_manager.move_connection(nickname, new_group_id)
@@ -6436,8 +7339,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         error_dialog.connect('response', on_error_response)
                         error_dialog.present()
                         
-                        # Clear the entry and focus it for retry
+                        # Clear the entry, reset color, and focus it for retry
                         self.create_group_entry.set_text("")
+                        reset_color_selection()
                         self.create_group_entry.grab_focus()
 
             self.create_group_entry.connect('changed', on_entry_changed)
