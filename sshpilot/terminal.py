@@ -396,15 +396,11 @@ class TerminalWidget(Gtk.Box):
 
         self.overlay.add_overlay(self.connecting_bg)
         self.overlay.add_overlay(self.connecting_box)
-        self.overlay.add_overlay(self.search_revealer)
-        try:
-            self.overlay.set_measure_overlay(self.search_revealer, True)
-        except AttributeError:
-            pass
 
         self.terminal_stack = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.terminal_stack.set_hexpand(True)
         self.terminal_stack.set_vexpand(True)
+        self.terminal_stack.append(self.search_revealer)
         self.terminal_stack.append(self.overlay)
 
         # Disconnected banner with reconnect button at the bottom (separate panel below terminal)
