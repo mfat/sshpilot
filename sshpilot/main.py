@@ -130,6 +130,7 @@ class SshPilotApplication(Adw.Application):
             self.create_action('open-new-connection-tab', self.on_open_new_connection_tab, ['<Meta><Alt>n'])
             self.create_action('toggle-list', self.on_toggle_list, ['<Meta>l'])
             self.create_action('search', self.on_search, ['<Meta>f'])
+            self.create_action('terminal-search', self.on_terminal_search, ['<Meta><Shift>f'])
             self.create_action('new-key', self.on_new_key, ['<Meta><Shift>k'])
             self.create_action('edit-ssh-config', self.on_edit_ssh_config, ['<Meta><Shift>e'])
             if not should_hide_file_manager_options():
@@ -142,6 +143,7 @@ class SshPilotApplication(Adw.Application):
             self.create_action('open-new-connection-tab', self.on_open_new_connection_tab, ['<primary><alt>n'])
             self.create_action('toggle-list', self.on_toggle_list, ['<primary>l'])
             self.create_action('search', self.on_search, ['<primary>f'])
+            self.create_action('terminal-search', self.on_terminal_search, ['<primary><shift>f'])
             self.create_action('new-key', self.on_new_key, ['<primary><shift>k'])
             self.create_action('edit-ssh-config', self.on_edit_ssh_config, ['<primary><shift>e'])
             if not should_hide_file_manager_options():
@@ -504,6 +506,16 @@ class SshPilotApplication(Adw.Application):
         logging.debug("Local terminal action triggered")
         if self.props.active_window:
             self.props.active_window.terminal_manager.show_local_terminal()
+
+    def on_terminal_search(self, action, param):
+        """Toggle the search overlay for the active terminal."""
+        window = self.props.active_window
+        if not window:
+            return
+
+        handler = getattr(window, 'toggle_terminal_search_overlay', None)
+        if callable(handler):
+            handler(select_all=True)
 
     def on_preferences(self, action, param):
         """Handle preferences action"""
