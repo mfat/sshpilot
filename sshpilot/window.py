@@ -4414,6 +4414,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             remote_row.set_show_apply_button(False)
             paths_group.add(remote_row)
 
+
             paths_wrapper = Adw.Clamp()
             paths_wrapper.set_child(paths_group)
             content_box.append(paths_wrapper)
@@ -4460,6 +4461,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             destination_wrapper = Adw.Clamp()
             destination_wrapper.set_child(destination_group)
             content_box.append(destination_wrapper)
+
 
             def _open_destination_picker():
                 file_dialog = Gtk.FileDialog(title=_('Select destination folder'))
