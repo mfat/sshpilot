@@ -83,7 +83,7 @@ Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
   </a>
 </p>
 
-OR in a terminal typ: 
+OR in a terminal type: 
 
 `
 flatpak install flathub io.github.mfat.sshpilot
