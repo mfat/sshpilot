@@ -19,7 +19,7 @@ import subprocess
 import shutil
 import pwd
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from .port_utils import get_port_checker
 from .platform_utils import is_flatpak, is_macos
 
@@ -255,7 +255,13 @@ class TerminalWidget(Gtk.Box):
         # Job detection state
         self._job_status = "UNKNOWN"  # IDLE, RUNNING, PROMPT, UNKNOWN
         self._shell_pgid = None  # Store shell process group ID for shell-agnostic detection
-        
+
+        # Control channel for the external PTY agent
+        self._agent_control_writer_fd: Optional[int] = None
+        self._agent_control_reader_fd: Optional[int] = None
+        self._agent_resize_handler_ids: List[int] = []
+        self._agent_last_reported_size: Optional[Tuple[int, int]] = None
+
         # Register with process manager
         process_manager.register_terminal(self)
         
@@ -2000,44 +2006,138 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Failed to setup local shell: {e}")
             self.emit('connection-failed', str(e))
     
+    def _ensure_agent_resize_monitoring(self):
+        """Connect handlers that propagate resize events to the agent."""
+        if not hasattr(self, 'vte') or self.vte is None:
+            return
+
+        if self._agent_resize_handler_ids:
+            return
+
+        try:
+            self._agent_resize_handler_ids.append(
+                self.vte.connect('notify::row-count', self._on_vte_dimensions_changed)
+            )
+            self._agent_resize_handler_ids.append(
+                self.vte.connect('notify::column-count', self._on_vte_dimensions_changed)
+            )
+            self._agent_resize_handler_ids.append(
+                self.vte.connect('size-allocate', self._on_vte_dimensions_changed)
+            )
+        except Exception as exc:
+            logger.debug("Failed to install resize handlers: %s", exc)
+
+    def _remove_agent_resize_monitoring(self):
+        if not self._agent_resize_handler_ids or not hasattr(self, 'vte') or self.vte is None:
+            self._agent_resize_handler_ids = []
+            return
+
+        for handler_id in self._agent_resize_handler_ids:
+            try:
+                self.vte.disconnect(handler_id)
+            except Exception as exc:
+                logger.debug("Failed to disconnect resize handler: %s", exc)
+
+        self._agent_resize_handler_ids = []
+
+    def _close_agent_control_channel(self):
+        if self._agent_control_writer_fd is not None:
+            try:
+                os.close(self._agent_control_writer_fd)
+            except OSError as exc:
+                logger.debug("Error closing agent control writer FD: %s", exc)
+            finally:
+                self._agent_control_writer_fd = None
+
+        if self._agent_control_reader_fd is not None:
+            try:
+                os.close(self._agent_control_reader_fd)
+            except OSError as exc:
+                logger.debug("Error closing agent control reader FD: %s", exc)
+            finally:
+                self._agent_control_reader_fd = None
+
+        self._agent_last_reported_size = None
+        self._remove_agent_resize_monitoring()
+
+    def _send_agent_resize_update(self):
+        if self._agent_control_writer_fd is None:
+            return
+
+        try:
+            rows = int(self.vte.get_row_count())
+            cols = int(self.vte.get_column_count())
+        except Exception as exc:
+            logger.debug("Unable to query terminal size for resize update: %s", exc)
+            return
+
+        if rows <= 0 or cols <= 0:
+            return
+
+        if self._agent_last_reported_size == (rows, cols):
+            return
+
+        message = json.dumps({'type': 'resize', 'rows': rows, 'cols': cols}).encode('utf-8') + b'\n'
+
+        try:
+            os.write(self._agent_control_writer_fd, message)
+        except (BrokenPipeError, OSError) as exc:
+            logger.debug("Failed to send resize update to agent: %s", exc)
+            self._close_agent_control_channel()
+            return
+
+        self._agent_last_reported_size = (rows, cols)
+
+    def _on_vte_dimensions_changed(self, *args):
+        self._send_agent_resize_update()
+
     def _try_agent_based_shell(self) -> bool:
         """
         Try to set up local shell using the agent (Ptyxis-style).
         This fixes job control issues in Flatpak.
-        
+
         Returns:
             True if successful, False otherwise
         """
         try:
             from .agent_client import AgentClient
-            
+
             # Create agent client
             client = AgentClient()
-            
+
             # Get terminal size
             cols = self.vte.get_column_count()
             rows = self.vte.get_row_count()
-            
+
             # Working directory
             cwd = os.path.expanduser('~')
-            
+
             # Check if verbose mode is enabled
             verbose = logger.getEffectiveLevel() <= logging.DEBUG
-            
+
             # Build agent command
-            command = client.build_agent_command(
+            launch = client.build_agent_command(
                 rows=rows,
                 cols=cols,
                 cwd=cwd,
                 verbose=verbose
             )
-            
-            if not command:
+
+            if not launch:
                 logger.warning("Could not build agent command, falling back to direct spawn")
                 return False
-            
+
+            command = launch.command
+
+            # Prepare control channel for resize notifications
+            self._close_agent_control_channel()
+            self._agent_control_writer_fd = launch.control_writer_fd
+            self._agent_control_reader_fd = launch.control_reader_fd
+            self._agent_last_reported_size = None
+            self._ensure_agent_resize_monitoring()
+
             logger.info(f"Launching agent-based shell via flatpak-spawn...")
-            
+
             # Environment for agent
             env = os.environ.copy()
             env['TERM'] = env.get('TERM', 'xterm-256color')
@@ -2060,10 +2160,18 @@ class TerminalWidget(Gtk.Box):
                 self._on_agent_spawn_complete,
                 None
             )
-            
+
+            if self._agent_control_reader_fd is not None:
+                try:
+                    os.close(self._agent_control_reader_fd)
+                except OSError as exc:
+                    logger.debug("Failed to close agent control reader FD: %s", exc)
+                finally:
+                    self._agent_control_reader_fd = None
+
             # Add fallback timer
             self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
-            
+
             return True
             
         except ImportError as e:
@@ -2158,9 +2266,10 @@ class TerminalWidget(Gtk.Box):
         """Callback when agent spawn completes"""
         if error:
             logger.error(f"Agent spawn failed: {error}")
+            self._close_agent_control_channel()
             self.emit('connection-failed', str(error))
             return
-        
+
         logger.info(f"Agent spawned successfully (PID: {pid})")
         
         # Hide the connecting overlay
@@ -2169,9 +2278,12 @@ class TerminalWidget(Gtk.Box):
             self._fallback_timer_id = None
         
         self._set_connecting_overlay_visible(False)
-        
+
         # Store PID for cleanup
         self.process_pid = pid
+
+        # Ensure the agent has the latest size information once it is ready
+        self._send_agent_resize_update()
 
     def _setup_context_menu(self):
         """Set up a robust per-terminal context menu and actions."""
@@ -2678,6 +2790,8 @@ class TerminalWidget(Gtk.Box):
         """Handle widget destruction"""
         logger.debug(f"Terminal widget {self.session_id} being destroyed")
 
+        self._close_agent_control_channel()
+
         # Disconnect VTE signal handlers first to prevent callbacks on destroyed objects
         if hasattr(self, 'vte') and self.vte:
             try:
@@ -2833,6 +2947,8 @@ class TerminalWidget(Gtk.Box):
     
     def disconnect(self):
         """Close the SSH connection and clean up resources"""
+        self._close_agent_control_channel()
+
         if not self.is_connected:
             return
             

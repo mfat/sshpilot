@@ -12,12 +12,22 @@ import logging
 import subprocess
 import shutil
 import shlex
+from dataclasses import dataclass
 from typing import Optional, Tuple, List
 from pathlib import Path
 
 from .platform_utils import is_flatpak
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AgentLaunchCommand:
+    """Return value for agent launch configuration."""
+
+    command: List[str]
+    control_reader_fd: int
+    control_writer_fd: int
 
 
 class AgentClient:
@@ -89,7 +99,7 @@ class AgentClient:
         cols: int = 80,
         cwd: Optional[str] = None,
         verbose: bool = False
-    ) -> Optional[List[str]]:
+    ) -> Optional[AgentLaunchCommand]:
         """
         Build the command to launch the agent.
         
@@ -100,40 +110,64 @@ class AgentClient:
             verbose: Enable verbose logging
             
         Returns:
-            Command list ready for subprocess, or None if agent not found
+            AgentLaunchCommand with process command and control pipe fds, or None if
+            the agent could not be located.
         """
+
+        control_reader, control_writer = os.pipe()
+
+        try:
+            os.set_inheritable(control_reader, True)
+        except OSError as exc:
+            logger.error("Failed to mark control FD inheritable: %s", exc)
+            os.close(control_reader)
+            os.close(control_writer)
+            return None
+
         # In Flatpak, use embedded agent code approach
         if is_flatpak():
-            return self._build_flatpak_agent_command(rows, cols, cwd, verbose)
-        
+            command = self._build_flatpak_agent_command(
+                rows, cols, cwd, verbose, control_reader
+            )
+            if not command:
+                os.close(control_reader)
+                os.close(control_writer)
+                return None
+
+            return AgentLaunchCommand(command, control_reader, control_writer)
+
         # Not in Flatpak, run directly
         python_path, agent_path = self.find_agent()
-        
+
         if not python_path or not agent_path:
+            os.close(control_reader)
+            os.close(control_writer)
             return None
-        
+
         # Build agent command
         agent_cmd = [
             python_path,
             agent_path,
             '--rows', str(rows),
             '--cols', str(cols),
+            '--control-fd', str(control_reader),
         ]
-        
+
         if cwd:
             agent_cmd.extend(['--cwd', cwd])
-        
+
         if verbose:
             agent_cmd.append('--verbose')
-        
-        return agent_cmd
+
+        return AgentLaunchCommand(agent_cmd, control_reader, control_writer)
     
     def _build_flatpak_agent_command(
         self,
         rows: int = 24,
         cols: int = 80,
         cwd: Optional[str] = None,
-        verbose: bool = False
+        verbose: bool = False,
+        control_fd: Optional[int] = None
     ) -> Optional[List[str]]:
         """
         Build agent command for Flatpak environment.
@@ -170,6 +204,9 @@ class AgentClient:
             '--rows', str(rows),
             '--cols', str(cols),
         ]
+
+        if control_fd is not None:
+            agent_args.extend(['--control-fd', str(control_fd)])
         
         if cwd:
             agent_args.extend(['--cwd', cwd])
@@ -190,13 +227,17 @@ class AgentClient:
         # Execute via flatpak-spawn
         cmd = [
             flatpak_spawn,
+            f'--forward-fd={control_fd}' if control_fd is not None else None,
             '--host',
             f'--env=SSHPILOT_AGENT={agent_b64}',
             'bash',
             '-c',
             wrapper_script
         ]
-        
+
+        # Remove any None entries that may have been inserted when control_fd is None
+        cmd = [arg for arg in cmd if arg is not None]
+
         return cmd
     
     def launch_agent(
@@ -205,37 +246,55 @@ class AgentClient:
         cols: int = 80,
         cwd: Optional[str] = None,
         verbose: bool = False
-    ) -> Optional[subprocess.Popen]:
+    ) -> Optional[Tuple[subprocess.Popen, AgentLaunchCommand]]:
         """
         Launch the agent process.
-        
+
         Returns:
-            Popen object for the agent process, or None if failed
+            Tuple of the spawned Popen object and the launch configuration with
+            control pipe descriptors, or None if launching failed.
         """
-        cmd = self.build_agent_command(rows, cols, cwd, verbose)
-        
-        if not cmd:
+        launch = self.build_agent_command(rows, cols, cwd, verbose)
+
+        if not launch:
             logger.error("Could not build agent command")
             return None
-        
+
         try:
-            logger.info(f"Launching agent: {' '.join(cmd)}")
-            
+            logger.info(f"Launching agent: {' '.join(launch.command)}")
+
             # Launch agent with pipes for I/O
             process = subprocess.Popen(
-                cmd,
+                launch.command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True  # Important: agent becomes session leader
             )
-            
+
             logger.debug(f"Agent launched with PID: {process.pid}")
-            return process
-            
+            return process, launch
+
         except Exception as e:
             logger.error(f"Failed to launch agent: {e}")
+            try:
+                os.close(launch.control_reader_fd)
+            except OSError:
+                pass
+            try:
+                os.close(launch.control_writer_fd)
+            except OSError:
+                pass
+            launch.control_reader_fd = -1
+            launch.control_writer_fd = -1
             return None
+        finally:
+            try:
+                os.close(launch.control_reader_fd)
+            except OSError:
+                pass
+            else:
+                launch.control_reader_fd = -1
     
     def get_agent_fds(self, process: subprocess.Popen) -> Tuple[int, int, int]:
         """
@@ -341,9 +400,10 @@ if __name__ == '__main__':
         print(f"Python: {python_path}")
         print(f"Agent: {agent_path}")
         
-        cmd = client.build_agent_command(rows=24, cols=80, verbose=True)
-        if cmd:
-            print(f"Command: {' '.join(cmd)}")
+        launch = client.build_agent_command(rows=24, cols=80, verbose=True)
+        if launch:
+            print(f"Command: {' '.join(launch.command)}")
+            print(f"Control reader FD: {launch.control_reader_fd}")
     else:
         print("Agent not found")
 

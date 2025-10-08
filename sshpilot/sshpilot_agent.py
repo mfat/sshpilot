@@ -39,6 +39,22 @@ class PTYAgent:
         self.slave_fd: Optional[int] = None
         self.shell_pid: Optional[int] = None
         self.original_termios = None
+        self.control_fd: Optional[int] = None
+        self._control_buffer = b''
+
+    def set_control_fd(self, fd: Optional[int]):
+        """Configure the optional control channel file descriptor."""
+        self.control_fd = fd
+        self._control_buffer = b''
+
+        if fd is None:
+            return
+
+        try:
+            flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+            fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        except OSError as exc:
+            logger.debug(f"Failed to configure control FD {fd}: {exc}")
         
     def discover_shell(self) -> str:
         """Discover the user's preferred shell on the host system"""
@@ -116,13 +132,80 @@ class PTYAgent:
         """Set the PTY size"""
         if self.master_fd is None:
             return
-        
+
         try:
             winsize = struct.pack('HHHH', rows, cols, 0, 0)
             fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, winsize)
             logger.debug(f"Set PTY size to {rows}x{cols}")
         except Exception as e:
             logger.error(f"Failed to set PTY size: {e}")
+
+    def _handle_control_messages(self):
+        """Process pending messages on the control channel."""
+        if self.control_fd is None:
+            return
+
+        try:
+            data = os.read(self.control_fd, 4096)
+        except BlockingIOError:
+            return
+        except OSError as exc:
+            logger.debug(f"Control FD read error: {exc}")
+            self._close_control_fd()
+            return
+
+        if not data:
+            logger.debug("Control FD closed by peer")
+            self._close_control_fd()
+            return
+
+        self._control_buffer += data
+
+        while b'\n' in self._control_buffer:
+            raw_line, self._control_buffer = self._control_buffer.split(b'\n', 1)
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            try:
+                message = json.loads(line.decode('utf-8'))
+            except json.JSONDecodeError as exc:
+                logger.warning(f"Invalid control message: {line!r} ({exc})")
+                continue
+
+            self._process_control_message(message)
+
+    def _process_control_message(self, message: dict):
+        """Handle a structured control message."""
+        msg_type = message.get('type')
+
+        if msg_type == 'resize':
+            rows = message.get('rows')
+            cols = message.get('cols')
+            if isinstance(rows, int) and isinstance(cols, int) and rows > 0 and cols > 0:
+                self.set_pty_size(rows, cols)
+                if self.shell_pid:
+                    try:
+                        os.kill(self.shell_pid, signal.SIGWINCH)
+                    except ProcessLookupError:
+                        logger.debug("Shell process gone while handling resize")
+                    except OSError as exc:
+                        logger.debug(f"Failed to signal shell about resize: {exc}")
+            else:
+                logger.debug(f"Invalid resize payload: {message}")
+        else:
+            logger.debug(f"Ignoring unknown control message type: {msg_type}")
+
+    def _close_control_fd(self):
+        if self.control_fd is None:
+            return
+
+        try:
+            os.close(self.control_fd)
+        except OSError:
+            pass
+        finally:
+            self.control_fd = None
     
     def spawn_shell(self, shell: str, cwd: Optional[str] = None) -> int:
         """
@@ -238,15 +321,21 @@ class PTYAgent:
         logger.debug("Starting I/O loop")
         
         try:
+            stdin_fd = sys.stdin.fileno()
+
             while True:
-                # Use select to wait for data on either stdin or master_fd
-                readable, _, _ = select.select([sys.stdin, self.master_fd], [], [])
-                
+                # Use select to wait for data on stdin/master_fd/control_fd
+                read_fds = [stdin_fd, self.master_fd]
+                if self.control_fd is not None:
+                    read_fds.append(self.control_fd)
+
+                readable, _, _ = select.select(read_fds, [], [])
+
                 for fd in readable:
-                    if fd == sys.stdin:
+                    if fd == stdin_fd:
                         # Data from VTE -> forward to shell
                         try:
-                            data = os.read(sys.stdin.fileno(), 4096)
+                            data = os.read(stdin_fd, 4096)
                             if not data:
                                 logger.debug("stdin closed")
                                 return
@@ -254,7 +343,7 @@ class PTYAgent:
                         except OSError as e:
                             logger.debug(f"stdin read error: {e}")
                             return
-                    
+
                     elif fd == self.master_fd:
                         # Data from shell -> forward to VTE
                         try:
@@ -267,6 +356,9 @@ class PTYAgent:
                         except OSError as e:
                             logger.debug(f"master_fd read error: {e}")
                             return
+
+                    elif self.control_fd is not None and fd == self.control_fd:
+                        self._handle_control_messages()
         
         except KeyboardInterrupt:
             logger.debug("Received interrupt")
@@ -303,20 +395,27 @@ class PTYAgent:
                 os.close(self.slave_fd)
             except Exception:
                 pass
-    
-    def run(self, rows: int = 24, cols: int = 80, cwd: Optional[str] = None):
+
+        if self.control_fd:
+            self._close_control_fd()
+
+    def run(self, rows: int = 24, cols: int = 80, cwd: Optional[str] = None, control_fd: Optional[int] = None):
         """Main entry point: create PTY, spawn shell, run I/O loop"""
         try:
             # Discover shell
             shell = self.discover_shell()
             logger.info(f"Using shell: {shell}")
-            
+
             # Create PTY with proper flags
             self.create_pty()
-            
+
             # Set initial size
             self.set_pty_size(rows, cols)
-            
+
+            # Configure optional control channel
+            if control_fd is not None:
+                self.set_control_fd(control_fd)
+
             # Spawn shell
             shell_pid = self.spawn_shell(shell, cwd)
 
@@ -367,6 +466,7 @@ def main():
     parser.add_argument('--cols', type=int, default=80, help='Terminal columns')
     parser.add_argument('--cwd', type=str, default=None, help='Working directory')
     parser.add_argument('--verbose', action='store_true', help='Verbose logging')
+    parser.add_argument('--control-fd', type=int, default=None, help='Control channel file descriptor')
     
     args = parser.parse_args()
     
@@ -375,7 +475,7 @@ def main():
     
     # Create and run agent
     agent = PTYAgent()
-    return agent.run(rows=args.rows, cols=args.cols, cwd=args.cwd)
+    return agent.run(rows=args.rows, cols=args.cols, cwd=args.cwd, control_fd=args.control_fd)
 
 
 if __name__ == '__main__':
