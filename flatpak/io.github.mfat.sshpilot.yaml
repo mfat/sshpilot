@@ -10,7 +10,8 @@ finish-args:
   - --socket=wayland
   - --socket=ssh-auth
   - --device=dri
-  - --filesystem=~/.ssh:ro
+  - --filesystem=~/.ssh:rw
+  - --talk-name=org.freedesktop.Flatpak
 
 cleanup:
   - '/include'
