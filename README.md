@@ -1,8 +1,7 @@
-<p align="center">
-<img width="154" height="154" alt="logo" src="https://github.com/user-attachments/assets/42b73dbf-778c-45ff-9361-22a52988f1b3" />
-</p>
 
 
+
+<img width="1322" height="922" alt="Screenshot From 2025-10-07 10-57-55" src="https://github.com/user-attachments/assets/af8ce903-2704-4740-8e39-547765ddd490" />
 
 
 
