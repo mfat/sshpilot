@@ -1981,21 +1981,32 @@ class TerminalWidget(Gtk.Box):
             self.emit('title-changed', 'Local Terminal')
 
             # Convert environment dict to list for VTE compatibility
-            env_list = []
-            for key, value in env.items():
-                env_list.append(f"{key}={value}")
+            env_list = [f"{key}={value}" for key, value in env.items()]
 
             # Start the user's shell as a login shell
             if flatpak_spawn:
-                command = [flatpak_spawn, '--host', 'env'] + env_list + [shell, '-l']
+                term_value = env.get('TERM', 'xterm-256color')
+                command = [
+                    flatpak_spawn,
+                    '--host',
+                    '--forward-fd=0',
+                    '--forward-fd=1',
+                    '--forward-fd=2',
+                    f'--env=TERM={term_value}',
+                    f'--env=SHELL={shell}',
+                    shell,
+                    '-l',
+                ]
+                spawn_env = None
             else:
                 command = [shell, '-l']
+                spawn_env = env_list
 
             self.vte.spawn_async(
                 Vte.PtyFlags.DEFAULT,
                 os.path.expanduser('~') or '/',
                 command,
-                env_list,
+                spawn_env,
                 GLib.SpawnFlags.DEFAULT,
                 None,
                 None,
