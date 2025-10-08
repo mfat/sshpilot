@@ -196,11 +196,24 @@ class PTYAgent:
 
     def _send_status(self, status_type: str, **payload):
         """Send a structured status message to stderr for the caller."""
+        stream = getattr(sys, 'stderr', None)
+        if not stream:
+            return
+
+        # When the agent is spawned through VTE the stderr stream is the
+        # interactive terminal itself, so emitting JSON control messages would be
+        # visible to the user.  Only send structured messages when stderr is a
+        # pipe (or otherwise not a tty), which covers the non-VTE execution path
+        # used by the Flatpak launcher while keeping the terminal output clean.
+        if hasattr(stream, 'isatty') and stream.isatty():
+            return
+
         try:
             message = {'type': status_type}
             message.update(payload)
-            sys.stderr.write(json.dumps(message) + '\n')
-            sys.stderr.flush()
+            stream.write(json.dumps(message) + '\n')
+            stream.flush()
+
         except Exception as exc:
             logger.debug(f"Failed to send status message: {exc}")
 
