@@ -1933,67 +1933,72 @@ class TerminalWidget(Gtk.Box):
             # Set up the terminal for local shell
             self.setup_terminal()
             
-            # Start a simple local shell - just like GNOME Terminal
-            env = os.environ.copy()
-
-            # Determine the user's preferred shell
-            shell = None
-            flatpak_spawn = None
-
-            if is_flatpak():
-                flatpak_spawn = shutil.which('flatpak-spawn')
-                if flatpak_spawn:
-                    username = env.get('USER')
-                    if not username:
-                        try:
-                            username = pwd.getpwuid(os.getuid()).pw_name
-                        except KeyError:
-                            username = None
-
-                    if username:
-                        try:
-                            result = subprocess.run(
-                                [flatpak_spawn, '--host', 'getent', 'passwd', username],
-                                capture_output=True,
-                                text=True,
-                                check=True,
-                            )
-                            output = result.stdout.strip().splitlines()
-                            if output:
-                                host_entry = output[-1]
-                                host_shell = host_entry.split(':')[-1].strip()
-                                if host_shell:
-                                    shell = host_shell
-                        except subprocess.CalledProcessError as e:
-                            logger.debug(f"Failed to get host shell via flatpak-spawn: {e}")
-                        except Exception as e:  # noqa: BLE001 - broad to ensure local shell fallback
-                            logger.debug(f"Unexpected error determining host shell: {e}")
-
-            if not shell:
-                shell = env.get('SHELL') or pwd.getpwuid(os.getuid()).pw_shell or '/bin/bash'
-
-            # Ensure we have a proper environment
-            env['SHELL'] = shell
-            if 'TERM' not in env:
-                env['TERM'] = 'xterm-256color'
-
             # Set initial title for local terminal
             self.emit('title-changed', 'Local Terminal')
-
-            # Convert environment dict to list for VTE compatibility
-            env_list = []
-            for key, value in env.items():
-                env_list.append(f"{key}={value}")
-
-            # Start the user's shell as a login shell
-            if flatpak_spawn:
-                command = [flatpak_spawn, '--host', 'env'] + env_list + [shell, '-l']
-            else:
-                command = [shell, '-l']
-
+            
+            # Try agent-based approach first (fixes job control in Flatpak)
+            if is_flatpak() and self._try_agent_based_shell():
+                logger.info("Using agent-based local shell (with job control fix)")
+                return
+            
+            # Fall back to direct spawn (legacy approach)
+            logger.info("Using direct spawn for local shell (fallback)")
+            self._setup_local_shell_direct()
+            
+        except Exception as e:
+            logger.error(f"Failed to setup local shell: {e}")
+            self.emit('connection-failed', str(e))
+    
+    def _try_agent_based_shell(self) -> bool:
+        """
+        Try to set up local shell using the agent (Ptyxis-style).
+        This fixes job control issues in Flatpak.
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            from .agent_client import AgentClient
+            
+            # Create agent client
+            client = AgentClient()
+            
+            # Get terminal size
+            cols = self.vte.get_column_count()
+            rows = self.vte.get_row_count()
+            
+            # Working directory
+            cwd = os.path.expanduser('~')
+            
+            # Check if verbose mode is enabled
+            verbose = logger.getEffectiveLevel() <= logging.DEBUG
+            
+            # Build agent command
+            command = client.build_agent_command(
+                rows=rows,
+                cols=cols,
+                cwd=cwd,
+                verbose=verbose
+            )
+            
+            if not command:
+                logger.warning("Could not build agent command, falling back to direct spawn")
+                return False
+            
+            logger.info(f"Launching agent-based shell via flatpak-spawn...")
+            
+            # Environment for agent
+            env = os.environ.copy()
+            env['TERM'] = env.get('TERM', 'xterm-256color')
+            
+            # Convert to list for VTE
+            env_list = [f"{k}={v}" for k, v in env.items()]
+            
+            # Spawn the agent via VTE
+            # Agent code is embedded in the command via base64 encoding
             self.vte.spawn_async(
                 Vte.PtyFlags.DEFAULT,
-                os.path.expanduser('~') or '/',
+                cwd,
                 command,
                 env_list,
                 GLib.SpawnFlags.DEFAULT,
@@ -2001,18 +2006,118 @@ class TerminalWidget(Gtk.Box):
                 None,
                 -1,
                 None,
-                self._on_spawn_complete,
-                ()
+                self._on_agent_spawn_complete,
+                None
             )
-
-            # Add fallback timer to hide spinner if spawn completion doesn't fire
-            self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
-
-            logger.info("Local shell terminal setup initiated")
             
+            # Add fallback timer
+            self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
+            
+            return True
+            
+        except ImportError as e:
+            logger.warning(f"Agent client not available: {e}")
+            return False
         except Exception as e:
-            logger.error(f"Failed to setup local shell: {e}")
-            self.emit('connection-failed', str(e))
+            logger.warning(f"Failed to setup agent-based shell: {e}")
+            return False
+    
+    def _setup_local_shell_direct(self):
+        """
+        Set up local shell using direct spawn (legacy approach).
+        This is the fallback when agent is not available.
+        """
+        env = os.environ.copy()
+
+        # Determine the user's preferred shell
+        shell = None
+        flatpak_spawn = None
+
+        if is_flatpak():
+            flatpak_spawn = shutil.which('flatpak-spawn')
+            if flatpak_spawn:
+                username = env.get('USER')
+                if not username:
+                    try:
+                        username = pwd.getpwuid(os.getuid()).pw_name
+                    except KeyError:
+                        username = None
+
+                if username:
+                    try:
+                        result = subprocess.run(
+                            [flatpak_spawn, '--host', 'getent', 'passwd', username],
+                            capture_output=True,
+                            text=True,
+                            check=True,
+                        )
+                        output = result.stdout.strip().splitlines()
+                        if output:
+                            host_entry = output[-1]
+                            host_shell = host_entry.split(':')[-1].strip()
+                            if host_shell:
+                                shell = host_shell
+                    except subprocess.CalledProcessError as e:
+                        logger.debug(f"Failed to get host shell via flatpak-spawn: {e}")
+                    except Exception as e:  # noqa: BLE001 - broad to ensure local shell fallback
+                        logger.debug(f"Unexpected error determining host shell: {e}")
+
+        if not shell:
+            shell = env.get('SHELL') or pwd.getpwuid(os.getuid()).pw_shell or '/bin/bash'
+
+        # Ensure we have a proper environment
+        env['SHELL'] = shell
+        if 'TERM' not in env:
+            env['TERM'] = 'xterm-256color'
+
+        # Convert environment dict to list for VTE compatibility
+        env_list = []
+        for key, value in env.items():
+            env_list.append(f"{key}={value}")
+
+        # Start the user's shell as a login shell
+        if flatpak_spawn:
+            command = [flatpak_spawn, '--host', 'env'] + env_list + [shell, '-l']
+        else:
+            command = [shell, '-l']
+
+        self.vte.spawn_async(
+            Vte.PtyFlags.DEFAULT,
+            os.path.expanduser('~') or '/',
+            command,
+            env_list,
+            GLib.SpawnFlags.DEFAULT,
+            None,
+            None,
+            -1,
+            None,
+            self._on_spawn_complete,
+            ()
+        )
+
+        # Add fallback timer to hide spinner if spawn completion doesn't fire
+        self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
+
+        logger.info("Local shell terminal setup initiated (direct spawn)")
+    
+    def _on_agent_spawn_complete(self, terminal, pid, error, user_data):
+        """Callback when agent spawn completes"""
+        if error:
+            logger.error(f"Agent spawn failed: {error}")
+            self.emit('connection-failed', str(error))
+            return
+        
+        logger.info(f"Agent spawned successfully (PID: {pid})")
+        
+        # Hide the connecting overlay
+        if self._fallback_timer_id:
+            GLib.source_remove(self._fallback_timer_id)
+            self._fallback_timer_id = None
+        
+        self._set_connecting_overlay_visible(False)
+        
+        # Store PID for cleanup
+        self.process_pid = pid
 
     def _setup_context_menu(self):
         """Set up a robust per-terminal context menu and actions."""

@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+"""
+SSHPilot Agent Launcher Script
+
+This script is installed to /app/bin/sshpilot-agent and runs on the host
+system to provide proper PTY handling for local shells in Flatpak.
+"""
+
+import sys
+import os
+
+# Add sshpilot module to Python path
+# This works both in Flatpak and regular installations
+for base_path in ['/app', '/usr', '/usr/local']:
+    for py_ver in ['3.13', '3.12', '3.11', '3.10', '3.9', '3.8']:
+        site_packages = os.path.join(base_path, f'lib/python{py_ver}/site-packages')
+        if os.path.isdir(site_packages):
+            sys.path.insert(0, site_packages)
+            break
+
+try:
+    from sshpilot.sshpilot_agent import main
+except ImportError as e:
+    print(f"Error: Could not import sshpilot agent module: {e}", file=sys.stderr)
+    print(f"Python path: {sys.path}", file=sys.stderr)
+    sys.exit(1)
+
+if __name__ == '__main__':
+    sys.exit(main())
+
