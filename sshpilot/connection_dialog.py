@@ -772,7 +772,10 @@ class ConnectionDialog(Adw.Window):
             self.split_original_nickname = getattr(connection, 'nickname', '')
         else:
             self.split_original_nickname = ''
-        
+
+        self._loading_connection_data = False
+        self._active_key_path: Optional[str] = None
+
         self.set_title('Edit Connection' if self.is_editing else 'New Connection')
         # Set modal and transient parent to ensure dialog stays on top
         self.set_modal(True)
@@ -1029,6 +1032,7 @@ class ConnectionDialog(Adw.Window):
             else:
                 if hasattr(self, 'key_passphrase_row'):
                     self.key_passphrase_row.set_text("")
+                self._active_key_path = None
         except Exception:
             pass
         
@@ -1202,18 +1206,24 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         """Load connection data into the dialog fields"""
         if not self.is_editing or not self.connection:
             return
-        
+
+        required_attrs = [
+            'nickname_row', 'hostname_row', 'username_row', 'port_row',
+            'proxy_jump_row', 'forward_agent_row',
+            'auth_method_row', 'keyfile_row', 'password_row', 'key_passphrase_row',
+            'pubkey_auth_row'
+        ]
+        for attr in required_attrs:
+            if not hasattr(self, attr):
+                return
+
+        if getattr(self, '_loading_connection_data', False):
+            return
+
+        self._loading_connection_data = True
+
         try:
-            # Ensure UI controls exist
-            required_attrs = [
-                'nickname_row', 'hostname_row', 'username_row', 'port_row',
-                'proxy_jump_row', 'forward_agent_row',
-                'auth_method_row', 'keyfile_row', 'password_row', 'key_passphrase_row',
-                'pubkey_auth_row'
-            ]
-            for attr in required_attrs:
-                if not hasattr(self, attr):
-                    return
+            keyfile_path = None
             # Load basic connection data
             if hasattr(self.connection, 'nickname'):
                 self.nickname_row.set_text(self.connection.nickname or "")
@@ -1266,11 +1276,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     logger.debug(f"Setting keyfile path in UI: {keyfile_path}")
                     has_specific_key = True
                     self.keyfile_row.set_subtitle(keyfile_path)
+                    self._active_key_path = keyfile_path
                     # Sync the dropdown to match the loaded keyfile
                     self._sync_key_dropdown_with_current_keyfile()
                 else:
                     logger.debug(f"Skipping invalid keyfile path: {keyfile_path}")
-            
+                    keyfile_path = None
+                    self._active_key_path = None
+            else:
+                self._active_key_path = None
+
             # Load certificate path if present
             if hasattr(self.connection, 'certificate') and self.connection.certificate:
                 cert_path = str(self.connection.certificate).strip()
@@ -1307,17 +1322,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self._orig_password = self.password_row.get_text()
             except Exception:
                 self._orig_password = ""
-                
+
             # Load key passphrase from connection object or from secure storage
             if hasattr(self.connection, 'key_passphrase') and self.connection.key_passphrase:
                 self.key_passphrase_row.set_text(self.connection.key_passphrase)
+                if keyfile_path:
+                    self._active_key_path = keyfile_path
             else:
                 # Try to load from secure storage if we have a keyfile
                 try:
-                    if hasattr(self, 'connection_manager') and self.connection_manager and keyfile:
-                        stored_passphrase = self.connection_manager.get_key_passphrase(keyfile)
+                    if hasattr(self, 'connection_manager') and self.connection_manager and keyfile_path:
+                        stored_passphrase = self.connection_manager.get_key_passphrase(keyfile_path)
                         if stored_passphrase:
                             self.key_passphrase_row.set_text(stored_passphrase)
+                            self._active_key_path = keyfile_path
                 except Exception as e:
                     logger.debug(f"Failed to load stored passphrase: {e}")
 
@@ -1456,9 +1474,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 for rule in self.forwarding_rules:
                     if not rule.get('enabled', True):
                         continue
-                        
+
                     rule_type = rule.get('type')
-                    
+
                     # Handle local forwarding
                     if rule_type == 'local' and hasattr(self, 'local_forwarding_enabled'):
                         self.local_forwarding_enabled.set_active(True)
@@ -1474,7 +1492,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                                 self.remote_port_row.set_text(str(int(rule['remote_port'])))
                             except Exception:
                                 self.remote_port_row.set_text(str(rule['remote_port']))
-                    
+
                     # Handle remote forwarding
                     elif rule_type == 'remote' and hasattr(self, 'remote_forwarding_enabled'):
                         self.remote_forwarding_enabled.set_active(True)
@@ -1515,11 +1533,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 
                 # Load the rules into the UI
                 self.load_port_forwarding_rules()
-                
+
         except Exception as e:
             logger.error(f"Error loading connection data: {e}")
             self.show_error(_("Failed to load connection data"))
-    
+        finally:
+            self._loading_connection_data = False
+
 
     
     # --- Inline validation helpers ---
@@ -3587,10 +3607,26 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         try:
             if not key_path or not hasattr(self, 'key_passphrase_row'):
                 return
-            
+
+            existing_text = ""
+            try:
+                existing_text = self.key_passphrase_row.get_text()
+            except Exception:
+                existing_text = ""
+
+            current_key = getattr(self, '_active_key_path', None)
+
+            if existing_text:
+                if getattr(self, '_loading_connection_data', False):
+                    self._active_key_path = key_path
+                    return
+                if current_key == key_path:
+                    self._active_key_path = key_path
+                    return
+
             # Clear the passphrase field first
             self.key_passphrase_row.set_text("")
-            
+
             # Try to load passphrase from secure storage for the selected key
             if hasattr(self, 'connection_manager') and self.connection_manager:
                 stored_passphrase = self.connection_manager.get_key_passphrase(key_path)
@@ -3601,6 +3637,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     logger.debug(f"No stored passphrase for key: {key_path}")
             else:
                 logger.debug(f"No connection manager available for key: {key_path}")
+
+            self._active_key_path = key_path
         except Exception as e:
             logger.debug(f"Failed to update passphrase for key {key_path}: {e}")
     
