@@ -188,7 +188,7 @@ class AgentClient:
             logger.error("Agent script not found")
             return None
 
-        python_exec = shlex.quote(python_path or 'python3')
+        python_exec = python_path or 'python3'
         
         # Read and encode agent code
         try:
@@ -213,13 +213,21 @@ class AgentClient:
         
         if verbose:
             agent_args.append('--verbose')
-        
-        args_str = ' '.join(agent_args)
-        
-        # Create bash script that decodes and runs the agent
-        wrapper_script = (
-            f'''{python_exec} -c "import base64,sys;exec(base64.b64decode('${{SSHPILOT_AGENT}}').decode())" {args_str}'''
+
+        python_code = (
+            "import base64,os,sys;"
+            "exec(base64.b64decode(os.environ['SSHPILOT_AGENT']).decode('utf-8'))"
         )
+
+        wrapper_args = [
+            python_exec,
+            '-c',
+            python_code,
+            *agent_args,
+        ]
+
+        # Create bash script that decodes and runs the agent
+        wrapper_script = shlex.join(wrapper_args)
         
         # Store agent code in environment variable format
         self._agent_env = {'SSHPILOT_AGENT': agent_b64}
