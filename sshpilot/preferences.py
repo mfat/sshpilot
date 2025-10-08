@@ -27,6 +27,78 @@ logger = logging.getLogger(__name__)
 _GROUP_PREVIEW_CSS_INSTALLED = False
 
 
+class _GroupDisplayToggleFallback:
+    """Fallback controller for group display toggle when Adw.ToggleGroup is missing."""
+
+    def __init__(self, buttons: Dict[str, Gtk.ToggleButton], default: str = "fullwidth"):
+        self._buttons = buttons
+        self._default = default
+        self._active_name: Optional[str] = None
+        self._callbacks: List[Any] = []
+        self._syncing = False
+
+        for name, button in self._buttons.items():
+            button.connect("toggled", self._on_button_toggled, name)
+
+    def get_active_name(self) -> str:
+        if self._active_name:
+            return self._active_name
+        if self._default in self._buttons:
+            return self._default
+        if self._buttons:
+            return next(iter(self._buttons.keys()))
+        return self._default
+
+    def set_active_name(self, name: str):
+        if name not in self._buttons:
+            return
+        if self._active_name == name:
+            return
+
+        self._syncing = True
+        try:
+            self._active_name = name
+            for option, button in self._buttons.items():
+                button.set_active(option == name)
+        finally:
+            self._syncing = False
+
+    def connect(self, callback):
+        self._callbacks.append(callback)
+
+    def _emit_changed(self):
+        for callback in self._callbacks:
+            callback(self, None)
+
+    def _on_button_toggled(self, button: Gtk.ToggleButton, name: str):
+        if self._syncing:
+            return
+
+        if not button.get_active():
+            # Keep one option active at all times.
+            if self._active_name == name:
+                self._syncing = True
+                try:
+                    button.set_active(True)
+                finally:
+                    self._syncing = False
+            return
+
+        if self._active_name == name:
+            return
+
+        self._active_name = name
+        self._syncing = True
+        try:
+            for option, other_button in self._buttons.items():
+                if option != name and other_button.get_active():
+                    other_button.set_active(False)
+        finally:
+            self._syncing = False
+
+        self._emit_changed()
+
+
 def _install_group_display_preview_css():
     global _GROUP_PREVIEW_CSS_INSTALLED
     if _GROUP_PREVIEW_CSS_INSTALLED:
@@ -890,26 +962,55 @@ class PreferencesWindow(Gtk.Window):
             except Exception:
                 pass
 
-            self.group_display_toggle_group = Adw.ToggleGroup.new()
-            self.group_display_toggle_group.set_orientation(Gtk.Orientation.HORIZONTAL)
-            self.group_display_toggle_group.add_css_class('linked')
-            self.group_display_toggle_group.set_hexpand(True)
-            try:
-                self.group_display_toggle_group.set_homogeneous(True)
-            except Exception:
-                pass
+            self.group_display_toggle_group = None
+            self._group_display_toggle_controller = None
 
-            self.group_display_toggle_fullwidth = Adw.Toggle.new()
-            self.group_display_toggle_fullwidth.props.name = 'fullwidth'
-            self.group_display_toggle_fullwidth.set_label('Fullwidth')
+            if hasattr(Adw, 'ToggleGroup') and hasattr(Adw.ToggleGroup, 'new'):
+                toggle_group = Adw.ToggleGroup.new()
+                toggle_group.set_orientation(Gtk.Orientation.HORIZONTAL)
+                toggle_group.add_css_class('linked')
+                toggle_group.set_hexpand(True)
+                try:
+                    toggle_group.set_homogeneous(True)
+                except Exception:
+                    pass
 
-            self.group_display_toggle_nested = Adw.Toggle.new()
-            self.group_display_toggle_nested.props.name = 'nested'
-            self.group_display_toggle_nested.set_label('Nested')
+                self.group_display_toggle_fullwidth = Adw.Toggle.new()
+                self.group_display_toggle_fullwidth.props.name = 'fullwidth'
+                self.group_display_toggle_fullwidth.set_label('Fullwidth')
 
-            self.group_display_toggle_group.add(self.group_display_toggle_fullwidth)
-            self.group_display_toggle_group.add(self.group_display_toggle_nested)
-            self.group_display_toggle_row.set_child(self.group_display_toggle_group)
+                self.group_display_toggle_nested = Adw.Toggle.new()
+                self.group_display_toggle_nested.props.name = 'nested'
+                self.group_display_toggle_nested.set_label('Nested')
+
+                toggle_group.add(self.group_display_toggle_fullwidth)
+                toggle_group.add(self.group_display_toggle_nested)
+                self.group_display_toggle_row.set_child(toggle_group)
+
+                self.group_display_toggle_group = toggle_group
+                self._group_display_toggle_controller = toggle_group
+            else:
+                fallback_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+                fallback_box.add_css_class('linked')
+                fallback_box.set_hexpand(True)
+
+                self.group_display_toggle_fullwidth = Gtk.ToggleButton(label='Fullwidth')
+                self.group_display_toggle_fullwidth.props.name = 'fullwidth'
+                self.group_display_toggle_fullwidth.set_hexpand(True)
+
+                self.group_display_toggle_nested = Gtk.ToggleButton(label='Nested')
+                self.group_display_toggle_nested.props.name = 'nested'
+                self.group_display_toggle_nested.set_hexpand(True)
+
+                fallback_box.append(self.group_display_toggle_fullwidth)
+                fallback_box.append(self.group_display_toggle_nested)
+                self.group_display_toggle_row.set_child(fallback_box)
+
+                buttons = {
+                    'fullwidth': self.group_display_toggle_fullwidth,
+                    'nested': self.group_display_toggle_nested,
+                }
+                self._group_display_toggle_controller = _GroupDisplayToggleFallback(buttons)
 
             current_display_mode = 'fullwidth'
             try:
@@ -923,13 +1024,19 @@ class PreferencesWindow(Gtk.Window):
 
             self._group_display_toggle_sync = True
             try:
-                self.group_display_toggle_group.set_active_name(current_display_mode)
+                if self._group_display_toggle_controller:
+                    self._group_display_toggle_controller.set_active_name(current_display_mode)
             finally:
                 self._group_display_toggle_sync = False
 
-            self.group_display_toggle_group.connect(
-                'notify::active-name', self.on_group_row_display_changed
-            )
+            if isinstance(self._group_display_toggle_controller, _GroupDisplayToggleFallback):
+                self._group_display_toggle_controller.connect(
+                    self.on_group_row_display_changed
+                )
+            elif self.group_display_toggle_group is not None:
+                self.group_display_toggle_group.connect(
+                    'notify::active-name', self.on_group_row_display_changed
+                )
 
             group_layout_group.add(self.group_display_toggle_row)
 
@@ -1919,7 +2026,8 @@ class PreferencesWindow(Gtk.Window):
                 pass
 
     def _sync_group_display_toggle_group(self, value):
-        if not hasattr(self, 'group_display_toggle_group') or self.group_display_toggle_group is None:
+        controller = getattr(self, '_group_display_toggle_controller', None)
+        if controller is None:
             return
 
         valid_modes = getattr(self, '_group_display_modes', ['fullwidth', 'nested'])
@@ -1931,13 +2039,18 @@ class PreferencesWindow(Gtk.Window):
         if normalized not in valid_modes:
             normalized = 'fullwidth'
 
-        if self.group_display_toggle_group.get_active_name() == normalized:
+        try:
+            current_active = controller.get_active_name()
+        except Exception:
+            current_active = 'fullwidth'
+
+        if current_active == normalized:
             self._update_group_display_preview(normalized)
             return
 
         self._group_display_toggle_sync = True
         try:
-            self.group_display_toggle_group.set_active_name(normalized)
+            controller.set_active_name(normalized)
         finally:
             self._group_display_toggle_sync = False
 
