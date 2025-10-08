@@ -1,3 +1,5 @@
+%undefine _disable_source_fetch
+
 Name:           sshpilot
 Version:        {{{ git_dir_version }}}
 Release:        1%{?dist}
@@ -36,6 +38,10 @@ for a modern Linux desktop experience.
 # No build step needed - standalone Python application
 
 %install
+# Show directory structure for debugging
+ls -la
+ls -la sshpilot/ || echo "sshpilot directory check"
+
 # Install the main executable
 install -D -m 755 run.py %{buildroot}%{_bindir}/sshpilot
 
@@ -64,4 +70,5 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
 
 %changelog
-{{{ git_dir_changelog }}}
+* Wed Oct 08 2025 mFat <newmfat@gmail.com>
+- Automated COPR build
