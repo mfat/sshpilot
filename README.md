@@ -5,7 +5,6 @@
 <img width="1322" height="922" alt="Screenshot From 2025-10-07 10-57-55" src="https://github.com/user-attachments/assets/af8ce903-2704-4740-8e39-547765ddd490" />
 
 
-
 <table>
   <tr>
     <td align="center" valign="top">
@@ -65,8 +64,15 @@ the built-in Paramiko transport or encounter compatibility issues with custom SS
 
 ## Download
 
-- ### DEB/RPM
+- ### Debian/Ubuntu
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
+
+- ### Fedora/RHEL
+
+```
+dnf copr enable mahdif62/sshpilot
+```
+
 
 - ### Flatpak
 Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
