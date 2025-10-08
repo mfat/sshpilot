@@ -25,7 +25,7 @@ from typing import Optional, Tuple
 
 # Set up logging
 logging.basicConfig(
-    level=logging.DEBUG if '--verbose' in sys.argv else logging.INFO,
+    level=logging.DEBUG if '--verbose' in sys.argv else logging.WARNING,
     format='[sshpilot-agent] %(levelname)s: %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 class PTYAgent:
     """Agent that manages PTY creation and shell spawning on the host"""
-    
+
     def __init__(self):
         self.master_fd: Optional[int] = None
         self.slave_fd: Optional[int] = None
@@ -133,7 +133,7 @@ class PTYAgent:
         """
         if self.slave_fd is None:
             raise RuntimeError("PTY not created yet")
-        
+
         try:
             # Prepare environment
             env = os.environ.copy()
@@ -187,17 +187,27 @@ class PTYAgent:
                 
                 self.shell_pid = pid
                 logger.info(f"Spawned shell: {shell} (PID: {pid})")
-                
+
                 return pid
-                
+
         except Exception as e:
             logger.error(f"Failed to spawn shell: {e}")
             raise
-    
+
+    def _send_status(self, status_type: str, **payload):
+        """Send a structured status message to stderr for the caller."""
+        try:
+            message = {'type': status_type}
+            message.update(payload)
+            sys.stderr.write(json.dumps(message) + '\n')
+            sys.stderr.flush()
+        except Exception as exc:
+            logger.debug(f"Failed to send status message: {exc}")
+
     def io_loop(self):
         """
         Main I/O loop: relay data between master PTY and stdin/stdout.
-        
+
         This forwards:
         - stdin (from VTE) -> master_fd (to shell)
         - master_fd (from shell) -> stdout (to VTE)
@@ -295,8 +305,11 @@ class PTYAgent:
             self.set_pty_size(rows, cols)
             
             # Spawn shell
-            self.spawn_shell(shell, cwd)
-            
+            shell_pid = self.spawn_shell(shell, cwd)
+
+            if shell_pid:
+                self._send_status('ready', pid=shell_pid)
+
             # Close stderr to prevent log messages from appearing in terminal
             # unless in verbose/debug mode
             if logger.getEffectiveLevel() > logging.DEBUG:
