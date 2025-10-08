@@ -62,6 +62,3 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{python3_sitelib}/sshpilot/
 %{_datadir}/applications/io.github.mfat.sshpilot.desktop
 %{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
-
-%changelog
-{{{ git_dir_changelog }}}
