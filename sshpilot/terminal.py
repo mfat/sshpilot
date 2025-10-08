@@ -1467,13 +1467,6 @@ class TerminalWidget(Gtk.Box):
             self.emit('connection-established')
             self._set_connecting_overlay_visible(False)
             try:
-                if getattr(self, 'vte', None):
-                    self.vte.grab_focus()
-                    if hasattr(self.vte, 'set_cursor_blink_mode'):
-                        self.vte.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)
-            except Exception as e:
-                logger.debug(f"Failed to refocus terminal after fallback: {e}")
-            try:
                 self._set_disconnected_banner_visible(False)
             except Exception:
                 pass
