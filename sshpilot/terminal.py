@@ -1660,33 +1660,11 @@ class TerminalWidget(Gtk.Box):
             
             # Force a redraw
             self.vte.queue_draw()
-
+            
             logger.debug(f"Applied terminal theme: {theme_name or 'default'}")
-
-            self._apply_cursor_preferences()
             
         except Exception as e:
             logger.error(f"Failed to apply terminal theme: {e}")
-
-    def _apply_cursor_preferences(self):
-        """Apply the configured cursor blink preference to the terminal."""
-        enabled = True
-
-        if self.config is not None:
-            try:
-                value = self.config.get_setting('terminal.cursor_blink', True)
-                if isinstance(value, str):
-                    enabled = value.lower() in ('1', 'true', 'yes', 'on')
-                else:
-                    enabled = bool(value)
-            except Exception:
-                enabled = True
-
-        try:
-            blink_mode = Vte.CursorBlinkMode.ON if enabled else Vte.CursorBlinkMode.OFF
-            self.vte.set_cursor_blink_mode(blink_mode)
-        except Exception:
-            logger.debug("Failed to apply cursor blink preference", exc_info=True)
 
     def _clone_rgba(self, rgba: Gdk.RGBA) -> Gdk.RGBA:
         clone = Gdk.RGBA()
@@ -1770,7 +1748,7 @@ class TerminalWidget(Gtk.Box):
             self.apply_theme()
             
             # Set cursor properties
-            self._apply_cursor_preferences()
+            self.vte.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)
             self.vte.set_cursor_shape(Vte.CursorShape.BLOCK)
             
             # Set scrollback lines
