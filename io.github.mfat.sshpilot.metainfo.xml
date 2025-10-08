@@ -35,7 +35,7 @@
 
   <releases>
 
-    <release version="4.3.1" date="2025-10-08">
+    <release version="4.3.2" date="2025-10-08">
 
       <description>
         <p>Introducing Group Colors - You can now set colors for groups and use them in tab headers and terminal backgrounds (optional)</p>
