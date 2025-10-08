@@ -213,6 +213,7 @@ class PTYAgent:
             message.update(payload)
             stream.write(json.dumps(message) + '\n')
             stream.flush()
+
         except Exception as exc:
             logger.debug(f"Failed to send status message: {exc}")
 
