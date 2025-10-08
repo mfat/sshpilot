@@ -11,6 +11,7 @@ import json
 import logging
 import subprocess
 import shutil
+import shlex
 from typing import Optional, Tuple, List
 from pathlib import Path
 
@@ -147,11 +148,13 @@ class AgentClient:
             logger.error("flatpak-spawn not found")
             return None
         
-        # Find agent script in sandbox
-        _, agent_path = self.find_agent()
+        # Find agent script in sandbox and discover host python if available
+        python_path, agent_path = self.find_agent()
         if not agent_path:
             logger.error("Agent script not found")
             return None
+
+        python_exec = shlex.quote(python_path or 'python3')
         
         # Read and encode agent code
         try:
@@ -177,7 +180,9 @@ class AgentClient:
         args_str = ' '.join(agent_args)
         
         # Create bash script that decodes and runs the agent
-        wrapper_script = f'''python3 -c "import base64,sys;exec(base64.b64decode('${{SSHPILOT_AGENT}}').decode())" {args_str}'''
+        wrapper_script = (
+            f'''{python_exec} -c "import base64,sys;exec(base64.b64decode('${{SSHPILOT_AGENT}}').decode())" {args_str}'''
+        )
         
         # Store agent code in environment variable format
         self._agent_env = {'SSHPILOT_AGENT': agent_b64}
