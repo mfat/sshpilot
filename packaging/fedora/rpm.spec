@@ -1,14 +1,11 @@
-%undefine _disable_source_fetch
-
 Name:           sshpilot
-Version:        {{{ git_dir_version }}}
+Version:        %{?version}%{!?version:4.3.1}
 Release:        1%{?dist}
 Summary:        SSH connection manager with integrated terminal
 
 License:        GPL-3.0-or-later
 URL:            https://github.com/mfat/sshpilot
-VCS:            {{{ git_dir_vcs }}}
-Source:         {{{ git_dir_pack }}}
+Source0:        https://github.com/mfat/sshpilot/archive/refs/heads/dev.tar.gz
 
 BuildArch:      noarch
 BuildRequires:  python3-devel
@@ -32,7 +29,7 @@ tunneling, key management, and tabbed interface. Built with GTK4 and Adwaita
 for a modern Linux desktop experience.
 
 %prep
-{{{ git_dir_setup_macro }}}
+%autosetup -n sshpilot-dev
 
 %build
 # No build step needed - standalone Python application
