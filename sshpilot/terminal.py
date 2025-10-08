@@ -2014,18 +2014,28 @@ class TerminalWidget(Gtk.Box):
         if self._agent_resize_handler_ids:
             return
 
-        try:
-            self._agent_resize_handler_ids.append(
-                self.vte.connect('notify::row-count', self._on_vte_dimensions_changed)
-            )
-            self._agent_resize_handler_ids.append(
-                self.vte.connect('notify::column-count', self._on_vte_dimensions_changed)
-            )
-            self._agent_resize_handler_ids.append(
-                self.vte.connect('size-allocate', self._on_vte_dimensions_changed)
-            )
-        except Exception as exc:
-            logger.debug("Failed to install resize handlers: %s", exc)
+        signals_to_try = (
+            'notify::row-count',
+            'notify::column-count',
+            'notify::char-width',
+            'notify::char-height',
+            'resize-window',
+        )
+
+        for signal_name in signals_to_try:
+            try:
+                handler_id = self.vte.connect(signal_name, self._on_vte_dimensions_changed)
+            except Exception as exc:
+                logger.debug(
+                    "Skipping resize monitoring signal %s: %s",
+                    signal_name,
+                    exc,
+                )
+            else:
+                self._agent_resize_handler_ids.append(handler_id)
+
+        if not self._agent_resize_handler_ids:
+            logger.debug("No resize monitoring signals available on VTE widget")
 
     def _remove_agent_resize_monitoring(self):
         if not self._agent_resize_handler_ids or not hasattr(self, 'vte') or self.vte is None:
@@ -2147,12 +2157,14 @@ class TerminalWidget(Gtk.Box):
             
             # Spawn the agent via VTE
             # Agent code is embedded in the command via base64 encoding
+            spawn_flags = GLib.SpawnFlags.DEFAULT | GLib.SpawnFlags.LEAVE_DESCRIPTORS_OPEN
+
             self.vte.spawn_async(
                 Vte.PtyFlags.DEFAULT,
                 cwd,
                 command,
                 env_list,
-                GLib.SpawnFlags.DEFAULT,
+                spawn_flags,
                 None,
                 None,
                 -1,
