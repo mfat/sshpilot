@@ -19,3 +19,6 @@ python3-deps.yml
 sshpilot-launcher.sh
 scripts/generate_github_url.sh
 scripts/screenshot_url.sh
+/flatpak
+flatpak/io.github.mfat.sshpilot.yaml
+/flatpak

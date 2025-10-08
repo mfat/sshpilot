@@ -16,11 +16,12 @@ import asyncio
 import threading
 import weakref
 import subprocess
+import shutil
 import pwd
 from datetime import datetime
 from typing import Optional, List
 from .port_utils import get_port_checker
-from .platform_utils import is_macos
+from .platform_utils import is_flatpak, is_macos
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
@@ -1936,7 +1937,40 @@ class TerminalWidget(Gtk.Box):
             env = os.environ.copy()
 
             # Determine the user's preferred shell
-            shell = env.get('SHELL') or pwd.getpwuid(os.getuid()).pw_shell or '/bin/bash'
+            shell = None
+            flatpak_spawn = None
+
+            if is_flatpak():
+                flatpak_spawn = shutil.which('flatpak-spawn')
+                if flatpak_spawn:
+                    username = env.get('USER')
+                    if not username:
+                        try:
+                            username = pwd.getpwuid(os.getuid()).pw_name
+                        except KeyError:
+                            username = None
+
+                    if username:
+                        try:
+                            result = subprocess.run(
+                                [flatpak_spawn, '--host', 'getent', 'passwd', username],
+                                capture_output=True,
+                                text=True,
+                                check=True,
+                            )
+                            output = result.stdout.strip().splitlines()
+                            if output:
+                                host_entry = output[-1]
+                                host_shell = host_entry.split(':')[-1].strip()
+                                if host_shell:
+                                    shell = host_shell
+                        except subprocess.CalledProcessError as e:
+                            logger.debug(f"Failed to get host shell via flatpak-spawn: {e}")
+                        except Exception as e:  # noqa: BLE001 - broad to ensure local shell fallback
+                            logger.debug(f"Unexpected error determining host shell: {e}")
+
+            if not shell:
+                shell = env.get('SHELL') or pwd.getpwuid(os.getuid()).pw_shell or '/bin/bash'
 
             # Ensure we have a proper environment
             env['SHELL'] = shell
@@ -1952,10 +1986,15 @@ class TerminalWidget(Gtk.Box):
                 env_list.append(f"{key}={value}")
 
             # Start the user's shell as a login shell
+            if flatpak_spawn:
+                command = [flatpak_spawn, '--host', 'env'] + env_list + [shell, '-l']
+            else:
+                command = [shell, '-l']
+
             self.vte.spawn_async(
                 Vte.PtyFlags.DEFAULT,
                 os.path.expanduser('~') or '/',
-                [shell, '-l'],
+                command,
                 env_list,
                 GLib.SpawnFlags.DEFAULT,
                 None,
