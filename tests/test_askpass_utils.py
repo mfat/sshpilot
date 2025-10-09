@@ -58,3 +58,23 @@ def test_lookup_passphrase_handles_home_relative_alias(monkeypatch, tmp_path):
 
     assert askpass_utils.lookup_passphrase(absolute_path) == "super-secret"
     assert askpass_utils.lookup_passphrase(key_path) == "super-secret"
+
+
+def test_clear_passphrase_removes_legacy_alias(monkeypatch, tmp_path):
+    from sshpilot import askpass_utils
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+    monkeypatch.setattr(askpass_utils, "Secret", DummySecretModule, raising=False)
+    monkeypatch.setattr(askpass_utils, "keyring", None, raising=False)
+    monkeypatch.setattr(askpass_utils, "is_macos", lambda: False, raising=False)
+    monkeypatch.setattr(askpass_utils, "_SCHEMA", None, raising=False)
+
+    legacy_key_path = "~/.ssh/key_symlink"
+    canonical_path = os.path.realpath(os.path.expanduser(legacy_key_path))
+
+    DummySecretModule.store = {legacy_key_path: "legacy-secret"}
+
+    assert askpass_utils.clear_passphrase(canonical_path)
+    assert DummySecretModule.store == {}
