@@ -60,6 +60,7 @@ modules:
     build-commands:
       - pip3 install --verbose --exists-action=i --no-build-isolation --no-deps --prefix=${FLATPAK_DEST} .
       - install -Dm755 sshpilot-launcher.sh /app/bin/sshpilot
+      - install -Dm755 sshpilot-agent /app/bin/sshpilot-agent
       - install -Dm644 sshpilot/resources/sshpilot.svg /app/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
       - install -Dm644 io.github.mfat.sshpilot.desktop /app/share/applications/io.github.mfat.sshpilot.desktop
       - install -Dm644 io.github.mfat.sshpilot.metainfo.xml /app/share/metainfo/io.github.mfat.sshpilot.metainfo.xml
