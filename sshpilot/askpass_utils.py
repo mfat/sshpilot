@@ -46,6 +46,75 @@ _ASKPASS_LOG_THREAD_LOCK = threading.Lock()
 _ASKPASS_LOG_IO_LOCK = threading.Lock()
 
 
+def _normalize_key_path_for_storage(key_path: str) -> str:
+    """Return a canonical representation for storing passphrases."""
+
+    expanded = os.path.expanduser(key_path)
+    try:
+        return os.path.realpath(expanded)
+    except Exception:
+        # ``realpath`` can fail on some exotic platforms; fall back to ``abspath``
+        return os.path.abspath(expanded)
+
+
+def _home_alias_for_path(path: str) -> str:
+    """Return a home-relative alias (~/...) for *path* when applicable."""
+
+    try:
+        home = os.path.expanduser("~")
+    except Exception:
+        return ""
+
+    if not home:
+        return ""
+
+    try:
+        relative = os.path.relpath(path, home)
+    except ValueError:
+        return ""
+
+    if relative in (".", os.curdir):
+        return "~"
+
+    if relative.startswith(".."):
+        return ""
+
+    return os.path.join("~", relative)
+
+
+def _get_key_path_lookup_candidates(key_path: str) -> List[str]:
+    """Return normalized key path variants for lookup and compatibility."""
+
+    if not key_path:
+        return []
+
+    candidates: List[str] = []
+    seen = set()
+
+    def _add(path: str) -> None:
+        if not path:
+            return
+        if path in seen:
+            return
+        seen.add(path)
+        candidates.append(path)
+
+    canonical = _normalize_key_path_for_storage(key_path)
+    _add(canonical)
+
+    expanded = os.path.expanduser(key_path)
+    _add(expanded)
+
+    for base in (canonical, expanded):
+        alias = _home_alias_for_path(base)
+        if alias:
+            _add(alias)
+
+    _add(key_path)
+
+    return candidates
+
+
 def get_secret_schema() -> "Secret.Schema":
     """Return the shared Secret.Schema for stored secrets."""
 
@@ -191,10 +260,15 @@ atexit.register(stop_askpass_log_forwarder)
 def store_passphrase(key_path: str, passphrase: str) -> bool:
     """Store a key passphrase using keyring (macOS) or libsecret (Linux)."""
 
+    if not key_path:
+        return False
+
+    canonical_path = _normalize_key_path_for_storage(key_path)
+
     # Try keyring first (macOS)
     if keyring and is_macos():
         try:
-            keyring.set_password('sshPilot', key_path, passphrase)
+            keyring.set_password('sshPilot', canonical_path, passphrase)
             return True
         except Exception as e:
             logger.debug(f"Failed to store passphrase in keyring: {e}")
@@ -207,14 +281,14 @@ def store_passphrase(key_path: str, passphrase: str) -> bool:
     attributes = {
         "application": "sshPilot",
         "type": "key_passphrase",
-        "key_path": key_path,
+        "key_path": canonical_path,
     }
     try:
         Secret.password_store_sync(
             schema,
             attributes,
             Secret.COLLECTION_DEFAULT,
-            f"SSH Key Passphrase: {os.path.basename(key_path)}",
+            f"SSH Key Passphrase: {os.path.basename(canonical_path)}",
             passphrase,
             None,
         )
@@ -226,55 +300,77 @@ def store_passphrase(key_path: str, passphrase: str) -> bool:
 def lookup_passphrase(key_path: str) -> str:
     """Look up a key passphrase using keyring (macOS) or libsecret (Linux)."""
 
+    candidates = _get_key_path_lookup_candidates(key_path)
+    if not candidates:
+        return ""
+
     # Try keyring first (macOS)
     if keyring and is_macos():
-        try:
-            passphrase = keyring.get_password('sshPilot', key_path)
-            return passphrase or ""
-        except Exception as e:
-            logger.debug(f"Failed to retrieve passphrase from keyring: {e}")
-            return ""
+        for candidate in candidates:
+            try:
+                passphrase = keyring.get_password('sshPilot', candidate)
+            except Exception as e:
+                logger.debug(f"Failed to retrieve passphrase from keyring: {e}")
+                break
+
+            if passphrase:
+                return passphrase
 
     # Fall back to libsecret (Linux)
     schema = get_secret_schema()
     if not schema:
         return ""
-    attributes = {
-        "application": "sshPilot",
-        "type": "key_passphrase",
-        "key_path": key_path,
-    }
-    try:
-        return Secret.password_lookup_sync(schema, attributes, None) or ""
-    except Exception:
-        return ""
+    for candidate in candidates:
+        attributes = {
+            "application": "sshPilot",
+            "type": "key_passphrase",
+            "key_path": candidate,
+        }
+        try:
+            result = Secret.password_lookup_sync(schema, attributes, None)
+        except Exception:
+            continue
+        if result:
+            return result
+    return ""
 
 
 def clear_passphrase(key_path: str) -> bool:
     """Remove a stored key passphrase using keyring (macOS) or libsecret (Linux)."""
 
+    candidates = _get_key_path_lookup_candidates(key_path)
+    if not candidates:
+        return False
+
     # Try keyring first (macOS)
     if keyring and is_macos():
-        try:
-            keyring.delete_password('sshPilot', key_path)
+        removed_any = False
+        for candidate in candidates:
+            try:
+                keyring.delete_password('sshPilot', candidate)
+                removed_any = True
+            except Exception as e:
+                logger.debug(f"Failed to delete passphrase from keyring: {e}")
+        if removed_any:
             return True
-        except Exception as e:
-            logger.debug(f"Failed to delete passphrase from keyring: {e}")
-            return False
 
     # Fall back to libsecret (Linux)
     schema = get_secret_schema()
     if not schema:
         return False
-    attributes = {
-        "application": "sshPilot",
-        "type": "key_passphrase",
-        "key_path": key_path,
-    }
-    try:
-        return bool(Secret.password_clear_sync(schema, attributes, None))
-    except Exception:
-        return False
+    removed_any = False
+    for candidate in candidates:
+        attributes = {
+            "application": "sshPilot",
+            "type": "key_passphrase",
+            "key_path": candidate,
+        }
+        try:
+            if Secret.password_clear_sync(schema, attributes, None):
+                removed_any = True
+        except Exception:
+            continue
+    return removed_any
 
 def ensure_passphrase_askpass() -> str:
     """Ensure the askpass script exists and return its path"""
@@ -467,14 +563,40 @@ if __name__ == "__main__":
             except Exception:
                 pass
             
-            # Try multiple path variations
-            candidates = [
-                key_path, 
-                os.path.expanduser(key_path), 
-                os.path.realpath(os.path.expanduser(key_path))
-            ]
-            seen = set()
-            for candidate in [c for c in candidates if not (c in seen or seen.add(c))]:
+            def _iter_candidates(original):
+                seen = set()
+
+                expanded = os.path.expanduser(original)
+                canonical = os.path.realpath(expanded)
+
+                home = os.path.expanduser("~")
+
+                for path in (canonical, expanded):
+                    if path and path not in seen:
+                        seen.add(path)
+                        yield path
+
+                    try:
+                        rel = os.path.relpath(path, home)
+                    except Exception:
+                        rel = None
+
+                    if rel in (".", os.curdir):
+                        alias = "~"
+                    elif rel and not str(rel).startswith(".."):
+                        alias = os.path.join("~", rel)
+                    else:
+                        alias = None
+
+                    if alias and alias not in seen:
+                        seen.add(alias)
+                        yield alias
+
+                if original and original not in seen:
+                    seen.add(original)
+                    yield original
+
+            for candidate in _iter_candidates(key_path):
                 passphrase = get_passphrase(candidate)
                 if passphrase:
                     try:

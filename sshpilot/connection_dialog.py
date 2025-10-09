@@ -3338,15 +3338,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # Store key passphrase in secret storage if provided
         if keyfile_value and keyfile_value != "Select key file":
+            normalized_keyfile_value = os.path.realpath(os.path.expanduser(keyfile_value))
             try:
                 if hasattr(self, 'connection_manager') and self.connection_manager:
                     if hasattr(self.connection_manager, 'store_key_passphrase'):
                         if key_passphrase:
                             # Store new or modified passphrase (already verified above)
-                            self.connection_manager.store_key_passphrase(keyfile_value, key_passphrase)
+                            self.connection_manager.store_key_passphrase(normalized_keyfile_value, key_passphrase)
                         elif hasattr(self.connection_manager, 'delete_key_passphrase'):
                             # User cleared the field - remove stored passphrase
-                            self.connection_manager.delete_key_passphrase(keyfile_value)
+                            self.connection_manager.delete_key_passphrase(normalized_keyfile_value)
             except Exception as e:
                 logger.warning(f"Failed to store/delete key passphrase: {e}")
 
