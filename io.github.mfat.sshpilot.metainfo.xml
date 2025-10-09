@@ -35,13 +35,10 @@
 
   <releases>
 
-    <release version="4.3.3" date="2025-10-09">
+    <release version="4.3.4" date="2025-10-09">
 
       <description>
-        <p>Introducing Group Colors - You can now set colors for groups and use them in tab headers and terminal backgrounds (optional)</p>
-        <p>Revamped Preferences dialog</p>
-        <p>Fixed file manager styling issues</p>
-        <p>Fixed StrictHostKeyChecking=accept-new always set, ignoring user settings</p>
+        <p>Bg fixes</p>
       </description>
     </release>
   </releases>
