@@ -261,6 +261,8 @@ class TerminalWidget(Gtk.Box):
         self._agent_control_reader_fd: Optional[int] = None
         self._agent_resize_handler_ids: List[int] = []
         self._agent_last_reported_size: Optional[Tuple[int, int]] = None
+        self._agent_shell_disabled: bool = False
+        self._agent_fallback_scheduled: bool = False
 
         # Register with process manager
         process_manager.register_terminal(self)
@@ -2014,18 +2016,28 @@ class TerminalWidget(Gtk.Box):
         if self._agent_resize_handler_ids:
             return
 
-        try:
-            self._agent_resize_handler_ids.append(
-                self.vte.connect('notify::row-count', self._on_vte_dimensions_changed)
-            )
-            self._agent_resize_handler_ids.append(
-                self.vte.connect('notify::column-count', self._on_vte_dimensions_changed)
-            )
-            self._agent_resize_handler_ids.append(
-                self.vte.connect('size-allocate', self._on_vte_dimensions_changed)
-            )
-        except Exception as exc:
-            logger.debug("Failed to install resize handlers: %s", exc)
+        signals_to_try = (
+            'notify::row-count',
+            'notify::column-count',
+            'notify::char-width',
+            'notify::char-height',
+            'resize-window',
+        )
+
+        for signal_name in signals_to_try:
+            try:
+                handler_id = self.vte.connect(signal_name, self._on_vte_dimensions_changed)
+            except Exception as exc:
+                logger.debug(
+                    "Skipping resize monitoring signal %s: %s",
+                    signal_name,
+                    exc,
+                )
+            else:
+                self._agent_resize_handler_ids.append(handler_id)
+
+        if not self._agent_resize_handler_ids:
+            logger.debug("No resize monitoring signals available on VTE widget")
 
     def _remove_agent_resize_monitoring(self):
         if not self._agent_resize_handler_ids or not hasattr(self, 'vte') or self.vte is None:
@@ -2100,6 +2112,10 @@ class TerminalWidget(Gtk.Box):
             True if successful, False otherwise
         """
         try:
+            if self._agent_shell_disabled:
+                logger.debug("Agent-based local shell disabled for this terminal; using direct spawn")
+                return False
+
             from .agent_client import AgentClient
 
             # Create agent client
@@ -2147,12 +2163,14 @@ class TerminalWidget(Gtk.Box):
             
             # Spawn the agent via VTE
             # Agent code is embedded in the command via base64 encoding
+            spawn_flags = GLib.SpawnFlags.DEFAULT | GLib.SpawnFlags.LEAVE_DESCRIPTORS_OPEN
+
             self.vte.spawn_async(
                 Vte.PtyFlags.DEFAULT,
                 cwd,
                 command,
                 env_list,
-                GLib.SpawnFlags.DEFAULT,
+                spawn_flags,
                 None,
                 None,
                 -1,
@@ -2160,14 +2178,6 @@ class TerminalWidget(Gtk.Box):
                 self._on_agent_spawn_complete,
                 None
             )
-
-            if self._agent_control_reader_fd is not None:
-                try:
-                    os.close(self._agent_control_reader_fd)
-                except OSError as exc:
-                    logger.debug("Failed to close agent control reader FD: %s", exc)
-                finally:
-                    self._agent_control_reader_fd = None
 
             # Add fallback timer
             self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
@@ -2265,18 +2275,24 @@ class TerminalWidget(Gtk.Box):
     def _on_agent_spawn_complete(self, terminal, pid, error, user_data):
         """Callback when agent spawn completes"""
         if error:
-            logger.error(f"Agent spawn failed: {error}")
-            self._close_agent_control_channel()
-            self.emit('connection-failed', str(error))
+            self._handle_agent_spawn_failure(error)
             return
 
         logger.info(f"Agent spawned successfully (PID: {pid})")
-        
+
+        if self._agent_control_reader_fd is not None:
+            try:
+                os.close(self._agent_control_reader_fd)
+            except OSError as exc:
+                logger.debug("Failed to close agent control reader FD: %s", exc)
+            finally:
+                self._agent_control_reader_fd = None
+
         # Hide the connecting overlay
         if self._fallback_timer_id:
             GLib.source_remove(self._fallback_timer_id)
             self._fallback_timer_id = None
-        
+
         self._set_connecting_overlay_visible(False)
 
         # Store PID for cleanup
@@ -2284,6 +2300,52 @@ class TerminalWidget(Gtk.Box):
 
         # Ensure the agent has the latest size information once it is ready
         self._send_agent_resize_update()
+
+    def _handle_agent_spawn_failure(self, error: Exception) -> None:
+        message = str(error) if error else _("Failed to launch local shell agent")
+        logger.error(f"Agent spawn failed: {message}")
+
+        if self._fallback_timer_id:
+            GLib.source_remove(self._fallback_timer_id)
+            self._fallback_timer_id = None
+
+        self._close_agent_control_channel()
+
+        if not self._is_local_terminal():
+            self.emit('connection-failed', message)
+            return
+
+        logger.warning("Agent-based local shell unavailable, falling back to direct spawn")
+        self._agent_shell_disabled = True
+        self._schedule_local_shell_fallback(message)
+
+    def _schedule_local_shell_fallback(self, reason: Optional[str] = None) -> None:
+        if self._agent_fallback_scheduled:
+            return
+
+        self._agent_fallback_scheduled = True
+
+        if reason:
+            logger.debug("Scheduling local shell fallback because: %s", reason)
+
+        def _fallback() -> bool:
+            try:
+                self._set_connecting_overlay_visible(False)
+            except Exception as exc:
+                logger.debug("Failed to hide connecting overlay during fallback: %s", exc)
+
+            try:
+                self._setup_local_shell_direct()
+            except Exception as exc:
+                logger.error(f"Local shell fallback failed: {exc}")
+                self.emit('connection-failed', str(exc))
+            finally:
+                # Allow future fallback attempts if needed
+                self._agent_fallback_scheduled = False
+
+            return False
+
+        GLib.idle_add(_fallback)
 
     def _setup_context_menu(self):
         """Set up a robust per-terminal context menu and actions."""
