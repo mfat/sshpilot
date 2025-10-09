@@ -73,6 +73,10 @@ Latest release can be downloaded from here: https://github.com/mfat/sshpilot/rel
 dnf copr enable mahdif62/sshpilot
 ```
 
+```
+dnf install sshpilot
+```
+[![Copr build status](https://copr.fedorainfracloud.org/coprs/mahdif62/sshpilot/package/sshpilot/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/mahdif62/sshpilot/package/sshpilot/)
 
 - ### Flatpak
 Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
