@@ -31,31 +31,6 @@ from gi.repository import Gtk, GObject, GLib, Vte, Pango, Gdk, Gio, Adw
 
 logger = logging.getLogger(__name__)
 
-_FLATPAK_SANDBOX_ENV_BLOCKLIST = (
-    "XDG_DATA_HOME",
-    "XDG_DATA_DIRS",
-)
-
-
-def _sanitize_flatpak_environment(env: dict) -> dict:
-    """Return a copy of *env* without sandbox-only Flatpak values."""
-
-    sanitized_env = dict(env)
-
-    removed_keys = []
-    for key in _FLATPAK_SANDBOX_ENV_BLOCKLIST:
-        if key in sanitized_env:
-            removed_keys.append(key)
-            sanitized_env.pop(key, None)
-
-    if removed_keys:
-        logger.debug(
-            "Removing Flatpak sandbox variables before host spawn: %s",
-            ", ".join(removed_keys),
-        )
-
-    return sanitized_env
-
 class SSHProcessManager:
     """Manages SSH processes and ensures proper cleanup"""
     _instance = None
@@ -2079,9 +2054,6 @@ class TerminalWidget(Gtk.Box):
         This is the fallback when agent is not available.
         """
         env = os.environ.copy()
-
-        if is_flatpak():
-            env = _sanitize_flatpak_environment(env)
 
         # Determine the user's preferred shell
         shell = None
