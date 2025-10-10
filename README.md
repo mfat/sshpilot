@@ -105,7 +105,7 @@ Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
 
 <p align="center">
 <a href='https://flathub.org/apps/io.github.mfat.sshpilot'>
-    <img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?locale=en'/>
+    <img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?svg&locale=en'/>
   </a>
 </p>
 
