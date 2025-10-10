@@ -135,7 +135,7 @@ or
 yay -S sshpilot
 ```
 
-### 🍎 macOS (aarch64)
+### <img src="https://upload.wikimedia.org/wikipedia/commons/7/74/Apple_logo_dark_grey.svg" width="24" height="24"/> macOS (aarch64)
 Download the dmg file from the releases section https://github.com/mfat/sshpilot/releases/
 
 ### 💻 Run from Source
