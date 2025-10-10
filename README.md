@@ -1,6 +1,21 @@
 **SSH Pilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal and a file manager.
 
+## Table of Contents
 
+- [Features](#features)
+- [Download](#download)
+  - [Debian/Ubuntu APT Repository](#debianubuntu-apt-repository)
+  - [Debian/Ubuntu (Manual Install)](#debianubuntu-manual-install)
+  - [Fedora/RHEL/openSUSE](#fedorarhel-opensuse)
+  - [Flatpak](#flatpak)
+  - [Arch Linux](#arch-linux)
+  - [macOS](#macos-aarch64)
+  - [Run from Source](#run-from-source)
+- [Runtime Dependencies](#runtime-dependencies)
+- [Testing](#testing)
+- [Telegram Channel](#telegram-channel)
+- [Special Thanks](#special-thanks)
+- [Support Development](#support-development)
 
 <img width="1322" height="922" alt="Screenshot From 2025-10-07 10-57-55" src="https://github.com/user-attachments/assets/af8ce903-2704-4740-8e39-547765ddd490" />
 
@@ -64,10 +79,38 @@ the built-in Paramiko transport or encounter compatibility issues with custom SS
 
 ## Download
 
-- ### Debian/Ubuntu
+### Debian/Ubuntu APT Repository
+
+**Recommended for Ubuntu 24.04+, Debian 13+, Linux Mint 22+**
+
+This repository provides automatic updates for SSH Pilot on Debian-based distributions.
+
+**System Requirements:** GTK4 (≥4.6), libadwaita (≥1.4), VTE (≥0.70)
+
+#### Installation
+
+1. Add the GPG key:
+```bash
+curl -fsSL https://mfat.github.io/sshpilot-ppa/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/sshpilot-ppa.gpg
+```
+
+2. Add the repository:
+```bash
+echo "deb [signed-by=/usr/share/keyrings/sshpilot-ppa.gpg arch=amd64] https://mfat.github.io/sshpilot-ppa any main" | sudo tee /etc/apt/sources.list.d/sshpilot-ppa.list
+```
+
+3. Update and install:
+```bash
+sudo apt update
+sudo apt install sshpilot
+```
+
+For more information, visit: https://mfat.github.io/sshpilot-ppa/
+
+### Debian/Ubuntu (Manual Install)
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
 
-- ### Fedora/RHEL
+### Fedora/RHEL/openSUSE
 
 ```
 dnf copr enable mahdif62/sshpilot
@@ -78,7 +121,7 @@ dnf install sshpilot
 ```
 [![Copr build status](https://copr.fedorainfracloud.org/coprs/mahdif62/sshpilot/package/sshpilot/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/mahdif62/sshpilot/package/sshpilot/)
 
-- ### Flatpak
+### Flatpak
 Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
 
 <p align="center">
@@ -93,13 +136,13 @@ OR in a terminal type:
 flatpak install flathub io.github.mfat.sshpilot
 `
 
-- ### Arch linux
-Arch linux package via AUR: https://aur.archlinux.org/packages/sshpilot
+### Arch Linux
+Arch Linux package via AUR: https://aur.archlinux.org/packages/sshpilot
 
-- ### macOS (aarch64)
+### macOS (aarch64)
 Download the dmg file from the releases section https://github.com/mfat/sshpilot/releases/
 
-- ### Run from source
+### Run from Source
 You can also run the app from source. Install the modules listed in requirements.txt and a fairly recent version of GNOME and it should run.
 
 `
@@ -114,8 +157,7 @@ python3 run.py --verbose
 
 
 
-Runtime dependencies
---------------------
+## Runtime Dependencies
 
 Install system GTK/libadwaita/VTE GI bindings (do not use pip for these).
 
@@ -173,7 +215,7 @@ python3 run.py --verbose
   dbus-run-session -- xvfb-run -s "-screen 0 1024x768x24" pytest -m e2e tests_e2e
   ```
 
-### Telegram channel
+## Telegram Channel
 https://t.me/sshpilot
 
 ## Special Thanks
@@ -182,7 +224,7 @@ https://t.me/sshpilot
 - Behnam Tavakkoli, Chalist and Kalpase, Ramin Najjarbashi, Farid and Narbeh for testing
 - Icon designed by [Blisterexe](https://github.com/Blisterexe)
 
-## Support development
+## Support Development
 Bitcoin: bc1qqtsyf0ft85zshsnw25jgsxnqy45rfa867zqk4t
 
 Doge: DRzNb8DycFD65H6oHNLuzyTzY1S5avPHHx
