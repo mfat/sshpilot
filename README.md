@@ -100,12 +100,12 @@ dnf copr enable mahdif62/sshpilot
 dnf install sshpilot
 ```
 
-### <img src="https://upload.wikimedia.org/wikipedia/commons/a/a5/Flatpak_logo.svg" width="24" height="24"/> Flatpak
+### <img src="https://flathub.org/api/badge?locale=en" width="24" height="24"/> Flatpak
 Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
 
 <p align="center">
 <a href='https://flathub.org/apps/io.github.mfat.sshpilot'>
-
+    <img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?locale=en'/>
   </a>
 </p>
 
