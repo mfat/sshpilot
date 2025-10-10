@@ -92,7 +92,7 @@ For more information, visit: https://mfat.github.io/sshpilot-ppa/
 ### <img src="https://img.icons8.com/color/48/000000/debian.png" width="24"/> <img src="https://img.icons8.com/color/48/000000/ubuntu.png" width="24"/> Debian/Ubuntu (Manual Install)
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
 
-### <img src="https://img.icons8.com/color/48/000000/fedora.png" width="24"/> Fedora/RHEL/openSUSE
+### <img src="https://upload.wikimedia.org/wikipedia/commons/3/3f/Fedora_logo.svg" width="24" height="24"/> Fedora/RHEL/openSUSE
 
 ```
 dnf copr enable mahdif62/sshpilot
@@ -100,7 +100,7 @@ dnf copr enable mahdif62/sshpilot
 dnf install sshpilot
 ```
 
-### <img src="https://img.icons8.com/color/48/000000/flatpak.png" width="24"/> Flatpak
+### <img src="https://upload.wikimedia.org/wikipedia/commons/a/a5/Flatpak_logo.svg" width="24" height="24"/> Flatpak
 Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
 
 <p align="center">
@@ -127,7 +127,7 @@ or
 yay -S sshpilot
 ```
 
-### <img src="https://img.icons8.com/ios-filled/50/000000/mac-os.png" width="24"/> macOS (aarch64)
+### 🍎 macOS (aarch64)
 Download the dmg file from the releases section https://github.com/mfat/sshpilot/releases/
 
 ### 💻 Run from Source
