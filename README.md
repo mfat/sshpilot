@@ -6,7 +6,8 @@
 - [Download](#download)
   - [Debian/Ubuntu APT Repository](#--debianubuntu-apt-repository)
   - [Debian/Ubuntu (Manual Install)](#--debianubuntu-manual-install)
-  - [Fedora/RHEL/openSUSE](#-fedorarhel-opensuse)
+  - [Fedora/RHEL/openSUSE COPR Repository](#-fedorarhel-opensuse-copr-repository)
+  - [Fedora/RHEL/openSUSE (Manual Install)](#-fedorarhel-opensuse-manual-install)
   - [Flatpak](#-flatpak)
   - [Arch Linux](#-arch-linux)
   - [🍎 macOS](#-macos-aarch64)
@@ -93,13 +94,19 @@ For more information, visit: https://mfat.github.io/sshpilot-ppa/
 ### <img src="https://img.icons8.com/color/48/000000/debian.png" width="24"/> <img src="https://img.icons8.com/color/48/000000/ubuntu.png" width="24"/> Debian/Ubuntu (Manual Install)
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
 
-### <img src="https://upload.wikimedia.org/wikipedia/commons/3/3f/Fedora_logo.svg" width="24" height="24"/> Fedora/RHEL/openSUSE
+### <img src="https://upload.wikimedia.org/wikipedia/commons/3/3f/Fedora_logo.svg" width="24" height="24"/> Fedora/RHEL/openSUSE COPR Repository
 
-```
+This repository provides automatic updates for SSH Pilot on RPM-based distributions.
+
+```bash
 dnf copr enable mahdif62/sshpilot
-
 dnf install sshpilot
 ```
+
+[![Copr build status](https://copr.fedorainfracloud.org/coprs/mahdif62/sshpilot/package/sshpilot/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/mahdif62/sshpilot/package/sshpilot/)
+
+### <img src="https://upload.wikimedia.org/wikipedia/commons/3/3f/Fedora_logo.svg" width="24" height="24"/> Fedora/RHEL/openSUSE (Manual Install)
+Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
 
 ### <img src="https://flathub.org/api/badge?locale=en" width="24" height="24"/> Flatpak
 Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
