@@ -1,6 +1,5 @@
 **SSH Pilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal and a file manager.
 
-## Table of Contents
 
 - [Features](#features)
 - [Download](#download)
