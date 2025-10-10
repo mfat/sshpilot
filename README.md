@@ -10,8 +10,9 @@
   - [Fedora/RHEL/openSUSE (Manual Install)](#-fedorarhel-opensuse-manual-install)
   - [Flatpak](#-flatpak)
   - [Arch Linux](#-arch-linux)
-  - [🍎 macOS](#-macos-aarch64)
-  - [💻 Run from Source](#-run-from-source)
+  - [macOS](#-macos-aarch64)
+- [Minimum Requirements](#minimum-requirements)
+- [Run from Source](#-run-from-source)
 - [Runtime Dependencies](#runtime-dependencies)
 - [Testing](#testing)
 - [Telegram Channel](#telegram-channel)
@@ -137,6 +138,24 @@ yay -S sshpilot
 
 ### <img src="https://upload.wikimedia.org/wikipedia/commons/7/74/Apple_logo_dark_grey.svg" width="24" height="24"/> macOS (aarch64)
 Download the dmg file from the releases section https://github.com/mfat/sshpilot/releases/
+
+---
+
+## Minimum Requirements
+
+| Component | Minimum Version |
+|-----------|----------------|
+| GTK 4 | 4.6 |
+| libadwaita | 1.4 |
+| VTE (GTK4) | 0.70 |
+| PyGObject | 3.42 |
+| pycairo | 1.20.0 |
+| Paramiko | 3.4 |
+| cryptography | 42.0 |
+| keyring | 24.3 |
+| psutil | 5.9.0 |
+
+---
 
 ### 💻 Run from Source
 You can also run the app from source. Install the modules listed in requirements.txt and a fairly recent version of GNOME and it should run.
