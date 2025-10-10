@@ -80,11 +80,6 @@ the built-in Paramiko transport or encounter compatibility issues with custom SS
 ## Download
 
 ### Debian/Ubuntu APT Repository
-
-**Recommended for Ubuntu 24.04+, Debian 13+, Linux Mint 22+**
-
-This repository provides automatic updates for SSH Pilot on Debian-based distributions.
-
 **System Requirements:** GTK4 (≥4.6), libadwaita (≥1.4), VTE (≥0.70)
 
 #### Installation
@@ -114,12 +109,9 @@ Latest release can be downloaded from here: https://github.com/mfat/sshpilot/rel
 
 ```
 dnf copr enable mahdif62/sshpilot
-```
 
-```
 dnf install sshpilot
 ```
-[![Copr build status](https://copr.fedorainfracloud.org/coprs/mahdif62/sshpilot/package/sshpilot/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/mahdif62/sshpilot/package/sshpilot/)
 
 ### Flatpak
 Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
