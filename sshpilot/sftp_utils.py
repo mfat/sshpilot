@@ -11,7 +11,7 @@ from typing import Optional, Tuple, Callable, Any
 
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk
 
-from .platform_utils import is_flatpak
+from .platform_utils import is_flatpak, is_macos
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +134,8 @@ def _should_use_in_app_file_manager() -> bool:
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("Failed to read file manager preference: %s", exc)
     if is_flatpak():
+        return True
+    if is_macos():
         return True
     if os.environ.get("SSHPILOT_DISABLE_GVFS") == "1":
         return True
