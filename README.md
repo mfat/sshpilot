@@ -111,12 +111,21 @@ Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
 
 OR in a terminal type: 
 
-`
+```
 flatpak install flathub io.github.mfat.sshpilot
-`
+```
 
 ### Arch Linux
 Arch Linux package via AUR: https://aur.archlinux.org/packages/sshpilot
+
+```
+paru -S sshpilot
+```
+or
+
+```
+yay -S sshpilot
+```
 
 ### macOS (aarch64)
 Download the dmg file from the releases section https://github.com/mfat/sshpilot/releases/
