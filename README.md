@@ -67,7 +67,7 @@
 
 ## Download
 
-### Debian/Ubuntu APT Repository
+### <img src="https://img.icons8.com/color/48/000000/debian.png" width="24"/> <img src="https://img.icons8.com/color/48/000000/ubuntu.png" width="24"/> Debian/Ubuntu APT Repository
 
 #### Installation
 
@@ -89,10 +89,10 @@ sudo apt install sshpilot
 
 For more information, visit: https://mfat.github.io/sshpilot-ppa/
 
-### Debian/Ubuntu (Manual Install)
+### <img src="https://img.icons8.com/color/48/000000/debian.png" width="24"/> <img src="https://img.icons8.com/color/48/000000/ubuntu.png" width="24"/> Debian/Ubuntu (Manual Install)
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
 
-### Fedora/RHEL/openSUSE
+### <img src="https://img.icons8.com/color/48/000000/fedora.png" width="24"/> Fedora/RHEL/openSUSE
 
 ```
 dnf copr enable mahdif62/sshpilot
@@ -100,7 +100,7 @@ dnf copr enable mahdif62/sshpilot
 dnf install sshpilot
 ```
 
-### Flatpak
+### <img src="https://img.icons8.com/color/48/000000/flatpak.png" width="24"/> Flatpak
 Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
 
 <p align="center">
@@ -115,7 +115,7 @@ OR in a terminal type:
 flatpak install flathub io.github.mfat.sshpilot
 ```
 
-### Arch Linux
+### <img src="https://img.icons8.com/color/48/000000/arch-linux.png" width="24"/> Arch Linux
 Arch Linux package via AUR: https://aur.archlinux.org/packages/sshpilot
 
 ```
@@ -127,10 +127,10 @@ or
 yay -S sshpilot
 ```
 
-### macOS (aarch64)
+### <img src="https://img.icons8.com/ios-filled/50/000000/mac-os.png" width="24"/> macOS (aarch64)
 Download the dmg file from the releases section https://github.com/mfat/sshpilot/releases/
 
-### Run from Source
+### 💻 Run from Source
 You can also run the app from source. Install the modules listed in requirements.txt and a fairly recent version of GNOME and it should run.
 
 `
