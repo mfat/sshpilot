@@ -68,7 +68,6 @@
 ## Download
 
 ### Debian/Ubuntu APT Repository
-**System Requirements:** GTK4 (≥4.6), libadwaita (≥1.4), VTE (≥0.70)
 
 #### Installation
 
