@@ -65,17 +65,6 @@
 - Free software (GPL v3 license)
 
 
-### Default connection mode
-
-Native SSH connection mode is enabled by default. Use **Preferences → Advanced → Connection Method** to disable it if you prefer
-the built-in Paramiko transport or encounter compatibility issues with custom SSH setups.
-
-
-
-
-
-
-
 ## Download
 
 ### Debian/Ubuntu APT Repository
