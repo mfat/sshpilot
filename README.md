@@ -1,15 +1,16 @@
 **SSH Pilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal and a file manager.
 
+## Table of Contents
 
 - [Features](#features)
 - [Download](#download)
-  - [Debian/Ubuntu APT Repository](#debianubuntu-apt-repository)
-  - [Debian/Ubuntu (Manual Install)](#debianubuntu-manual-install)
-  - [Fedora/RHEL/openSUSE](#fedorarhel-opensuse)
-  - [Flatpak](#flatpak)
-  - [Arch Linux](#arch-linux)
-  - [macOS](#macos-aarch64)
-  - [Run from Source](#run-from-source)
+  - [Debian/Ubuntu APT Repository](#--debianubuntu-apt-repository)
+  - [Debian/Ubuntu (Manual Install)](#--debianubuntu-manual-install)
+  - [Fedora/RHEL/openSUSE](#-fedorarhel-opensuse)
+  - [Flatpak](#-flatpak)
+  - [Arch Linux](#-arch-linux)
+  - [🍎 macOS](#-macos-aarch64)
+  - [💻 Run from Source](#-run-from-source)
 - [Runtime Dependencies](#runtime-dependencies)
 - [Testing](#testing)
 - [Telegram Channel](#telegram-channel)
