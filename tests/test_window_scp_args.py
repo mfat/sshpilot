@@ -214,6 +214,66 @@ def test_download_file_with_passphrase_merges_env_and_opts(monkeypatch, tmp_path
     assert base_env['SSH_ASKPASS_REQUIRE'] == 'old'
 
 
+def test_download_file_with_forced_passphrase_env(monkeypatch, tmp_path):
+    recorded = {}
+
+    def fake_run(argv, check, text, capture_output, env):
+        recorded['argv'] = argv
+        recorded['env'] = env
+
+        class _Result:
+            returncode = 0
+            stderr = ''
+
+        return _Result()
+
+    monkeypatch.setattr(window.subprocess, 'run', fake_run)
+
+    ask_env = {
+        'SSH_ASKPASS': '/tmp/fake-askpass',
+        'SSH_ASKPASS_REQUIRE': 'force',
+        'DISPLAY': ':99',
+    }
+    monkeypatch.setattr(askpass_utils, 'get_ssh_env_with_forced_askpass', lambda: ask_env)
+    monkeypatch.setattr(
+        askpass_utils,
+        'get_scp_ssh_options',
+        lambda: ['-o', 'PreferredAuthentications=publickey', '-o', 'IdentitiesOnly=yes'],
+    )
+
+    base_env = {
+        'BASE': '2',
+        'SSH_ASKPASS': 'base-value',
+        'SSH_ASKPASS_REQUIRE': 'base',
+    }
+
+    local_dir = tmp_path / 'downloads'
+    result = window.download_file(
+        'example.org',
+        'carol',
+        '/remote/file.txt',
+        str(local_dir),
+        port=2222,
+        extra_ssh_opts=[],
+        inherit_env=base_env,
+        keyfile='/tmp/id_force',
+        key_mode=1,
+        force_passphrase_env=True,
+    )
+
+    assert result is True
+    assert recorded['argv'][0] == 'scp'
+    assert '-P' in recorded['argv'] and '2222' in recorded['argv']
+    assert '-i' in recorded['argv'] and '/tmp/id_force' in recorded['argv']
+    assert 'IdentitiesOnly=yes' in recorded['argv']
+    assert 'PreferredAuthentications=publickey' in recorded['argv']
+    assert recorded['env']['SSH_ASKPASS'] == '/tmp/fake-askpass'
+    assert recorded['env']['SSH_ASKPASS_REQUIRE'] == 'force'
+    assert recorded['env']['BASE'] == '2'
+    assert base_env['SSH_ASKPASS'] == 'base-value'
+    assert base_env['SSH_ASKPASS_REQUIRE'] == 'base'
+
+
 def test_download_file_without_passphrase_strips_askpass(monkeypatch, tmp_path):
     recorded = {}
 
@@ -247,3 +307,60 @@ def test_download_file_without_passphrase_strips_askpass(monkeypatch, tmp_path):
     assert 'SSH_ASKPASS_REQUIRE' not in recorded['env']
     assert base_env['SSH_ASKPASS'] == 'something'
     assert base_env['SSH_ASKPASS_REQUIRE'] == 'prefer'
+
+
+def test_list_remote_files_with_forced_passphrase_env(monkeypatch):
+    recorded = {}
+
+    def fake_run(cmd, *, capture_output, text, timeout, check, env):
+        recorded['cmd'] = cmd
+        recorded['env'] = env
+
+        class _Result:
+            stdout = "__SSHPILOT_BEGIN__\nremote-file.txt\n__SSHPILOT_STATUS__0\n__SSHPILOT_END__\n"
+            stderr = ''
+            returncode = 0
+
+        return _Result()
+
+    monkeypatch.setattr(window.subprocess, 'run', fake_run)
+    monkeypatch.setattr(window.shutil, 'which', lambda *_: '/usr/bin/ssh')
+
+    ask_env = {
+        'SSH_ASKPASS': '/tmp/fake-askpass',
+        'SSH_ASKPASS_REQUIRE': 'force',
+        'DISPLAY': ':77',
+    }
+    monkeypatch.setattr(askpass_utils, 'get_ssh_env_with_forced_askpass', lambda: ask_env)
+
+    base_env = {
+        'BASE': '3',
+        'SSH_ASKPASS': 'base-value',
+        'SSH_ASKPASS_REQUIRE': 'base',
+    }
+
+    entries, error = window.list_remote_files(
+        'example.net',
+        'dave',
+        '~/remote',
+        port=2201,
+        extra_ssh_opts=[],
+        inherit_env=base_env,
+        keyfile='/tmp/id_force_list',
+        key_mode=1,
+        force_passphrase_env=True,
+    )
+
+    assert error is None
+    assert entries == [('remote-file.txt', False)]
+    assert recorded['cmd'][0].endswith('ssh')
+    assert '-P' not in recorded['cmd']
+    assert '-i' in recorded['cmd']
+    assert '/tmp/id_force_list' in recorded['cmd']
+    assert 'IdentitiesOnly=yes' in recorded['cmd']
+    assert recorded['env']['SSH_ASKPASS'] == '/tmp/fake-askpass'
+    assert recorded['env']['SSH_ASKPASS_REQUIRE'] == 'force'
+    assert recorded['env']['DISPLAY'] == ':77'
+    assert recorded['env']['BASE'] == '3'
+    assert base_env['SSH_ASKPASS'] == 'base-value'
+    assert base_env['SSH_ASKPASS_REQUIRE'] == 'base'

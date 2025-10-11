@@ -312,6 +312,9 @@ def list_remote_files(
     extra_ssh_opts: Optional[List[str]] = None,
     use_publickey: bool = False,
     inherit_env: Optional[Dict[str, str]] = None,
+    keyfile: Optional[str] = None,
+    key_mode: Optional[int] = None,
+    force_passphrase_env: bool = False,
 ) -> Tuple[List[Tuple[str, bool]], Optional[str]]:
     """List remote files via SSH for the provided path.
 
@@ -336,8 +339,31 @@ def list_remote_files(
     )
 
     env = (inherit_env or os.environ).copy()
-    env.pop('SSH_ASKPASS', None)
-    env.pop('SSH_ASKPASS_REQUIRE', None)
+    ssh_extra_opts: List[str] = list(extra_ssh_opts or [])
+    forced_passphrase_env = bool(force_passphrase_env) and not password
+
+    if forced_passphrase_env:
+        try:
+            from .askpass_utils import get_ssh_env_with_forced_askpass
+        except Exception:  # pragma: no cover - defensive import guard
+            get_ssh_env_with_forced_askpass = None  # type: ignore
+
+        if get_ssh_env_with_forced_askpass is not None:
+            try:
+                askpass_env = get_ssh_env_with_forced_askpass()
+                if isinstance(askpass_env, dict):
+                    env.update(askpass_env)
+            except Exception:
+                logger.debug('SCP: Unable to initialize askpass environment', exc_info=True)
+
+        if keyfile and '-i' not in ssh_extra_opts:
+            ssh_extra_opts.extend(['-i', keyfile])
+
+        if key_mode == 1 and 'IdentitiesOnly=yes' not in ' '.join(ssh_extra_opts):
+            ssh_extra_opts.extend(['-o', 'IdentitiesOnly=yes'])
+    else:
+        env.pop('SSH_ASKPASS', None)
+        env.pop('SSH_ASKPASS_REQUIRE', None)
 
     try:
         if password:
@@ -348,15 +374,15 @@ def list_remote_files(
                 port=port,
                 argv_tail=['sh', '-lc', wrapped_command],
                 known_hosts_path=known_hosts_path,
-                extra_ssh_opts=extra_ssh_opts or [],
+                extra_ssh_opts=ssh_extra_opts,
                 inherit_env=env,
                 use_publickey=use_publickey,
             )
         else:
             sshbin = shutil.which('ssh') or '/usr/bin/ssh'
             cmd = [sshbin, '-p', str(port)]
-            if extra_ssh_opts:
-                cmd.extend(extra_ssh_opts)
+            if ssh_extra_opts:
+                cmd.extend(ssh_extra_opts)
             if known_hosts_path:
                 cmd += ['-o', f'UserKnownHostsFile={known_hosts_path}']
             else:
@@ -422,6 +448,7 @@ def download_file(
     saved_passphrase: Optional[str] = None,
     keyfile: Optional[str] = None,
     key_mode: Optional[int] = None,
+    force_passphrase_env: bool = False,
 ) -> bool:
     """Download a remote file (or directory when ``recursive``) via SCP."""
     if not host or not remote_file or not local_path:
@@ -433,8 +460,9 @@ def download_file(
 
     ssh_extra_opts: List[str] = list(extra_ssh_opts or [])
     passphrase_auth = bool(saved_passphrase) and not password
+    forced_passphrase_env = bool(force_passphrase_env) and not password
 
-    if passphrase_auth:
+    if passphrase_auth or forced_passphrase_env:
         try:
             from .askpass_utils import (
                 get_ssh_env_with_forced_askpass,
@@ -4509,6 +4537,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 use_publickey_with_password = False
 
             base_env = os.environ.copy()
+            password_auth_active = bool(saved_password)
+            if not password_auth_active:
+                password_auth_active = bool(
+                    profile.prefer_password
+                    or profile.combined_auth
+                    or use_publickey_with_password
+                )
+            force_passphrase_env = bool(
+                profile.identity_agent_disabled and not password_auth_active
+            )
 
             dialog = Adw.Window()
             dialog.set_transient_for(self)
@@ -4777,6 +4815,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         saved_passphrase=profile.saved_passphrase,
                         keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
                         key_mode=profile.key_mode,
+                        force_passphrase_env=force_passphrase_env,
                     )
                     GLib.idle_add(_finish_download, success, destination_dir, remote_name)
 
@@ -4868,6 +4907,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         extra_ssh_opts=ssh_extra_opts,
                         use_publickey=use_publickey_with_password,
                         inherit_env=base_env,
+                        keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
+                        key_mode=profile.key_mode,
+                        force_passphrase_env=force_passphrase_env,
                     )
 
                     def _update():
