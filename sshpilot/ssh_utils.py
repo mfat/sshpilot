@@ -11,6 +11,83 @@ from .platform_utils import is_flatpak
 logger = logging.getLogger(__name__)
 
 
+def _is_batchmode_yes_token(token: str) -> bool:
+    """Return True when the provided SSH option token enables BatchMode."""
+
+    if not isinstance(token, str):
+        return False
+
+    normalized = token.strip().lower()
+    if not normalized:
+        return False
+
+    if normalized in {"batchmode=yes", "batchmode yes"}:
+        return True
+
+    if normalized == "batchmode":
+        # Caller should inspect the following token for the value, handled separately
+        return False
+
+    return False
+
+
+def remove_batchmode_yes_options(argv: List[str]) -> List[str]:
+    """Return a copy of *argv* with any ``BatchMode=yes`` directives removed."""
+
+    cleaned: List[str] = []
+    idx = 0
+
+    while idx < len(argv):
+        arg = argv[idx]
+
+        if arg == "-o" and idx + 1 < len(argv):
+            option = argv[idx + 1]
+            option_norm = option.strip().lower() if isinstance(option, str) else ""
+
+            if _is_batchmode_yes_token(option):
+                idx += 2
+                continue
+
+            if option_norm == "batchmode" and idx + 2 < len(argv):
+                value = argv[idx + 2]
+                if isinstance(value, str) and value.strip().lower() == "yes":
+                    idx += 3
+                    continue
+
+            cleaned.extend(["-o", option])
+            idx += 2
+            continue
+
+        if isinstance(arg, str):
+            stripped = arg.strip().lower()
+
+            if arg.startswith("-o") and _is_batchmode_yes_token(arg[2:]):
+                idx += 1
+                continue
+
+            if stripped == "batchmode" and idx + 1 < len(argv):
+                next_value = argv[idx + 1]
+                if isinstance(next_value, str) and next_value.strip().lower() == "yes":
+                    idx += 2
+                    continue
+
+            if stripped == "yes" and cleaned:
+                last_token = cleaned[-1]
+                if isinstance(last_token, str) and last_token.strip().lower() == "batchmode":
+                    cleaned.pop()
+                    idx += 1
+                    continue
+
+            if _is_batchmode_yes_token(arg):
+                idx += 1
+                continue
+
+        cleaned.append(arg)
+        idx += 1
+
+    return cleaned
+
+
 def ensure_writable_ssh_home(env: Dict[str, str]) -> None:
     """Ensure ssh-copy-id has a writable HOME when running in Flatpak."""
     if is_flatpak():
@@ -72,10 +149,11 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
         password_auth_selected = False
         has_saved_password = False
     using_password = password_auth_selected or (not password_auth_selected and has_saved_password)
+    identity_agent_disabled = bool(getattr(connection, 'identity_agent_disabled', False))
 
     # Apply advanced args according to stored preferences (same as terminal.py)
     # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
-    if batch_mode and not using_password:
+    if batch_mode and not using_password and not identity_agent_disabled:
         options.extend(['-o', 'BatchMode=yes'])
     if connect_timeout is not None:
         options.extend(['-o', f'ConnectTimeout={connect_timeout}'])
@@ -190,4 +268,7 @@ def build_connection_ssh_options(connection, config=None, for_ssh_copy_id=False)
     if hasattr(connection, 'x11_forwarding') and connection.x11_forwarding and not for_ssh_copy_id:
         options.append('-X')
     
+    if identity_agent_disabled:
+        options = remove_batchmode_yes_options(options)
+
     return options
