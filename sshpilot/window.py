@@ -1644,7 +1644,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         menu_button.set_menu_model(self.create_menu())
         header.append(menu_button)
 
-        sidebar_box.append(header)
+        header_handle = Gtk.WindowHandle()
+        header_handle.set_child(header)
+        sidebar_box.append(header_handle)
 
         # Search container
         search_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)

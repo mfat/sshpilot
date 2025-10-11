@@ -1,4 +1,5 @@
 import os
+import logging
 
 import pytest
 
@@ -78,3 +79,26 @@ def test_clear_passphrase_removes_legacy_alias(monkeypatch, tmp_path):
 
     assert askpass_utils.clear_passphrase(canonical_path)
     assert DummySecretModule.store == {}
+
+
+def test_forward_askpass_log_to_logger_respects_debug(monkeypatch, tmp_path, caplog):
+    from sshpilot import askpass_utils
+
+    log_path = tmp_path / "askpass.log"
+    log_path.write_text("line-one\nline-two\n")
+
+    monkeypatch.setattr(askpass_utils, "_ASKPASS_LOG_PATH", str(log_path), raising=False)
+    monkeypatch.setattr(askpass_utils, "_ASKPASS_LOG_OFFSET", 0, raising=False)
+    monkeypatch.setattr(askpass_utils, "_ASKPASS_LOG_INITIALIZED", False, raising=False)
+
+    logger = logging.getLogger("sshpilot.test.askpass")
+
+    caplog.set_level(logging.INFO, logger=logger.name)
+    askpass_utils.forward_askpass_log_to_logger(logger, include_existing=True)
+    assert not any("ASKPASS" in record.getMessage() for record in caplog.records)
+    assert log_path.read_text() == "line-one\nline-two\n"
+
+    caplog.clear()
+    caplog.set_level(logging.DEBUG, logger=logger.name)
+    askpass_utils.forward_askpass_log_to_logger(logger, include_existing=True)
+    assert any("ASKPASS: line-one" in record.getMessage() for record in caplog.records)
