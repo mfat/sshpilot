@@ -2422,6 +2422,8 @@ class FilePane(Gtk.Box):
         self._selection_model = Gtk.MultiSelection.new(self._list_store)
         self._selection_anchor: Optional[int] = None
 
+        self._suppress_next_context_menu: bool = False
+
         list_factory = Gtk.SignalListItemFactory()
         list_factory.connect("setup", self._on_list_setup)
         list_factory.connect("bind", self._on_list_bind)
@@ -2855,6 +2857,17 @@ class FilePane(Gtk.Box):
         # sync with Gtk.GridView expectations.
         click_gesture = Gtk.GestureClick()
         click_gesture.set_button(Gdk.BUTTON_PRIMARY)
+        if hasattr(click_gesture, "set_exclusive"):
+            try:
+                click_gesture.set_exclusive(True)
+            except Exception:
+                pass
+        propagation_phase = getattr(Gtk, "PropagationPhase", None)
+        if propagation_phase is not None and hasattr(click_gesture, "set_propagation_phase"):
+            try:
+                click_gesture.set_propagation_phase(propagation_phase.CAPTURE)
+            except Exception:
+                pass
         click_gesture.connect("pressed", self._on_grid_cell_pressed, button)
         button.add_controller(click_gesture)
         
@@ -2917,9 +2930,15 @@ class FilePane(Gtk.Box):
 
         if n_press == 1:
             self._update_grid_selection_for_press(position, gesture)
+            return
 
         if n_press >= 2:
-            self._activate_grid_position(position)
+            try:
+                gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            except Exception:
+                pass
+            self._suppress_next_context_menu = True
+            self._navigate_to_entry(position)
 
     def _update_grid_selection_for_press(
         self, position: int, gesture: Gtk.GestureClick
@@ -2928,12 +2947,15 @@ class FilePane(Gtk.Box):
         if state is None:
             state = Gdk.ModifierType(0)
 
-        primary_mask = Gdk.ModifierType.CONTROL_MASK
+        primary_mask = getattr(Gdk.ModifierType, "CONTROL_MASK", 0)
         if is_macos():
-            primary_mask |= Gdk.ModifierType.META_MASK | Gdk.ModifierType.SUPER_MASK
+            primary_mask |= (
+                getattr(Gdk.ModifierType, "META_MASK", 0)
+                | getattr(Gdk.ModifierType, "SUPER_MASK", 0)
+            )
 
         has_primary = bool(state & primary_mask)
-        has_shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
+        has_shift = bool(state & getattr(Gdk.ModifierType, "SHIFT_MASK", 0))
 
         if has_shift and self._selection_anchor is not None:
             start = min(self._selection_anchor, position)
@@ -2958,15 +2980,15 @@ class FilePane(Gtk.Box):
                 self._selection_model.select_item(position, False)
             self._selection_anchor = position
         else:
-            self._selection_model.select_item(position, True)
+            is_selected = False
+            if hasattr(self._selection_model, "is_selected"):
+                try:
+                    is_selected = self._selection_model.is_selected(position)
+                except Exception:
+                    is_selected = False
+            if not is_selected:
+                self._selection_model.select_item(position, True)
             self._selection_anchor = position
-
-    def _activate_grid_position(self, position: int) -> None:
-        activate_item = getattr(self._grid_view, "activate_item", None)
-        if callable(activate_item):
-            activate_item(position)
-        else:
-            self._on_grid_activate(self._grid_view, position)
 
     def _on_selection_changed(self, model, position, n_items):
         self._update_menu_state()
@@ -3129,6 +3151,9 @@ class FilePane(Gtk.Box):
 
 
     def _show_context_menu(self, widget: Gtk.Widget, x: float, y: float) -> None:
+        if getattr(self, '_suppress_next_context_menu', False):
+            self._suppress_next_context_menu = False
+            return
         self._update_selection_for_menu(widget, x, y)
         self._update_menu_state()
         try:
@@ -3661,11 +3686,24 @@ class FilePane(Gtk.Box):
 
     # -- navigation helpers --------------------------------------------
 
-    def _on_list_activate(self, _list_view: Gtk.ListView, position: int) -> None:
-        if position is not None and 0 <= position < len(self._entries):
+    def _navigate_to_entry(self, position: Optional[int]) -> None:
+        if position is None or not (0 <= position < len(self._entries)):
+            return
+
+        try:
             entry = self._entries[position]
-            if entry.is_dir:
-                self.emit("path-changed", os.path.join(self._current_path, entry.name))
+        except IndexError:
+            return
+
+        if not getattr(entry, "is_dir", False):
+            return
+
+        base_path = self._current_path or ""
+        target_path = os.path.join(base_path, entry.name)
+        self.emit("path-changed", target_path)
+
+    def _on_list_activate(self, _list_view: Gtk.ListView, position: int) -> None:
+        self._navigate_to_entry(position)
 
     def _sort_entries(self, entries: Iterable[FileEntry]) -> List[FileEntry]:
         def key_func(item: FileEntry):
@@ -5936,4 +5974,3 @@ __all__ = [
     "SFTPProgressDialog",
     "launch_file_manager_window",
 ]
-
