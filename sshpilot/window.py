@@ -312,9 +312,6 @@ def list_remote_files(
     extra_ssh_opts: Optional[List[str]] = None,
     use_publickey: bool = False,
     inherit_env: Optional[Dict[str, str]] = None,
-    keyfile: Optional[str] = None,
-    key_mode: Optional[int] = None,
-
     force_passphrase_env: bool = False,
 ) -> Tuple[List[Tuple[str, bool]], Optional[str]]:
     """List remote files via SSH for the provided path.
@@ -359,14 +356,10 @@ def list_remote_files(
                 if isinstance(askpass_env, dict):
                     env.update(askpass_env)
             except Exception:
-                logger.debug('SCP: Unable to initialize askpass environment', exc_info=True)
-
-        if keyfile and '-i' not in ssh_extra_opts:
-            ssh_extra_opts.extend(['-i', keyfile])
-
-        if key_mode == 1 and 'IdentitiesOnly=yes' not in ' '.join(ssh_extra_opts):
-            ssh_extra_opts.extend(['-o', 'IdentitiesOnly=yes'])
-
+                logger.debug(
+                    'SCP: Unable to initialize askpass environment',
+                    exc_info=True,
+                )
 
         if get_scp_ssh_options is not None:
             try:
@@ -4934,9 +4927,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         extra_ssh_opts=ssh_extra_opts,
                         use_publickey=use_publickey_with_password,
                         inherit_env=base_env,
-                        keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
-                        key_mode=profile.key_mode,
-
                         force_passphrase_env=force_passphrase_env,
                     )
 
