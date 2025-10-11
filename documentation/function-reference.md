@@ -94,7 +94,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`force_regenerate_askpass_script()`** — Force regeneration of the askpass script
 
-- **`forward_askpass_log_to_logger(log, include_existing=False)`** — Forward askpass log lines into the main application logger when debug logging is enabled.
+- **`forward_askpass_log_to_logger(log, include_existing=False)`** — Forward askpass log lines into the main application logger.
 
 - **`get_askpass_log_path()`** — Return the path to the askpass log file.
 
@@ -1882,7 +1882,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_contrast_color(rgba)`** — Handles contrast color.
 
-- **`_enable_askpass_log_forwarding(include_existing=False)`** — Start forwarding askpass log lines into the application logger when debug logging is enabled.
+- **`_enable_askpass_log_forwarding(include_existing=False)`** — Start forwarding askpass log lines into the application logger.
 
 - **`_ensure_opaque(rgba)`** — Handles ensure opaque.
 

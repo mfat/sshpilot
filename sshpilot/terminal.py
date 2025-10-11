@@ -1608,10 +1608,6 @@ class TerminalWidget(Gtk.Box):
     def _enable_askpass_log_forwarding(self, include_existing: bool = False) -> None:
         """Start forwarding askpass log lines into the application logger."""
 
-        if not logger.isEnabledFor(logging.DEBUG):
-            # Keep the askpass log file intact but avoid forwarding unless debug logging is active.
-            return
-
         try:
             from .askpass_utils import ensure_askpass_log_forwarder, forward_askpass_log_to_logger
         except Exception as exc:
