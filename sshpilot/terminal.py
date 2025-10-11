@@ -609,6 +609,7 @@ class TerminalWidget(Gtk.Box):
 
         if getattr(connection, "identity_agent_disabled", False):
             logger.debug("Skipping native key preload because identity agent is disabled")
+
             return
 
         manager = getattr(self, 'connection_manager', None)
@@ -946,15 +947,20 @@ class TerminalWidget(Gtk.Box):
                     )
 
                     if has_explicit_key and hasattr(self, 'connection_manager') and self.connection_manager:
-                        try:
-                            if hasattr(self.connection_manager, 'prepare_key_for_connection'):
-                                key_prepared = self.connection_manager.prepare_key_for_connection(keyfile_value)
-                                if key_prepared:
-                                    logger.debug(f"Key prepared for connection: {keyfile_value}")
-                                else:
-                                    logger.warning(f"Failed to prepare key for connection: {keyfile_value}")
-                        except Exception as e:
-                            logger.warning(f"Error preparing key for connection: {e}")
+                        if getattr(self.connection, 'identity_agent_disabled', False):
+                            logger.debug(
+                                "IdentityAgent disabled; skipping key preparation before connection"
+                            )
+                        else:
+                            try:
+                                if hasattr(self.connection_manager, 'prepare_key_for_connection'):
+                                    key_prepared = self.connection_manager.prepare_key_for_connection(keyfile_value)
+                                    if key_prepared:
+                                        logger.debug(f"Key prepared for connection: {keyfile_value}")
+                                    else:
+                                        logger.warning(f"Failed to prepare key for connection: {keyfile_value}")
+                            except Exception as e:
+                                logger.warning(f"Error preparing key for connection: {e}")
 
                     # Only add specific key when a dedicated key mode is selected
                     if has_explicit_key and key_select_mode in (1, 2):

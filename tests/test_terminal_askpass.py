@@ -59,6 +59,7 @@ def test_forced_askpass_without_passphrase(monkeypatch, caplog):
 
     lookup_calls = []
     manager_calls = []
+    prepare_calls = []
 
     def fake_forced_env():
         return {
@@ -119,11 +120,15 @@ def test_forced_askpass_without_passphrase(monkeypatch, caplog):
         manager_calls.append(path)
         return None
 
+    def fake_prepare_key_for_connection(path, *_args, **_kwargs):
+        prepare_calls.append(path)
+        return True
+
     terminal.connection_manager = types.SimpleNamespace(
         native_connect_enabled=False,
         get_password=lambda *a, **k: None,
         known_hosts_path="",
-        prepare_key_for_connection=lambda *a, **k: False,
+        prepare_key_for_connection=fake_prepare_key_for_connection,
         get_key_passphrase=fake_get_key_passphrase,
         update_connection_status=lambda *a, **k: None,
     )
@@ -145,6 +150,7 @@ def test_forced_askpass_without_passphrase(monkeypatch, caplog):
 
     assert lookup_calls == [key_path]
     assert manager_calls == [key_path]
+    assert prepare_calls == []
 
     assert terminal.vte.last_env_list is not None
     env_dict = dict(item.split("=", 1) for item in terminal.vte.last_env_list)
@@ -154,3 +160,35 @@ def test_forced_askpass_without_passphrase(monkeypatch, caplog):
     assert "SSH_ASKPASS_REQUIRE" not in env_dict
 
     assert "allowing interactive prompt" in caplog.text
+
+
+def test_prepare_key_skipped_when_identity_agent_disabled(tmp_path):
+    terminal_mod = importlib.import_module("sshpilot.terminal")
+
+    terminal_cls = terminal_mod.TerminalWidget
+    terminal = terminal_cls.__new__(terminal_cls)
+
+    key_path = tmp_path / "id_test_key"
+    key_path.write_text("dummy")
+
+    prepare_calls = []
+
+    terminal.connection_manager = types.SimpleNamespace(
+        prepare_key_for_connection=lambda path: prepare_calls.append(path) or True
+    )
+
+    connection = types.SimpleNamespace(
+        key_select_mode=1,
+        keyfile=str(key_path),
+        identity_agent_disabled=True,
+    )
+
+    terminal.connection = connection
+    terminal._resolve_native_identity_candidates = lambda: []
+
+    terminal._prepare_key_for_native_mode()
+    assert prepare_calls == []
+
+    connection.identity_agent_disabled = False
+    terminal._prepare_key_for_native_mode()
+    assert prepare_calls == [str(key_path)]
