@@ -274,6 +274,7 @@ def test_download_file_with_forced_passphrase_env(monkeypatch, tmp_path):
     assert base_env['SSH_ASKPASS_REQUIRE'] == 'base'
 
 
+
 def test_download_file_without_passphrase_strips_askpass(monkeypatch, tmp_path):
     recorded = {}
 

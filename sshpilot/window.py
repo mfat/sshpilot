@@ -314,6 +314,7 @@ def list_remote_files(
     inherit_env: Optional[Dict[str, str]] = None,
     keyfile: Optional[str] = None,
     key_mode: Optional[int] = None,
+
     force_passphrase_env: bool = False,
 ) -> Tuple[List[Tuple[str, bool]], Optional[str]]:
     """List remote files via SSH for the provided path.
@@ -348,6 +349,7 @@ def list_remote_files(
         except Exception:  # pragma: no cover - defensive import guard
             get_ssh_env_with_forced_askpass = None  # type: ignore
 
+
         if get_ssh_env_with_forced_askpass is not None:
             try:
                 askpass_env = get_ssh_env_with_forced_askpass()
@@ -361,7 +363,7 @@ def list_remote_files(
 
         if key_mode == 1 and 'IdentitiesOnly=yes' not in ' '.join(ssh_extra_opts):
             ssh_extra_opts.extend(['-o', 'IdentitiesOnly=yes'])
-    else:
+
         env.pop('SSH_ASKPASS', None)
         env.pop('SSH_ASKPASS_REQUIRE', None)
 
@@ -4909,6 +4911,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         inherit_env=base_env,
                         keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
                         key_mode=profile.key_mode,
+
                         force_passphrase_env=force_passphrase_env,
                     )
 
