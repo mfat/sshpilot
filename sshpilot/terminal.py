@@ -1250,39 +1250,74 @@ class TerminalWidget(Gtk.Box):
                         getattr(self.connection, 'keyfile', '') or ''
                     )
 
-                    if not passphrase_available and key_path_for_lookup:
-                        try:
-                            looked_up = lookup_passphrase(key_path_for_lookup)
-                        except Exception as exc:
-                            logger.debug(
-                                "Passphrase lookup via askpass_utils failed for %s: %s",
-                                key_path_for_lookup,
-                                exc,
-                            )
-                            looked_up = ''
-                        if looked_up:
-                            passphrase_available = True
+                    identity_candidates: List[str] = []
 
-                    if (
-                        not passphrase_available
-                        and key_path_for_lookup
-                        and hasattr(self, 'connection_manager')
-                        and self.connection_manager
-                        and hasattr(self.connection_manager, 'get_key_passphrase')
-                    ):
-                        try:
-                            stored = self.connection_manager.get_key_passphrase(
-                                key_path_for_lookup
-                            )
-                        except Exception as exc:
-                            logger.debug(
-                                "Connection manager passphrase lookup failed for %s: %s",
-                                key_path_for_lookup,
-                                exc,
-                            )
-                            stored = None
-                        if stored:
-                            passphrase_available = True
+                    def _append_candidate(candidate: str) -> None:
+                        if not candidate:
+                            return
+                        expanded = os.path.expanduser(str(candidate))
+                        if expanded not in identity_candidates:
+                            identity_candidates.append(expanded)
+
+                    if key_path_for_lookup:
+                        _append_candidate(key_path_for_lookup)
+
+                    try:
+                        resolved_identities = getattr(
+                            self.connection, 'resolved_identity_files', []
+                        )
+                    except Exception:
+                        resolved_identities = []
+
+                    if isinstance(resolved_identities, (list, tuple)):
+                        for candidate in resolved_identities:
+                            _append_candidate(candidate)
+
+                    try:
+                        native_candidates = self._resolve_native_identity_candidates()
+                    except Exception:
+                        native_candidates = []
+
+                    for candidate in native_candidates:
+                        _append_candidate(candidate)
+
+                    if not passphrase_available:
+                        for candidate in identity_candidates:
+                            try:
+                                looked_up = lookup_passphrase(candidate)
+                            except Exception as exc:
+                                logger.debug(
+                                    "Passphrase lookup via askpass_utils failed for %s: %s",
+                                    candidate,
+                                    exc,
+                                )
+                                looked_up = ''
+
+                            if looked_up:
+                                passphrase_available = True
+                                break
+
+                            if (
+                                hasattr(self, 'connection_manager')
+                                and self.connection_manager
+                                and hasattr(
+                                    self.connection_manager, 'get_key_passphrase'
+                                )
+                            ):
+                                try:
+                                    stored = self.connection_manager.get_key_passphrase(
+                                        candidate
+                                    )
+                                except Exception as exc:
+                                    logger.debug(
+                                        "Connection manager passphrase lookup failed for %s: %s",
+                                        candidate,
+                                        exc,
+                                    )
+                                    stored = None
+                                if stored:
+                                    passphrase_available = True
+                                    break
 
                     if not passphrase_available:
                         askpass_env.pop('SSH_ASKPASS_REQUIRE', None)
