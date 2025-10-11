@@ -14,6 +14,7 @@ def test_connection_batchmode_removed_when_identity_agent_none(monkeypatch):
 
     monkeypatch.setattr("sshpilot.config.Config", DummyConfig, raising=False)
 
+
     def fake_effective_config(_alias, config_file=None):
         return {"identityagent": "none"}
 
@@ -110,3 +111,4 @@ def test_native_connect_strips_batchmode_from_overrides(monkeypatch):
     assert 'BatchMode=yes' not in connection.ssh_cmd
     assert '-o' in connection.ssh_cmd
     assert any(opt.startswith('ConnectTimeout=') for opt in connection.ssh_cmd)
+
