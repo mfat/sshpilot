@@ -671,6 +671,10 @@ class Connection:
                         sanitized_overrides.append(flag)
 
             if sanitized_overrides:
+                if self.identity_agent_disabled:
+                    sanitized_overrides = remove_batchmode_yes_options(
+                        sanitized_overrides
+                    )
                 ssh_cmd.extend(sanitized_overrides)
 
             ssh_cmd.append(host_label)
