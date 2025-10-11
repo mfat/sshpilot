@@ -177,6 +177,130 @@ def _quote_remote_path_for_shell(path: str) -> str:
     return shlex.quote(normalized)
 
 
+def _resolve_ssh_copy_id_askpass_env(connection, ssh_key, connection_manager):
+    """Return askpass environment and force status for ssh-copy-id launches."""
+
+    from .askpass_utils import (
+        get_ssh_env_with_askpass,
+        get_ssh_env_with_forced_askpass,
+        lookup_passphrase,
+    )
+
+    agent_disabled = bool(getattr(connection, 'identity_agent_disabled', False))
+    manager_agent_disabled = bool(
+        getattr(connection_manager, 'identity_agent_disabled', False)
+    ) if connection_manager else False
+
+    requires_force = agent_disabled or manager_agent_disabled
+
+    askpass_env = (
+        get_ssh_env_with_forced_askpass()
+        if requires_force
+        else get_ssh_env_with_askpass()
+    )
+
+    if not requires_force:
+        return askpass_env, requires_force, askpass_env.get('SSH_ASKPASS_REQUIRE') == 'force'
+
+    key_passphrase = getattr(connection, 'key_passphrase', '') or ''
+    passphrase_available = bool(key_passphrase)
+    identity_candidates: List[str] = []
+
+    def _append_candidate(candidate: Any) -> None:
+        if not candidate:
+            return
+        expanded = os.path.expanduser(str(candidate))
+        if expanded not in identity_candidates:
+            identity_candidates.append(expanded)
+
+    if ssh_key:
+        _append_candidate(getattr(ssh_key, 'private_path', ''))
+
+    _append_candidate(getattr(connection, 'keyfile', ''))
+
+    try:
+        resolved = getattr(connection, 'resolved_identity_files', [])
+    except Exception:
+        resolved = []
+
+    if isinstance(resolved, (list, tuple, set)):
+        for candidate in resolved:
+            _append_candidate(candidate)
+
+    if (
+        key_passphrase
+        and identity_candidates
+        and connection_manager
+        and hasattr(connection_manager, 'store_key_passphrase')
+    ):
+        for candidate in identity_candidates:
+            try:
+                connection_manager.store_key_passphrase(candidate, key_passphrase)
+                logger.debug(
+                    'IdentityAgent disabled: refreshed stored passphrase for %s',
+                    candidate,
+                )
+            except Exception as exc:
+                logger.debug(
+                    'IdentityAgent disabled: failed to refresh stored passphrase for %s: %s',
+                    candidate,
+                    exc,
+                )
+
+    if not passphrase_available:
+        for candidate in identity_candidates:
+            looked_up = ''
+            try:
+                looked_up = lookup_passphrase(candidate)
+            except Exception as exc:
+                logger.debug(
+                    'Passphrase lookup via askpass_utils failed for %s: %s',
+                    candidate,
+                    exc,
+                )
+
+            if looked_up:
+                logger.debug(
+                    'IdentityAgent disabled: located stored passphrase for %s',
+                    candidate,
+                )
+                passphrase_available = True
+                break
+
+            if (
+                connection_manager
+                and hasattr(connection_manager, 'get_key_passphrase')
+            ):
+                try:
+                    stored = connection_manager.get_key_passphrase(candidate)
+                except Exception as exc:
+                    logger.debug(
+                        'Connection manager passphrase lookup failed for %s: %s',
+                        candidate,
+                        exc,
+                    )
+                    stored = None
+                if stored:
+                    logger.debug(
+                        'IdentityAgent disabled: connection manager supplied passphrase for %s',
+                        candidate,
+                    )
+                    passphrase_available = True
+                    break
+
+    if not passphrase_available:
+        askpass_env.pop('SSH_ASKPASS_REQUIRE', None)
+        logger.info(
+            'SSH askpass helper could not supply a key passphrase; allowing interactive prompt instead',
+        )
+    else:
+        logger.debug(
+            'IdentityAgent disabled: keeping forced askpass to deliver stored passphrase',
+        )
+
+    return askpass_env, requires_force, askpass_env.get('SSH_ASKPASS_REQUIRE') == 'force'
+
+
 def list_remote_files(
     host: str,
     user: str,
@@ -4831,13 +4955,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     f"port: {getattr(connection, 'port', 22)}")
         logger.debug(f"Main window: SSH key details - private_path: {getattr(ssh_key, 'private_path', 'unknown')}, "
                     f"public_path: {getattr(ssh_key, 'public_path', 'unknown')}")
-        
+
         try:
             target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
             pub_name = os.path.basename(getattr(ssh_key, 'public_path', '') or '')
             body_text = _('This will add your public key to the server\'s ~/.ssh/authorized_keys so future logins can use SSH keys.')
             logger.debug(f"Main window: Target: {target}, public key name: {pub_name}")
-            
+
             dlg = Adw.Window()
             dlg.set_transient_for(self)
             dlg.set_modal(True)
@@ -4907,14 +5031,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
             button_box.set_halign(Gtk.Align.END)
             button_box.set_margin_top(12)
-            
+
             cancel_btn = Gtk.Button(label=_('Close'))
             try:
                 cancel_btn.add_css_class('suggested-action')
             except Exception:
                 pass
             button_box.append(cancel_btn)
-            
+
             content_box.append(button_box)
 
             # Root container combines header and content
@@ -4968,7 +5092,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.debug("Main window: Setting up authentication environment")
             env = os.environ.copy()
             logger.debug(f"Main window: Environment variables count: {len(env)}")
-            
+
             # Determine auth method and check for saved password
             logger.debug("Main window: Determining authentication preferences")
             try:
@@ -4991,7 +5115,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 logger.debug("Main window: Using sshpass for password authentication")
                 import shutil
                 sshpass_path = None
-                
+
                 # Check if sshpass is available and executable
                 logger.debug("Main window: Checking for sshpass availability")
                 if os.path.exists('/app/bin/sshpass') and os.access('/app/bin/sshpass', os.X_OK):
@@ -5002,13 +5126,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     logger.debug(f"Found sshpass in PATH: {sshpass_path}")
                 else:
                     logger.debug("sshpass not found or not executable")
-                
+
                 if sshpass_path:
                     # Use the same approach as ssh_password_exec.py for consistency
                     logger.debug("Main window: Setting up sshpass with FIFO")
                     from .ssh_password_exec import _mk_priv_dir, _write_once_fifo
                     import threading
-                    
+
                     # Create private temp directory and FIFO
                     logger.debug("Main window: Creating private temp directory")
                     tmpdir = _mk_priv_dir()
@@ -5016,26 +5140,26 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     logger.debug(f"Main window: FIFO path: {fifo}")
                     os.mkfifo(fifo, 0o600)
                     logger.debug("Main window: FIFO created with permissions 0o600")
-                    
+
                     # Start writer thread that writes the password exactly once
                     saved_password = self.connection_manager.get_password(host_value, connection.username)
                     logger.debug(f"Main window: Retrieved saved password, length: {len(saved_password) if saved_password else 0}")
                     t = threading.Thread(target=_write_once_fifo, args=(fifo, saved_password), daemon=True)
                     t.start()
                     logger.debug("Main window: Password writer thread started")
-                    
+
                     # Use sshpass with FIFO
                     original_argv = argv.copy()
                     argv = [sshpass_path, "-f", fifo] + argv
                     logger.debug(f"Main window: Modified argv - added sshpass: {argv}")
-                    
+
                     # Important: strip askpass vars so OpenSSH won't try the askpass helper for passwords
                     env.pop("SSH_ASKPASS", None)
                     env.pop("SSH_ASKPASS_REQUIRE", None)
                     logger.debug("Main window: Removed SSH_ASKPASS environment variables")
-                    
+
                     logger.debug("Using sshpass with FIFO for ssh-copy-id password authentication")
-                    
+
                     # Store tmpdir for cleanup (will be cleaned up when process exits)
                     def cleanup_tmpdir():
                         try:
@@ -5057,10 +5181,25 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             else:
                 # Use askpass for passphrase prompts (key-based auth)
                 logger.debug("Main window: Using askpass for key-based authentication")
-                from .askpass_utils import get_ssh_env_with_askpass
-                askpass_env = get_ssh_env_with_askpass()
-                logger.debug(f"Main window: Askpass environment variables: {list(askpass_env.keys())}")
+                askpass_env, requires_force, force_active = _resolve_ssh_copy_id_askpass_env(
+                    connection,
+                    ssh_key,
+                    getattr(self, 'connection_manager', None),
+                )
+                logger.debug(
+                    "Main window: Askpass environment variables: %s",
+                    list(askpass_env.keys()),
+                )
                 env.update(askpass_env)
+                if requires_force:
+                    if force_active:
+                        logger.debug(
+                            "IdentityAgent disabled for this host; forcing SSH askpass usage",
+                        )
+                    else:
+                        logger.debug(
+                            "IdentityAgent disabled but no stored passphrase was located; allowing interactive prompt",
+                        )
 
             ensure_writable_ssh_home(env)
 
@@ -5076,7 +5215,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     logger.debug("Main window: /app/bin already in PATH")
             else:
                 logger.debug("Main window: /app/bin does not exist, skipping PATH modification")
-            
+
             cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
             logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
             logger.debug(f"Main window: Final command line: {cmdline}")
@@ -5087,7 +5226,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 logger.debug("Main window: Spawning ssh-copy-id process in VTE terminal")
                 logger.debug(f"Main window: Working directory: {os.path.expanduser('~') or '/'}")
                 logger.debug(f"Main window: Command: ['bash', '-lc', '{cmdline}']")
-                
+
                 term_widget.vte.spawn_async(
                     Vte.PtyFlags.DEFAULT,
                     os.path.expanduser('~') or '/',
@@ -5124,10 +5263,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             exit_code = status
 
                     logger.info(f"ssh-copy-id exited with status: {status}, normalized exit_code: {exit_code}")
-                    
+
                     # Simple verification: just check exit code like default ssh-copy-id
                     ok = (exit_code == 0)
-                    
+
                     # Get error details from output if failed
                     error_details = None
                     if not ok:
@@ -5161,7 +5300,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                                         error_details = f"Error details: {lines[-1]}"
                         except Exception as e:
                             logger.debug(f"Main window: Error extracting error details: {e}")
-                    
+
                     if ok:
                         logger.info("ssh-copy-id completed successfully")
                         logger.debug("Main window: ssh-copy-id succeeded, showing success message")
@@ -5214,7 +5353,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self._error_dialog(_("SSH Key Copy Error"),
                               _("Failed to create ssh-copy-id terminal window."), 
                               f"Error: {str(e)}\n\nThis could be due to:\n• Missing VTE terminal widget\n• Display/GTK issues\n• System resource limitations")
-
 
 
     def _build_ssh_copy_id_argv(
