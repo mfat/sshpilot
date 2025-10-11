@@ -201,6 +201,10 @@ def read_new_askpass_log_lines(include_existing: bool = False) -> List[str]:
 def forward_askpass_log_to_logger(log, include_existing: bool = False) -> None:
     """Forward askpass log lines into the main application logger."""
 
+    # Skip the potentially expensive file reads unless debug logging is enabled.
+    if not log.isEnabledFor(logging.DEBUG):
+        return
+
     try:
         lines = read_new_askpass_log_lines(include_existing=include_existing)
     except Exception as exc:
@@ -208,7 +212,7 @@ def forward_askpass_log_to_logger(log, include_existing: bool = False) -> None:
         return
 
     for line in lines:
-        log.info(f"ASKPASS: {line}")
+        log.debug(f"ASKPASS: {line}")
 
 
 def _askpass_log_forwarder_loop() -> None:
