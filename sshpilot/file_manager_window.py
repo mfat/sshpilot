@@ -2986,8 +2986,12 @@ class FilePane(Gtk.Box):
                     is_selected = self._selection_model.is_selected(position)
                 except Exception:
                     is_selected = False
-            if not is_selected:
-                self._selection_model.select_item(position, True)
+            if not is_selected or self._selection_model is None:
+                try:
+                    self._selection_model.unselect_all()
+                except Exception:
+                    pass
+                self._selection_model.select_item(position, False)
             self._selection_anchor = position
 
     def _on_selection_changed(self, model, position, n_items):
