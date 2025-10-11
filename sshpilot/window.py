@@ -8400,7 +8400,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # options resolved via ssh -G are honored for the reconnect.
             try:
                 loop = asyncio.get_event_loop()
-                connect_coro = connection.connect()
+                cm = getattr(self, 'connection_manager', None)
+                app = self.get_application() if hasattr(self, 'get_application') else None
+                use_native = bool(getattr(cm, 'native_connect_enabled', False))
+                if not use_native and app is not None and hasattr(app, 'native_connect_enabled'):
+                    use_native = bool(app.native_connect_enabled)
+
+                if use_native and hasattr(connection, 'native_connect'):
+                    connect_coro = connection.native_connect()
+                else:
+                    connect_coro = connection.connect()
                 if loop.is_running():
                     future = asyncio.run_coroutine_threadsafe(connect_coro, loop)
                     future.result()
