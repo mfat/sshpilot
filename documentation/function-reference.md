@@ -44,11 +44,41 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 
 
+## Module: `sshpilot.agent_client`
+
+### Functions
+
+- **`create_agent_launcher_script()`** — Create a standalone launcher script for the agent.
+
+### Class: `AgentClient`
+
+- **`__init__()`** — Handles init.
+
+- **`_build_flatpak_agent_command(rows=24, cols=80, cwd=None, verbose=False)`** — Build agent command for Flatpak environment.
+
+- **`build_agent_command(rows=24, cols=80, cwd=None, verbose=False)`** — Build the command to launch the agent.
+
+- **`find_agent()`** — Find the agent script and Python interpreter.
+
+- **`get_agent_fds(process)`** — Get file descriptors for agent communication.
+
+- **`launch_agent(rows=24, cols=80, cwd=None, verbose=False)`** — Launch the agent process.
+
+- **`wait_for_ready(process, timeout=5.0)`** — Wait for agent to signal ready.
+
+
+
 ## Module: `sshpilot.askpass_utils`
 
 ### Functions
 
 - **`_askpass_log_forwarder_loop()`** — Background loop that forwards askpass logs to the module logger.
+
+- **`_get_key_path_lookup_candidates(key_path)`** — Return normalized key path variants for lookup and compatibility.
+
+- **`_home_alias_for_path(path)`** — Return a home-relative alias (~/...) for *path* when applicable.
+
+- **`_normalize_key_path_for_storage(key_path)`** — Return a canonical representation for storing passphrases.
 
 - **`clear_passphrase(key_path)`** — Remove a stored key passphrase using keyring (macOS) or libsecret (Linux).
 
@@ -375,6 +405,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_forward_data(reader, writer, label)`** — Helper method to forward data between two streams
 
 - **`_resolve_config_override_path()`** — Return an absolute path to the SSH config override, if any.
+
+- **`_update_identity_agent_state(directive)`** — Update cached IdentityAgent directive information for the connection.
 
 - **`_update_properties_from_data(data)`** — Update instance properties from data dictionary
 
@@ -722,6 +754,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_hide_request_access_button()`** — Hide the Request Access button after access has been granted.
 
+- **`_navigate_to_entry(position)`** — Handles navigate to entry.
+
 - **`_on_back_clicked(_button)`** — Handles back clicked.
 
 - **`_on_download_clicked(_button)`** — Handles download clicked.
@@ -741,6 +775,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_on_grid_activate(_grid_view, position)`** — Handles grid activate.
 
 - **`_on_grid_bind(factory, item)`** — Handles grid bind.
+
+- **`_on_grid_cell_pressed(gesture, n_press, _x, _y, button)`** — Handles grid cell pressed.
 
 - **`_on_grid_setup(factory, item)`** — Handles grid setup.
 
@@ -807,6 +843,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_show_properties_dialog(entry, details)`** — Show modern properties dialog.
 
 - **`_sort_entries(entries)`** — Handles sort entries.
+
+- **`_update_grid_selection_for_press(position, gesture)`** — Updates grid selection for press.
 
 - **`_update_menu_state()`** — Updates menu state.
 
@@ -1086,6 +1124,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`on_tab_prev(action, param)`** — Switch to previous tab
 
+- **`on_terminal_search(action, param)`** — Toggle the search overlay for the active terminal.
+
 - **`on_toggle_list(action, param)`** — Handle toggle list focus action
 
 - **`quit()`** — Request application shutdown, showing confirmation if needed.
@@ -1165,6 +1205,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`should_hide_external_terminal_options()`** — Check if external terminal options should be hidden.
 
 - **`should_hide_file_manager_options()`** — Check if file manager options should be hidden.
+
+- **`should_show_force_internal_file_manager_toggle()`** — Return True when the built-in toggle for forcing the internal manager should be shown.
 
 ### Class: `MonospaceFontDialog`
 
@@ -1329,6 +1371,20 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`setup_navigation_layout()`** — Configure split view layout mirroring GNOME Settings.
 
 - **`setup_preferences()`** — Set up preferences UI with current values
+
+### Class: `_GroupDisplayToggleFallback`
+
+- **`__init__(buttons, default='fullwidth')`** — Handles init.
+
+- **`_emit_changed()`** — Handles emit changed.
+
+- **`_on_button_toggled(button, name)`** — Handles button toggled.
+
+- **`connect(callback)`** — Handles connect.
+
+- **`get_active_name()`** — Returns active name.
+
+- **`set_active_name(name)`** — Sets active name.
 
 
 
@@ -1752,6 +1808,36 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 
 
+## Module: `sshpilot.sshpilot_agent`
+
+### Functions
+
+- **`handle_resize_signal(signum, frame)`** — Handle SIGWINCH for terminal resize
+
+- **`main()`** — Main entry point for the agent
+
+### Class: `PTYAgent`
+
+- **`__init__()`** — Handles init.
+
+- **`_send_status(status_type, **payload)`** — Send a structured status message to stderr for the caller.
+
+- **`cleanup()`** — Clean up resources
+
+- **`create_pty()`** — Create a PTY master/slave pair with proper flags.
+
+- **`discover_shell()`** — Discover the user's preferred shell on the host system
+
+- **`io_loop()`** — Main I/O loop: relay data between master PTY and stdin/stdout.
+
+- **`run(rows=24, cols=80, cwd=None)`** — Main entry point: create PTY, spawn shell, run I/O loop
+
+- **`set_pty_size(rows, cols)`** — Set the PTY size
+
+- **`spawn_shell(shell, cwd=None)`** — Spawn the user's shell with proper PTY setup.
+
+
+
 ## Module: `sshpilot.terminal`
 
 ### Class: `SSHProcessManager`
@@ -1773,6 +1859,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 ### Class: `TerminalWidget`
 
 - **`__init__(connection, config, connection_manager, group_color=None)`** — Handles init.
+
+- **`_apply_cursor_and_selection_colors()`** — Handles apply cursor and selection colors.
 
 - **`_apply_pass_through_mode(enabled)`** — Enable or disable custom shortcut handling based on configuration.
 
@@ -1827,6 +1915,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_mix_with_white(rgba, ratio=0.35)`** — Handles mix with white.
 
 - **`_notify_invalid_encoding(requested, fallback)`** — Handles notify invalid encoding.
+
+- **`_on_agent_spawn_complete(terminal, pid, error, user_data)`** — Callback when agent spawn completes
 
 - **`_on_config_setting_changed(_config, key, value)`** — Handles config setting changed.
 
@@ -1890,6 +1980,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_setup_context_menu()`** — Set up a robust per-terminal context menu and actions.
 
+- **`_setup_local_shell_direct()`** — Set up local shell using direct spawn (legacy approach).
+
 - **`_setup_mouse_wheel_zoom()`** — Set up mouse wheel zoom functionality with Cmd+MouseWheel.
 
 - **`_setup_process_group(spawn_data)`** — Setup function called after fork but before exec
@@ -1901,6 +1993,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_show_search_overlay(select_all=False)`** — Reveal the terminal search overlay and focus the search entry.
 
 - **`_terminate_process_tree(pid)`** — Terminate a process and all its children
+
+- **`_try_agent_based_shell()`** — Try to set up local shell using the agent (Ptyxis-style).
 
 - **`_update_search_pattern(text, case_sensitive=False, regex=False, move_forward=True, update_entry=False)`** — Apply or update the search pattern on the VTE widget.
 
@@ -1964,9 +2058,9 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_apply_tab_css_color(page, rgba)`** — Apply CSS color to the tab view to color indicator icons
 
-- **`_apply_tab_group_color(page, color_value)`** — Handles apply tab group color.
+- **`_apply_tab_group_color(page, color_value, tooltip=None)`** — Handles apply tab group color.
 
-- **`_apply_tab_icon_color(page, rgba)`** — Apply color to tab icon by setting a colored icon
+- **`_apply_tab_icon_color(page, rgba, tooltip_text=None)`** — Apply color to tab icon by setting a colored icon
 
 - **`_clear_tab_group_color(page)`** — Handles clear tab group color.
 
@@ -1977,6 +2071,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_on_disconnect_confirmed(dialog, response_id, connection)`** — Handles disconnect confirmed.
 
 - **`_resolve_group_color(connection)`** — Handles resolve group color.
+
+- **`_resolve_group_color_and_name(connection)`** — Handles resolve group color and name.
 
 - **`broadcast_command(command)`** — Handles broadcast command.
 
@@ -2046,7 +2142,9 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_remote_parent(path)`** — Handles remote parent.
 
-- **`download_file(host, user, remote_file, local_path, recursive=False, port=22, password=None, known_hosts_path=None, extra_ssh_opts=None, use_publickey=False, inherit_env=None)`** — Download a remote file (or directory when ``recursive``) via SCP.
+- **`_resolve_ssh_copy_id_askpass_env(connection, ssh_key, connection_manager)`** — Return askpass environment and force status for ssh-copy-id launches.
+
+- **`download_file(host, user, remote_file, local_path, recursive=False, port=22, password=None, known_hosts_path=None, extra_ssh_opts=None, use_publickey=False, inherit_env=None, saved_passphrase=None, keyfile=None, key_mode=None)`** — Download a remote file (or directory when ``recursive``) via SCP.
 
 - **`list_remote_files(host, user, remote_path, port=22, password=None, known_hosts_path=None, extra_ssh_opts=None, use_publickey=False, inherit_env=None)`** — List remote files via SSH for the provided path.
 
@@ -2060,9 +2158,13 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_add_safe_current_shortcuts(section, primary)`** — Add shortcuts with current customizations using a safe approach
 
+- **`_append_scp_option_pair(options, flag, value)`** — Append a flag/value pair to ``options`` if it is not already present.
+
 - **`_build_grouped_list(hierarchy, connections_dict, level)`** — Recursively build the grouped connection list
 
 - **`_build_scp_argv(connection, sources, destination, direction, known_hosts_path=None)`** — Builds scp argv.
+
+- **`_build_scp_connection_profile(connection)`** — Builds scp connection profile.
 
 - **`_build_shortcuts_window()`** — Builds shortcuts window.
 
@@ -2088,6 +2190,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_error_dialog(heading, body, detail='')`** — Handles error dialog.
 
+- **`_extend_scp_options_from_connection(connection, options)`** — Augment ``options`` with connection-specific SSH arguments.
+
 - **`_focus_active_terminal_tab()`** — Focus the currently active terminal tab
 
 - **`_focus_connection_list_first_row()`** — Focus the connection list and ensure the first row is selected (startup only).
@@ -2099,6 +2203,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_focus_terminal_widget(terminal)`** — Request focus for a terminal widget, retrying on idle if needed.
 
 - **`_generate_duplicate_nickname(base_nickname)`** — Generate a unique nickname for a duplicated connection.
+
+- **`_get_active_terminal_widget()`** — Return the TerminalWidget for the currently selected tab, if any.
 
 - **`_get_default_terminal_command()`** — Get the default terminal command from desktop environment
 
@@ -2336,7 +2442,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`on_window_size_changed(window, param)`** — Handle window size change
 
-- **`open_help_url()`** — Open the SSH Pilot wiki in the default browser
+- **`open_help_url()`** — Open the SSH Pilot wiki using a portal-friendly launcher.
 
 - **`open_in_system_terminal(connection)`** — Open the connection in the system's default terminal
 
@@ -2379,3 +2485,5 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`simple_close_handler(window)`** — Handle window close - distinguish between tab close and window close
 
 - **`toggle_list_focus()`** — Toggle focus between connection list and terminal
+
+- **`toggle_terminal_search_overlay(select_all=False)`** — Toggle the search overlay for the currently focused terminal tab.
