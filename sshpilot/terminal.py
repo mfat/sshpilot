@@ -1218,9 +1218,24 @@ class TerminalWidget(Gtk.Box):
                 logger.debug("No saved password - using interactive prompt if required")
             else:
                 # Use askpass for passphrase prompts (key-based auth)
-                from .askpass_utils import get_ssh_env_with_askpass
-                askpass_env = get_ssh_env_with_askpass()
+                from .askpass_utils import (
+                    get_ssh_env_with_askpass,
+                    get_ssh_env_with_forced_askpass,
+                )
+
+                requires_force = bool(
+                    getattr(self.connection, 'identity_agent_disabled', False)
+                )
+                askpass_env = (
+                    get_ssh_env_with_forced_askpass()
+                    if requires_force
+                    else get_ssh_env_with_askpass()
+                )
                 env.update(askpass_env)
+                if requires_force:
+                    logger.debug(
+                        "IdentityAgent disabled for this host; forcing SSH askpass usage"
+                    )
                 self._enable_askpass_log_forwarding(include_existing=True)
             env['TERM'] = env.get('TERM', 'xterm-256color')
             env['SHELL'] = env.get('SHELL', '/bin/bash')
