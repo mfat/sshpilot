@@ -4447,51 +4447,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             identity_agent_disabled=identity_agent_disabled,
         )
 
-    def _use_terminal_for_scp_download(
-        self,
-        connection,
-        profile: SCPConnectionProfile,
-        remote_path: str,
-        destination_dir,
-        *,
-        recursive: bool,
-    ) -> bool:
-        """Return True when download should fall back to terminal-based scp."""
-
-        try:
-            dest_path = os.fspath(destination_dir)
-        except TypeError:
-            dest_path = str(destination_dir)
-
-        if not remote_path or not dest_path:
-            return False
-
-        if not profile:
-            return False
-
-        if not getattr(profile, 'identity_agent_disabled', False):
-            return False
-
-        if not getattr(profile, 'keyfile_ok', False):
-            return False
-
-        expanded_key = getattr(profile, 'keyfile_expanded', '')
-        if not expanded_key:
-            return False
-
-        saved_passphrase = getattr(profile, 'saved_passphrase', None)
-        if saved_passphrase:
-            return False
-
-        self._start_scp_transfer(
-            connection,
-            [remote_path],
-            dest_path,
-            direction='download',
-            recursive=recursive,
-        )
-        return True
-
     def _prompt_scp_download(self, connection):
         """Show a simple file picker that downloads selected remote files via scp."""
         try:
@@ -4799,22 +4754,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     )
                     return
 
-                is_directory = bool(getattr(selected_row, 'remote_is_dir', False))
-
-                if self._use_terminal_for_scp_download(
-                    connection,
-                    profile,
-                    remote_path,
-                    destination_dir,
-                    recursive=is_directory,
-                ):
-                    dialog.close()
-                    return
-
                 status_label.set_text(_('Downloading…'))
                 download_button.set_sensitive(False)
                 refresh_button.set_sensitive(False)
                 list_box.set_sensitive(False)
+
+                is_directory = bool(getattr(selected_row, 'remote_is_dir', False))
 
                 def _worker():
                     success = download_file(
@@ -5592,35 +5537,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception as e:
             logger.error(f'File selection failed: {e}')
 
-    def _start_scp_transfer(
-        self,
-        connection,
-        sources,
-        destination,
-        *,
-        direction: str,
-        recursive: bool = False,
-    ):
+    def _start_scp_transfer(self, connection, sources, destination, *, direction: str):
         """Run scp using the same terminal window layout as ssh-copy-id."""
         try:
-            self._show_scp_terminal_window(
-                connection,
-                sources,
-                destination,
-                direction,
-                recursive=recursive,
-            )
+            self._show_scp_terminal_window(connection, sources, destination, direction)
         except Exception as e:
             logger.error(f'scp {direction} failed to start: {e}')
 
-    def _show_scp_terminal_window(
-        self,
-        connection,
-        sources,
-        destination,
-        direction,
-        recursive: bool = False,
-    ):
+
+    def _show_scp_terminal_window(self, connection, sources, destination, direction):
         try:
             alias_value = _get_connection_alias(connection)
             hostname_value = _get_connection_host(connection)
@@ -5747,7 +5672,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 destination,
                 direction=direction,
                 known_hosts_path=self.connection_manager.known_hosts_path,
-                recursive=recursive,
             )
 
             env = os.environ.copy()
@@ -5886,7 +5810,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         *,
         direction: str,
         known_hosts_path: Optional[str] = None,
-        recursive: bool = False,
     ):
         profile = self._build_scp_connection_profile(connection)
 
@@ -5943,8 +5866,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             ssh_extra_opts += ['-o', f'UserKnownHostsFile={known_hosts_path}']
 
         argv = ['scp', '-v']
-        if recursive:
-            argv.append('-r')
         if port and port != 22:
             argv += ['-P', str(port)]
         argv += ssh_extra_opts

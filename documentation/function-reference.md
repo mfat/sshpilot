@@ -2300,13 +2300,13 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_show_reconnect_error(connection, error_message=None)`** — Show an error message when reconnection fails
 
-- **`_show_scp_terminal_window(connection, sources, destination, direction, recursive=False)`** — Shows scp terminal window.
+- **`_show_scp_terminal_window(connection, sources, destination, direction)`** — Shows scp terminal window.
 
 - **`_show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key, force=False)`** — Show a window with header bar and embedded terminal running ssh-copy-id.
 
 - **`_show_terminal_error_dialog()`** — Show error dialog when no terminal is found
 
-- **`_start_scp_transfer(connection, sources, destination, direction, recursive=False)`** — Run scp using the same terminal window layout as ssh-copy-id.
+- **`_start_scp_transfer(connection, sources, destination, direction)`** — Run scp using the same terminal window layout as ssh-copy-id.
 
 - **`_start_scp_upload_flow(connection)`** — Kick off the upload flow using a portal-aware file chooser.
 
