@@ -1222,7 +1222,11 @@ class TerminalWidget(Gtk.Box):
                     env.pop("SSH_ASKPASS", None)
                     env.pop("SSH_ASKPASS_REQUIRE", None)
                     logger.warning("sshpass not available; falling back to interactive password prompt")
-            elif (password_auth_selected or auth_method == 0) and not has_saved_password:
+            elif (
+                (password_auth_selected or auth_method == 0)
+                and not has_saved_password
+                and not getattr(self.connection, 'identity_agent_disabled', False)
+            ):
                 # Password may be required but none saved - allow interactive prompt
                 logger.debug("No saved password - using interactive prompt if required")
             else:
@@ -1249,6 +1253,11 @@ class TerminalWidget(Gtk.Box):
                     key_path_for_lookup = (
                         getattr(self.connection, 'keyfile', '') or ''
                     )
+
+                    if key_passphrase:
+                        logger.debug(
+                            "IdentityAgent disabled: in-memory passphrase available from connection settings"
+                        )
 
                     identity_candidates: List[str] = []
 
@@ -1281,6 +1290,40 @@ class TerminalWidget(Gtk.Box):
                     for candidate in native_candidates:
                         _append_candidate(candidate)
 
+                    if identity_candidates:
+                        logger.debug(
+                            "IdentityAgent disabled: evaluating passphrase candidates %s",
+                            identity_candidates,
+                        )
+                    else:
+                        logger.debug(
+                            "IdentityAgent disabled: no key candidates available for passphrase retrieval"
+                        )
+
+                    if (
+                        key_passphrase
+                        and identity_candidates
+                        and hasattr(self, 'connection_manager')
+                        and self.connection_manager
+                        and hasattr(self.connection_manager, 'store_key_passphrase')
+                    ):
+                        for candidate in identity_candidates:
+                            try:
+                                self.connection_manager.store_key_passphrase(
+                                    candidate,
+                                    key_passphrase,
+                                )
+                                logger.debug(
+                                    "IdentityAgent disabled: refreshed stored passphrase for %s",
+                                    candidate,
+                                )
+                            except Exception as exc:
+                                logger.debug(
+                                    "IdentityAgent disabled: failed to refresh stored passphrase for %s: %s",
+                                    candidate,
+                                    exc,
+                                )
+
                     if not passphrase_available:
                         for candidate in identity_candidates:
                             try:
@@ -1294,6 +1337,10 @@ class TerminalWidget(Gtk.Box):
                                 looked_up = ''
 
                             if looked_up:
+                                logger.debug(
+                                    "IdentityAgent disabled: located stored passphrase for %s",
+                                    candidate,
+                                )
                                 passphrase_available = True
                                 break
 
@@ -1316,6 +1363,10 @@ class TerminalWidget(Gtk.Box):
                                     )
                                     stored = None
                                 if stored:
+                                    logger.debug(
+                                        "IdentityAgent disabled: connection manager supplied passphrase for %s",
+                                        candidate,
+                                    )
                                     passphrase_available = True
                                     break
 
@@ -1324,6 +1375,10 @@ class TerminalWidget(Gtk.Box):
                         logger.info(
                             "SSH askpass helper could not supply a key passphrase; "
                             "allowing interactive prompt instead"
+                        )
+                    else:
+                        logger.debug(
+                            "IdentityAgent disabled: keeping forced askpass to deliver stored passphrase"
                         )
                 env.update(askpass_env)
                 if requires_force:

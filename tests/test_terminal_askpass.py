@@ -318,3 +318,112 @@ def test_prepare_key_skipped_when_identity_agent_disabled(tmp_path):
     connection.identity_agent_disabled = False
     terminal._prepare_key_for_native_mode()
     assert prepare_calls == [str(key_path)]
+
+
+def test_identity_agent_disabled_with_key_auth_uses_forced_askpass(monkeypatch, tmp_path):
+    terminal_mod = importlib.import_module("sshpilot.terminal")
+    askpass_mod = importlib.import_module("sshpilot.askpass_utils")
+
+    monkeypatch.setattr(
+        terminal_mod,
+        "Vte",
+        types.SimpleNamespace(
+            Pty=types.SimpleNamespace(new_sync=lambda *a, **k: object()),
+            PtyFlags=types.SimpleNamespace(DEFAULT=0),
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(terminal_mod, "GLib", _DummyGLib, raising=False)
+    monkeypatch.setattr(
+        terminal_mod.Adw,
+        "Application",
+        types.SimpleNamespace(get_default=lambda: None),
+        raising=False,
+    )
+
+    monkeypatch.delenv("SSH_ASKPASS_REQUIRE", raising=False)
+    monkeypatch.delenv("SSH_ASKPASS", raising=False)
+
+    candidate_key = tmp_path / "id_disabled_agent"
+    candidate_key.write_text("dummy")
+
+    def fake_forced_env():
+        return {
+            "SSH_ASKPASS": "/tmp/helper",
+            "SSH_ASKPASS_REQUIRE": "force",
+            "DISPLAY": ":1",
+        }
+
+    def fake_lookup(_key_path):
+        return "secret"
+
+    monkeypatch.setattr(
+        askpass_mod,
+        "get_ssh_env_with_forced_askpass",
+        fake_forced_env,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        askpass_mod,
+        "lookup_passphrase",
+        fake_lookup,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        terminal_mod,
+        "lookup_passphrase",
+        fake_lookup,
+        raising=False,
+    )
+
+    terminal_cls = terminal_mod.TerminalWidget
+    terminal = terminal_cls.__new__(terminal_cls)
+
+    terminal.connection = types.SimpleNamespace(
+        ssh_cmd=None,
+        auth_method=0,
+        password=None,
+        key_passphrase="",
+        keyfile=str(candidate_key),
+        key_select_mode=0,
+        identity_agent_disabled=True,
+        quick_connect_command="",
+        data={},
+        forwarding_rules=[],
+        hostname="example.com",
+        username="demo",
+        port=22,
+        pubkey_auth_no=False,
+        remote_command="",
+        local_command="",
+        extra_ssh_config="",
+        resolved_identity_files=[str(candidate_key)],
+    )
+
+    terminal.connection_manager = types.SimpleNamespace(
+        native_connect_enabled=False,
+        get_password=lambda *a, **k: None,
+        known_hosts_path="",
+        get_key_passphrase=lambda *_a, **_k: None,
+        store_key_passphrase=lambda *_a, **_k: None,
+        prepare_key_for_connection=lambda *_a, **_k: False,
+        update_connection_status=lambda *a, **k: None,
+    )
+
+    terminal.config = types.SimpleNamespace(get_ssh_config=lambda: {})
+    terminal.vte = DummyVte()
+    terminal._enable_askpass_log_forwarding = lambda *a, **k: None
+    terminal.apply_theme = lambda *a, **k: None
+    terminal._set_connecting_overlay_visible = lambda *a, **k: None
+    terminal._set_disconnected_banner_visible = lambda *a, **k: None
+    terminal.emit = lambda *a, **k: None
+    terminal.session_id = "session-forced"
+    terminal.is_connected = False
+    terminal._is_quitting = False
+
+    terminal._setup_ssh_terminal()
+
+    assert terminal.vte.last_env_list is not None
+    env_dict = dict(item.split("=", 1) for item in terminal.vte.last_env_list)
+    assert env_dict.get("SSH_ASKPASS_REQUIRE") == "force"
+    assert env_dict.get("SSH_ASKPASS") == "/tmp/helper"
