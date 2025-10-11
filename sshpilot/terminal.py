@@ -551,14 +551,86 @@ class TerminalWidget(Gtk.Box):
             # Immediately hide banner and show connecting overlay
             self._set_disconnected_banner_visible(False)
             self._set_connecting_overlay_visible(True)
-            # Reuse existing connect method
-            if not self._connect_ssh():
-                # Show banner again if failed to start reconnect
-                self._set_connecting_overlay_visible(False)
-                self._set_disconnected_banner_visible(True, _('Reconnect failed to start'))
+            # Rebuild the SSH command with the latest preferences before reconnecting
+            def _prepare_and_connect():
+                prepared = False
+                try:
+                    prepared = self._refresh_connection_command()
+                except Exception as exc:
+                    logger.error(f"Failed to refresh SSH command before reconnect: {exc}")
+                    prepared = False
+
+                if not prepared:
+                    self._set_connecting_overlay_visible(False)
+                    self._set_disconnected_banner_visible(True, _('Reconnect failed to start'))
+                    return False
+
+                if not self._connect_ssh():
+                    # Show banner again if failed to start reconnect
+                    self._set_connecting_overlay_visible(False)
+                    self._set_disconnected_banner_visible(True, _('Reconnect failed to start'))
+                return False
+
+            GLib.idle_add(_prepare_and_connect)
         except Exception:
             self._set_connecting_overlay_visible(False)
             self._set_disconnected_banner_visible(True, _('Reconnect failed'))
+
+    def _refresh_connection_command(self) -> bool:
+        """Refresh the prepared SSH command using current preferences."""
+
+        connection = getattr(self, 'connection', None)
+        if not connection:
+            logger.error('Reconnect requested without an active connection')
+            return False
+
+        try:
+            if hasattr(connection, 'ssh_cmd'):
+                connection.ssh_cmd = []
+        except Exception as exc:
+            logger.debug(f"Unable to reset cached ssh_cmd before reconnect: {exc}")
+
+        connect_coro = None
+        use_native = False
+        try:
+            use_native = bool(getattr(self.connection_manager, 'native_connect_enabled', False))
+            if not use_native:
+                app = Adw.Application.get_default()
+                if app is not None and hasattr(app, 'native_connect_enabled'):
+                    use_native = bool(app.native_connect_enabled)
+        except Exception:
+            use_native = False
+
+        try:
+            if use_native and hasattr(connection, 'native_connect'):
+                connect_coro = connection.native_connect()
+            elif hasattr(connection, 'connect'):
+                connect_coro = connection.connect()
+        except Exception as exc:
+            logger.error(f"Failed to build connection coroutine for reconnect: {exc}")
+            connect_coro = None
+
+        if connect_coro is None:
+            logger.error('Unable to refresh SSH command; missing connect coroutine')
+            return False
+
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        try:
+            if loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(connect_coro, loop)
+                future.result()
+            else:
+                loop.run_until_complete(connect_coro)
+        except Exception as exc:
+            logger.error(f"Failed to refresh SSH command for reconnect: {exc}")
+            return False
+
+        return bool(getattr(connection, 'ssh_cmd', None))
 
     def _set_connecting_overlay_visible(self, visible: bool):
         try:
@@ -839,9 +911,40 @@ class TerminalWidget(Gtk.Box):
                     if option not in ssh_cmd:
                         ssh_cmd.extend(['-o', option])
 
+                def remove_option(option_name: str, keep_value: Optional[str] = None):
+                    prefix = f'{option_name}='
+                    idx = 0
+                    found_keep = False
+                    while idx < len(ssh_cmd):
+                        if ssh_cmd[idx] == '-o' and idx + 1 < len(ssh_cmd):
+                            opt_value = ssh_cmd[idx + 1]
+                            if opt_value.startswith(prefix):
+                                if (
+                                    keep_value is not None
+                                    and opt_value == f'{option_name}={keep_value}'
+                                    and not found_keep
+                                ):
+                                    found_keep = True
+                                    idx += 2
+                                    continue
+                                del ssh_cmd[idx:idx + 2]
+                                continue
+                        idx += 1
+
+                def sync_option(option_name: str, desired_value: Optional[str]):
+                    if desired_value is None:
+                        remove_option(option_name)
+                    else:
+                        remove_option(option_name, desired_value)
+                        ensure_option(f'{option_name}={desired_value}')
+
                 def ensure_flag(flag: str):
                     if flag not in ssh_cmd:
                         ssh_cmd.append(flag)
+
+                def remove_flag(flag: str):
+                    while flag in ssh_cmd:
+                        ssh_cmd.remove(flag)
 
                 # Read SSH behavior from config with sane defaults
                 try:
@@ -871,20 +974,23 @@ class TerminalWidget(Gtk.Box):
 
                 # Apply advanced args according to stored preferences
                 # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
-                if batch_mode and not using_password:
-                    ensure_option('BatchMode=yes')
-                if connect_timeout is not None:
-                    ensure_option(f'ConnectTimeout={connect_timeout}')
-                if connection_attempts is not None:
-                    ensure_option(f'ConnectionAttempts={connection_attempts}')
-                if keepalive_interval is not None:
-                    ensure_option(f'ServerAliveInterval={keepalive_interval}')
-                if keepalive_count is not None:
-                    ensure_option(f'ServerAliveCountMax={keepalive_count}')
+                desired_batch = 'yes' if batch_mode and not using_password else None
+                sync_option('BatchMode', desired_batch)
+
+                sync_option('ConnectTimeout', str(connect_timeout) if connect_timeout is not None else None)
+                sync_option('ConnectionAttempts', str(connection_attempts) if connection_attempts is not None else None)
+                sync_option('ServerAliveInterval', str(keepalive_interval) if keepalive_interval is not None else None)
+                sync_option('ServerAliveCountMax', str(keepalive_count) if keepalive_count is not None else None)
+
                 if strict_host:
-                    ensure_option(f'StrictHostKeyChecking={strict_host}')
+                    sync_option('StrictHostKeyChecking', strict_host)
+                else:
+                    remove_option('StrictHostKeyChecking')
+
                 if compression:
                     ensure_flag('-C')
+                else:
+                    remove_flag('-C')
 
                 # Default to accepting new host keys non-interactively on fresh installs
                 try:
@@ -903,7 +1009,7 @@ class TerminalWidget(Gtk.Box):
                     logger.debug('Failed to set UserKnownHostsFile option', exc_info=True)
 
                 # Ensure SSH exits immediately on failure rather than waiting in background
-                ensure_option('ExitOnForwardFailure=yes')
+                sync_option('ExitOnForwardFailure', 'yes')
 
                 # Only add verbose flag if explicitly enabled in config
                 try:
@@ -911,10 +1017,11 @@ class TerminalWidget(Gtk.Box):
                     verbosity = int(ssh_cfg.get('verbosity', 0))
                     debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
                     v = max(0, min(3, verbosity))
-                    existing_v = ssh_cmd.count('-v')
-                    for _ in range(max(0, v - existing_v)):
+                    remove_flag('-v')
+                    for _ in range(v):
                         ssh_cmd.append('-v')
                     # Map verbosity to LogLevel to ensure messages are not suppressed by defaults
+                    remove_option('LogLevel')
                     if v == 1:
                         ensure_option('LogLevel=VERBOSE')
                     elif v == 2:
@@ -1100,8 +1207,8 @@ class TerminalWidget(Gtk.Box):
                                     ssh_cmd.extend(['-o', f"{option}=yes"])
                                     logger.debug(f"Added SSH option: {option}=yes")
 
-                    # Add NumberOfPasswordPrompts option before hostname and command
-                    ensure_option('NumberOfPasswordPrompts=1')
+                # Add NumberOfPasswordPrompts option before hostname and command
+                sync_option('NumberOfPasswordPrompts', '1')
 
                 # Add port if not default (must be before host)
                 if (
