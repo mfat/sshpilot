@@ -19,6 +19,7 @@ from typing import Dict, List, Optional, Any, Tuple, Union, Set
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
 from .platform_utils import is_macos, get_config_dir, get_ssh_dir
 from .key_utils import _is_private_key
+from .ssh_utils import remove_batchmode_yes_options
 
 try:
     import gi
@@ -420,8 +421,7 @@ class Connection:
                 has_saved_password = False
             using_password = password_auth_selected or has_saved_password
 
-            if batch_mode and not using_password:
-                ssh_cmd.extend(['-o', 'BatchMode=yes'])
+            should_enable_batch_mode = batch_mode and not using_password
             if connect_timeout is not None:
                 ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
             if connection_attempts is not None:
@@ -483,6 +483,11 @@ class Connection:
 
 
             self._update_identity_agent_state(effective_cfg.get('identityagent'))
+
+            if self.identity_agent_disabled:
+                ssh_cmd = remove_batchmode_yes_options(ssh_cmd)
+            elif should_enable_batch_mode:
+                ssh_cmd.extend(['-o', 'BatchMode=yes'])
 
             # Determine final parameters, falling back to resolved config when needed
             existing_hostname = self.hostname or ''
@@ -666,6 +671,10 @@ class Connection:
                         sanitized_overrides.append(flag)
 
             if sanitized_overrides:
+                if self.identity_agent_disabled:
+                    sanitized_overrides = remove_batchmode_yes_options(
+                        sanitized_overrides
+                    )
                 ssh_cmd.extend(sanitized_overrides)
 
             ssh_cmd.append(host_label)
