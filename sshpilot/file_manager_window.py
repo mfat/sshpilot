@@ -2891,8 +2891,10 @@ class FilePane(Gtk.Box):
             return
 
         # Ensure the backing selection reflects the activated item, then
-        # trigger the standard grid activation handler.
-        self._selection_model.select_item(position, False)
+        # trigger the standard grid activation handler. Use "unselect rest"
+        # semantics so primary clicks behave like a normal single-selection
+        # grid instead of accumulating selections when navigating folders.
+        self._selection_model.select_item(position, True)
 
         activate_item = getattr(self._grid_view, "activate_item", None)
         if callable(activate_item):
