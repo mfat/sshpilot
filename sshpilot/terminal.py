@@ -1221,6 +1221,7 @@ class TerminalWidget(Gtk.Box):
                 from .askpass_utils import (
                     get_ssh_env_with_askpass,
                     get_ssh_env_with_forced_askpass,
+                    lookup_passphrase,
                 )
 
                 requires_force = bool(
@@ -1231,6 +1232,55 @@ class TerminalWidget(Gtk.Box):
                     if requires_force
                     else get_ssh_env_with_askpass()
                 )
+                if requires_force:
+                    key_passphrase = (
+                        getattr(self.connection, 'key_passphrase', '') or ''
+                    )
+                    passphrase_available = bool(key_passphrase)
+                    key_path_for_lookup = (
+                        getattr(self.connection, 'keyfile', '') or ''
+                    )
+
+                    if not passphrase_available and key_path_for_lookup:
+                        try:
+                            looked_up = lookup_passphrase(key_path_for_lookup)
+                        except Exception as exc:
+                            logger.debug(
+                                "Passphrase lookup via askpass_utils failed for %s: %s",
+                                key_path_for_lookup,
+                                exc,
+                            )
+                            looked_up = ''
+                        if looked_up:
+                            passphrase_available = True
+
+                    if (
+                        not passphrase_available
+                        and key_path_for_lookup
+                        and hasattr(self, 'connection_manager')
+                        and self.connection_manager
+                        and hasattr(self.connection_manager, 'get_key_passphrase')
+                    ):
+                        try:
+                            stored = self.connection_manager.get_key_passphrase(
+                                key_path_for_lookup
+                            )
+                        except Exception as exc:
+                            logger.debug(
+                                "Connection manager passphrase lookup failed for %s: %s",
+                                key_path_for_lookup,
+                                exc,
+                            )
+                            stored = None
+                        if stored:
+                            passphrase_available = True
+
+                    if not passphrase_available:
+                        askpass_env.pop('SSH_ASKPASS_REQUIRE', None)
+                        logger.info(
+                            "SSH askpass helper could not supply a key passphrase; "
+                            "allowing interactive prompt instead"
+                        )
                 env.update(askpass_env)
                 if requires_force:
                     logger.debug(
