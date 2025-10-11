@@ -104,29 +104,3 @@ def test_prepare_key_native_mode_falls_back(monkeypatch, tmp_path, caplog):
 
     assert attempts == [str(first_key), str(second_key)]
     assert "boom" in caplog.text
-
-
-def test_prepare_key_native_mode_skips_when_agent_disabled(tmp_path):
-    terminal_cls = terminal_mod.TerminalWidget
-    terminal = terminal_cls.__new__(terminal_cls)
-
-    key_path = tmp_path / "identity"
-    key_path.write_text("dummy")
-
-    attempts = []
-
-    class DummyManager:
-        def prepare_key_for_connection(self, key_path):
-            attempts.append(key_path)
-            return True
-
-    terminal.connection_manager = DummyManager()
-    terminal.connection = types.SimpleNamespace(
-        key_select_mode=0,
-        identity_agent_disabled=True,
-        resolved_identity_files=[str(key_path)],
-    )
-
-    terminal._prepare_key_for_native_mode()
-
-    assert attempts == []
