@@ -2405,6 +2405,7 @@ class FilePane(Gtk.Box):
 
         self._list_store = Gio.ListStore(item_type=Gtk.StringObject)
         self._selection_model = Gtk.MultiSelection.new(self._list_store)
+        self._selection_anchor: Optional[int] = None
 
         list_factory = Gtk.SignalListItemFactory()
         list_factory.connect("setup", self._on_list_setup)
@@ -2834,11 +2835,13 @@ class FilePane(Gtk.Box):
 
         button.set_child(content)
 
-        # Forward primary button clicks to the grid view so the standard
-        # "activate" handler is reached even though each cell is wrapped in a
-        # standalone Gtk.Button.  This restores navigation when grid view is
-        # active.
-        button.connect("clicked", self._on_grid_button_clicked)
+        # GestureClick allows inspecting modifier state and click counts before
+        # the button consumes the event. Use this to keep selection behaviour in
+        # sync with Gtk.GridView expectations.
+        click_gesture = Gtk.GestureClick()
+        click_gesture.set_button(Gdk.BUTTON_PRIMARY)
+        click_gesture.connect("pressed", self._on_grid_cell_pressed, button)
+        button.add_controller(click_gesture)
         
         # Add drag source for file operations
         drag_source = Gtk.DragSource()
@@ -2885,17 +2888,65 @@ class FilePane(Gtk.Box):
         if button is None:
             return
 
-    def _on_grid_button_clicked(self, button: Gtk.Button) -> None:
+    def _on_grid_cell_pressed(
+        self,
+        gesture: Gtk.GestureClick,
+        n_press: int,
+        _x: float,
+        _y: float,
+        button: Gtk.Button,
+    ) -> None:
         position = getattr(button, "drag_position", None)
         if position is None or not (0 <= position < len(self._entries)):
             return
 
-        # Ensure the backing selection reflects the activated item. Using
-        # ``unselect_rest=True`` maintains single-selection behaviour because
-        # Gtk.GridView's own handler is bypassed when the embedded button
-        # consumes the click event.
-        self._selection_model.select_item(position, True)
+        if n_press == 1:
+            self._update_grid_selection_for_press(position, gesture)
 
+        if n_press >= 2:
+            self._activate_grid_position(position)
+
+    def _update_grid_selection_for_press(
+        self, position: int, gesture: Gtk.GestureClick
+    ) -> None:
+        state = gesture.get_current_event_state()
+        if state is None:
+            state = Gdk.ModifierType(0)
+
+        primary_mask = Gdk.ModifierType.CONTROL_MASK
+        if is_macos():
+            primary_mask |= Gdk.ModifierType.META_MASK | Gdk.ModifierType.SUPER_MASK
+
+        has_primary = bool(state & primary_mask)
+        has_shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
+
+        if has_shift and self._selection_anchor is not None:
+            start = min(self._selection_anchor, position)
+            end = max(self._selection_anchor, position)
+            self._selection_model.unselect_all()
+            for index in range(start, end + 1):
+                self._selection_model.select_item(index, False)
+            self._selection_anchor = position
+        elif has_shift:
+            self._selection_model.select_item(position, True)
+            self._selection_anchor = position
+        elif has_primary:
+            is_selected = False
+            if hasattr(self._selection_model, "is_selected"):
+                try:
+                    is_selected = self._selection_model.is_selected(position)
+                except Exception:
+                    is_selected = False
+            if is_selected:
+                self._selection_model.unselect_item(position)
+            else:
+                self._selection_model.select_item(position, False)
+            self._selection_anchor = position
+        else:
+            self._selection_model.select_item(position, True)
+            self._selection_anchor = position
+
+    def _activate_grid_position(self, position: int) -> None:
         activate_item = getattr(self._grid_view, "activate_item", None)
         if callable(activate_item):
             activate_item(position)
@@ -3552,7 +3603,9 @@ class FilePane(Gtk.Box):
         if match is None:
             return
         self._selection_model.unselect_all()
+        self._selection_anchor = None
         self._selection_model.select_item(match, False)
+        self._selection_anchor = match
         self._scroll_to_position(match)
 
     def _apply_entry_filter(self, *, preserve_selection: bool) -> None:
@@ -3581,8 +3634,11 @@ class FilePane(Gtk.Box):
                 restored_selection.append(idx)
 
         self._selection_model.unselect_all()
+        self._selection_anchor = None
         for index in restored_selection:
             self._selection_model.select_item(index, False)
+        if restored_selection:
+            self._selection_anchor = restored_selection[-1]
 
         self._update_menu_state()
 
