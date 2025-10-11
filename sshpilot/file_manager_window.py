@@ -1226,6 +1226,7 @@ class AsyncSFTPManager(GObject.GObject):
         key_mode = 0
 
         logger.debug("File manager: connection object is %s", "None" if connection is None else "present")
+        identity_agent_disabled = False
         if connection is not None:
             try:
                 auth_method = int(getattr(connection, "auth_method", 0) or 0)
@@ -1241,10 +1242,14 @@ class AsyncSFTPManager(GObject.GObject):
             keyfile = raw_keyfile.strip()
             if keyfile.lower().startswith("select key file"):
                 keyfile = ""
-            
-            logger.debug("File manager: connection nickname='%s', hostname='%s', key_mode=%d, keyfile='%s', auth_method=%d", 
-                        getattr(connection, 'nickname', 'None'), 
-                        getattr(connection, 'hostname', 'None'), 
+
+            identity_agent_disabled = bool(
+                getattr(connection, "identity_agent_disabled", False)
+            )
+
+            logger.debug("File manager: connection nickname='%s', hostname='%s', key_mode=%d, keyfile='%s', auth_method=%d",
+                        getattr(connection, 'nickname', 'None'),
+                        getattr(connection, 'hostname', 'None'),
                         key_mode, keyfile, auth_method)
         else:
             logger.debug("File manager: No connection object provided")
@@ -1255,10 +1260,16 @@ class AsyncSFTPManager(GObject.GObject):
                 logger.debug("File manager: Using specific key file: %s", keyfile)
                 # Prepare key for connection (add to ssh-agent if needed)
                 key_prepared = False
-                if (
+                attempted_key_prep = False
+                if identity_agent_disabled:
+                    logger.debug(
+                        "File manager: Skipping key preparation because identity agent is disabled"
+                    )
+                elif (
                     self._connection_manager is not None
                     and hasattr(self._connection_manager, "prepare_key_for_connection")
                 ):
+                    attempted_key_prep = True
                     try:
                         key_prepared = self._connection_manager.prepare_key_for_connection(keyfile)
                         if key_prepared:
@@ -1268,9 +1279,9 @@ class AsyncSFTPManager(GObject.GObject):
                     except Exception as exc:  # pragma: no cover - defensive
                         logger.warning("Error preparing key for file manager %s: %s", keyfile, exc)
                         key_prepared = False
-                
+
                 # If key preparation failed, we still try to connect but may prompt for passphrase
-                if not key_prepared:
+                if attempted_key_prep and not key_prepared:
                     logger.info("Key preparation failed for %s, connection may prompt for passphrase", keyfile)
 
                 passphrase = getattr(connection, "key_passphrase", None) or None

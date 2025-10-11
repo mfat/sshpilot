@@ -607,6 +607,10 @@ class TerminalWidget(Gtk.Box):
         if not connection:
             return
 
+        if getattr(connection, "identity_agent_disabled", False):
+            logger.debug("Skipping native key preload because identity agent is disabled")
+            return
+
         manager = getattr(self, 'connection_manager', None)
         if not manager or not hasattr(manager, 'prepare_key_for_connection'):
             return

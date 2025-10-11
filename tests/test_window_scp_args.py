@@ -121,6 +121,44 @@ def test_build_scp_argv_prefers_alias_and_proxy(monkeypatch, tmp_path):
     assert argv[-1] == 'alice@testbox:/remote/path'
 
 
+def test_build_scp_argv_skips_key_prep_when_agent_disabled(monkeypatch, tmp_path):
+    monkeypatch.setattr(window, 'Config', _DummyConfig)
+
+    key_path = tmp_path / 'id_skip'
+    key_path.write_text('dummy')
+
+    class RecordingManager(_DummyConnectionManager):
+        def __init__(self):
+            self.calls = []
+
+        def prepare_key_for_connection(self, key_path):
+            self.calls.append(key_path)
+            return True
+
+    connection = SimpleNamespace(
+        hostname='example.com',
+        username='alice',
+        keyfile=str(key_path),
+        key_select_mode=1,
+        auth_method=2,
+        port=22,
+        identity_agent_disabled=True,
+    )
+
+    dummy_window = _DummyWindow()
+    dummy_window.connection_manager = RecordingManager()
+
+    window.MainWindow._build_scp_argv(
+        dummy_window,
+        connection,
+        ['local.txt'],
+        '/remote/path',
+        direction='upload',
+    )
+
+    assert dummy_window.connection_manager.calls == []
+
+
 def test_download_file_with_passphrase_merges_env_and_opts(monkeypatch, tmp_path):
     recorded = {}
 
