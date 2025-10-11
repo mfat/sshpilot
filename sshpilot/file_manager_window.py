@@ -38,7 +38,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 import paramiko
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
-from .platform_utils import is_flatpak
+from .platform_utils import is_flatpak, is_macos
 
 import logging
 
@@ -3655,6 +3655,9 @@ class FilePane(Gtk.Box):
     def _on_drag_begin(self, drag_source: Gtk.DragSource, drag: Gdk.Drag) -> None:
         """Called when drag operation begins - set drag icon."""
         logger.debug(f"Drag begin: pane={self._is_remote}")
+        if is_macos():
+            # macOS provides its own drag preview; avoid setting a custom icon.
+            return
         # Create a simple icon for the drag operation
         widget = drag_source.get_widget()
         if widget:
