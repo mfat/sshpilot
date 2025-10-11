@@ -2833,6 +2833,12 @@ class FilePane(Gtk.Box):
         content.append(label)
 
         button.set_child(content)
+
+        # Forward primary button clicks to the grid view so the standard
+        # "activate" handler is reached even though each cell is wrapped in a
+        # standalone Gtk.Button.  This restores navigation when grid view is
+        # active.
+        button.connect("clicked", self._on_grid_button_clicked)
         
         # Add drag source for file operations
         drag_source = Gtk.DragSource()
@@ -2878,6 +2884,21 @@ class FilePane(Gtk.Box):
         button = item.get_child()
         if button is None:
             return
+
+    def _on_grid_button_clicked(self, button: Gtk.Button) -> None:
+        position = getattr(button, "drag_position", None)
+        if position is None or not (0 <= position < len(self._entries)):
+            return
+
+        # Ensure the backing selection reflects the activated item, then
+        # trigger the standard grid activation handler.
+        self._selection_model.select_item(position, False)
+
+        activate_item = getattr(self._grid_view, "activate_item", None)
+        if callable(activate_item):
+            activate_item(position)
+        else:
+            self._on_grid_activate(self._grid_view, position)
 
     def _on_selection_changed(self, model, position, n_items):
         self._update_menu_state()
