@@ -312,6 +312,7 @@ def list_remote_files(
     extra_ssh_opts: Optional[List[str]] = None,
     use_publickey: bool = False,
     inherit_env: Optional[Dict[str, str]] = None,
+    force_passphrase_env: bool = False,
 ) -> Tuple[List[Tuple[str, bool]], Optional[str]]:
     """List remote files via SSH for the provided path.
 
@@ -336,8 +337,53 @@ def list_remote_files(
     )
 
     env = (inherit_env or os.environ).copy()
-    env.pop('SSH_ASKPASS', None)
-    env.pop('SSH_ASKPASS_REQUIRE', None)
+    ssh_extra_opts: List[str] = list(extra_ssh_opts or [])
+    forced_passphrase_env = bool(force_passphrase_env) and not password
+
+    if forced_passphrase_env:
+        try:
+            from .askpass_utils import (
+                get_ssh_env_with_forced_askpass,
+                get_scp_ssh_options,
+            )
+        except Exception:
+            get_ssh_env_with_forced_askpass = None  # type: ignore
+            get_scp_ssh_options = None  # type: ignore
+
+        if get_ssh_env_with_forced_askpass is not None:
+            try:
+                askpass_env = get_ssh_env_with_forced_askpass()
+                if isinstance(askpass_env, dict):
+                    env.update(askpass_env)
+            except Exception:
+                logger.debug(
+                    'SCP: Unable to initialize askpass environment',
+                    exc_info=True,
+                )
+
+        if get_scp_ssh_options is not None:
+            try:
+                passphrase_opts = list(get_scp_ssh_options())
+            except Exception:
+                passphrase_opts = []
+            for idx in range(0, len(passphrase_opts) - 1, 2):
+                flag = passphrase_opts[idx]
+                value = passphrase_opts[idx + 1]
+                if not flag or not value:
+                    continue
+                already = False
+                for opt_idx in range(0, len(ssh_extra_opts) - 1, 2):
+                    if (
+                        ssh_extra_opts[opt_idx] == flag
+                        and ssh_extra_opts[opt_idx + 1] == value
+                    ):
+                        already = True
+                        break
+                if not already:
+                    ssh_extra_opts.extend([flag, value])
+    else:
+        env.pop('SSH_ASKPASS', None)
+        env.pop('SSH_ASKPASS_REQUIRE', None)
 
     try:
         if password:
@@ -348,15 +394,15 @@ def list_remote_files(
                 port=port,
                 argv_tail=['sh', '-lc', wrapped_command],
                 known_hosts_path=known_hosts_path,
-                extra_ssh_opts=extra_ssh_opts or [],
+                extra_ssh_opts=ssh_extra_opts,
                 inherit_env=env,
                 use_publickey=use_publickey,
             )
         else:
             sshbin = shutil.which('ssh') or '/usr/bin/ssh'
             cmd = [sshbin, '-p', str(port)]
-            if extra_ssh_opts:
-                cmd.extend(extra_ssh_opts)
+            if ssh_extra_opts:
+                cmd.extend(ssh_extra_opts)
             if known_hosts_path:
                 cmd += ['-o', f'UserKnownHostsFile={known_hosts_path}']
             else:
@@ -4881,6 +4927,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         extra_ssh_opts=ssh_extra_opts,
                         use_publickey=use_publickey_with_password,
                         inherit_env=base_env,
+                        force_passphrase_env=force_passphrase_env,
                     )
 
                     def _update():
