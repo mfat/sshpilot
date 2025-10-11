@@ -120,20 +120,25 @@ Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
 
 OR in a terminal type: 
 
-```
+```bash
 flatpak install flathub io.github.mfat.sshpilot
 ```
 
 ### <img src="https://img.icons8.com/color/48/000000/arch-linux.png" width="24"/> Arch Linux
 Arch Linux package via AUR: https://aur.archlinux.org/packages/sshpilot
 
-```
-paru -S sshpilot
-```
-or
-
-```
+```bash
+# replace yay with your AUR helper of choice, e.g. paru
 yay -S sshpilot
+```
+
+OR
+
+Nightly Arch Linux package via AUR (community maintained): https://aur.archlinux.org/packages/sshpilot-git
+
+```bash
+# replace yay with your AUR helper of choice, e.g. paru
+yay -S sshpilot-git
 ```
 
 ### <img src="https://upload.wikimedia.org/wikipedia/commons/7/74/Apple_logo_dark_grey.svg" width="24" height="24"/> macOS (aarch64)
