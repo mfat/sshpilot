@@ -422,6 +422,7 @@ def download_file(
     saved_passphrase: Optional[str] = None,
     keyfile: Optional[str] = None,
     key_mode: Optional[int] = None,
+    force_passphrase_env: bool = False,
 ) -> bool:
     """Download a remote file (or directory when ``recursive``) via SCP."""
     if not host or not remote_file or not local_path:
@@ -433,8 +434,9 @@ def download_file(
 
     ssh_extra_opts: List[str] = list(extra_ssh_opts or [])
     passphrase_auth = bool(saved_passphrase) and not password
+    forced_passphrase_env = bool(force_passphrase_env) and not password
 
-    if passphrase_auth:
+    if passphrase_auth or forced_passphrase_env:
         try:
             from .askpass_utils import (
                 get_ssh_env_with_forced_askpass,
@@ -4509,6 +4511,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 use_publickey_with_password = False
 
             base_env = os.environ.copy()
+            password_auth_active = bool(saved_password)
+            if not password_auth_active:
+                password_auth_active = bool(
+                    profile.prefer_password
+                    or profile.combined_auth
+                    or use_publickey_with_password
+                )
+            force_passphrase_env = bool(
+                profile.identity_agent_disabled and not password_auth_active
+            )
 
             dialog = Adw.Window()
             dialog.set_transient_for(self)
@@ -4777,6 +4789,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         saved_passphrase=profile.saved_passphrase,
                         keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
                         key_mode=profile.key_mode,
+                        force_passphrase_env=force_passphrase_env,
                     )
                     GLib.idle_add(_finish_download, success, destination_dir, remote_name)
 
