@@ -2144,9 +2144,9 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_resolve_ssh_copy_id_askpass_env(connection, ssh_key, connection_manager)`** — Return askpass environment and force status for ssh-copy-id launches.
 
-- **`download_file(host, user, remote_file, local_path, recursive=False, port=22, password=None, known_hosts_path=None, extra_ssh_opts=None, use_publickey=False, inherit_env=None, saved_passphrase=None, keyfile=None, key_mode=None)`** — Download a remote file (or directory when ``recursive``) via SCP.
+- **`download_file(host, user, remote_file, local_path, recursive=False, port=22, password=None, known_hosts_path=None, extra_ssh_opts=None, use_publickey=False, inherit_env=None, saved_passphrase=None, keyfile=None, key_mode=None, force_passphrase_env=False)`** — Download a remote file (or directory when ``recursive``) via SCP.
 
-- **`list_remote_files(host, user, remote_path, port=22, password=None, known_hosts_path=None, extra_ssh_opts=None, use_publickey=False, inherit_env=None)`** — List remote files via SSH for the provided path.
+- **`list_remote_files(host, user, remote_path, port=22, password=None, known_hosts_path=None, extra_ssh_opts=None, use_publickey=False, inherit_env=None, keyfile=None, key_mode=None, force_passphrase_env=False)`** — List remote files via SSH for the provided path.
 
 - **`maybe_set_native_controls(header_bar, value=False)`** — Safely set native controls on header bar, with fallback for older GTK versions.
 
