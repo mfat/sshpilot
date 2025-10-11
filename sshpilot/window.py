@@ -157,6 +157,7 @@ class SCPConnectionProfile:
     keyfile: str
     keyfile_ok: bool
     keyfile_expanded: str
+    identity_agent_disabled: bool = False
 
 
 def _quote_remote_path_for_shell(path: str) -> str:
@@ -4293,6 +4294,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password',
             ]
 
+        identity_agent_disabled = bool(
+            getattr(connection, 'identity_agent_disabled', False)
+        )
+
         return SCPConnectionProfile(
             alias=alias_value or '',
             hostname=hostname_value or '',
@@ -4309,6 +4314,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             keyfile=keyfile,
             keyfile_ok=keyfile_ok,
             keyfile_expanded=expanded_keyfile if keyfile_ok else '',
+            identity_agent_disabled=identity_agent_disabled,
         )
 
     def _prompt_scp_download(self, connection):
@@ -4341,8 +4347,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 known_hosts_path = getattr(self.connection_manager, 'known_hosts_path', None)
                 saved_password = profile.saved_password
                 try:
-                    if profile.key_mode in (1, 2) and profile.keyfile_ok and profile.keyfile_expanded:
-                        self.connection_manager.prepare_key_for_connection(profile.keyfile_expanded)
+                    if (
+                        profile.key_mode in (1, 2)
+                        and profile.keyfile_ok
+                        and profile.keyfile_expanded
+                    ):
+                        if profile.identity_agent_disabled:
+                            logger.debug(
+                                "SCP: IdentityAgent disabled; skipping key preload"
+                            )
+                        else:
+                            self.connection_manager.prepare_key_for_connection(
+                                profile.keyfile_expanded
+                            )
                 except Exception:
                     pass
 
@@ -5528,13 +5545,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
                 try:
                     keyfile = getattr(connection, 'keyfile', '') or ''
-                    if keyfile and os.path.isfile(keyfile):
+                    if (
+                        keyfile
+                        and os.path.isfile(keyfile)
+                        and not getattr(connection, 'identity_agent_disabled', False)
+                    ):
                         if hasattr(self, 'connection_manager') and self.connection_manager:
                             key_prepared = self.connection_manager.prepare_key_for_connection(keyfile)
                             if key_prepared:
                                 logger.debug(f"SCP: Key prepared for connection: {keyfile}")
                             else:
                                 logger.warning(f"SCP: Failed to prepare key for connection: {keyfile}")
+                    elif getattr(connection, 'identity_agent_disabled', False):
+                        logger.debug("SCP: IdentityAgent disabled; skipping key preload")
                 except Exception as e:
                     logger.warning(f"SCP: Error preparing key for connection: {e}")
             else:
@@ -5660,8 +5683,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         )
         if hasattr(self, 'connection_manager') and self.connection_manager:
             try:
-                if profile.key_mode in (1, 2) and profile.keyfile_ok and profile.keyfile_expanded:
-                    self.connection_manager.prepare_key_for_connection(profile.keyfile_expanded)
+                if (
+                    profile.key_mode in (1, 2)
+                    and profile.keyfile_ok
+                    and profile.keyfile_expanded
+                ):
+                    if profile.identity_agent_disabled:
+                        logger.debug(
+                            "SCP: IdentityAgent disabled; skipping key preload"
+                        )
+                    else:
+                        self.connection_manager.prepare_key_for_connection(
+                            profile.keyfile_expanded
+                        )
             except Exception:
                 pass
         port = profile.port
