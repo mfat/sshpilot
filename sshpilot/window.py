@@ -314,6 +314,7 @@ def list_remote_files(
     inherit_env: Optional[Dict[str, str]] = None,
     keyfile: Optional[str] = None,
     key_mode: Optional[int] = None,
+
     force_passphrase_env: bool = False,
 ) -> Tuple[List[Tuple[str, bool]], Optional[str]]:
     """List remote files via SSH for the provided path.
@@ -365,6 +366,7 @@ def list_remote_files(
 
         if key_mode == 1 and 'IdentitiesOnly=yes' not in ' '.join(ssh_extra_opts):
             ssh_extra_opts.extend(['-o', 'IdentitiesOnly=yes'])
+
 
         if get_scp_ssh_options is not None:
             try:
@@ -4934,6 +4936,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         inherit_env=base_env,
                         keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
                         key_mode=profile.key_mode,
+
                         force_passphrase_env=force_passphrase_env,
                     )
 

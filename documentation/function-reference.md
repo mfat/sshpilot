@@ -2148,6 +2148,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`list_remote_files(host, user, remote_path, port=22, password=None, known_hosts_path=None, extra_ssh_opts=None, use_publickey=False, inherit_env=None, keyfile=None, key_mode=None, force_passphrase_env=False)`** — List remote files via SSH for the provided path.
 
+
 - **`maybe_set_native_controls(header_bar, value=False)`** — Safely set native controls on header bar, with fallback for older GTK versions.
 
 ### Class: `MainWindow`
