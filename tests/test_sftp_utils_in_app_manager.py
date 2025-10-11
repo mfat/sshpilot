@@ -327,3 +327,22 @@ def test_gvfs_supports_sftp_false_when_gio_missing(monkeypatch):
     sftp_utils = import_sftp_utils(monkeypatch)
     monkeypatch.setattr(sftp_utils.shutil, "which", lambda *_args, **_kwargs: None)
     assert not sftp_utils._gvfs_supports_sftp()
+
+
+def test_should_use_in_app_manager_when_macos(monkeypatch):
+    sftp_utils = import_sftp_utils(monkeypatch)
+    monkeypatch.delenv("SSHPILOT_FORCE_IN_APP_FILE_MANAGER", raising=False)
+    monkeypatch.delenv("SSHPILOT_DISABLE_GVFS", raising=False)
+    monkeypatch.setattr(sftp_utils, "is_flatpak", lambda: False)
+    monkeypatch.setattr(sftp_utils, "is_macos", lambda: True)
+
+    gvfs_called = {"value": False}
+
+    def fake_gvfs_support():
+        gvfs_called["value"] = True
+        return True
+
+    monkeypatch.setattr(sftp_utils, "_gvfs_supports_sftp", fake_gvfs_support)
+
+    assert sftp_utils._should_use_in_app_file_manager()
+    assert not gvfs_called["value"]

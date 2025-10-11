@@ -607,6 +607,10 @@ class TerminalWidget(Gtk.Box):
         if not connection:
             return
 
+        if getattr(connection, 'identity_agent_disabled', False):
+            logger.debug("IdentityAgent disabled; skipping native key preload")
+            return
+
         manager = getattr(self, 'connection_manager', None)
         if not manager or not hasattr(manager, 'prepare_key_for_connection'):
             return
@@ -942,15 +946,20 @@ class TerminalWidget(Gtk.Box):
                     )
 
                     if has_explicit_key and hasattr(self, 'connection_manager') and self.connection_manager:
-                        try:
-                            if hasattr(self.connection_manager, 'prepare_key_for_connection'):
-                                key_prepared = self.connection_manager.prepare_key_for_connection(keyfile_value)
-                                if key_prepared:
-                                    logger.debug(f"Key prepared for connection: {keyfile_value}")
-                                else:
-                                    logger.warning(f"Failed to prepare key for connection: {keyfile_value}")
-                        except Exception as e:
-                            logger.warning(f"Error preparing key for connection: {e}")
+                        if getattr(self.connection, 'identity_agent_disabled', False):
+                            logger.debug(
+                                "IdentityAgent disabled; skipping key preparation before connection"
+                            )
+                        else:
+                            try:
+                                if hasattr(self.connection_manager, 'prepare_key_for_connection'):
+                                    key_prepared = self.connection_manager.prepare_key_for_connection(keyfile_value)
+                                    if key_prepared:
+                                        logger.debug(f"Key prepared for connection: {keyfile_value}")
+                                    else:
+                                        logger.warning(f"Failed to prepare key for connection: {keyfile_value}")
+                            except Exception as e:
+                                logger.warning(f"Error preparing key for connection: {e}")
 
                     # Only add specific key when a dedicated key mode is selected
                     if has_explicit_key and key_select_mode in (1, 2):
@@ -1213,14 +1222,169 @@ class TerminalWidget(Gtk.Box):
                     env.pop("SSH_ASKPASS", None)
                     env.pop("SSH_ASKPASS_REQUIRE", None)
                     logger.warning("sshpass not available; falling back to interactive password prompt")
-            elif (password_auth_selected or auth_method == 0) and not has_saved_password:
+            elif (
+                (password_auth_selected or auth_method == 0)
+                and not has_saved_password
+                and not getattr(self.connection, 'identity_agent_disabled', False)
+            ):
                 # Password may be required but none saved - allow interactive prompt
                 logger.debug("No saved password - using interactive prompt if required")
             else:
                 # Use askpass for passphrase prompts (key-based auth)
-                from .askpass_utils import get_ssh_env_with_askpass
-                askpass_env = get_ssh_env_with_askpass()
+                from .askpass_utils import (
+                    get_ssh_env_with_askpass,
+                    get_ssh_env_with_forced_askpass,
+                    lookup_passphrase,
+                )
+
+                requires_force = bool(
+                    getattr(self.connection, 'identity_agent_disabled', False)
+                )
+                askpass_env = (
+                    get_ssh_env_with_forced_askpass()
+                    if requires_force
+                    else get_ssh_env_with_askpass()
+                )
+                if requires_force:
+                    key_passphrase = (
+                        getattr(self.connection, 'key_passphrase', '') or ''
+                    )
+                    passphrase_available = bool(key_passphrase)
+                    key_path_for_lookup = (
+                        getattr(self.connection, 'keyfile', '') or ''
+                    )
+
+                    if key_passphrase:
+                        logger.debug(
+                            "IdentityAgent disabled: in-memory passphrase available from connection settings"
+                        )
+
+                    identity_candidates: List[str] = []
+
+                    def _append_candidate(candidate: str) -> None:
+                        if not candidate:
+                            return
+                        expanded = os.path.expanduser(str(candidate))
+                        if expanded not in identity_candidates:
+                            identity_candidates.append(expanded)
+
+                    if key_path_for_lookup:
+                        _append_candidate(key_path_for_lookup)
+
+                    try:
+                        resolved_identities = getattr(
+                            self.connection, 'resolved_identity_files', []
+                        )
+                    except Exception:
+                        resolved_identities = []
+
+                    if isinstance(resolved_identities, (list, tuple)):
+                        for candidate in resolved_identities:
+                            _append_candidate(candidate)
+
+                    try:
+                        native_candidates = self._resolve_native_identity_candidates()
+                    except Exception:
+                        native_candidates = []
+
+                    for candidate in native_candidates:
+                        _append_candidate(candidate)
+
+                    if identity_candidates:
+                        logger.debug(
+                            "IdentityAgent disabled: evaluating passphrase candidates %s",
+                            identity_candidates,
+                        )
+                    else:
+                        logger.debug(
+                            "IdentityAgent disabled: no key candidates available for passphrase retrieval"
+                        )
+
+                    if (
+                        key_passphrase
+                        and identity_candidates
+                        and hasattr(self, 'connection_manager')
+                        and self.connection_manager
+                        and hasattr(self.connection_manager, 'store_key_passphrase')
+                    ):
+                        for candidate in identity_candidates:
+                            try:
+                                self.connection_manager.store_key_passphrase(
+                                    candidate,
+                                    key_passphrase,
+                                )
+                                logger.debug(
+                                    "IdentityAgent disabled: refreshed stored passphrase for %s",
+                                    candidate,
+                                )
+                            except Exception as exc:
+                                logger.debug(
+                                    "IdentityAgent disabled: failed to refresh stored passphrase for %s: %s",
+                                    candidate,
+                                    exc,
+                                )
+
+                    if not passphrase_available:
+                        for candidate in identity_candidates:
+                            try:
+                                looked_up = lookup_passphrase(candidate)
+                            except Exception as exc:
+                                logger.debug(
+                                    "Passphrase lookup via askpass_utils failed for %s: %s",
+                                    candidate,
+                                    exc,
+                                )
+                                looked_up = ''
+
+                            if looked_up:
+                                logger.debug(
+                                    "IdentityAgent disabled: located stored passphrase for %s",
+                                    candidate,
+                                )
+                                passphrase_available = True
+                                break
+
+                            if (
+                                hasattr(self, 'connection_manager')
+                                and self.connection_manager
+                                and hasattr(
+                                    self.connection_manager, 'get_key_passphrase'
+                                )
+                            ):
+                                try:
+                                    stored = self.connection_manager.get_key_passphrase(
+                                        candidate
+                                    )
+                                except Exception as exc:
+                                    logger.debug(
+                                        "Connection manager passphrase lookup failed for %s: %s",
+                                        candidate,
+                                        exc,
+                                    )
+                                    stored = None
+                                if stored:
+                                    logger.debug(
+                                        "IdentityAgent disabled: connection manager supplied passphrase for %s",
+                                        candidate,
+                                    )
+                                    passphrase_available = True
+                                    break
+
+                    if not passphrase_available:
+                        askpass_env.pop('SSH_ASKPASS_REQUIRE', None)
+                        logger.info(
+                            "SSH askpass helper could not supply a key passphrase; "
+                            "allowing interactive prompt instead"
+                        )
+                    else:
+                        logger.debug(
+                            "IdentityAgent disabled: keeping forced askpass to deliver stored passphrase"
+                        )
                 env.update(askpass_env)
+                if requires_force:
+                    logger.debug(
+                        "IdentityAgent disabled for this host; forcing SSH askpass usage"
+                    )
                 self._enable_askpass_log_forwarding(include_existing=True)
             env['TERM'] = env.get('TERM', 'xterm-256color')
             env['SHELL'] = env.get('SHELL', '/bin/bash')

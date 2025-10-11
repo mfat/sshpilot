@@ -148,6 +148,10 @@ class Connection:
             self.auth_method = 0
         # X11 forwarding preference
         self.x11_forwarding = bool(data.get('x11_forwarding', False))
+
+        # Track IdentityAgent directives so terminals can adjust askpass behaviour
+        self.identity_agent_directive: str = ''
+        self.identity_agent_disabled: bool = False
         
         # Key selection mode: 0 try all, 1 specific key (IdentitiesOnly), 2 specific key (no IdentitiesOnly)
         try:
@@ -249,6 +253,9 @@ class Connection:
     ) -> List[str]:
         """Return resolved identity file paths that exist on disk for this host."""
 
+        # Reset IdentityAgent state before evaluating configuration
+        self._update_identity_agent_state(None)
+
         candidates: List[str] = []
         seen: Set[str] = set()
 
@@ -271,6 +278,10 @@ class Connection:
                 seen.add(expanded)
 
         if key_mode in (1, 2):
+            if effective_cfg is not None:
+                self._update_identity_agent_state(
+                    effective_cfg.get('identityagent')  # type: ignore[arg-type]
+                )
             _add_candidate(keyfile_value)
             return candidates
 
@@ -304,6 +315,7 @@ class Connection:
                 effective_cfg = {}
 
         cfg = effective_cfg or {}
+        self._update_identity_agent_state(cfg.get('identityagent'))
         cfg_ids = cfg.get('identityfile') if isinstance(cfg, dict) else None
         if isinstance(cfg_ids, list):
             for value in cfg_ids:
@@ -315,6 +327,35 @@ class Connection:
 
         return candidates
 
+    def _update_identity_agent_state(self, directive: Optional[Union[str, List[str]]]) -> None:
+        """Update cached IdentityAgent directive information for the connection."""
+
+        directive_value = ''
+        disabled = False
+
+        if isinstance(directive, list):
+            values = [
+                str(entry).strip()
+                for entry in directive
+                if isinstance(entry, str) and str(entry).strip()
+            ]
+        elif isinstance(directive, str):
+            stripped = directive.strip()
+            values = [stripped] if stripped else []
+        else:
+            values = []
+
+        if values:
+            directive_value = values[-1]
+            disabled = directive_value.lower() == 'none'
+
+        self.identity_agent_directive = directive_value
+        self.identity_agent_disabled = disabled
+        if disabled:
+            logger.debug(
+                "IdentityAgent directive disables ssh-agent; forcing askpass for this connection"
+            )
+
     @property
     def source_file(self) -> str:
         """Return path to the config file where this host is defined."""
@@ -323,6 +364,7 @@ class Connection:
     async def connect(self):
         """Prepare SSH command for later use (no preflight echo)."""
         try:
+            self._update_identity_agent_state(None)
             # Reset resolved identity cache on every connect preparation
             self.resolved_identity_files = []
 
@@ -439,6 +481,8 @@ class Connection:
                 else:
                     effective_cfg = get_effective_ssh_config(target_alias)
 
+
+            self._update_identity_agent_state(effective_cfg.get('identityagent'))
 
             # Determine final parameters, falling back to resolved config when needed
             existing_hostname = self.hostname or ''
@@ -565,6 +609,7 @@ class Connection:
     async def native_connect(self):
         """Prepare a minimal SSH command deferring to the user's SSH configuration."""
         try:
+            self._update_identity_agent_state(None)
             # Reset resolved identity cache when preparing native command
             self.resolved_identity_files = []
 
@@ -590,6 +635,19 @@ class Connection:
             if config_override:
                 ssh_cmd.extend(['-F', config_override])
 
+            effective_cfg: Dict[str, Union[str, List[str]]] = {}
+            try:
+                if config_override:
+                    effective_cfg = get_effective_ssh_config(
+                        host_label, config_file=config_override
+                    )
+                else:
+                    effective_cfg = get_effective_ssh_config(host_label)
+            except Exception:
+                effective_cfg = {}
+
+            self._update_identity_agent_state(effective_cfg.get('identityagent'))
+
             try:
                 from .config import Config  # avoid circular import at top level
                 cfg = Config()
@@ -613,7 +671,9 @@ class Connection:
             ssh_cmd.append(host_label)
 
             try:
-                self.resolved_identity_files = self.collect_identity_file_candidates()
+                self.resolved_identity_files = self.collect_identity_file_candidates(
+                    effective_cfg=effective_cfg
+                )
             except Exception:
                 self.resolved_identity_files = []
 

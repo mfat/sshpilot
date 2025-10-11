@@ -38,7 +38,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 import paramiko
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
-from .platform_utils import is_flatpak
+from .platform_utils import is_flatpak, is_macos
 
 import logging
 
@@ -1249,13 +1249,28 @@ class AsyncSFTPManager(GObject.GObject):
         else:
             logger.debug("File manager: No connection object provided")
 
-        if connection is not None and key_mode in (1, 2) and keyfile and os.path.isfile(keyfile):
+        identity_agent_disabled = False
+        if connection is not None:
+            identity_agent_disabled = bool(
+                getattr(connection, "identity_agent_disabled", False)
+            )
+
+        if (
+            connection is not None
+            and key_mode in (1, 2)
+            and keyfile
+            and os.path.isfile(keyfile)
+        ):
                 key_filename = keyfile
                 look_for_keys = False
                 logger.debug("File manager: Using specific key file: %s", keyfile)
                 # Prepare key for connection (add to ssh-agent if needed)
                 key_prepared = False
-                if (
+                if identity_agent_disabled:
+                    logger.debug(
+                        "File manager: IdentityAgent disabled; skipping key preparation"
+                    )
+                elif (
                     self._connection_manager is not None
                     and hasattr(self._connection_manager, "prepare_key_for_connection")
                 ):
@@ -2405,6 +2420,9 @@ class FilePane(Gtk.Box):
 
         self._list_store = Gio.ListStore(item_type=Gtk.StringObject)
         self._selection_model = Gtk.MultiSelection.new(self._list_store)
+        self._selection_anchor: Optional[int] = None
+
+        self._suppress_next_context_menu: bool = False
 
         list_factory = Gtk.SignalListItemFactory()
         list_factory.connect("setup", self._on_list_setup)
@@ -2833,6 +2851,25 @@ class FilePane(Gtk.Box):
         content.append(label)
 
         button.set_child(content)
+
+        # GestureClick allows inspecting modifier state and click counts before
+        # the button consumes the event. Use this to keep selection behaviour in
+        # sync with Gtk.GridView expectations.
+        click_gesture = Gtk.GestureClick()
+        click_gesture.set_button(Gdk.BUTTON_PRIMARY)
+        if hasattr(click_gesture, "set_exclusive"):
+            try:
+                click_gesture.set_exclusive(True)
+            except Exception:
+                pass
+        propagation_phase = getattr(Gtk, "PropagationPhase", None)
+        if propagation_phase is not None and hasattr(click_gesture, "set_propagation_phase"):
+            try:
+                click_gesture.set_propagation_phase(propagation_phase.CAPTURE)
+            except Exception:
+                pass
+        click_gesture.connect("pressed", self._on_grid_cell_pressed, button)
+        button.add_controller(click_gesture)
         
         # Add drag source for file operations
         drag_source = Gtk.DragSource()
@@ -2878,6 +2915,84 @@ class FilePane(Gtk.Box):
         button = item.get_child()
         if button is None:
             return
+
+    def _on_grid_cell_pressed(
+        self,
+        gesture: Gtk.GestureClick,
+        n_press: int,
+        _x: float,
+        _y: float,
+        button: Gtk.Button,
+    ) -> None:
+        position = getattr(button, "drag_position", None)
+        if position is None or not (0 <= position < len(self._entries)):
+            return
+
+        if n_press == 1:
+            self._update_grid_selection_for_press(position, gesture)
+            return
+
+        if n_press >= 2:
+            try:
+                gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            except Exception:
+                pass
+            self._suppress_next_context_menu = True
+            self._navigate_to_entry(position)
+
+    def _update_grid_selection_for_press(
+        self, position: int, gesture: Gtk.GestureClick
+    ) -> None:
+        state = gesture.get_current_event_state()
+        if state is None:
+            state = Gdk.ModifierType(0)
+
+        primary_mask = getattr(Gdk.ModifierType, "CONTROL_MASK", 0)
+        if is_macos():
+            primary_mask |= (
+                getattr(Gdk.ModifierType, "META_MASK", 0)
+                | getattr(Gdk.ModifierType, "SUPER_MASK", 0)
+            )
+
+        has_primary = bool(state & primary_mask)
+        has_shift = bool(state & getattr(Gdk.ModifierType, "SHIFT_MASK", 0))
+
+        if has_shift and self._selection_anchor is not None:
+            start = min(self._selection_anchor, position)
+            end = max(self._selection_anchor, position)
+            self._selection_model.unselect_all()
+            for index in range(start, end + 1):
+                self._selection_model.select_item(index, False)
+            self._selection_anchor = position
+        elif has_shift:
+            self._selection_model.select_item(position, True)
+            self._selection_anchor = position
+        elif has_primary:
+            is_selected = False
+            if hasattr(self._selection_model, "is_selected"):
+                try:
+                    is_selected = self._selection_model.is_selected(position)
+                except Exception:
+                    is_selected = False
+            if is_selected:
+                self._selection_model.unselect_item(position)
+            else:
+                self._selection_model.select_item(position, False)
+            self._selection_anchor = position
+        else:
+            is_selected = False
+            if hasattr(self._selection_model, "is_selected"):
+                try:
+                    is_selected = self._selection_model.is_selected(position)
+                except Exception:
+                    is_selected = False
+            if not is_selected or self._selection_model is None:
+                try:
+                    self._selection_model.unselect_all()
+                except Exception:
+                    pass
+                self._selection_model.select_item(position, False)
+            self._selection_anchor = position
 
     def _on_selection_changed(self, model, position, n_items):
         self._update_menu_state()
@@ -3040,6 +3155,9 @@ class FilePane(Gtk.Box):
 
 
     def _show_context_menu(self, widget: Gtk.Widget, x: float, y: float) -> None:
+        if getattr(self, '_suppress_next_context_menu', False):
+            self._suppress_next_context_menu = False
+            return
         self._update_selection_for_menu(widget, x, y)
         self._update_menu_state()
         try:
@@ -3529,7 +3647,9 @@ class FilePane(Gtk.Box):
         if match is None:
             return
         self._selection_model.unselect_all()
+        self._selection_anchor = None
         self._selection_model.select_item(match, False)
+        self._selection_anchor = match
         self._scroll_to_position(match)
 
     def _apply_entry_filter(self, *, preserve_selection: bool) -> None:
@@ -3558,8 +3678,11 @@ class FilePane(Gtk.Box):
                 restored_selection.append(idx)
 
         self._selection_model.unselect_all()
+        self._selection_anchor = None
         for index in restored_selection:
             self._selection_model.select_item(index, False)
+        if restored_selection:
+            self._selection_anchor = restored_selection[-1]
 
         self._update_menu_state()
 
@@ -3567,11 +3690,24 @@ class FilePane(Gtk.Box):
 
     # -- navigation helpers --------------------------------------------
 
-    def _on_list_activate(self, _list_view: Gtk.ListView, position: int) -> None:
-        if position is not None and 0 <= position < len(self._entries):
+    def _navigate_to_entry(self, position: Optional[int]) -> None:
+        if position is None or not (0 <= position < len(self._entries)):
+            return
+
+        try:
             entry = self._entries[position]
-            if entry.is_dir:
-                self.emit("path-changed", os.path.join(self._current_path, entry.name))
+        except IndexError:
+            return
+
+        if not getattr(entry, "is_dir", False):
+            return
+
+        base_path = self._current_path or ""
+        target_path = os.path.join(base_path, entry.name)
+        self.emit("path-changed", target_path)
+
+    def _on_list_activate(self, _list_view: Gtk.ListView, position: int) -> None:
+        self._navigate_to_entry(position)
 
     def _sort_entries(self, entries: Iterable[FileEntry]) -> List[FileEntry]:
         def key_func(item: FileEntry):
@@ -3634,6 +3770,9 @@ class FilePane(Gtk.Box):
     def _on_drag_begin(self, drag_source: Gtk.DragSource, drag: Gdk.Drag) -> None:
         """Called when drag operation begins - set drag icon."""
         logger.debug(f"Drag begin: pane={self._is_remote}")
+        if is_macos():
+            # macOS provides its own drag preview; avoid setting a custom icon.
+            return
         # Create a simple icon for the drag operation
         widget = drag_source.get_widget()
         if widget:
@@ -5839,4 +5978,3 @@ __all__ = [
     "SFTPProgressDialog",
     "launch_file_manager_window",
 ]
-

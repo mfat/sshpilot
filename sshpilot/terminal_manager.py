@@ -24,7 +24,6 @@ class TerminalManager:
     # Connecting/disconnecting hosts
     def connect_to_host(self, connection, force_new: bool = False):
         window = self.window
-        group_color = self._resolve_group_color(connection)
         if not force_new:
             if connection in window.active_terminals:
                 terminal = window.active_terminals[connection]
@@ -52,7 +51,7 @@ class TerminalManager:
             window._open_connection_in_external_terminal(connection)
             return
         else:
-            group_color = self._resolve_group_color(connection)
+            group_color, group_name = self._resolve_group_color_and_name(connection)
 
             terminal = TerminalWidget(
                 connection,
@@ -68,7 +67,9 @@ class TerminalManager:
             page = window.tab_view.append(terminal)
             page.set_title(connection.nickname)
             page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
-            self._apply_tab_group_color(page, group_color)
+            if group_name:
+                setattr(terminal, 'group_name', group_name)
+            self._apply_tab_group_color(page, group_color, tooltip=group_name)
 
 
             window.connection_to_terminals.setdefault(connection, []).append(terminal)
@@ -144,13 +145,17 @@ class TerminalManager:
         GLib.idle_add(_set_terminal_colors)
 
     def _resolve_group_color(self, connection):
+        color_value, _ = self._resolve_group_color_and_name(connection)
+        return color_value
+
+    def _resolve_group_color_and_name(self, connection):
         manager = getattr(self.window, 'group_manager', None)
         if not manager:
-            return None
+            return None, None
 
         nickname = getattr(connection, 'nickname', None)
         if not nickname:
-            return None
+            return None, None
 
         try:
             group_id = manager.get_connection_group(nickname)
@@ -168,23 +173,23 @@ class TerminalManager:
             except Exception:
                 group_info = None
 
-            if not group_info:
+            if not isinstance(group_info, dict):
                 break
 
-            color = group_info.get('color') if isinstance(group_info, dict) else None
+            color = group_info.get('color')
             if color:
-                return color
+                return color, group_info.get('name')
 
-            group_id = group_info.get('parent_id') if isinstance(group_info, dict) else None
+            group_id = group_info.get('parent_id')
 
-        return None
+        return None, None
 
     def _create_tab_color_icon(self, rgba: Gdk.RGBA):
         # Use a simple themed icon instead of creating custom icons
         # This avoids the pixbuf save issues and works reliably
         return Gio.ThemedIcon.new("media-record-symbolic")
 
-    def _apply_tab_group_color(self, page, color_value):
+    def _apply_tab_group_color(self, page, color_value, tooltip=None):
         use_pref = False
         try:
             use_pref = bool(
@@ -196,6 +201,8 @@ class TerminalManager:
         if not use_pref or not color_value:
             self._clear_tab_group_color(page)
             return
+
+        tooltip_text = tooltip or _('Group color')
 
         rgba = Gdk.RGBA()
         try:
@@ -216,10 +223,10 @@ class TerminalManager:
             try:
                 page.set_indicator_icon(icon)
                 if hasattr(page, 'set_indicator_tooltip'):
-                    page.set_indicator_tooltip(_('Group color'))
-                
+                    page.set_indicator_tooltip(tooltip_text)
+
                 # Apply color to the icon using CSS
-                self._apply_tab_icon_color(page, rgba)
+                self._apply_tab_icon_color(page, rgba, tooltip_text)
                 setattr(page, '_sshpilot_group_indicator_icon', icon)
                 setattr(page, '_sshpilot_group_color', rgba.to_string())
             except Exception as exc:
@@ -229,9 +236,12 @@ class TerminalManager:
                 if not hasattr(page, '_sshpilot_original_icon'):
                     setattr(page, '_sshpilot_original_icon', page.get_icon())
                 page.set_icon(icon)
-                
+
+                if hasattr(page, 'set_indicator_tooltip'):
+                    page.set_indicator_tooltip(tooltip_text)
+
                 # Apply color to the icon using CSS
-                self._apply_tab_icon_color(page, rgba)
+                self._apply_tab_icon_color(page, rgba, tooltip_text)
                 setattr(page, '_sshpilot_group_indicator_icon', icon)
                 setattr(page, '_sshpilot_group_color', rgba.to_string())
             except Exception as exc:
@@ -321,7 +331,7 @@ class TerminalManager:
         except Exception as exc:
             logger.debug(f"Failed to apply tab CSS color: {exc}")
 
-    def _apply_tab_icon_color(self, page, rgba: Gdk.RGBA):
+    def _apply_tab_icon_color(self, page, rgba: Gdk.RGBA, tooltip_text=None):
         """Apply color to tab icon by setting a colored icon"""
         try:
             # Create a colored icon
@@ -333,8 +343,9 @@ class TerminalManager:
             # Set the colored icon on the tab page
             page.set_indicator_icon(icon)
             page.set_indicator_activatable(True)
-            page.set_indicator_tooltip("Group color indicator")
-            
+            if hasattr(page, 'set_indicator_tooltip'):
+                page.set_indicator_tooltip(tooltip_text or _('Group color'))
+
             # Store reference to the icon and color for cleanup
             setattr(page, '_sshpilot_group_indicator_icon', icon)
             setattr(page, '_sshpilot_group_color', rgba)
@@ -358,7 +369,12 @@ class TerminalManager:
                 continue
 
             connection = window.terminal_to_connection.get(terminal)
-            color_value = self._resolve_group_color(connection) if connection else None
+            if connection:
+                color_value, group_name = self._resolve_group_color_and_name(connection)
+                if group_name:
+                    setattr(terminal, 'group_name', group_name)
+            else:
+                color_value, group_name = None, None
 
             if hasattr(terminal, 'set_group_color'):
                 try:
@@ -366,7 +382,8 @@ class TerminalManager:
                 except Exception as exc:
                     logger.debug("Failed to update terminal group color: %s", exc)
 
-            self._apply_tab_group_color(page, color_value)
+            tooltip = getattr(terminal, 'group_name', None)
+            self._apply_tab_group_color(page, color_value, tooltip=tooltip)
 
 
     def _on_disconnect_confirmed(self, dialog, response_id, connection):

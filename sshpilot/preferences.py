@@ -206,6 +206,18 @@ def should_hide_external_terminal_options() -> bool:
     )
 
 
+def should_show_force_internal_file_manager_toggle() -> bool:
+    """Return True when the built-in toggle for forcing the internal manager should be shown."""
+
+    try:
+        if is_macos():
+            return False
+        return bool(has_native_gvfs_support())
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Failed to determine GVFS availability: %s", exc)
+        return False
+
+
 def should_hide_file_manager_options() -> bool:
     """Check if file manager options should be hidden.
 
@@ -506,6 +518,8 @@ class PreferencesWindow(Gtk.Window):
         self._updating_connection_switches = False
         self.native_connect_row = None
         self.legacy_connect_row = None
+        self.force_internal_file_manager_row = None
+        self.open_file_manager_externally_row = None
 
         self._config_signal_id = None
 
@@ -1519,19 +1533,21 @@ class PreferencesWindow(Gtk.Window):
                     "These preferences only affect sshPilot's built-in SFTP file manager."
                 )
 
-                self.force_internal_file_manager_row = Adw.SwitchRow()
-                self.force_internal_file_manager_row.set_title("Always Use Built-in File Manager")
-                self.force_internal_file_manager_row.set_subtitle(
-                    "Use the in-app file manager even when system integrations are available"
-                )
-                self.force_internal_file_manager_row.set_active(
-                    bool(self.config.get_setting('file_manager.force_internal', False))
-                )
-                self.force_internal_file_manager_row.connect(
-                    'notify::active', self.on_force_internal_file_manager_changed
-                )
+                self.force_internal_file_manager_row = None
+                if should_show_force_internal_file_manager_toggle():
+                    self.force_internal_file_manager_row = Adw.SwitchRow()
+                    self.force_internal_file_manager_row.set_title("Always Use Built-in File Manager")
+                    self.force_internal_file_manager_row.set_subtitle(
+                        "Use the in-app file manager even when system integrations are available"
+                    )
+                    self.force_internal_file_manager_row.set_active(
+                        bool(self.config.get_setting('file_manager.force_internal', False))
+                    )
+                    self.force_internal_file_manager_row.connect(
+                        'notify::active', self.on_force_internal_file_manager_changed
+                    )
 
-                file_manager_group.add(self.force_internal_file_manager_row)
+                    file_manager_group.add(self.force_internal_file_manager_row)
 
                 self.open_file_manager_externally_row = Adw.SwitchRow()
                 self.open_file_manager_externally_row.set_title("Open File Manager in Separate Window")

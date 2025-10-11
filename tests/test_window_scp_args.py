@@ -17,13 +17,17 @@ class _DummyConfig:
 
 
 class _DummyConnectionManager:
+    def __init__(self):
+        self.prepare_calls = []
+
     def get_password(self, *_):
         return None
 
     def get_key_passphrase(self, *_):
         return None
 
-    def prepare_key_for_connection(self, *_):
+    def prepare_key_for_connection(self, *args):
+        self.prepare_calls.append(args[0] if args else None)
         return True
 
 
@@ -83,6 +87,35 @@ def test_build_scp_argv_mode_2_skips_identities_only(monkeypatch, tmp_path):
     assert '-i' in argv
     assert argv[argv.index('-i') + 1] == key_path
     assert 'IdentitiesOnly=yes' not in argv
+
+
+def test_build_scp_argv_skips_key_prep_when_identity_agent_disabled(monkeypatch, tmp_path):
+    monkeypatch.setattr(window, 'Config', _DummyConfig)
+
+    key_path = tmp_path / 'id_test_key'
+    key_path.write_text('dummy')
+
+    connection = SimpleNamespace(
+        hostname='example.com',
+        username='alice',
+        keyfile=str(key_path),
+        key_select_mode=1,
+        auth_method=2,
+        port=22,
+        identity_agent_disabled=True,
+    )
+
+    dummy_window = _DummyWindow()
+
+    window.MainWindow._build_scp_argv(
+        dummy_window,
+        connection,
+        ['local.txt'],
+        '/remote/path',
+        direction='upload',
+    )
+
+    assert dummy_window.connection_manager.prepare_calls == []
 
 
 def test_build_scp_argv_prefers_alias_and_proxy(monkeypatch, tmp_path):
