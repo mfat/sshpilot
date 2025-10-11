@@ -38,7 +38,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 import paramiko
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
-from .platform_utils import is_flatpak
+from .platform_utils import is_flatpak, is_macos
 
 import logging
 
@@ -2833,6 +2833,12 @@ class FilePane(Gtk.Box):
         content.append(label)
 
         button.set_child(content)
+
+        # Forward primary button clicks to the grid view so the standard
+        # "activate" handler is reached even though each cell is wrapped in a
+        # standalone Gtk.Button.  This restores navigation when grid view is
+        # active.
+        button.connect("clicked", self._on_grid_button_clicked)
         
         # Add drag source for file operations
         drag_source = Gtk.DragSource()
@@ -2878,6 +2884,23 @@ class FilePane(Gtk.Box):
         button = item.get_child()
         if button is None:
             return
+
+    def _on_grid_button_clicked(self, button: Gtk.Button) -> None:
+        position = getattr(button, "drag_position", None)
+        if position is None or not (0 <= position < len(self._entries)):
+            return
+
+        # Ensure the backing selection reflects the activated item. Using
+        # ``unselect_rest=True`` maintains single-selection behaviour because
+        # Gtk.GridView's own handler is bypassed when the embedded button
+        # consumes the click event.
+        self._selection_model.select_item(position, True)
+
+        activate_item = getattr(self._grid_view, "activate_item", None)
+        if callable(activate_item):
+            activate_item(position)
+        else:
+            self._on_grid_activate(self._grid_view, position)
 
     def _on_selection_changed(self, model, position, n_items):
         self._update_menu_state()
@@ -3634,6 +3657,9 @@ class FilePane(Gtk.Box):
     def _on_drag_begin(self, drag_source: Gtk.DragSource, drag: Gdk.Drag) -> None:
         """Called when drag operation begins - set drag icon."""
         logger.debug(f"Drag begin: pane={self._is_remote}")
+        if is_macos():
+            # macOS provides its own drag preview; avoid setting a custom icon.
+            return
         # Create a simple icon for the drag operation
         widget = drag_source.get_widget()
         if widget:
