@@ -336,8 +336,11 @@ def list_remote_files(
     )
 
     env = (inherit_env or os.environ).copy()
-    env.pop('SSH_ASKPASS', None)
-    env.pop('SSH_ASKPASS_REQUIRE', None)
+    
+    # Only remove askpass environment if it wasn't inherited (e.g., when identity agent is disabled)
+    if not (inherit_env and inherit_env.get('SSH_ASKPASS_REQUIRE')):
+        env.pop('SSH_ASKPASS', None)
+        env.pop('SSH_ASKPASS_REQUIRE', None)
 
     try:
         if password:
@@ -434,6 +437,9 @@ def download_file(
     ssh_extra_opts: List[str] = list(extra_ssh_opts or [])
     passphrase_auth = bool(saved_passphrase) and not password
 
+    # Check if the inherited environment has askpass configured (e.g., when identity agent is disabled)
+    has_inherited_askpass = bool(inherit_env and inherit_env.get('SSH_ASKPASS_REQUIRE'))
+
     if passphrase_auth:
         try:
             from .askpass_utils import (
@@ -475,7 +481,8 @@ def download_file(
                         break
                 if not already:
                     ssh_extra_opts.extend([flag, value])
-    else:
+    elif not has_inherited_askpass:
+        # Only remove askpass environment if it wasn't inherited (e.g., when identity agent is disabled)
         env.pop('SSH_ASKPASS', None)
         env.pop('SSH_ASKPASS_REQUIRE', None)
 
@@ -4340,6 +4347,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             port = 22
 
+        # Update identity agent state from SSH config before using it
+        if hasattr(connection, 'get_resolved_identities'):
+            try:
+                connection.get_resolved_identities()
+            except Exception:
+                pass
+
         keyfile = getattr(connection, 'keyfile', '') or ''
         try:
             key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
@@ -4424,9 +4438,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password',
             ]
 
+        # Check both the connection attribute and the SSH options
         identity_agent_disabled = bool(
             getattr(connection, 'identity_agent_disabled', False)
         )
+        
+        # Also check if 'identityagent none' is in the SSH options
+        if not identity_agent_disabled and ssh_options:
+            ssh_opts_str = ' '.join(ssh_options).lower()
+            if 'identityagent none' in ssh_opts_str or 'identityagent=none' in ssh_opts_str:
+                identity_agent_disabled = True
+                logger.debug("SCP: Detected 'identityagent none' in SSH options")
 
         return SCPConnectionProfile(
             alias=alias_value or '',
@@ -4508,7 +4530,36 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if profile.prefer_password:
                 use_publickey_with_password = False
 
-            base_env = os.environ.copy()
+            # Set up askpass environment if identity agent is disabled
+            logger.debug(f"SCP Download: Checking identity_agent_disabled={profile.identity_agent_disabled}")
+            logger.debug(f"SCP Download: Initial ssh_extra_opts={ssh_extra_opts}")
+            if profile.identity_agent_disabled:
+                from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
+                base_env = get_ssh_env_with_forced_askpass()
+                
+                # Add SSH options to force publickey authentication only
+                scp_ssh_opts = get_scp_ssh_options()
+                logger.debug(f"SCP: Current ssh_extra_opts before adding: {ssh_extra_opts}")
+                
+                # Add options in pairs, checking for duplicates properly
+                for i in range(0, len(scp_ssh_opts), 2):
+                    if i + 1 < len(scp_ssh_opts):
+                        flag = scp_ssh_opts[i]
+                        value = scp_ssh_opts[i + 1]
+                        # Check if this exact option pair is already present
+                        already_present = False
+                        for j in range(0, len(ssh_extra_opts) - 1, 2):
+                            if ssh_extra_opts[j] == flag and ssh_extra_opts[j + 1] == value:
+                                already_present = True
+                                break
+                        if not already_present:
+                            ssh_extra_opts.extend([flag, value])
+                            logger.debug(f"SCP: Added option pair: {flag} {value}")
+                
+                logger.debug("SCP: Using forced askpass environment (identity agent disabled)")
+                logger.debug(f"SCP: Final ssh_extra_opts: {ssh_extra_opts}")
+            else:
+                base_env = os.environ.copy()
 
             dialog = Adw.Window()
             dialog.set_transient_for(self)
@@ -5847,14 +5898,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         saved_passphrase = profile.saved_passphrase
         ssh_extra_opts = list(profile.ssh_options)
 
-        if saved_passphrase:
+        # Set up askpass environment for passphrase-protected keys
+        if saved_passphrase or profile.identity_agent_disabled:
             from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
 
             askpass_env = get_ssh_env_with_forced_askpass()
             if not hasattr(self, '_scp_askpass_env'):
                 self._scp_askpass_env = {}
             self._scp_askpass_env.update(askpass_env)
-            logger.debug(f"SCP: Stored askpass environment for key passphrase: {list(askpass_env.keys())}")
+            
+            if saved_passphrase:
+                logger.debug(f"SCP: Stored askpass environment for saved key passphrase: {list(askpass_env.keys())}")
+            else:
+                logger.debug(f"SCP: Stored askpass environment (identity agent disabled): {list(askpass_env.keys())}")
 
             passphrase_opts = get_scp_ssh_options()
             for idx in range(0, len(passphrase_opts), 2):
