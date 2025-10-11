@@ -19,6 +19,7 @@ from typing import Dict, List, Optional, Any, Tuple, Union, Set
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
 from .platform_utils import is_macos, get_config_dir, get_ssh_dir
 from .key_utils import _is_private_key
+from .ssh_utils import remove_batchmode_yes_options
 
 try:
     import gi
@@ -420,8 +421,7 @@ class Connection:
                 has_saved_password = False
             using_password = password_auth_selected or has_saved_password
 
-            if batch_mode and not using_password:
-                ssh_cmd.extend(['-o', 'BatchMode=yes'])
+            should_enable_batch_mode = batch_mode and not using_password
             if connect_timeout is not None:
                 ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
             if connection_attempts is not None:
@@ -472,17 +472,53 @@ class Connection:
                 or self.host
                 or self.hostname
             )
+            lookup_candidates: List[str] = []
+
+            def _add_lookup_candidate(value: Optional[str]) -> None:
+                if not value:
+                    return
+                candidate = str(value).strip()
+                if not candidate or candidate in lookup_candidates:
+                    return
+                lookup_candidates.append(candidate)
+
+            _add_lookup_candidate(target_alias)
+            _add_lookup_candidate(stored_alias)
+            try:
+                resolved_identifier = self.resolve_host_identifier()
+            except Exception:
+                resolved_identifier = ""
+            _add_lookup_candidate(resolved_identifier)
+            _add_lookup_candidate(self.host)
+            _add_lookup_candidate(self.hostname)
+            try:
+                fallback_host = self.get_effective_host()
+            except Exception:
+                fallback_host = ""
+            _add_lookup_candidate(fallback_host)
+
             config_override = self._resolve_config_override_path()
-            if target_alias:
+            for candidate in lookup_candidates:
+                if not candidate:
+                    continue
                 if config_override:
-                    effective_cfg = get_effective_ssh_config(
-                        target_alias, config_file=config_override
+                    candidate_cfg = get_effective_ssh_config(
+                        candidate, config_file=config_override
                     )
                 else:
-                    effective_cfg = get_effective_ssh_config(target_alias)
-
+                    candidate_cfg = get_effective_ssh_config(candidate)
+                if not isinstance(candidate_cfg, dict):
+                    continue
+                effective_cfg = candidate_cfg
+                if candidate_cfg.get("identityagent"):
+                    break
 
             self._update_identity_agent_state(effective_cfg.get('identityagent'))
+
+            if self.identity_agent_disabled:
+                ssh_cmd = remove_batchmode_yes_options(ssh_cmd)
+            elif should_enable_batch_mode:
+                ssh_cmd.extend(['-o', 'BatchMode=yes'])
 
             # Determine final parameters, falling back to resolved config when needed
             existing_hostname = self.hostname or ''
@@ -812,7 +848,7 @@ class Connection:
             batch_mode = bool(ssh_cfg.get('batch_mode', False))
 
             # Robust non-interactive options to prevent hangs
-            if batch_mode:
+            if batch_mode and not self.identity_agent_disabled:
                 ssh_cmd.extend(['-o', 'BatchMode=yes'])
             if connect_timeout is not None:
                 ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])

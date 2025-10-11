@@ -427,3 +427,75 @@ def test_identity_agent_disabled_with_key_auth_uses_forced_askpass(monkeypatch, 
     env_dict = dict(item.split("=", 1) for item in terminal.vte.last_env_list)
     assert env_dict.get("SSH_ASKPASS_REQUIRE") == "force"
     assert env_dict.get("SSH_ASKPASS") == "/tmp/helper"
+
+
+def test_identity_agent_disabled_skips_batchmode(monkeypatch):
+    terminal_mod = importlib.import_module("sshpilot.terminal")
+
+    monkeypatch.setattr(
+        terminal_mod,
+        "Vte",
+        types.SimpleNamespace(
+            Pty=types.SimpleNamespace(new_sync=lambda *a, **k: object()),
+            PtyFlags=types.SimpleNamespace(DEFAULT=0),
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(terminal_mod, "GLib", _DummyGLib, raising=False)
+    monkeypatch.setattr(
+        terminal_mod.Adw,
+        "Application",
+        types.SimpleNamespace(get_default=lambda: None),
+        raising=False,
+    )
+    monkeypatch.setattr(terminal_mod, "lookup_passphrase", lambda *_a, **_k: "", raising=False)
+
+    terminal_cls = terminal_mod.TerminalWidget
+
+    def _build_command(identity_agent_disabled: bool):
+        terminal = terminal_cls.__new__(terminal_cls)
+        terminal.connection = types.SimpleNamespace(
+            ssh_cmd=None,
+            auth_method=0,
+            password=None,
+            key_passphrase="",
+            keyfile="",
+            key_select_mode=0,
+            identity_agent_disabled=identity_agent_disabled,
+            quick_connect_command="",
+            data={},
+            forwarding_rules=[],
+            hostname="example.com",
+            username="demo",
+            port=22,
+            pubkey_auth_no=False,
+            remote_command="",
+            local_command="",
+            extra_ssh_config="",
+        )
+        terminal.connection_manager = types.SimpleNamespace(
+            native_connect_enabled=False,
+            get_password=lambda *a, **k: None,
+            known_hosts_path="",
+            update_connection_status=lambda *a, **k: None,
+        )
+        terminal.config = types.SimpleNamespace(get_ssh_config=lambda: {"batch_mode": True})
+        terminal.vte = DummyVte()
+        terminal._enable_askpass_log_forwarding = lambda *a, **k: None
+        terminal.apply_theme = lambda *a, **k: None
+        terminal._set_connecting_overlay_visible = lambda *a, **k: None
+        terminal._set_disconnected_banner_visible = lambda *a, **k: None
+        terminal.emit = lambda *a, **k: None
+        terminal.session_id = "session-batchmode"
+        terminal.is_connected = False
+        terminal._is_quitting = False
+
+        terminal._setup_ssh_terminal()
+        spawn_args = terminal.vte.spawn_calls[0]
+        return list(spawn_args[2])
+
+    enabled_cmd = _build_command(False)
+    disabled_cmd = _build_command(True)
+
+    assert any(token == 'BatchMode=yes' for token in enabled_cmd)
+    assert all(token != 'BatchMode=yes' for token in disabled_cmd)

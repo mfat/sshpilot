@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Optional, List
 from .port_utils import get_port_checker
 from .platform_utils import is_flatpak, is_macos
+from .ssh_utils import remove_batchmode_yes_options
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
@@ -868,10 +869,16 @@ class TerminalWidget(Gtk.Box):
                 compression = bool(ssh_cfg.get('compression', False))
 
                 using_password = password_auth_selected or has_saved_password
+                identity_agent_disabled = bool(
+                    getattr(self.connection, 'identity_agent_disabled', False)
+                )
+
+                if identity_agent_disabled:
+                    ssh_cmd = remove_batchmode_yes_options(ssh_cmd)
 
                 # Apply advanced args according to stored preferences
                 # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
-                if batch_mode and not using_password:
+                if batch_mode and not using_password and not identity_agent_disabled:
                     ensure_option('BatchMode=yes')
                 if connect_timeout is not None:
                     ensure_option(f'ConnectTimeout={connect_timeout}')
@@ -1099,6 +1106,9 @@ class TerminalWidget(Gtk.Box):
                                     option = parts[0]
                                     ssh_cmd.extend(['-o', f"{option}=yes"])
                                     logger.debug(f"Added SSH option: {option}=yes")
+
+                    if identity_agent_disabled:
+                        ssh_cmd = remove_batchmode_yes_options(ssh_cmd)
 
                     # Add NumberOfPasswordPrompts option before hostname and command
                     ensure_option('NumberOfPasswordPrompts=1')
