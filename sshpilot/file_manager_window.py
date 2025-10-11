@@ -1249,13 +1249,28 @@ class AsyncSFTPManager(GObject.GObject):
         else:
             logger.debug("File manager: No connection object provided")
 
-        if connection is not None and key_mode in (1, 2) and keyfile and os.path.isfile(keyfile):
+        identity_agent_disabled = False
+        if connection is not None:
+            identity_agent_disabled = bool(
+                getattr(connection, "identity_agent_disabled", False)
+            )
+
+        if (
+            connection is not None
+            and key_mode in (1, 2)
+            and keyfile
+            and os.path.isfile(keyfile)
+        ):
                 key_filename = keyfile
                 look_for_keys = False
                 logger.debug("File manager: Using specific key file: %s", keyfile)
                 # Prepare key for connection (add to ssh-agent if needed)
                 key_prepared = False
-                if (
+                if identity_agent_disabled:
+                    logger.debug(
+                        "File manager: IdentityAgent disabled; skipping key preparation"
+                    )
+                elif (
                     self._connection_manager is not None
                     and hasattr(self._connection_manager, "prepare_key_for_connection")
                 ):
