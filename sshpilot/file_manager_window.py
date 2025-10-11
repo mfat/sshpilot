@@ -2890,9 +2890,11 @@ class FilePane(Gtk.Box):
         if position is None or not (0 <= position < len(self._entries)):
             return
 
-        # Ensure the backing selection reflects the activated item, then
-        # trigger the standard grid activation handler.
-        self._selection_model.select_item(position, False)
+        # Ensure the backing selection reflects the activated item. Using
+        # ``unselect_rest=True`` maintains single-selection behaviour because
+        # Gtk.GridView's own handler is bypassed when the embedded button
+        # consumes the click event.
+        self._selection_model.select_item(position, True)
 
         activate_item = getattr(self._grid_view, "activate_item", None)
         if callable(activate_item):
