@@ -247,3 +247,61 @@ def test_download_file_without_passphrase_strips_askpass(monkeypatch, tmp_path):
     assert 'SSH_ASKPASS_REQUIRE' not in recorded['env']
     assert base_env['SSH_ASKPASS'] == 'something'
     assert base_env['SSH_ASKPASS_REQUIRE'] == 'prefer'
+
+
+def test_download_falls_back_to_terminal_when_agent_disabled(monkeypatch, tmp_path):
+    download_called = False
+
+    def fake_download(*args, **kwargs):
+        nonlocal download_called
+        download_called = True
+        return True
+
+    monkeypatch.setattr(window, 'download_file', fake_download)
+
+    class _Harness:
+        def __init__(self):
+            self.calls = []
+
+        def _start_scp_transfer(self, connection, sources, destination, *, direction, recursive=False):
+            self.calls.append(
+                {
+                    'connection': connection,
+                    'sources': sources,
+                    'destination': destination,
+                    'direction': direction,
+                    'recursive': recursive,
+                }
+            )
+
+    harness = _Harness()
+
+    profile = SimpleNamespace(
+        identity_agent_disabled=True,
+        keyfile_ok=True,
+        keyfile_expanded=str(tmp_path / 'id_secure'),
+        saved_passphrase=None,
+    )
+
+    destination_dir = tmp_path / 'downloads'
+    destination_dir.mkdir()
+
+    remote_path = '/var/log/app.log'
+
+    handled = window.MainWindow._use_terminal_for_scp_download(
+        harness,
+        object(),
+        profile,
+        remote_path,
+        destination_dir,
+        recursive=True,
+    )
+
+    assert handled is True
+    assert download_called is False
+    assert harness.calls
+    call = harness.calls[0]
+    assert call['sources'] == [remote_path]
+    assert call['destination'] == str(destination_dir)
+    assert call['direction'] == 'download'
+    assert call['recursive'] is True
