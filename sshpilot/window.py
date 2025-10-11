@@ -3483,33 +3483,39 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         about.present(self)
 
     def open_help_url(self):
-        """Open the SSH Pilot wiki in the default browser"""
+        """Open the SSH Pilot wiki using a portal-friendly launcher."""
+        url = "https://github.com/mfat/sshpilot/wiki"
         try:
-            import subprocess
+            Gio.AppInfo.launch_default_for_uri(url, None)
+            logger.info("Opened help URL via default handler: %s", url)
+            return
+        except Exception as exc:
+            logger.debug("Portal-friendly launcher failed for %s: %s", url, exc)
+
+        # Fall back to old webbrowser module as a last resort
+        try:
             import webbrowser
-            
-            # Try to open the URL using the default browser
-            url = "https://github.com/mfat/sshpilot/wiki"
-            
-            # Use webbrowser module which handles platform differences
-            webbrowser.open(url)
-            
-            logger.info(f"Opened help URL: {url}")
-        except Exception as e:
-            logger.error(f"Failed to open help URL: {e}")
-            # Fallback: show an error dialog
-            try:
-                dialog = Gtk.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    message_type=Gtk.MessageType.ERROR,
-                    buttons=Gtk.ButtonsType.OK,
-                    text="Failed to open help",
-                    secondary_text=f"Could not open the help URL. Please visit:\n{url}"
-                )
-                dialog.present()
-            except Exception:
-                pass
+
+            if not webbrowser.open(url):
+                raise RuntimeError("webbrowser.open returned False")
+            logger.info("Opened help URL via webbrowser fallback: %s", url)
+            return
+        except Exception as exc:
+            logger.error("Failed to open help URL: %s", exc)
+
+        # Display a minimal error dialog if all launchers fail
+        try:
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text="Failed to open help",
+                secondary_text=f"Please open this page manually:\n{url}"
+            )
+            dialog.present()
+        except Exception:
+            pass
 
     def show_shortcuts_window(self):
         """Display keyboard shortcuts using Gtk.ShortcutsWindow"""
