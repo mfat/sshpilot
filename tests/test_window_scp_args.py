@@ -274,6 +274,79 @@ def test_download_file_with_forced_passphrase_env(monkeypatch, tmp_path):
     assert base_env['SSH_ASKPASS_REQUIRE'] == 'base'
 
 
+def test_list_remote_files_preserves_forced_askpass_env(monkeypatch):
+    recorded = {}
+
+    def fake_run(cmd, capture_output, text, timeout, check, env):
+        recorded['cmd'] = cmd
+        recorded['env'] = env
+
+        class _Result:
+            stdout = (
+                '__SSHPILOT_BEGIN__\n'
+                'file.txt\n'
+                '__SSHPILOT_STATUS__0\n'
+                '__SSHPILOT_END__\n'
+            )
+            stderr = ''
+            returncode = 0
+
+        return _Result()
+
+    monkeypatch.setattr(window.subprocess, 'run', fake_run)
+    monkeypatch.setattr(window.shutil, 'which', lambda *_: '/usr/bin/ssh')
+
+    ask_env = {
+        'SSH_ASKPASS': '/tmp/forced-askpass',
+        'SSH_ASKPASS_REQUIRE': 'force',
+        'DISPLAY': ':77',
+    }
+    monkeypatch.setattr(
+        askpass_utils,
+        'get_ssh_env_with_forced_askpass',
+        lambda: ask_env,
+    )
+    monkeypatch.setattr(
+        askpass_utils,
+        'get_scp_ssh_options',
+        lambda: [
+            '-o', 'PreferredAuthentications=publickey',
+            '-o', 'PasswordAuthentication=no',
+            '-o', 'IdentitiesOnly=yes',
+        ],
+    )
+
+    base_env = {
+        'BASE': '1',
+        'SSH_ASKPASS': 'old',
+        'SSH_ASKPASS_REQUIRE': 'maybe',
+    }
+    extra_opts = ['-o', 'IdentitiesOnly=yes']
+
+    entries, error = window.list_remote_files(
+        'example.net',
+        'dave',
+        '.',
+        port=2022,
+        known_hosts_path='/tmp/known_hosts',
+        extra_ssh_opts=extra_opts,
+        inherit_env=base_env,
+        force_passphrase_env=True,
+    )
+
+    assert error is None
+    assert entries == [('file.txt', False)]
+    assert recorded['env']['SSH_ASKPASS'] == '/tmp/forced-askpass'
+    assert recorded['env']['SSH_ASKPASS_REQUIRE'] == 'force'
+    assert recorded['env']['BASE'] == '1'
+    assert base_env['SSH_ASKPASS'] == 'old'
+    assert base_env['SSH_ASKPASS_REQUIRE'] == 'maybe'
+    assert extra_opts == ['-o', 'IdentitiesOnly=yes']
+    assert '-p' in recorded['cmd'] and '2022' in recorded['cmd']
+    assert 'PreferredAuthentications=publickey' in recorded['cmd']
+    assert recorded['cmd'].count('IdentitiesOnly=yes') == 1
+
+
 def test_download_file_without_passphrase_strips_askpass(monkeypatch, tmp_path):
     recorded = {}
 
