@@ -498,3 +498,62 @@ def test_async_sftp_manager_configures_keepalive(monkeypatch):
     assert manager._keepalive_stop_event is None
     assert client._sftp_closed
 
+
+def test_async_sftp_manager_skips_key_prep_when_agent_disabled(monkeypatch, tmp_path):
+    module = _load_file_manager_module(monkeypatch)
+
+    key_path = tmp_path / "id_agent_disabled"
+    key_path.write_text("dummy")
+
+    connection = types.SimpleNamespace(
+        hostname="example.com",
+        host="example.com",
+        username="alice",
+        auth_method=0,
+        key_select_mode=1,
+        keyfile=str(key_path),
+        key_passphrase=None,
+        password="",
+        identity_agent_disabled=True,
+        pubkey_auth_no=False,
+        proxy_command="",
+        proxy_jump=[],
+        source="",
+        isolated_config=False,
+    )
+
+    class RecordingManager:
+        def __init__(self):
+            self.calls = []
+            self.known_hosts_path = None
+
+        def get_password(self, *_):
+            return None
+
+        def get_key_passphrase(self, *_):
+            return None
+
+        def prepare_key_for_connection(self, key_path):
+            self.calls.append(key_path)
+            return True
+
+    manager = RecordingManager()
+
+    async_manager = module.AsyncSFTPManager(
+        "example.com",
+        "alice",
+        port=22,
+        connection=connection,
+        connection_manager=manager,
+        ssh_config={},
+    )
+
+    async_manager._stop_keepalive_worker = lambda: None
+    async_manager._start_keepalive_worker = lambda: None
+
+    async_manager._connect_impl()
+
+    try:
+        assert manager.calls == []
+    finally:
+        async_manager.close()
