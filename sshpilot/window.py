@@ -7417,15 +7417,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Create new group entry and button
             create_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
 
-            self.create_group_entry = Gtk.Entry()
-            self.create_group_entry.set_placeholder_text(_("Enter group name"))
-            self.create_group_entry.set_hexpand(True)
-            create_box.append(self.create_group_entry)
-
-            self.create_group_button = Gtk.Button(label=_("Create"))
-            self.create_group_button.add_css_class("suggested-action")
-            self.create_group_button.set_sensitive(False)
-            create_box.append(self.create_group_button)
+            create_group_entry = Gtk.Entry()
+            create_group_entry.set_placeholder_text(_("Enter group name"))
+            create_group_entry.set_hexpand(True)
+            create_group_entry.set_activates_default(True)
+            create_box.append(create_group_entry)
 
             create_section_box.append(create_box)
 
@@ -7516,34 +7512,54 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             dialog.set_default_response(Gtk.ResponseType.OK)
             
             # Connect entry and button events
+            def find_existing_group_id(name: str) -> Optional[str]:
+                lowered = name.lower()
+                for group in available_groups:
+                    if group['name'].lower() == lowered:
+                        return group['id']
+                return None
+
+            def has_valid_target() -> bool:
+                if create_group_entry.get_text().strip():
+                    return True
+                return listbox.get_selected_row() is not None
+
+            def update_move_button_state(*_args):
+                move_button.set_sensitive(has_valid_target())
+
+            listbox.connect('row-selected', lambda _lb, _row: update_move_button_state())
+
             def on_entry_changed(entry):
-                text = entry.get_text().strip()
-                self.create_group_button.set_sensitive(bool(text))
+                update_move_button_state()
 
-            def on_entry_activated(entry):
-                text = entry.get_text().strip()
-                if text:
-                    on_create_group_clicked()
+            def on_entry_activated(_entry):
+                if has_valid_target():
+                    dialog.response(Gtk.ResponseType.OK)
 
-            def on_create_group_clicked():
-                group_name = self.create_group_entry.get_text().strip()
+            create_group_entry.connect('changed', on_entry_changed)
+            create_group_entry.connect('activate', on_entry_activated)
+            update_move_button_state()
+
+            def perform_move() -> bool:
+                group_name = create_group_entry.get_text().strip()
                 if group_name:
+                    existing_group_id = find_existing_group_id(group_name)
+                    if existing_group_id:
+                        for nickname in connection_nicknames:
+                            self.group_manager.move_connection(nickname, existing_group_id)
+                        self.rebuild_connection_list()
+                        return True
                     try:
-                        # Create the new group
                         selected_color = None
                         rgba_value = color_button.get_rgba()
                         if color_selected and rgba_value.alpha > 0:
                             selected_color = rgba_value.to_string()
                         new_group_id = self.group_manager.create_group(group_name, color=selected_color)
-                        # Move all selected connections to the new group
                         for nickname in connection_nicknames:
                             self.group_manager.move_connection(nickname, new_group_id)
-                        # Rebuild the connection list
                         self.rebuild_connection_list()
-                        # Close the dialog
-                        dialog.destroy()
+                        return True
                     except ValueError as e:
-                        # Show error dialog for duplicate group name
                         error_dialog = Gtk.Dialog(
                             title=_("Group Already Exists"),
                             transient_for=dialog,
@@ -7552,46 +7568,48 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         )
                         error_dialog.set_default_size(400, 150)
                         error_dialog.set_resizable(False)
-                        
+
                         content_area = error_dialog.get_content_area()
                         content_area.set_margin_start(20)
                         content_area.set_margin_end(20)
                         content_area.set_margin_top(20)
                         content_area.set_margin_bottom(20)
-                        
-                        # Add error message
+
                         error_label = Gtk.Label(label=str(e))
                         error_label.set_wrap(True)
                         error_label.set_xalign(0)
                         content_area.append(error_label)
-                        
-                        # Add OK button
+
                         error_dialog.add_button(_('OK'), Gtk.ResponseType.OK)
                         error_dialog.set_default_response(Gtk.ResponseType.OK)
-                        
-                        def on_error_response(dialog, response):
+
+                        def on_error_response(dialog, _response):
                             dialog.destroy()
-                        
+
                         error_dialog.connect('response', on_error_response)
                         error_dialog.present()
-                        
-                        # Clear the entry, reset color, and focus it for retry
-                        self.create_group_entry.set_text("")
-                        reset_color_selection()
-                        self.create_group_entry.grab_focus()
 
-            self.create_group_entry.connect('changed', on_entry_changed)
-            self.create_group_entry.connect('activate', on_entry_activated)
-            self.create_group_button.connect('clicked', lambda btn: on_create_group_clicked())
+                        create_group_entry.set_text("")
+                        reset_color_selection()
+                        create_group_entry.grab_focus()
+                        update_move_button_state()
+                        return False
+
+                selected_row = listbox.get_selected_row()
+                if selected_row:
+                    target_group_id = selected_row.group_id
+                    for nickname in connection_nicknames:
+                        self.group_manager.move_connection(nickname, target_group_id)
+                    self.rebuild_connection_list()
+                    return True
+                return False
 
             def on_response(dialog, response):
                 if response == Gtk.ResponseType.OK:
-                    selected_row = listbox.get_selected_row()
-                    if selected_row:
-                        target_group_id = selected_row.group_id
-                        for nickname in connection_nicknames:
-                            self.group_manager.move_connection(nickname, target_group_id)
-                        self.rebuild_connection_list()
+                    if perform_move():
+                        dialog.destroy()
+                        return
+                    return
                 dialog.destroy()
             
             dialog.connect('response', on_response)

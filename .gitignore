@@ -22,3 +22,4 @@ scripts/screenshot_url.sh
 /flatpak
 flatpak/io.github.mfat.sshpilot.yaml
 /flatpak
+*.pyc
