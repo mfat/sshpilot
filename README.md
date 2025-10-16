@@ -240,6 +240,10 @@ https://t.me/sshpilot
 - Icon designed by [Blisterexe](https://github.com/Blisterexe)
 
 ## Support Development
+
+Ko-fi: https://ko-fi.com/newmfat
+
+
 Bitcoin:
 
 ```
