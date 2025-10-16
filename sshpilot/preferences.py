@@ -3081,6 +3081,9 @@ class PreferencesWindow(Gtk.Window):
                 ("tilix", "tilix"),
                 ("xterm", "xterm"),
                 ("guake", "guake"),
+                ("ghostty", "ghostty"),
+                ("foot", "foot"),
+                ("blackbox", "blackbox"),
             ]
 
             # Append macOS terminals when running on macOS
