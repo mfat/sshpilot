@@ -242,7 +242,8 @@ https://t.me/sshpilot
 ## Support Development
 Bitcoin:
 
-``` bc1qqtsyf0ft85zshsnw25jgsxnqy45rfa867zqk4t
+```
+bc1qqtsyf0ft85zshsnw25jgsxnqy45rfa867zqk4t
 ```
 
 Doge:
