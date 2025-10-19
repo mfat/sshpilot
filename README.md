@@ -240,6 +240,21 @@ https://t.me/sshpilot
 - Icon designed by [Blisterexe](https://github.com/Blisterexe)
 
 ## Support Development
-Bitcoin: bc1qqtsyf0ft85zshsnw25jgsxnqy45rfa867zqk4t
 
-Doge: DRzNb8DycFD65H6oHNLuzyTzY1S5avPHHx
+Ko-fi: https://ko-fi.com/newmfat
+
+Bitcoin:
+
+```
+bc1qqtsyf0ft85zshsnw25jgsxnqy45rfa867zqk4t
+```
+
+Doge:
+```
+DRzNb8DycFD65H6oHNLuzyTzY1S5avPHHx
+```
+USDT (TRC20)
+```
+TAvQWVD83DB3QuDspnMh4uiJ7hi4Jzcr6X
+```
+
