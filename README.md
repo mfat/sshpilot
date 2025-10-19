@@ -109,12 +109,12 @@ dnf install sshpilot
 ### <img src="https://upload.wikimedia.org/wikipedia/commons/3/3f/Fedora_logo.svg" width="24" height="24"/> Fedora/RHEL/openSUSE (Manual Install)
 Latest release can be downloaded from here: https://github.com/mfat/sshpilot/releases/
 
-### <img src="https://flathub.org/api/badge?locale=en" width="24" height="24"/> Flatpak
+### <img src="https://flathub.org/favicon.svg" width="24" height="24"/> Flatpak
 Available on [Flathub](https://flathub.org/en/apps/io.github.mfat.sshpilot)
 
-<p align="center">
+<p align="left">
 <a href='https://flathub.org/apps/io.github.mfat.sshpilot'>
-    <img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?locale=en'/>
+    <img width='160' alt='Get it on Flathub' src='https://flathub.org/api/badge?locale=en'/>
   </a>
 </p>
 
@@ -141,7 +141,7 @@ Nightly Arch Linux package via AUR (community maintained): https://aur.archlinux
 yay -S sshpilot-git
 ```
 
-### <img src="https://upload.wikimedia.org/wikipedia/commons/7/74/Apple_logo_dark_grey.svg" width="24" height="24"/> macOS (aarch64)
+### <img src="https://upload.wikimedia.org/wikipedia/commons/7/74/Apple_logo_dark_grey.svg" height="24"/> macOS (aarch64)
 Download the dmg file from the releases section https://github.com/mfat/sshpilot/releases/
 
 ---
