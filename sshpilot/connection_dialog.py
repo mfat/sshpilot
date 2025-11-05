@@ -2462,7 +2462,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         try:
             dbe = dynamic_bind_row.get_child()
             if dbe and hasattr(dbe, 'set_placeholder_text'):
-                dbe.set_placeholder_text("127.0.0.1")
+                dbe.set_placeholder_text("localhost")
         except Exception:
             pass
         dynamic_settings_box.append(dynamic_bind_row)
@@ -2966,7 +2966,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         else:
             type_row.set_selected(0)
             # Sane defaults for a new rule
-            listen_addr_row.set_text('127.0.0.1')
+            listen_addr_row.set_text('localhost')
             listen_port_row.set_text('8080')
             remote_host_row.set_text('localhost')
             remote_port_row.set_text('22')
@@ -3004,7 +3004,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             try:
                 if idx == 0:  # Local
                     if not listen_addr_row.get_text().strip():
-                        listen_addr_row.set_text('127.0.0.1')
+                        listen_addr_row.set_text('localhost')
                     try:
                         if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
                             listen_port_row.set_text('8080')
@@ -3034,7 +3034,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                         remote_port_row.set_text('22')
                 else:  # Dynamic
                     if not listen_addr_row.get_text().strip():
-                        listen_addr_row.set_text('127.0.0.1')
+                        listen_addr_row.set_text('localhost')
                     try:
                         if int((listen_port_row.get_text() or '0').strip() or '0') == 0:
                             listen_port_row.set_text('1080')
@@ -3062,7 +3062,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     def _save_rule_from_editor(self, existing_rule, type_row, listen_addr_row, listen_port_row, remote_host_row, remote_port_row):
         idx = type_row.get_selected()
         rtype = 'local' if idx == 0 else ('remote' if idx == 1 else 'dynamic')
-        listen_addr = listen_addr_row.get_text().strip() or '127.0.0.1'
+        listen_addr = listen_addr_row.get_text().strip() or 'localhost'
         try:
             listen_port = int((listen_port_row.get_text() or '0').strip() or '0')
         except Exception:
@@ -3454,7 +3454,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
     def _sanitize_forwarding_rules(self, rules):
         """Validate and normalize forwarding rules before saving.
-        - Ensure listen_addr defaults to 127.0.0.1 (or 0.0.0.0 for remote if provided as such)
+        - Ensure listen_addr defaults to localhost (or 0.0.0.0 for remote if provided as such)
         - Ensure listen_port > 0
         - For local/remote: ensure remote_host non-empty and remote_port > 0
         Invalid rules are dropped silently.
@@ -3463,7 +3463,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         for r in rules or []:
             try:
                 rtype = r.get('type')
-                listen_addr = (r.get('listen_addr') or '').strip() or '127.0.0.1'
+                listen_addr = (r.get('listen_addr') or '').strip() or 'localhost'
                 listen_port = int(r.get('listen_port') or 0)
                 if listen_port <= 0:
                     continue
@@ -3579,7 +3579,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     })
                 elif rule_type == 'dynamic' and hasattr(self, 'dynamic_port_row'):
                     rule.update({
-                        'listen_addr': (self.dynamic_bind_row.get_text().strip() if hasattr(self, 'dynamic_bind_row') else '') or '127.0.0.1',
+                        'listen_addr': (self.dynamic_bind_row.get_text().strip() if hasattr(self, 'dynamic_bind_row') else '') or 'localhost',
                         'listen_port': int((self.dynamic_port_row.get_text() or '0').strip() or '0')
                     })
                 

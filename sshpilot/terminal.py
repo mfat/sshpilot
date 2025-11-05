@@ -1127,6 +1127,14 @@ class TerminalWidget(Gtk.Box):
 
                 # Add port forwarding rules with conflict checking
                 if hasattr(self.connection, 'forwarding_rules'):
+                    def _format_forward_host(host: str) -> str:
+                        host = (host or '').strip()
+                        if not host:
+                            return host
+                        if ':' in host and not (host.startswith('[') and host.endswith(']')):
+                            return f"[{host}]"
+                        return host
+
                     port_conflicts = []
                     port_checker = get_port_checker()
 
@@ -1136,7 +1144,7 @@ class TerminalWidget(Gtk.Box):
                             continue
 
                         rule_type = rule.get('type')
-                        listen_addr = rule.get('listen_addr', '127.0.0.1')
+                        listen_addr = (rule.get('listen_addr') or 'localhost').strip()
                         listen_port = rule.get('listen_port')
 
                         # Check for local port conflicts (for local and dynamic forwarding)
@@ -1154,10 +1162,12 @@ class TerminalWidget(Gtk.Box):
                                 logger.debug(f"Could not check port conflict for {listen_port}: {e}")
 
                         # Add the forwarding rule if no conflicts
+                        listen_addr_cli = _format_forward_host(listen_addr) or listen_addr or 'localhost'
+
                         if rule_type == 'dynamic' and listen_port:
                             try:
-                                ssh_cmd.extend(['-D', f"{listen_addr}:{listen_port}"])
-                                logger.debug(f"Added dynamic port forwarding: {listen_addr}:{listen_port}")
+                                ssh_cmd.extend(['-D', f"{listen_addr_cli}:{listen_port}"])
+                                logger.debug(f"Added dynamic port forwarding: {listen_addr_cli}:{listen_port}")
                             except Exception as e:
                                 logger.error(f"Failed to set up dynamic forwarding: {e}")
 
@@ -1165,8 +1175,9 @@ class TerminalWidget(Gtk.Box):
                             try:
                                 remote_host = rule.get('remote_host', 'localhost')
                                 remote_port = rule.get('remote_port')
-                                ssh_cmd.extend(['-L', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"])
-                                logger.debug(f"Added local port forwarding: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
+                                remote_host_cli = _format_forward_host(remote_host) or remote_host or 'localhost'
+                                ssh_cmd.extend(['-L', f"{listen_addr_cli}:{listen_port}:{remote_host_cli}:{remote_port}"])
+                                logger.debug(f"Added local port forwarding: {listen_addr_cli}:{listen_port} -> {remote_host_cli}:{remote_port}")
                             except Exception as e:
                                 logger.error(f"Failed to set up local forwarding: {e}")
 
@@ -1176,8 +1187,9 @@ class TerminalWidget(Gtk.Box):
                                 local_host = rule.get('local_host') or rule.get('remote_host', 'localhost')
                                 local_port = rule.get('local_port') or rule.get('remote_port')
                                 if local_port:
-                                    ssh_cmd.extend(['-R', f"{listen_addr}:{listen_port}:{local_host}:{local_port}"])
-                                    logger.debug(f"Added remote port forwarding: {listen_addr}:{listen_port} -> {local_host}:{local_port}")
+                                    local_host_cli = _format_forward_host(local_host) or local_host or 'localhost'
+                                    ssh_cmd.extend(['-R', f"{listen_addr_cli}:{listen_port}:{local_host_cli}:{local_port}"])
+                                    logger.debug(f"Added remote port forwarding: {listen_addr_cli}:{listen_port} -> {local_host_cli}:{local_port}")
                             except Exception as e:
                                 logger.error(f"Failed to set up remote forwarding: {e}")
 

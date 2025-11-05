@@ -1578,9 +1578,10 @@ class ConnectionManager(GObject.Object):
                         # Format is usually "[bind_address:]port"
                         if ':' in forward_spec:
                             bind_addr, port_str = forward_spec.rsplit(':', 1)
+                            bind_addr = bind_addr.strip() or 'localhost'
                             listen_port = int(port_str)
                         else:
-                            bind_addr = '127.0.0.1'  # Default bind address
+                            bind_addr = 'localhost'  # Default bind address
                             listen_port = int(forward_spec)
                         
                         parsed['forwarding_rules'].append({
@@ -1599,9 +1600,10 @@ class ConnectionManager(GObject.Object):
                             # Parse listen address and port
                             if ':' in listen_spec:
                                 bind_addr, port_str = listen_spec.rsplit(':', 1)
+                                bind_addr = bind_addr.strip() or 'localhost'
                                 listen_port = int(port_str)
                             else:
-                                bind_addr = '127.0.0.1'  # Default bind address
+                                bind_addr = 'localhost'  # Default bind address
                                 listen_port = int(listen_spec)
                             
                             # Parse destination host and port
@@ -2049,6 +2051,14 @@ class ConnectionManager(GObject.Object):
                 return f'"{token}"'
             return token
 
+        def _format_forward_host(host: str) -> str:
+            host = (host or '').strip()
+            if not host:
+                return host
+            if ':' in host and not (host.startswith('[') and host.endswith(']')):
+                return f"[{host}]"
+            return host
+
         host = data.get('hostname') or data.get('host', '')
         nickname = data.get('nickname') or host
         primary_token = _quote_token(nickname)
@@ -2126,18 +2136,20 @@ class ConnectionManager(GObject.Object):
         
         # Add port forwarding rules if any (ensure sane defaults)
         for rule in data.get('forwarding_rules', []):
-            listen_addr = rule.get('listen_addr', '') or '127.0.0.1'
+            listen_addr = (rule.get('listen_addr') or 'localhost').strip()
             listen_port = rule.get('listen_port', '')
             if not listen_port:
                 continue
-            listen_spec = f"{listen_addr}:{listen_port}"
+            listen_spec = f"{_format_forward_host(listen_addr) or 'localhost'}:{listen_port}"
             
             if rule.get('type') == 'local':
-                dest_spec = f"{rule.get('remote_host', '')}:{rule.get('remote_port', '')}"
+                dest_host = rule.get('remote_host', '')
+                dest_spec = f"{_format_forward_host(dest_host) or dest_host}:{rule.get('remote_port', '')}"
                 lines.append(f"    LocalForward {listen_spec} {dest_spec}")
             elif rule.get('type') == 'remote':
                 # For RemoteForward we forward remote listen -> local destination
-                dest_spec = f"{rule.get('local_host') or rule.get('remote_host', '')}:{rule.get('local_port') or rule.get('remote_port', '')}"
+                dest_host = rule.get('local_host') or rule.get('remote_host', '')
+                dest_spec = f"{_format_forward_host(dest_host) or dest_host}:{rule.get('local_port') or rule.get('remote_port', '')}"
                 lines.append(f"    RemoteForward {listen_spec} {dest_spec}")
             elif rule.get('type') == 'dynamic':
                 lines.append(f"    DynamicForward {listen_spec}")
