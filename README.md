@@ -182,11 +182,12 @@ Debian/Ubuntu (minimum versions)
 sudo apt update
 sudo apt install \
   python3 python3-gi python3-gi-cairo \
-  libgtk-4-1 (>= 4.6) gir1.2-gtk-4.0 (>= 4.6) \
-  libadwaita-1-0 (>= 1.4) gir1.2-adw-1 (>= 1.4) \
-  libvte-2.91-gtk4-0 (>= 0.70) gir1.2-vte-3.91 (>= 0.70) \
+  libgtk-4-1 gir1.2-gtk-4.0 \
+  libadwaita-1-0 gir1.2-adw-1 \
+  libvte-2.91-gtk4-0 gir1.2-vte-3.91 \
   libsecret-1-0 gir1.2-secret-1 \
   python3-paramiko python3-cryptography sshpass ssh-askpass
+
 ```
 
 Fedora / RHEL / CentOS
