@@ -69,6 +69,31 @@ if os.name == 'posix':
 logger = logging.getLogger(__name__)
 _SERVICE_NAME = "sshPilot"
 
+
+def _ensure_event_loop() -> asyncio.AbstractEventLoop:
+    """Return the running asyncio event loop or create one if missing.
+
+    Python 3.13+ no longer creates a default event loop implicitly, so we need
+    to provision one ourselves when the GTK application starts up. This helper
+    keeps the existing loop when present and falls back to creating and
+    registering a new loop on the current thread.
+    """
+
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+
+    try:
+        return asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+        except Exception:
+            logger.debug("Failed to register newly created asyncio loop", exc_info=True)
+        return loop
+
 class Connection:
     """Represents an SSH connection"""
     
@@ -163,7 +188,7 @@ class Connection:
         self.forwarding_rules = data.get('forwarding_rules', [])
         
         # Asyncio event loop
-        self.loop = asyncio.get_event_loop()
+        self.loop = _ensure_event_loop()
 
     def __str__(self):
         return f"{self.nickname} ({self.username}@{self.hostname})"
@@ -1135,7 +1160,7 @@ class ConnectionManager(GObject.Object):
         # Store wildcard/negated host blocks (rules) separately
         self.rules: List[Dict[str, Any]] = []
         self.ssh_config = {}
-        self.loop = asyncio.get_event_loop()
+        self.loop = _ensure_event_loop()
         self.active_connections: Dict[str, asyncio.Task] = {}
         self._active_connection_keys: Dict[int, str] = {}
         self.ssh_config_path = ''
