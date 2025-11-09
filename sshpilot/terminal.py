@@ -1892,9 +1892,13 @@ class TerminalWidget(Gtk.Box):
             if use_group_color and override_rgba is not None:
                 bg_color = self._clone_rgba(override_rgba)  # Use exact group color
                 fg_color = self._get_contrast_color(bg_color)
-                highlight_bg = self._clone_rgba(override_rgba)
+
+                contrast_for_bg = self._get_contrast_color(bg_color)
+                mix_ratio = 0.35 if self._relative_luminance(bg_color) < 0.5 else 0.25
+                highlight_bg = self._mix_rgba(bg_color, contrast_for_bg, mix_ratio)
+                highlight_bg.alpha = 1.0
                 highlight_fg = self._get_contrast_color(highlight_bg)
-                cursor_color = self._clone_rgba(highlight_fg)
+                cursor_color = self._clone_rgba(fg_color)
 
 
             # Prepare palette colors (16 ANSI colors)
