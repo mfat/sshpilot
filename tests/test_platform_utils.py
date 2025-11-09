@@ -64,5 +64,19 @@ def test_get_ssh_dir_override(monkeypatch, tmp_path):
         lambda: "ignored",
         raising=False,
     )
-    assert platform_utils.get_ssh_dir() == str(override)
+    expected = os.path.abspath(str(override))
+    assert platform_utils.get_ssh_dir() == expected
+
+
+def test_get_ssh_dir_glib_empty_falls_back_to_home(monkeypatch, tmp_path):
+    monkeypatch.delenv("SSHPILOT_SSH_DIR", raising=False)
+    monkeypatch.setattr(
+        platform_utils.GLib,
+        "get_home_dir",
+        lambda: "",
+        raising=False,
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    expected = os.path.join(str(tmp_path), ".ssh")
+    assert platform_utils.get_ssh_dir() == expected
 
