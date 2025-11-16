@@ -717,6 +717,9 @@ class PreferencesWindow(Gtk.Window):
             color_schemes.append("One Dark")
             color_schemes.append("Tomorrow Night")
             color_schemes.append("Material Dark")
+            color_schemes.append("Rosé Pine")
+            color_schemes.append("Rosé Pine Moon")
+            color_schemes.append("Rosé Pine Dawn")
             self.color_scheme_row.set_model(color_schemes)
             
             # Set current color scheme from config
@@ -731,7 +734,8 @@ class PreferencesWindow(Gtk.Window):
             scheme_names = [
                 "Default", "Black on White", "Solarized Dark", "Solarized Light",
                 "Monokai", "Dracula", "Nord",
-                "Gruvbox Dark", "One Dark", "Tomorrow Night", "Material Dark"
+                "Gruvbox Dark", "One Dark", "Tomorrow Night", "Material Dark",
+                "Rosé Pine", "Rosé Pine Moon", "Rosé Pine Dawn"
             ]
             try:
                 current_index = scheme_names.index(current_scheme_display)
@@ -2588,6 +2592,9 @@ class PreferencesWindow(Gtk.Window):
             "One Dark": "one_dark",
             "Tomorrow Night": "tomorrow_night",
             "Material Dark": "material_dark",
+            "Rosé Pine": "rose_pine",
+            "Rosé Pine Moon": "rose_pine_moon",
+            "Rosé Pine Dawn": "rose_pine_dawn",
         }
     
     def get_reverse_theme_mapping(self):
@@ -2747,7 +2754,8 @@ class PreferencesWindow(Gtk.Window):
         scheme_names = [
             "Default", "Black on White", "Solarized Dark", "Solarized Light",
             "Monokai", "Dracula", "Nord",
-            "Gruvbox Dark", "One Dark", "Tomorrow Night", "Material Dark"
+            "Gruvbox Dark", "One Dark", "Tomorrow Night", "Material Dark",
+            "Rosé Pine", "Rosé Pine Moon", "Rosé Pine Dawn"
         ]
         selected_scheme = scheme_names[selected] if selected < len(scheme_names) else "Default"
         
@@ -2940,6 +2948,36 @@ class PreferencesWindow(Gtk.Window):
                 'yellow': '#ffcb6b',
                 'magenta': '#c792ea',
                 'cyan': '#89ddff'
+            },
+            'rose_pine': {
+                'background': '#191724',
+                'foreground': '#e0def4',
+                'blue': '#9ccfd8',
+                'green': '#31748f',
+                'red': '#eb6f92',
+                'yellow': '#f6c177',
+                'magenta': '#c4a7e7',
+                'cyan': '#ebbcba'
+            },
+            'rose_pine_moon': {
+                'background': '#232136',
+                'foreground': '#e0def4',
+                'blue': '#9ccfd8',
+                'green': '#3e8fb0',
+                'red': '#eb6f92',
+                'yellow': '#f6c177',
+                'magenta': '#c4a7e7',
+                'cyan': '#ea9a97'
+            },
+            'rose_pine_dawn': {
+                'background': '#faf4ed',
+                'foreground': '#464261',
+                'blue': '#56949f',
+                'green': '#286983',
+                'red': '#b4637a',
+                'yellow': '#ea9d34',
+                'magenta': '#907aa9',
+                'cyan': '#d7827e'
             }
         }
         return schemes.get(scheme_key, schemes['default'])
@@ -3081,6 +3119,9 @@ class PreferencesWindow(Gtk.Window):
                 ("tilix", "tilix"),
                 ("xterm", "xterm"),
                 ("guake", "guake"),
+                ("ghostty", "ghostty"),
+                ("foot", "foot"),
+                ("blackbox", "blackbox"),
             ]
 
             # Append macOS terminals when running on macOS

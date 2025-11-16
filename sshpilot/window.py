@@ -7737,7 +7737,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     cmd = terminal_command + ['--args', 'bash', '-lc', f'{ssh_command}; exec bash']
             else:
                 terminal_basename = os.path.basename(terminal_command[0])
-                if terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal']:
+                if terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal', 'foot', 'blackbox']:
                     cmd = terminal_command + ['--', 'bash', '-c', f'{ssh_command}; exec bash']
                 elif terminal_basename in ['konsole', 'terminator', 'guake']:
                     cmd = terminal_command + ['-e', f'bash -c "{ssh_command}; exec bash"']
@@ -7747,6 +7747,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     cmd = terminal_command + ['-e', f'bash -c "{ssh_command}; exec bash"']
                 elif terminal_basename == 'xdg-terminal':
                     cmd = terminal_command + [ssh_command]
+                elif terminal_basename in ['ghostty']:
+                    cmd = terminal_command + ['+new-window', '-e', 'bash', '-c', f'{ssh_command}; exec bash']
                 else:
                     cmd = terminal_command + [ssh_command]
 
