@@ -38,7 +38,8 @@
     <release version="4.3.9" date="2025-11-16">
 
       <description>
-        <p>Bg fixes</p>
+        <p>Bug fixes</p>
+        <p>New color schemes for terminal</p>
       </description>
     </release>
   </releases>
