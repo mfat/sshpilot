@@ -69,6 +69,31 @@ if os.name == 'posix':
 logger = logging.getLogger(__name__)
 _SERVICE_NAME = "sshPilot"
 
+
+def _ensure_event_loop() -> asyncio.AbstractEventLoop:
+    """Return the running asyncio event loop or create one if missing.
+
+    Python 3.13+ no longer creates a default event loop implicitly, so we need
+    to provision one ourselves when the GTK application starts up. This helper
+    keeps the existing loop when present and falls back to creating and
+    registering a new loop on the current thread.
+    """
+
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+
+    try:
+        return asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+        except Exception:
+            logger.debug("Failed to register newly created asyncio loop", exc_info=True)
+        return loop
+
 class Connection:
     """Represents an SSH connection"""
     
@@ -163,7 +188,7 @@ class Connection:
         self.forwarding_rules = data.get('forwarding_rules', [])
         
         # Asyncio event loop
-        self.loop = asyncio.get_event_loop()
+        self.loop = _ensure_event_loop()
 
     def __str__(self):
         return f"{self.nickname} ({self.username}@{self.hostname})"
@@ -1135,7 +1160,7 @@ class ConnectionManager(GObject.Object):
         # Store wildcard/negated host blocks (rules) separately
         self.rules: List[Dict[str, Any]] = []
         self.ssh_config = {}
-        self.loop = asyncio.get_event_loop()
+        self.loop = _ensure_event_loop()
         self.active_connections: Dict[str, asyncio.Task] = {}
         self._active_connection_keys: Dict[int, str] = {}
         self.ssh_config_path = ''
@@ -1198,23 +1223,25 @@ class ConnectionManager(GObject.Object):
         """Switch between standard and isolated SSH configuration"""
         self.isolated_mode = bool(isolated)
         if self.isolated_mode:
-            base = get_config_dir()
-            self.ssh_config_path = os.path.join(base, 'ssh_config')
-            self.known_hosts_path = os.path.join(base, 'known_hosts')
-            os.makedirs(base, exist_ok=True)
+            base = self._normalize_path(get_config_dir())
+            os.makedirs(base, mode=0o700, exist_ok=True)
             self._ensure_secure_permissions(base, 0o700)
+            self.ssh_config_path = self._normalize_path(os.path.join(base, 'ssh_config'))
+            self.known_hosts_path = self._normalize_path(os.path.join(base, 'known_hosts'))
             for path in (self.ssh_config_path, self.known_hosts_path):
                 if not os.path.exists(path):
-                    open(path, 'a').close()
+                    open(path, 'a', encoding='utf-8').close()
                 self._ensure_secure_permissions(path, 0o600)
         else:
-            ssh_dir = get_ssh_dir()
-            os.makedirs(ssh_dir, exist_ok=True)
+            ssh_dir = self._normalize_path(get_ssh_dir())
+            os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
             self._ensure_secure_permissions(ssh_dir, 0o700)
-            self.ssh_config_path = os.path.join(ssh_dir, 'config')
-            self.known_hosts_path = os.path.join(ssh_dir, 'known_hosts')
+            self.ssh_config_path = self._normalize_path(os.path.join(ssh_dir, 'config'))
+            self.known_hosts_path = self._normalize_path(os.path.join(ssh_dir, 'known_hosts'))
             if os.path.exists(self.ssh_config_path):
                 self._ensure_secure_permissions(self.ssh_config_path, 0o600)
+            if os.path.exists(self.known_hosts_path):
+                self._ensure_secure_permissions(self.known_hosts_path, 0o600)
 
         # Reload SSH config to reflect new paths
         self.load_ssh_config()
@@ -1236,6 +1263,26 @@ class ConnectionManager(GObject.Object):
             os.chmod(path, mode)
         except Exception as exc:
             logger.debug("Unable to set permissions on %s: %s", path, exc)
+
+    def _normalize_path(self, path: str) -> str:
+        """Expand user/env vars and return absolute, non-empty paths."""
+        if not path or not str(path).strip():
+            raise ValueError("Cannot normalize empty SSH path")
+        expanded = os.path.expanduser(os.path.expandvars(path))
+        return os.path.abspath(expanded)
+
+    def _ensure_config_parent_dir(self, path: str) -> str:
+        """Normalize *path* and ensure its parent directory exists with secure permissions."""
+        normalized = self._normalize_path(path)
+        parent_dir = os.path.dirname(normalized)
+        if parent_dir:
+            try:
+                os.makedirs(parent_dir, mode=0o700, exist_ok=True)
+            except Exception as exc:
+                logger.error("Unable to create SSH config directory %s: %s", parent_dir, exc)
+                raise
+            self._ensure_secure_permissions(parent_dir, 0o700)
+        return normalized
 
     def _post_init_slow_path(self):
         """Run slower initialization steps after UI is responsive."""
@@ -1307,15 +1354,16 @@ class ConnectionManager(GObject.Object):
             existing_by_nickname = {conn.nickname: conn for conn in self.connections}
             self.connections = []
             self.rules = []
-            parent_dir = os.path.dirname(self.ssh_config_path)
-            if parent_dir:
-                os.makedirs(parent_dir, exist_ok=True)
-                self._ensure_secure_permissions(parent_dir, 0o700)
+            try:
+                self.ssh_config_path = self._ensure_config_parent_dir(self.ssh_config_path)
+            except Exception as exc:
+                logger.error("Unable to prepare SSH config path '%s': %s", self.ssh_config_path, exc)
+                return
             if not os.path.exists(self.ssh_config_path):
                 logger.info("SSH config file not found, creating empty one")
-                os.makedirs(os.path.dirname(self.ssh_config_path), exist_ok=True)
                 with open(self.ssh_config_path, 'w', encoding='utf-8') as f:
                     f.write("# SSH configuration file\n")
+                    f.write('\n')
                 self._ensure_secure_permissions(self.ssh_config_path, 0o600)
                 return
             else:
@@ -1578,9 +1626,10 @@ class ConnectionManager(GObject.Object):
                         # Format is usually "[bind_address:]port"
                         if ':' in forward_spec:
                             bind_addr, port_str = forward_spec.rsplit(':', 1)
+                            bind_addr = bind_addr.strip() or 'localhost'
                             listen_port = int(port_str)
                         else:
-                            bind_addr = '127.0.0.1'  # Default bind address
+                            bind_addr = 'localhost'  # Default bind address
                             listen_port = int(forward_spec)
                         
                         parsed['forwarding_rules'].append({
@@ -1599,9 +1648,10 @@ class ConnectionManager(GObject.Object):
                             # Parse listen address and port
                             if ':' in listen_spec:
                                 bind_addr, port_str = listen_spec.rsplit(':', 1)
+                                bind_addr = bind_addr.strip() or 'localhost'
                                 listen_port = int(port_str)
                             else:
-                                bind_addr = '127.0.0.1'  # Default bind address
+                                bind_addr = 'localhost'  # Default bind address
                                 listen_port = int(listen_spec)
                             
                             # Parse destination host and port
@@ -2049,6 +2099,14 @@ class ConnectionManager(GObject.Object):
                 return f'"{token}"'
             return token
 
+        def _format_forward_host(host: str) -> str:
+            host = (host or '').strip()
+            if not host:
+                return host
+            if ':' in host and not (host.startswith('[') and host.endswith(']')):
+                return f"[{host}]"
+            return host
+
         host = data.get('hostname') or data.get('host', '')
         nickname = data.get('nickname') or host
         primary_token = _quote_token(nickname)
@@ -2126,18 +2184,20 @@ class ConnectionManager(GObject.Object):
         
         # Add port forwarding rules if any (ensure sane defaults)
         for rule in data.get('forwarding_rules', []):
-            listen_addr = rule.get('listen_addr', '') or '127.0.0.1'
+            listen_addr = (rule.get('listen_addr') or 'localhost').strip()
             listen_port = rule.get('listen_port', '')
             if not listen_port:
                 continue
-            listen_spec = f"{listen_addr}:{listen_port}"
+            listen_spec = f"{_format_forward_host(listen_addr) or 'localhost'}:{listen_port}"
             
             if rule.get('type') == 'local':
-                dest_spec = f"{rule.get('remote_host', '')}:{rule.get('remote_port', '')}"
+                dest_host = rule.get('remote_host', '')
+                dest_spec = f"{_format_forward_host(dest_host) or dest_host}:{rule.get('remote_port', '')}"
                 lines.append(f"    LocalForward {listen_spec} {dest_spec}")
             elif rule.get('type') == 'remote':
                 # For RemoteForward we forward remote listen -> local destination
-                dest_spec = f"{rule.get('local_host') or rule.get('remote_host', '')}:{rule.get('local_port') or rule.get('remote_port', '')}"
+                dest_host = rule.get('local_host') or rule.get('remote_host', '')
+                dest_spec = f"{_format_forward_host(dest_host) or dest_host}:{rule.get('local_port') or rule.get('remote_port', '')}"
                 lines.append(f"    RemoteForward {listen_spec} {dest_spec}")
             elif rule.get('type') == 'dynamic':
                 lines.append(f"    DynamicForward {listen_spec}")
@@ -2226,7 +2286,7 @@ class ConnectionManager(GObject.Object):
         try:
             if not target_path:
                 target_path = self.ssh_config_path
-            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            target_path = self._ensure_config_parent_dir(target_path)
 
             try:
                 with open(target_path, 'r') as f:
@@ -2295,13 +2355,13 @@ class ConnectionManager(GObject.Object):
         """Update SSH config file with new connection data"""
         try:
             target_path = new_data.get('source') or getattr(connection, 'source', None) or self.ssh_config_path
+            target_path = self._ensure_config_parent_dir(target_path)
             if not os.path.exists(target_path):
-                os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                with open(target_path, 'w') as f:
-                    f.write("# SSH configuration file\n")
-                with open(target_path, 'a') as f:
+                with open(target_path, 'w', encoding='utf-8') as f:
+                    f.write("# SSH configuration file\n\n")
                     updated_config = self.format_ssh_config_entry(new_data)
-                    f.write('\n' + updated_config + '\n')
+                    f.write(updated_config.rstrip('\n') + '\n')
+                self._ensure_secure_permissions(target_path, 0o600)
                 return
 
             try:
@@ -2374,6 +2434,7 @@ class ConnectionManager(GObject.Object):
             try:
                 with open(target_path, 'w') as f:
                     f.writelines(updated_lines)
+                self._ensure_secure_permissions(target_path, 0o600)
                 logger.info(
                     "Wrote SSH config for host %s (found=%s, rules=%d) to %s",
                     new_name,

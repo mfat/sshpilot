@@ -806,6 +806,53 @@ class TerminalWidget(Gtk.Box):
                 base_cmd = ['ssh']
 
             ssh_cmd = list(base_cmd)
+
+            def ensure_option(option: str):
+                if option not in ssh_cmd:
+                    ssh_cmd.extend(['-o', option])
+
+            def remove_option(option_name: str, keep_value: Optional[str] = None):
+                prefix = f'{option_name}='
+                idx = 0
+                found_keep = False
+                while idx < len(ssh_cmd):
+                    if ssh_cmd[idx] == '-o' and idx + 1 < len(ssh_cmd):
+                        opt_value = ssh_cmd[idx + 1]
+                        if opt_value.startswith(prefix):
+                            if (
+                                keep_value is not None
+                                and opt_value == f'{option_name}={keep_value}'
+                                and not found_keep
+                            ):
+                                found_keep = True
+                                idx += 2
+                                continue
+                            del ssh_cmd[idx:idx + 2]
+                            continue
+                    idx += 1
+
+            def sync_option(option_name: str, desired_value: Optional[str]):
+                if desired_value is None:
+                    remove_option(option_name)
+                else:
+                    remove_option(option_name, desired_value)
+                    ensure_option(f'{option_name}={desired_value}')
+
+            def ensure_flag(flag: str):
+                if flag not in ssh_cmd:
+                    ssh_cmd.append(flag)
+
+            def remove_flag(flag: str):
+                while flag in ssh_cmd:
+                    ssh_cmd.remove(flag)
+
+            ssh_cfg = {}
+            try:
+                cfg_obj = getattr(self, 'config', None)
+                if cfg_obj is not None and hasattr(cfg_obj, 'get_ssh_config'):
+                    ssh_cfg = cfg_obj.get_ssh_config()
+            except Exception:
+                ssh_cfg = {}
             native_mode_enabled = bool(getattr(self.connection_manager, 'native_connect_enabled', False))
             try:
                 app = Adw.Application.get_default()
@@ -859,6 +906,13 @@ class TerminalWidget(Gtk.Box):
                 password_auth_selected = False
                 has_saved_password = False
 
+            using_password = password_auth_selected or has_saved_password
+
+            if not quick_connect_mode:
+                batch_mode_pref = bool(ssh_cfg.get('batch_mode', False))
+                desired_batch_mode = 'yes' if batch_mode_pref and not using_password else None
+                sync_option('BatchMode', desired_batch_mode)
+
             if native_mode_enabled and not ssh_cmd:
                 host_label = ''
                 try:
@@ -907,51 +961,7 @@ class TerminalWidget(Gtk.Box):
                 if using_prepared_cmd and host_arg is None:
                     needs_host_append = False
 
-                def ensure_option(option: str):
-                    if option not in ssh_cmd:
-                        ssh_cmd.extend(['-o', option])
-
-                def remove_option(option_name: str, keep_value: Optional[str] = None):
-                    prefix = f'{option_name}='
-                    idx = 0
-                    found_keep = False
-                    while idx < len(ssh_cmd):
-                        if ssh_cmd[idx] == '-o' and idx + 1 < len(ssh_cmd):
-                            opt_value = ssh_cmd[idx + 1]
-                            if opt_value.startswith(prefix):
-                                if (
-                                    keep_value is not None
-                                    and opt_value == f'{option_name}={keep_value}'
-                                    and not found_keep
-                                ):
-                                    found_keep = True
-                                    idx += 2
-                                    continue
-                                del ssh_cmd[idx:idx + 2]
-                                continue
-                        idx += 1
-
-                def sync_option(option_name: str, desired_value: Optional[str]):
-                    if desired_value is None:
-                        remove_option(option_name)
-                    else:
-                        remove_option(option_name, desired_value)
-                        ensure_option(f'{option_name}={desired_value}')
-
-                def ensure_flag(flag: str):
-                    if flag not in ssh_cmd:
-                        ssh_cmd.append(flag)
-
-                def remove_flag(flag: str):
-                    while flag in ssh_cmd:
-                        ssh_cmd.remove(flag)
-
                 # Read SSH behavior from config with sane defaults
-                try:
-                    ssh_cfg = self.config.get_ssh_config() if hasattr(self.config, 'get_ssh_config') else {}
-                except Exception:
-                    ssh_cfg = {}
-
                 def _coerce_int(value, default=None):
                     try:
                         coerced = int(str(value))
@@ -969,8 +979,6 @@ class TerminalWidget(Gtk.Box):
                 auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
                 batch_mode = bool(ssh_cfg.get('batch_mode', False))
                 compression = bool(ssh_cfg.get('compression', False))
-
-                using_password = password_auth_selected or has_saved_password
 
                 # Apply advanced args according to stored preferences
                 # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
@@ -1013,7 +1021,6 @@ class TerminalWidget(Gtk.Box):
 
                 # Only add verbose flag if explicitly enabled in config
                 try:
-                    ssh_cfg = self.config.get_ssh_config() if hasattr(self.config, 'get_ssh_config') else {}
                     verbosity = int(ssh_cfg.get('verbosity', 0))
                     debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
                     v = max(0, min(3, verbosity))
@@ -1127,6 +1134,14 @@ class TerminalWidget(Gtk.Box):
 
                 # Add port forwarding rules with conflict checking
                 if hasattr(self.connection, 'forwarding_rules'):
+                    def _format_forward_host(host: str) -> str:
+                        host = (host or '').strip()
+                        if not host:
+                            return host
+                        if ':' in host and not (host.startswith('[') and host.endswith(']')):
+                            return f"[{host}]"
+                        return host
+
                     port_conflicts = []
                     port_checker = get_port_checker()
 
@@ -1136,7 +1151,7 @@ class TerminalWidget(Gtk.Box):
                             continue
 
                         rule_type = rule.get('type')
-                        listen_addr = rule.get('listen_addr', '127.0.0.1')
+                        listen_addr = (rule.get('listen_addr') or 'localhost').strip()
                         listen_port = rule.get('listen_port')
 
                         # Check for local port conflicts (for local and dynamic forwarding)
@@ -1154,10 +1169,12 @@ class TerminalWidget(Gtk.Box):
                                 logger.debug(f"Could not check port conflict for {listen_port}: {e}")
 
                         # Add the forwarding rule if no conflicts
+                        listen_addr_cli = _format_forward_host(listen_addr) or listen_addr or 'localhost'
+
                         if rule_type == 'dynamic' and listen_port:
                             try:
-                                ssh_cmd.extend(['-D', f"{listen_addr}:{listen_port}"])
-                                logger.debug(f"Added dynamic port forwarding: {listen_addr}:{listen_port}")
+                                ssh_cmd.extend(['-D', f"{listen_addr_cli}:{listen_port}"])
+                                logger.debug(f"Added dynamic port forwarding: {listen_addr_cli}:{listen_port}")
                             except Exception as e:
                                 logger.error(f"Failed to set up dynamic forwarding: {e}")
 
@@ -1165,8 +1182,9 @@ class TerminalWidget(Gtk.Box):
                             try:
                                 remote_host = rule.get('remote_host', 'localhost')
                                 remote_port = rule.get('remote_port')
-                                ssh_cmd.extend(['-L', f"{listen_addr}:{listen_port}:{remote_host}:{remote_port}"])
-                                logger.debug(f"Added local port forwarding: {listen_addr}:{listen_port} -> {remote_host}:{remote_port}")
+                                remote_host_cli = _format_forward_host(remote_host) or remote_host or 'localhost'
+                                ssh_cmd.extend(['-L', f"{listen_addr_cli}:{listen_port}:{remote_host_cli}:{remote_port}"])
+                                logger.debug(f"Added local port forwarding: {listen_addr_cli}:{listen_port} -> {remote_host_cli}:{remote_port}")
                             except Exception as e:
                                 logger.error(f"Failed to set up local forwarding: {e}")
 
@@ -1176,8 +1194,9 @@ class TerminalWidget(Gtk.Box):
                                 local_host = rule.get('local_host') or rule.get('remote_host', 'localhost')
                                 local_port = rule.get('local_port') or rule.get('remote_port')
                                 if local_port:
-                                    ssh_cmd.extend(['-R', f"{listen_addr}:{listen_port}:{local_host}:{local_port}"])
-                                    logger.debug(f"Added remote port forwarding: {listen_addr}:{listen_port} -> {local_host}:{local_port}")
+                                    local_host_cli = _format_forward_host(local_host) or local_host or 'localhost'
+                                    ssh_cmd.extend(['-R', f"{listen_addr_cli}:{listen_port}:{local_host_cli}:{local_port}"])
+                                    logger.debug(f"Added remote port forwarding: {listen_addr_cli}:{listen_port} -> {local_host_cli}:{local_port}")
                             except Exception as e:
                                 logger.error(f"Failed to set up remote forwarding: {e}")
 
@@ -1880,9 +1899,13 @@ class TerminalWidget(Gtk.Box):
             if use_group_color and override_rgba is not None:
                 bg_color = self._clone_rgba(override_rgba)  # Use exact group color
                 fg_color = self._get_contrast_color(bg_color)
-                highlight_bg = self._clone_rgba(override_rgba)
+
+                contrast_for_bg = self._get_contrast_color(bg_color)
+                mix_ratio = 0.35 if self._relative_luminance(bg_color) < 0.5 else 0.25
+                highlight_bg = self._mix_rgba(bg_color, contrast_for_bg, mix_ratio)
+                highlight_bg.alpha = 1.0
                 highlight_fg = self._get_contrast_color(highlight_bg)
-                cursor_color = self._clone_rgba(highlight_fg)
+                cursor_color = self._clone_rgba(fg_color)
 
 
             # Prepare palette colors (16 ANSI colors)
