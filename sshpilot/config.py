@@ -392,6 +392,48 @@ class Config(GObject.Object):
                     '#546E7A', '#FF5370', '#C3E88D', '#FFCB6B',
                     '#82AAFF', '#C792EA', '#89DDFF', '#FFFFFF'
                 ]
+            },
+            'rose_pine': {
+                'name': 'Rosé Pine',
+                'foreground': '#e0def4',
+                'background': '#191724',
+                'cursor_color': '#524f67',
+                'highlight_background': '#26233a',
+                'highlight_foreground': '#e0def4',
+                'palette': [
+                    '#191724', '#eb6f92', '#31748f', '#f6c177',
+                    '#9ccfd8', '#c4a7e7', '#ebbcba', '#e0def4',
+                    '#6e6a86', '#eb6f92', '#31748f', '#f6c177',
+                    '#9ccfd8', '#c4a7e7', '#ebbcba', '#e0def4'
+                ]
+            },
+            'rose_pine_moon': {
+                'name': 'Rosé Pine Moon',
+                'foreground': '#e0def4',
+                'background': '#232136',
+                'cursor_color': '#56526e',
+                'highlight_background': '#393552',
+                'highlight_foreground': '#e0def4',
+                'palette': [
+                    '#232136', '#eb6f92', '#3e8fb0', '#f6c177',
+                    '#9ccfd8', '#c4a7e7', '#ea9a97', '#e0def4',
+                    '#6e6a86', '#eb6f92', '#3e8fb0', '#f6c177',
+                    '#9ccfd8', '#c4a7e7', '#ea9a97', '#e0def4'
+                ]
+            },
+            'rose_pine_dawn': {
+                'name': 'Rosé Pine Dawn',
+                'foreground': '#464261',
+                'background': '#faf4ed',
+                'cursor_color': '#cecacd',
+                'highlight_background': '#f2e9e1',
+                'highlight_foreground': '#464261',
+                'palette': [
+                    '#faf4ed', '#b4637a', '#286983', '#ea9d34',
+                    '#56949f', '#907aa9', '#d7827e', '#464261',
+                    '#9893a5', '#b4637a', '#286983', '#ea9d34',
+                    '#56949f', '#907aa9', '#d7827e', '#464261'
+                ]
             }
         }
 
@@ -561,7 +603,7 @@ class Config(GObject.Object):
 
     def remove_custom_theme(self, name: str):
         """Remove a custom theme"""
-        if name in self.terminal_themes and name not in ['default', 'dark', 'light', 'black_on_white', 'solarized_dark', 'solarized_light', 'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark', 'tomorrow_night', 'material_dark']:
+        if name in self.terminal_themes and name not in ['default', 'dark', 'light', 'black_on_white', 'solarized_dark', 'solarized_light', 'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark', 'tomorrow_night', 'material_dark', 'rose_pine', 'rose_pine_moon', 'rose_pine_dawn']:
             del self.terminal_themes[name]
             
             # Remove from config
@@ -768,7 +810,7 @@ class Config(GObject.Object):
                 config_data = self.config_data.copy()
             
             # Add custom themes
-            builtin = ['default', 'dark', 'light', 'black_on_white', 'solarized_dark', 'solarized_light', 'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark', 'tomorrow_night', 'material_dark']
+            builtin = ['default', 'dark', 'light', 'black_on_white', 'solarized_dark', 'solarized_light', 'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark', 'tomorrow_night', 'material_dark', 'rose_pine', 'rose_pine_moon', 'rose_pine_dawn']
             config_data['custom_themes'] = {name: theme for name, theme in self.terminal_themes.items() if name not in builtin}
             
             with open(file_path, 'w') as f:
