@@ -806,6 +806,53 @@ class TerminalWidget(Gtk.Box):
                 base_cmd = ['ssh']
 
             ssh_cmd = list(base_cmd)
+
+            def ensure_option(option: str):
+                if option not in ssh_cmd:
+                    ssh_cmd.extend(['-o', option])
+
+            def remove_option(option_name: str, keep_value: Optional[str] = None):
+                prefix = f'{option_name}='
+                idx = 0
+                found_keep = False
+                while idx < len(ssh_cmd):
+                    if ssh_cmd[idx] == '-o' and idx + 1 < len(ssh_cmd):
+                        opt_value = ssh_cmd[idx + 1]
+                        if opt_value.startswith(prefix):
+                            if (
+                                keep_value is not None
+                                and opt_value == f'{option_name}={keep_value}'
+                                and not found_keep
+                            ):
+                                found_keep = True
+                                idx += 2
+                                continue
+                            del ssh_cmd[idx:idx + 2]
+                            continue
+                    idx += 1
+
+            def sync_option(option_name: str, desired_value: Optional[str]):
+                if desired_value is None:
+                    remove_option(option_name)
+                else:
+                    remove_option(option_name, desired_value)
+                    ensure_option(f'{option_name}={desired_value}')
+
+            def ensure_flag(flag: str):
+                if flag not in ssh_cmd:
+                    ssh_cmd.append(flag)
+
+            def remove_flag(flag: str):
+                while flag in ssh_cmd:
+                    ssh_cmd.remove(flag)
+
+            ssh_cfg = {}
+            try:
+                cfg_obj = getattr(self, 'config', None)
+                if cfg_obj is not None and hasattr(cfg_obj, 'get_ssh_config'):
+                    ssh_cfg = cfg_obj.get_ssh_config()
+            except Exception:
+                ssh_cfg = {}
             native_mode_enabled = bool(getattr(self.connection_manager, 'native_connect_enabled', False))
             try:
                 app = Adw.Application.get_default()
@@ -859,6 +906,13 @@ class TerminalWidget(Gtk.Box):
                 password_auth_selected = False
                 has_saved_password = False
 
+            using_password = password_auth_selected or has_saved_password
+
+            if not quick_connect_mode:
+                batch_mode_pref = bool(ssh_cfg.get('batch_mode', False))
+                desired_batch_mode = 'yes' if batch_mode_pref and not using_password else None
+                sync_option('BatchMode', desired_batch_mode)
+
             if native_mode_enabled and not ssh_cmd:
                 host_label = ''
                 try:
@@ -907,51 +961,7 @@ class TerminalWidget(Gtk.Box):
                 if using_prepared_cmd and host_arg is None:
                     needs_host_append = False
 
-                def ensure_option(option: str):
-                    if option not in ssh_cmd:
-                        ssh_cmd.extend(['-o', option])
-
-                def remove_option(option_name: str, keep_value: Optional[str] = None):
-                    prefix = f'{option_name}='
-                    idx = 0
-                    found_keep = False
-                    while idx < len(ssh_cmd):
-                        if ssh_cmd[idx] == '-o' and idx + 1 < len(ssh_cmd):
-                            opt_value = ssh_cmd[idx + 1]
-                            if opt_value.startswith(prefix):
-                                if (
-                                    keep_value is not None
-                                    and opt_value == f'{option_name}={keep_value}'
-                                    and not found_keep
-                                ):
-                                    found_keep = True
-                                    idx += 2
-                                    continue
-                                del ssh_cmd[idx:idx + 2]
-                                continue
-                        idx += 1
-
-                def sync_option(option_name: str, desired_value: Optional[str]):
-                    if desired_value is None:
-                        remove_option(option_name)
-                    else:
-                        remove_option(option_name, desired_value)
-                        ensure_option(f'{option_name}={desired_value}')
-
-                def ensure_flag(flag: str):
-                    if flag not in ssh_cmd:
-                        ssh_cmd.append(flag)
-
-                def remove_flag(flag: str):
-                    while flag in ssh_cmd:
-                        ssh_cmd.remove(flag)
-
                 # Read SSH behavior from config with sane defaults
-                try:
-                    ssh_cfg = self.config.get_ssh_config() if hasattr(self.config, 'get_ssh_config') else {}
-                except Exception:
-                    ssh_cfg = {}
-
                 def _coerce_int(value, default=None):
                     try:
                         coerced = int(str(value))
@@ -969,8 +979,6 @@ class TerminalWidget(Gtk.Box):
                 auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
                 batch_mode = bool(ssh_cfg.get('batch_mode', False))
                 compression = bool(ssh_cfg.get('compression', False))
-
-                using_password = password_auth_selected or has_saved_password
 
                 # Apply advanced args according to stored preferences
                 # Only enable BatchMode when NOT doing password auth (BatchMode disables prompts)
@@ -1013,7 +1021,6 @@ class TerminalWidget(Gtk.Box):
 
                 # Only add verbose flag if explicitly enabled in config
                 try:
-                    ssh_cfg = self.config.get_ssh_config() if hasattr(self.config, 'get_ssh_config') else {}
                     verbosity = int(ssh_cfg.get('verbosity', 0))
                     debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
                     v = max(0, min(3, verbosity))
