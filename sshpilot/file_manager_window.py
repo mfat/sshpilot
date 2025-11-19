@@ -2576,6 +2576,9 @@ class FilePane(Gtk.Box):
             content.set_icon_name("folder-open-symbolic")
             content.set_label("Request Access")
             request_access_button.set_child(content)
+            # Ensure the button uses the suggested-action styling with visible background
+            request_access_button.set_has_frame(True)
+            request_access_button.remove_css_class("flat")
             request_access_button.add_css_class("suggested-action")
             # Store reference to the button so we can hide it later
             self._request_access_button = request_access_button
