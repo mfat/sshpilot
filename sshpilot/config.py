@@ -176,6 +176,7 @@ class Config(GObject.Object):
                 'group_color_display': 'fill',
                 'use_group_color_in_tab': False,
                 'use_group_color_in_terminal': False,
+                'connection_sort_last': 'name-asc',
             },
             'welcome': {
                 'background_color': None,  # None for default, or CSS string for custom
@@ -974,6 +975,11 @@ class Config(GObject.Object):
             updated = True
         elif not isinstance(ui_cfg['use_group_color_in_terminal'], bool):
             ui_cfg['use_group_color_in_terminal'] = bool(ui_cfg['use_group_color_in_terminal'])
+            updated = True
+
+        sort_last = ui_cfg.get('connection_sort_last')
+        if not isinstance(sort_last, str):
+            ui_cfg['connection_sort_last'] = 'name-asc'
             updated = True
 
         ssh_cfg = config.get('ssh')

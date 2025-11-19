@@ -51,6 +51,11 @@ from .connection_display import (
     get_connection_host,
     format_connection_host_display,
 )
+from .connection_sort import (
+    CONNECTION_SORT_PRESETS,
+    DEFAULT_CONNECTION_SORT,
+    apply_connection_sort as apply_sort_to_manager,
+)
 # Port forwarding UI is now integrated into connection_dialog.py
 from .connection_dialog import ConnectionDialog
 from .preferences import (
@@ -620,6 +625,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self._hide_hosts = bool(self.config.get_setting('ui.hide_hosts', False))
         except Exception:
             self._hide_hosts = False
+
+        # Remember last chosen sort preset
+        try:
+            stored_sort = str(self.config.get_setting('ui.connection_sort_last', DEFAULT_CONNECTION_SORT))
+        except Exception:
+            stored_sort = DEFAULT_CONNECTION_SORT
+        if stored_sort not in CONNECTION_SORT_PRESETS:
+            stored_sort = DEFAULT_CONNECTION_SORT
+        self._connection_sort_last = stored_sort
+        self.sort_split_button = None
+        self._sort_button_content = None
+        self._sort_menu_model = None
         
         # Set up window
         self.setup_window()
@@ -1630,6 +1647,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
         header.append(hide_button)
 
+        sort_button = self._build_sort_split_button()
+        header.append(sort_button)
+
 
         # Add spacer to push menu button to far right
         spacer = Gtk.Box()
@@ -2307,6 +2327,99 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 break
 
         return None
+
+    # ------------------------------------------------------------------
+    # Connection sorting helpers
+    # ------------------------------------------------------------------
+
+    def _build_sort_split_button(self):
+        button = Adw.SplitButton()
+        button.set_can_focus(False)
+        button.set_menu_model(self._get_sort_menu_model())
+        button.connect("clicked", self._on_sort_primary_clicked)
+
+        content = Adw.ButtonContent()
+        content.set_label(_("Sort"))
+        content.set_icon_name("view-sort-ascending-symbolic")
+        button.set_child(content)
+
+        try:
+            button.set_dropdown_tooltip(_("Change connection sort order"))
+        except Exception:
+            pass
+
+        self.sort_split_button = button
+        self._sort_button_content = content
+        self._update_sort_button_content()
+        return button
+
+    def _get_sort_menu_model(self):
+        if self._sort_menu_model:
+            return self._sort_menu_model
+
+        menu = Gio.Menu()
+        for preset_id, preset in CONNECTION_SORT_PRESETS.items():
+            menu.append(preset.title, f"win.sort-connections::{preset_id}")
+        self._sort_menu_model = menu
+        return menu
+
+    def _update_sort_button_content(self):
+        if not self.sort_split_button or not self._sort_button_content:
+            return
+
+        preset = CONNECTION_SORT_PRESETS.get(
+            self._connection_sort_last, CONNECTION_SORT_PRESETS[DEFAULT_CONNECTION_SORT]
+        )
+        self._sort_button_content.set_label(_("Sort"))
+        self._sort_button_content.set_icon_name(preset.icon_name)
+
+        tooltip = _("Apply {title} order").format(title=preset.title)
+        try:
+            self.sort_split_button.set_tooltip_text(tooltip)
+        except Exception:
+            pass
+
+    def _on_sort_primary_clicked(self, *_args):
+        preset_id = self._connection_sort_last or DEFAULT_CONNECTION_SORT
+        self.apply_connection_sort_preset(preset_id)
+
+    def apply_connection_sort_preset(self, preset_id: str):
+        preset = CONNECTION_SORT_PRESETS.get(preset_id)
+        if not preset:
+            preset_id = DEFAULT_CONNECTION_SORT
+            preset = CONNECTION_SORT_PRESETS[preset_id]
+
+        changed = apply_sort_to_manager(
+            self.group_manager,
+            self.connection_manager.get_connections(),
+            preset_id,
+        )
+
+        self._connection_sort_last = preset_id
+        try:
+            self.config.set_setting('ui.connection_sort_last', preset_id)
+        except Exception:
+            pass
+
+        self._update_sort_button_content()
+        if changed:
+            self.rebuild_connection_list()
+
+        self._notify_sort_result(preset, changed)
+
+    def _notify_sort_result(self, preset, changed: bool):
+        toast_overlay = getattr(self, "toast_overlay", None)
+        if not toast_overlay:
+            return
+
+        if changed:
+            message = _("Connections sorted — {title}").format(title=preset.title)
+        else:
+            message = _("Already sorted as {title}").format(title=preset.title)
+
+        toast = Adw.Toast.new(message)
+        toast.set_timeout(3)
+        toast_overlay.add_toast(toast)
 
     def setup_content_area(self):
         """Set up the main content area with stack for tabs and welcome view"""
