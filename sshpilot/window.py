@@ -634,9 +634,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if stored_sort not in CONNECTION_SORT_PRESETS:
             stored_sort = DEFAULT_CONNECTION_SORT
         self._connection_sort_last = stored_sort
-        self.sort_split_button = None
-        self._sort_button_content = None
-        self._sort_menu_model = None
+        self.sort_button = None
         
         # Set up window
         self.setup_window()
@@ -1647,7 +1645,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             pass
         header.append(hide_button)
 
-        sort_button = self._build_sort_split_button()
+        sort_button = self._build_sort_button()
         header.append(sort_button)
 
 
@@ -2332,56 +2330,45 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     # Connection sorting helpers
     # ------------------------------------------------------------------
 
-    def _build_sort_split_button(self):
-        button = Adw.SplitButton()
+    def _build_sort_button(self):
+        button = Gtk.Button.new_from_icon_name("view-sort-ascending-symbolic")
         button.set_can_focus(False)
-        button.set_menu_model(self._get_sort_menu_model())
-        button.connect("clicked", self._on_sort_primary_clicked)
-
-        content = Adw.ButtonContent()
-        content.set_label(_("Sort"))
-        content.set_icon_name("view-sort-ascending-symbolic")
-        button.set_child(content)
-
-        try:
-            button.set_dropdown_tooltip(_("Change connection sort order"))
-        except Exception:
-            pass
-
-        self.sort_split_button = button
-        self._sort_button_content = content
-        self._update_sort_button_content()
+        button.connect("clicked", self._on_sort_button_clicked)
+        self.sort_button = button
+        self._update_sort_button()
         return button
 
-    def _get_sort_menu_model(self):
-        if self._sort_menu_model:
-            return self._sort_menu_model
+    def _next_sort_preset_id(self, current_id: str) -> str:
+        if current_id == "name-desc":
+            return "name-asc"
+        return "name-desc"
 
-        menu = Gio.Menu()
-        for preset_id, preset in CONNECTION_SORT_PRESETS.items():
-            menu.append(preset.title, f"win.sort-connections::{preset_id}")
-        self._sort_menu_model = menu
-        return menu
-
-    def _update_sort_button_content(self):
-        if not self.sort_split_button or not self._sort_button_content:
+    def _update_sort_button(self):
+        if not self.sort_button:
             return
 
-        preset = CONNECTION_SORT_PRESETS.get(
-            self._connection_sort_last, CONNECTION_SORT_PRESETS[DEFAULT_CONNECTION_SORT]
-        )
-        self._sort_button_content.set_label(_("Sort"))
-        self._sort_button_content.set_icon_name(preset.icon_name)
+        preset_id = self._connection_sort_last or DEFAULT_CONNECTION_SORT
+        preset = CONNECTION_SORT_PRESETS.get(preset_id, CONNECTION_SORT_PRESETS[DEFAULT_CONNECTION_SORT])
+        self.sort_button.set_icon_name(preset.icon_name)
 
-        tooltip = _("Apply {title} order").format(title=preset.title)
+        next_preset_id = self._next_sort_preset_id(preset_id)
+        next_preset = CONNECTION_SORT_PRESETS.get(next_preset_id)
+        if next_preset:
+            tooltip = _("Sort {current} — click for {next}").format(
+                current=preset.title, next=next_preset.title
+            )
+        else:
+            tooltip = _("Sort {title}").format(title=preset.title)
+
         try:
-            self.sort_split_button.set_tooltip_text(tooltip)
+            self.sort_button.set_tooltip_text(tooltip)
         except Exception:
             pass
 
-    def _on_sort_primary_clicked(self, *_args):
-        preset_id = self._connection_sort_last or DEFAULT_CONNECTION_SORT
-        self.apply_connection_sort_preset(preset_id)
+    def _on_sort_button_clicked(self, *_args):
+        current = self._connection_sort_last or DEFAULT_CONNECTION_SORT
+        next_preset = self._next_sort_preset_id(current)
+        self.apply_connection_sort_preset(next_preset)
 
     def apply_connection_sort_preset(self, preset_id: str):
         preset = CONNECTION_SORT_PRESETS.get(preset_id)
@@ -2401,7 +2388,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
 
-        self._update_sort_button_content()
+        self._update_sort_button()
         if changed:
             self.rebuild_connection_list()
 
