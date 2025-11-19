@@ -2196,7 +2196,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_build_shortcuts_window()`** — Builds shortcuts window.
 
-- **`_build_sort_split_button()`** — Builds sort split button.
+- **`_build_sort_button()`** — Builds sort button.
 
 - **`_build_ssh_copy_id_argv(connection, ssh_key, force=False, known_hosts_path=None)`** — Construct argv for ssh-copy-id honoring saved UI auth preferences.
 
@@ -2246,8 +2246,6 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_get_sidebar_width()`** — Returns sidebar width.
 
-- **`_get_sort_menu_model()`** — Returns sort menu model.
-
 - **`_get_target_connection_rows(prefer_context=False)`** — Return rows targeted by the current action, respecting context menus.
 
 - **`_get_target_connections(prefer_context=False)`** — Return connection objects targeted by the current action.
@@ -2259,6 +2257,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_info_dialog(heading, body)`** — Handles info dialog.
 
 - **`_install_sidebar_css()`** — Install sidebar focus CSS
+
+- **`_next_sort_preset_id(current_id)`** — Handles next sort preset id.
 
 - **`_notify_sort_result(preset, changed)`** — Handles notify sort result.
 
@@ -2272,7 +2272,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_on_search_entry_key_pressed(controller, keyval, keycode, state)`** — Handle key presses in search entry.
 
-- **`_on_sort_primary_clicked(*_args)`** — Handles sort primary clicked.
+- **`_on_sort_button_clicked(*_args)`** — Handles sort button clicked.
 
 - **`_on_ssh_config_editor_saved()`** — Handles ssh config editor saved.
 
@@ -2352,7 +2352,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_track_internal_file_manager_window(window, widget=None)`** — Keep a reference to in-app file manager controllers to prevent GC.
 
-- **`_update_sort_button_content()`** — Updates sort button content.
+- **`_update_sort_button()`** — Updates sort button.
 
 - **`_update_tab_button_visibility()`** — Update TabButton visibility based on number of tabs
 
