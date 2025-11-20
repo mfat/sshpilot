@@ -860,6 +860,11 @@ class AsyncSFTPManager(GObject.GObject):
                 self._keepalive_stop_event = None
                 self._keepalive_failures = 0
 
+    def set_password(self, password: Optional[str]) -> None:
+        """Update the password used for future SSH connections."""
+        with self._lock:
+            self._password = password or None
+
     # -- helpers --------------------------------------------------------
 
     def _submit(
@@ -4257,6 +4262,9 @@ class FileManagerWindow(Adw.Window):
         self._connection = connection
         self._connection_manager = connection_manager
         self._ssh_config = dict(ssh_config) if ssh_config else None
+        self._current_password: Optional[str] = None
+        self._password_prompt_dialog: Optional[Adw.MessageDialog] = None
+        self._pending_auth_failure_message: Optional[str] = None
         # Set default and minimum sizes following GNOME HIG
         self.set_default_size(1000, 640)
         # Set minimum size to ensure usability (GNOME HIG recommends minimum 360px width)
@@ -4479,6 +4487,7 @@ class FileManagerWindow(Adw.Window):
         initial_password = None
         if connection is not None:
             initial_password = getattr(connection, "password", None) or None
+        self._current_password = initial_password
 
         self._manager = AsyncSFTPManager(
             host,
@@ -4630,32 +4639,220 @@ class FileManagerWindow(Adw.Window):
     def _on_progress(self, _manager, fraction: float, message: str) -> None:
         self._show_progress(fraction, message)
 
-    def _on_operation_error(self, _manager, message: str) -> None:
-        """Handle operation error with toast."""
+    def _show_high_priority_toast(self, message: Optional[str]) -> None:
+        """Show a toast message with high priority, ignoring display failures."""
+        text = (message or "Operation failed").strip() or "Operation failed"
         try:
-            toast = Adw.Toast.new(message)
+            toast = Adw.Toast.new(text)
             toast.set_priority(Adw.ToastPriority.HIGH)
             self._toast_overlay.add_toast(toast)
         except (AttributeError, RuntimeError, GLib.GError):
-            # Overlay might be destroyed or invalid, ignore
             pass
 
+    def _on_operation_error(self, _manager, message: str) -> None:
+        """Handle operation error with toast."""
+        self._show_high_priority_toast(message)
+
     def _on_connection_error(self, _manager, message: str) -> None:
-        """Handle connection error with toast."""
+        """Handle connection error by prompting for credentials or showing a toast."""
         self._clear_progress_toast()
-        
+
+        if self._handle_authentication_error(message):
+            return
+
         if self._connection_error_reported:
             return
-        
+
+        self._show_high_priority_toast(message or "Connection failed")
+        self._connection_error_reported = True
+
+    def _handle_authentication_error(self, message: Optional[str]) -> bool:
+        """Prompt for a password when authentication fails.
+
+        Returns ``True`` when the error was handled (prompt shown or pending),
+        ``False`` otherwise so the caller can fall back to toasts.
+        """
+
+        if getattr(self, '_password_prompt_dialog', None) is not None:
+            return True
+
+        normalized = (message or "").strip().lower()
+        if not normalized:
+            return False
+
+        keywords = (
+            "no authentication methods available",
+            "authentication failed",
+            "permission denied",
+            "password authentication failed",
+        )
+        if not any(keyword in normalized for keyword in keywords):
+            return False
+
+        self._show_password_retry_dialog(message or "Authentication failed.")
+        return True
+
+    def _show_password_retry_dialog(self, failure_message: str) -> None:
+        """Show a modal password prompt allowing the user to retry the connection."""
+
+        if getattr(self, '_password_prompt_dialog', None) is not None:
+            return
+
+        self._pending_auth_failure_message = failure_message
+
+        parent = self._get_dialog_parent()
+        identity = f"{self._username}@{self._host}".strip("@") or self._host or self._username or "remote host"
+        heading = "SSH Password Required"
+        body_lines = []
+        if failure_message:
+            body_lines.append(failure_message.strip())
+        body_lines.append(f"Enter the password for {identity} to continue.")
+        body = "\n".join(line for line in body_lines if line)
+
+        dialog = Adw.MessageDialog.new(parent, heading, body)
+        dialog.set_modal(True)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("retry", "Retry")
+        dialog.set_default_response("retry")
+        dialog.set_close_response("cancel")
+        dialog.set_response_enabled("retry", False)
+
+        entry = Gtk.PasswordEntry()
+        entry.set_hexpand(True)
+        entry.set_show_peek_icon(True)
+        entry.set_activates_default(True)
+        entry.set_placeholder_text("Password")
+        entry.set_margin_top(6)
+        entry.set_margin_bottom(6)
+
+        remember_check = Gtk.CheckButton(label="Save password to system keyring")
+        remember_check.set_margin_bottom(6)
+        can_store = bool(
+            self._connection_manager and callable(getattr(self._connection_manager, "store_password", None))
+        )
+        remember_check.set_sensitive(can_store)
+        remember_check.set_active(can_store)
+
+        def _update_response(*_args):
+            dialog.set_response_enabled("retry", bool(entry.get_text().strip()))
+
+        entry.connect("changed", _update_response)
+        entry.connect("activate", lambda *_: dialog.activate_response("retry"))
+        _update_response()
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        content.append(entry)
+        content.append(remember_check)
+        dialog.set_extra_child(content)
+
+        dialog.connect(
+            "response",
+            lambda dlg, resp: self._on_password_retry_response(dlg, resp, entry, remember_check),
+        )
+        self._password_prompt_dialog = dialog
+        dialog.present()
         try:
-            toast = Adw.Toast.new(message or "Connection failed")
-            toast.set_priority(Adw.ToastPriority.HIGH)
-            self._toast_overlay.add_toast(toast)
-        except (AttributeError, RuntimeError, GLib.GError):
-            # Overlay might be destroyed or invalid, ignore
+            entry.grab_focus()
+        except Exception:
+            pass
+
+    def _on_password_retry_response(
+        self,
+        dialog: Adw.MessageDialog,
+        response: str,
+        entry: Gtk.PasswordEntry,
+        remember_check: Gtk.CheckButton,
+    ) -> None:
+        """Handle responses from the password retry dialog."""
+
+        try:
+            dialog.destroy()
+        except Exception:
             pass
         finally:
-            self._connection_error_reported = True
+            self._password_prompt_dialog = None
+
+        if response != "retry":
+            if not self._connection_error_reported:
+                self._show_high_priority_toast(self._pending_auth_failure_message or "Connection cancelled")
+                self._connection_error_reported = True
+            self._pending_auth_failure_message = None
+            return
+
+        password = entry.get_text()
+        remember = remember_check.get_active() and remember_check.get_sensitive()
+        self._pending_auth_failure_message = None
+        self._retry_with_password(password, remember)
+
+    def _retry_with_password(self, password: str, remember: bool) -> None:
+        """Retry the SFTP connection using the supplied password."""
+
+        password_value = (password or "").strip()
+        manager = getattr(self, "_manager", None)
+        if not password_value or manager is None:
+            self._show_high_priority_toast("Password cannot be empty.")
+            return
+
+        self._current_password = password_value
+        if self._connection is not None:
+            try:
+                self._connection.password = password_value
+            except Exception:
+                pass
+
+        if remember and self._connection_manager is not None:
+            host_label, username_label = self._resolve_password_lookup_target()
+            if host_label and username_label:
+                try:
+                    self._connection_manager.store_password(host_label, username_label, password_value)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to store password for %s@%s: %s",
+                        username_label,
+                        host_label,
+                        exc,
+                    )
+                    self._show_high_priority_toast("Failed to store password in keyring.")
+
+        try:
+            manager.set_password(password_value)
+        except Exception as exc:
+            logger.debug("Failed to update password on SFTP manager: %s", exc)
+
+        self._connection_error_reported = False
+        self._show_progress(0.2, "Reconnecting…")
+        manager.connect_to_server()
+
+    def _resolve_password_lookup_target(self) -> Tuple[str, str]:
+        """Return host/username identifiers used for password storage."""
+
+        host_label = self._host or ""
+        username_label = self._username or ""
+
+        connection = self._connection
+        if connection is not None:
+            host_label = (
+                getattr(connection, "nickname", None)
+                or getattr(connection, "hostname", None)
+                or getattr(connection, "host", None)
+                or host_label
+            )
+            username_label = getattr(connection, "username", None) or username_label
+
+        return str(host_label or self._host or ""), str(username_label or self._username or "")
+
+    def _get_dialog_parent(self) -> Gtk.Window:
+        """Return the best parent window for modal dialogs."""
+
+        transient = self.get_transient_for()
+        if isinstance(transient, Gtk.Window):
+            return transient
+
+        embedded_parent = getattr(self, "_embedded_parent", None)
+        if isinstance(embedded_parent, Gtk.Window):
+            return embedded_parent
+
+        return self
 
     def _on_directory_loaded(
         self, _manager, path: str, entries: Iterable[FileEntry]
