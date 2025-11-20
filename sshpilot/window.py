@@ -6658,7 +6658,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception as e:
                 logger.error(f"Error opening file manager: {e}")
 
-    def _open_manage_files_for_connection(self, connection):
+    def _open_manage_files_for_connection(self, connection, *, prefer_internal=False, _allow_gvfs_retry=True):
         """Open files for the supplied connection using the best integration."""
 
         nickname = getattr(connection, 'nickname', None) or getattr(connection, 'hostname', None) or getattr(connection, 'host', None) or getattr(connection, 'username', 'Remote Host')
@@ -6667,8 +6667,45 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         port_value = getattr(connection, 'port', 22)
         effective_port = port_value if port_value and port_value != 22 else None
 
+        fallback_triggered = {'value': False}
+
+        def _schedule_internal_retry():
+            if fallback_triggered['value']:
+                return
+
+            fallback_triggered['value'] = True
+
+            def _run_retry():
+                try:
+                    self._open_manage_files_for_connection(
+                        connection,
+                        prefer_internal=True,
+                        _allow_gvfs_retry=False,
+                    )
+                except Exception as retry_exc:  # pragma: no cover - defensive fallback
+                    logger.error("Internal file manager retry failed: %s", retry_exc)
+                    self._show_manage_files_error(str(nickname), str(retry_exc))
+                return False
+
+            GLib.idle_add(_run_retry, priority=GLib.PRIORITY_DEFAULT_IDLE)
+
         def error_callback(error_msg):
             message = error_msg or "Failed to open file manager"
+
+            if (
+                _allow_gvfs_retry
+                and not prefer_internal
+                and has_internal_file_manager()
+                and self._should_retry_file_manager_internal(message)
+            ):
+                logger.warning(
+                    "GVFS mount failed for %s with '%s'; retrying using embedded file manager",
+                    nickname,
+                    message,
+                )
+                _schedule_internal_retry()
+                return
+
             logger.error(f"Failed to open file manager for {nickname}: {message}")
             self._show_manage_files_error(str(nickname), message)
 
@@ -6689,9 +6726,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             open_externally = False
             force_internal = False
 
+        if prefer_internal:
+            open_externally = False
+            force_internal = True
+
         use_internal = False
         if not open_externally:
             use_internal = force_internal or should_use_in_app_file_manager()
+        if prefer_internal:
+            use_internal = True
 
         placeholder_info = None
         if use_internal and has_internal_file_manager():
@@ -8123,6 +8166,29 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             
         except Exception as e:
             logger.error(f"Failed to show manage files error dialog: {e}")
+
+    @staticmethod
+    def _should_retry_file_manager_internal(error_message: Optional[str]) -> bool:
+        """Return True when the error indicates GVFS mount support is missing."""
+
+        if not error_message:
+            return False
+
+        lowered = error_message.lower()
+
+        if "volume" in lowered and "mount" in lowered and "not" in lowered:
+            return True
+
+        keywords = (
+            "volume doesn't implement mount",
+            "volume does not implement mount",
+            "operation not supported",
+            "not supported",
+            "not implemented",
+            "gvfsd-sftp",
+        )
+
+        return any(keyword in lowered for keyword in keywords)
 
     def _do_quit(self):
         """Actually quit the application - FINAL STEP"""

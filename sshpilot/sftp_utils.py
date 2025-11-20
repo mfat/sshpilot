@@ -7,6 +7,7 @@ import logging
 import shutil
 import subprocess
 import threading
+from functools import lru_cache
 from typing import Optional, Tuple, Callable, Any
 
 from gi.repository import Gtk, Adw, Gio, GLib, Gdk
@@ -142,6 +143,31 @@ def _should_use_in_app_file_manager() -> bool:
     return not _gvfs_supports_sftp()
 
 
+@lru_cache(maxsize=1)
+def _gvfs_sftp_backend_available() -> bool:
+    """Return True when the gvfsd-sftp backend is installed."""
+
+    if shutil.which("gvfsd-sftp"):
+        return True
+
+    backend_paths = (
+        "/usr/libexec/gvfsd-sftp",
+        "/usr/libexec/gvfs/gvfsd-sftp",
+        "/usr/lib/gvfs/gvfsd-sftp",
+        "/usr/lib64/gvfs/gvfsd-sftp",
+        "/usr/lib/gio/modules/gvfsd-sftp",
+    )
+
+    for path in backend_paths:
+        try:
+            if os.path.exists(path):
+                return True
+        except Exception:  # pragma: no cover - filesystem quirks
+            continue
+
+    return False
+
+
 def _gvfs_supports_sftp() -> bool:
     """Heuristic detection of whether GVFS/GIO can handle SFTP mounts."""
 
@@ -149,6 +175,10 @@ def _gvfs_supports_sftp() -> bool:
     # module.  If it is missing we assume GVFS support is not present.
     if shutil.which("gio") is None:
         logger.debug("gio binary missing – assuming GVFS unavailable")
+        return False
+
+    if not _gvfs_sftp_backend_available():
+        logger.debug("gvfsd-sftp backend missing – assuming GVFS SFTP unavailable")
         return False
 
     try:

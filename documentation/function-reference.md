@@ -540,6 +540,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 ### Functions
 
+- **`_gvfs_mount_not_supported(error_message)`** — Return True when the GVFS backend reported missing mount support.
+
 - **`create_internal_file_manager_tab(user, host, port=None, nickname=None, parent_window=None, connection=None, connection_manager=None, ssh_config=None)`** — Create an embedded file manager suitable for use inside a tab.
 
 - **`has_internal_file_manager()`** — Return True when the built-in file manager window is available.
@@ -1444,6 +1446,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_find_gvfs_mount_point(user, host)`** — Find the actual GVFS mount point for the SFTP connection
 
+- **`_gvfs_sftp_backend_available()`** — Return True when the gvfsd-sftp backend is installed.
+
 - **`_gvfs_supports_sftp()`** — Heuristic detection of whether GVFS/GIO can handle SFTP mounts.
 
 - **`_launch_terminal_sftp(user, host, port, error_callback=None)`** — Launch terminal-based SFTP client as last resort
@@ -2286,7 +2290,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_open_connection_in_external_terminal(connection)`** — Open the connection in the user's preferred external terminal
 
-- **`_open_manage_files_for_connection(connection)`** — Open files for the supplied connection using the best integration.
+- **`_open_manage_files_for_connection(connection, prefer_internal=False, _allow_gvfs_retry=True)`** — Open files for the supplied connection using the best integration.
 
 - **`_open_ssh_config_editor()`** — Opens ssh config editor.
 
@@ -2329,6 +2333,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_set_content_widget(widget)`** — Sets content widget.
 
 - **`_set_sidebar_widget(widget)`** — Sets sidebar widget.
+
+- **`_should_retry_file_manager_internal(error_message)`** — Return True when the error indicates GVFS mount support is missing.
 
 - **`_show_duplicate_connection_error(connection, error)`** — Display an error dialog when duplication fails.
 

@@ -15,7 +15,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk
 
 from .platform_utils import is_flatpak, is_macos
-from .sftp_utils import open_remote_in_file_manager
+from .sftp_utils import open_remote_in_file_manager, _gvfs_supports_sftp
 
 logger = logging.getLogger(__name__)
 
@@ -34,23 +34,7 @@ def has_native_gvfs_support() -> bool:
         logger.debug("Gio not available for GVFS integration: %s", exc)
         return False
 
-    if shutil.which("gio") or shutil.which("gvfs-mount"):
-        return True
-
-    gvfs_paths = [
-        f"/run/user/{os.getuid()}/gvfs",
-        f"/var/run/user/{os.getuid()}/gvfs",
-        os.path.expanduser("~/.gvfs"),
-    ]
-
-    for path in gvfs_paths:
-        try:
-            if os.path.isdir(path):
-                return True
-        except Exception:  # pragma: no cover - filesystem quirks
-            continue
-
-    return False
+    return _gvfs_supports_sftp()
 
 
 @lru_cache(maxsize=1)
@@ -202,6 +186,29 @@ def create_internal_file_manager_tab(
     return widget, controller
 
 
+def _gvfs_mount_not_supported(error_message: Optional[str]) -> bool:
+    """Return True when the GVFS backend reported missing mount support."""
+
+    if not error_message:
+        return False
+
+    lowered = error_message.lower()
+
+    if "volume" in lowered and "mount" in lowered and "not" in lowered:
+        return True
+
+    keywords = (
+        "volume doesn't implement mount",
+        "volume does not implement mount",
+        "operation not supported",
+        "not supported",
+        "not implemented",
+        "gvfsd-sftp",
+    )
+
+    return any(keyword in lowered for keyword in keywords)
+
+
 def launch_remote_file_manager(
     *,
     user: str,
@@ -227,6 +234,32 @@ def launch_remote_file_manager(
             connection_manager=connection_manager,
             ssh_config=ssh_config,
         )
+
+        if success or not has_internal_file_manager():
+            return success, error_msg, None
+
+        if _gvfs_mount_not_supported(error_msg):
+            try:
+                window = open_internal_file_manager(
+                    user=user,
+                    host=host,
+                    port=port,
+                    parent_window=parent_window,
+                    nickname=nickname,
+                    connection=connection,
+                    connection_manager=connection_manager,
+                    ssh_config=ssh_config,
+                )
+                return True, None, window
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.error("Internal file manager fallback failed: %s", exc)
+                message = str(exc) or "Failed to open internal file manager"
+                if error_callback:
+                    try:
+                        error_callback(message)
+                    except Exception:
+                        logger.debug("Error callback failed when reporting fallback error")
+                return False, message, None
         return success, error_msg, None
 
     if has_internal_file_manager():

@@ -2,33 +2,85 @@ import importlib
 import sys
 import types
 
+from tests.test_sftp_utils_in_app_manager import setup_gi as _rich_setup_gi
+
 
 def setup_gi(monkeypatch):
-    gi = types.ModuleType("gi")
-    def require_version(*args, **kwargs):
-        pass
-    gi.require_version = require_version
-    repository = types.ModuleType("repository")
-    gi.repository = repository
-    monkeypatch.setitem(sys.modules, "gi", gi)
-    monkeypatch.setitem(sys.modules, "gi.repository", repository)
-    for name in ["Gtk", "Adw", "Pango", "PangoFT2", "Gio", "GLib", "Gdk", "Vte"]:
-        module = types.ModuleType(name)
-        setattr(repository, name, module)
-        monkeypatch.setitem(sys.modules, f"gi.repository.{name}", module)
-    repository.Gtk.Window = type("Window", (), {})
-    repository.Adw.Toast = types.SimpleNamespace(new=lambda *_args, **_kwargs: object())
-    repository.Adw.Window = type("Window", (), {})
-    repository.Adw.PreferencesWindow = type("PreferencesWindow", (), {})
-    class SimpleAction:
-        def __init__(self, name=None, parameter_type=None):
-            self.name = name
-        @classmethod
-        def new(cls, name, parameter_type):
-            return cls(name, parameter_type)
-        def connect(self, *args, **kwargs):
-            pass
-    repository.Gio.SimpleAction = SimpleAction
+    _rich_setup_gi(monkeypatch)
+    repository = sys.modules.get("gi.repository")
+    if repository is None:
+        return
+    for name in ("Pango", "PangoFT2"):
+        if not hasattr(repository, name):
+            module = types.ModuleType(name)
+            setattr(repository, name, module)
+            monkeypatch.setitem(sys.modules, f"gi.repository.{name}", module)
+    gtk_module = getattr(repository, "Gtk", None)
+    if gtk_module is not None:
+        if not hasattr(gtk_module, "ToggleButton"):
+            class _DummyToggleButton:
+                def __init__(self, *args, **kwargs):
+                    self._active = False
+
+                def connect(self, *args, **kwargs):
+                    return None
+
+                def set_active(self, value):
+                    self._active = bool(value)
+
+                def get_active(self):
+                    return self._active
+
+            gtk_module.ToggleButton = _DummyToggleButton
+
+        class _GtkFallback:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __call__(self, *args, **kwargs):
+                return _GtkFallback()
+
+            def __getattr__(self, _name):
+                return lambda *args, **kwargs: None
+
+            def connect(self, *args, **kwargs):
+                return None
+
+            def set_active(self, *args, **kwargs):
+                return None
+
+            def get_active(self, *args, **kwargs):
+                return False
+
+        def _gtk_getattr(name):
+            return _GtkFallback
+
+        gtk_module.__getattr__ = _gtk_getattr
+    gio_module = getattr(repository, "Gio", None)
+    if gio_module is not None and not hasattr(gio_module, "SimpleAction"):
+        class _SimpleAction:
+            def __init__(self, name=None, parameter_type=None):
+                self.name = name
+
+            @classmethod
+            def new(cls, name, parameter_type):
+                return cls(name, parameter_type)
+
+            def connect(self, *args, **kwargs):
+                return None
+
+        gio_module.SimpleAction = _SimpleAction
+    glib_module = getattr(repository, "GLib", None)
+    if glib_module is not None and not hasattr(glib_module, "VariantType"):
+        class _VariantType:
+            def __init__(self, signature):
+                self.signature = signature
+
+            @classmethod
+            def new(cls, signature):
+                return cls(signature)
+
+        glib_module.VariantType = _VariantType
 
 
 def reload_module(name):
@@ -43,7 +95,12 @@ def prepare_actions(monkeypatch):
     def open_remote_in_file_manager(*args, **kwargs):
         return True, None
     sftp_stub.open_remote_in_file_manager = open_remote_in_file_manager
+    sftp_stub._gvfs_supports_sftp = lambda: True
     monkeypatch.setitem(sys.modules, "sshpilot.sftp_utils", sftp_stub)
+    prefs_stub = types.ModuleType("sshpilot.preferences")
+    prefs_stub.should_hide_external_terminal_options = lambda: False
+    prefs_stub.should_hide_file_manager_options = lambda: False
+    monkeypatch.setitem(sys.modules, "sshpilot.preferences", prefs_stub)
     return reload_module("sshpilot.actions")
 
 
@@ -53,6 +110,7 @@ def prepare_file_manager_integration(monkeypatch):
     def open_remote_in_file_manager(*args, **kwargs):
         return True, None
     sftp_stub.open_remote_in_file_manager = open_remote_in_file_manager
+    sftp_stub._gvfs_supports_sftp = lambda: True
     monkeypatch.setitem(sys.modules, "sshpilot.sftp_utils", sftp_stub)
     return reload_module("sshpilot.file_manager_integration")
 
@@ -61,32 +119,49 @@ def create_window():
     class DummyWindow:
         def add_action(self, action):
             pass
+
         def on_open_new_connection_action(self, *args):
             pass
+
         def on_open_new_connection_tab_action(self, *args):
             pass
+
         def on_manage_files_action(self, *args):
             pass
+
         def on_edit_connection_action(self, *args):
             pass
+
         def on_delete_connection_action(self, *args):
             pass
+
         def on_open_in_system_terminal_action(self, *args):
             pass
+
+        def on_sort_connections_action(self, *args):
+            pass
+
         def on_broadcast_command_action(self, *args):
-             pass
+            pass
+
         def on_create_group_action(self, *args):
-             pass
+            pass
+
         def on_edit_group_action(self, *args):
-             pass
+            pass
+
         def on_delete_group_action(self, *args):
-             pass
+            pass
+
         def on_move_to_ungrouped_action(self, *args):
-             pass
+            pass
+
         def on_move_to_group_action(self, *args):
-             pass
+            pass
+
         def on_toggle_sidebar_action(self, *args):
-             pass
+            pass
+
     return DummyWindow()
 
 
@@ -209,3 +284,37 @@ def test_launch_remote_file_manager_no_backend(monkeypatch):
     assert "No compatible" in error
     assert captured["message"] == error
     assert window is None
+
+
+def test_launch_remote_file_manager_falls_back_after_mount_error(monkeypatch):
+    integration = prepare_file_manager_integration(monkeypatch)
+
+    monkeypatch.setattr(integration, "has_native_gvfs_support", lambda: True)
+    monkeypatch.setattr(integration, "has_internal_file_manager", lambda: True)
+
+    def fake_open_remote_in_file_manager(**_kwargs):
+        return False, "Volume doesn't implement mount"
+
+    sentinel = object()
+
+    def fake_open_internal_file_manager(**kwargs):
+        kwargs["check"] = "ok"
+        return sentinel
+
+    monkeypatch.setattr(
+        integration, "open_remote_in_file_manager", fake_open_remote_in_file_manager
+    )
+    monkeypatch.setattr(
+        integration, "open_internal_file_manager", fake_open_internal_file_manager
+    )
+
+    success, error, window = integration.launch_remote_file_manager(
+        user="fallback",
+        host="example.test",
+        port=2200,
+        nickname="Mountless",
+    )
+
+    assert success
+    assert error is None
+    assert window is sentinel
