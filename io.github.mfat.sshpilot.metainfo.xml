@@ -7,10 +7,10 @@
   <name>SSH Pilot</name>
   <summary>Manage your servers with ease</summary>
   <description>
-    <p>sshPilot is a user-friendly SSH connection manager and client. It features a built-in tabbed terminal, remote file management, key transfer, port forwarding and more.</p>
+    <p>SSH Pilot is a user-friendly SSH connection manager. It features a built-in tabbed terminal, remote file management, key transfer, port forwarding and more.</p>
     <ul>
       <li>Manage multiple machines from a unified, clean interface</li>
-      <li>Transfer files to and from servers using the built-in file manager</li>
+      <li>Transfer files to and from servers using the built-in file manager (SFTP & SCP)</li>
       <li>Tuned for fast keyboard navigation with customizable shortcuts</li>
       <li>Easily generate and transfer SSH keys to servers</li>
       <li>Loads existing ~/.ssh/config and works with standard SSH keys and settings</li>
@@ -38,8 +38,8 @@
     <release version="4.4.0" date="2025-11-20">
 
       <description>
-        <p>Bug fixes</p>
-        <p>New color schemes for terminal</p>
+        <p>Added sorting to connection list</p>
+        <p>Minor UI fixes</p>
       </description>
     </release>
   </releases>
