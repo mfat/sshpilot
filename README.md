@@ -1,4 +1,4 @@
-**SSH Pilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal and a file manager.
+**SSH Pilot** is a user-friendly, modern and lightweight SSH connection manager for Linux and macOS, with an integrated terminal and a file manager. It's an alternative to Termius, Putty, Mobaxterm and similar apps.
 
 ## Table of Contents
 
