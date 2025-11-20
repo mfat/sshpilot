@@ -40,6 +40,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`on_open_new_connection_tab_action(action, param=None)`** — Open a new tab for the selected connection via global shortcut (Ctrl/⌘+Alt+N).
 
+- **`on_sort_connections_action(action, param=None)`** — Apply a requested connection sort preset.
+
 - **`on_toggle_sidebar_action(action, param)`** — Handle sidebar toggle action (for keyboard shortcuts)
 
 
@@ -396,6 +398,10 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 ## Module: `sshpilot.connection_manager`
 
+### Functions
+
+- **`_ensure_event_loop()`** — Return the running asyncio event loop or create one if missing.
+
 ### Class: `Connection`
 
 - **`__init__(data)`** — Handles init.
@@ -438,6 +444,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`__init__(config, isolated_mode=False)`** — Handles init.
 
+- **`_ensure_config_parent_dir(path)`** — Normalize *path* and ensure its parent directory exists with secure permissions.
+
 - **`_ensure_secure_permissions(path, mode)`** — Best effort at applying restrictive permissions to files/directories.
 
 - **`_ensure_ssh_agent()`** — Ensure ssh-agent is running and export environment variables
@@ -449,6 +457,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_get_active_connection_key(connection)`** — Return the dictionary key used to track active connection tasks.
 
 - **`_get_keyring_backend_name()`** — Return a descriptive name for the active keyring backend.
+
+- **`_normalize_path(path)`** — Expand user/env vars and return absolute, non-empty paths.
 
 - **`_post_init_slow_path()`** — Run slower initialization steps after UI is responsive.
 
@@ -507,6 +517,22 @@ This document enumerates the functions and methods available in the `sshpilot` p
 ### Class: `GLibEventLoopPolicy`
 
 - **`new_event_loop()`** — Handles new event loop.
+
+
+
+## Module: `sshpilot.connection_sort`
+
+### Functions
+
+- **`_name_key(connection)`** — Return a tuple used for alphabetical sorting.
+
+- **`_normalize_key(value)`** — Normalize a key so comparisons remain stable.
+
+- **`apply_connection_sort(group_manager, connections, preset_id)`** — Reorder connection lists managed by ``group_manager`` using ``preset_id``.
+
+### Class: `SortPreset`
+
+- **`__hash__()`** — Handles hash.
 
 
 
@@ -1962,6 +1988,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_prepare_key_for_native_mode()`** — Ensure explicit keys are unlocked when native SSH mode is active.
 
+- **`_refresh_connection_command()`** — Refresh the prepared SSH command using current preferences.
+
 - **`_relative_luminance(rgba)`** — Handles relative luminance.
 
 - **`_remove_custom_shortcut_controllers()`** — Detach any custom shortcut or scroll controllers from the VTE widget.
@@ -2168,6 +2196,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_build_shortcuts_window()`** — Builds shortcuts window.
 
+- **`_build_sort_button()`** — Builds sort button.
+
 - **`_build_ssh_copy_id_argv(connection, ssh_key, force=False, known_hosts_path=None)`** — Construct argv for ssh-copy-id honoring saved UI auth preferences.
 
 - **`_cancel_broadcast_hide_timeout()`** — Cancel any pending hide timeout for the broadcast banner
@@ -2228,6 +2258,10 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_install_sidebar_css()`** — Install sidebar focus CSS
 
+- **`_next_sort_preset_id(current_id)`** — Handles next sort preset id.
+
+- **`_notify_sort_result(preset, changed)`** — Handles notify sort result.
+
 - **`_on_config_setting_changed(_config, key, value)`** — Synchronize runtime state when configuration values change.
 
 - **`_on_connection_list_key_pressed(controller, keyval, keycode, state)`** — Handle key presses in the connection list
@@ -2237,6 +2271,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_on_reconnect_response(dialog, response_id, connection)`** — Handle response from reconnect prompt
 
 - **`_on_search_entry_key_pressed(controller, keyval, keycode, state)`** — Handle key presses in search entry.
+
+- **`_on_sort_button_clicked(*_args)`** — Handles sort button clicked.
 
 - **`_on_ssh_config_editor_saved()`** — Handles ssh config editor saved.
 
@@ -2316,11 +2352,15 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_track_internal_file_manager_window(window, widget=None)`** — Keep a reference to in-app file manager controllers to prevent GC.
 
+- **`_update_sort_button()`** — Updates sort button.
+
 - **`_update_tab_button_visibility()`** — Update TabButton visibility based on number of tabs
 
 - **`_update_tab_titles()`** — Update tab titles
 
 - **`add_connection_row(connection, indent_level=0)`** — Add a connection row to the list with optional indentation
+
+- **`apply_connection_sort_preset(preset_id)`** — Handles apply connection sort preset.
 
 - **`create_menu()`** — Create application menu
 

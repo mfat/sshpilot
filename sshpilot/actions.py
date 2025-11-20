@@ -197,6 +197,19 @@ class WindowActions:
         except Exception as e:
             logger.error(f"Failed to open in system terminal: {e}")
 
+    def on_sort_connections_action(self, action, param=None):
+        """Apply a requested connection sort preset."""
+        try:
+            preset_id = param.get_string() if param is not None else None
+        except AttributeError:
+            preset_id = None
+
+        if not preset_id:
+            return
+
+        if hasattr(self, 'apply_connection_sort_preset'):
+            self.apply_connection_sort_preset(preset_id)
+
     def on_broadcast_command_action(self, action, param=None):
         """Handle broadcast command action - shows dialog to input command"""
         try:
@@ -834,6 +847,10 @@ def register_window_actions(window):
         window.open_in_system_terminal_action = Gio.SimpleAction.new('open-in-system-terminal', None)
         window.open_in_system_terminal_action.connect('activate', window.on_open_in_system_terminal_action)
         window.add_action(window.open_in_system_terminal_action)
+
+    window.sort_connections_action = Gio.SimpleAction.new('sort-connections', GLib.VariantType.new('s'))
+    window.sort_connections_action.connect('activate', window.on_sort_connections_action)
+    window.add_action(window.sort_connections_action)
 
     # Action for broadcasting commands to all SSH terminals
     window.broadcast_command_action = Gio.SimpleAction.new('broadcast-command', None)
