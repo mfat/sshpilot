@@ -14,7 +14,7 @@
 - [Minimum Requirements](#minimum-requirements)
 - [Run from Source](#-run-from-source)
 - [Runtime Dependencies](#runtime-dependencies)
-- [Testing](#testing)
+- [Documentation](#documentation)
 - [Telegram Channel](#telegram-channel)
 - [Special Thanks](#special-thanks)
 - [Support Development](#support-development)
@@ -217,19 +217,8 @@ Enable verbose debugging with:
 python3 run.py --verbose
 ```
 
-## Testing
-
-- **Unit & integration:**
-
-  ```bash
-  pytest -m "not e2e"
-  ```
-
-- **End-to-end (Dogtail, requires X11/AT-SPI):**
-
-  ```bash
-  dbus-run-session -- xvfb-run -s "-screen 0 1024x768x24" pytest -m e2e tests_e2e
-  ```
+## Documentation
+https://github.com/mfat/sshpilot/wiki
 
 ## Telegram Channel
 https://t.me/sshpilot

@@ -44,6 +44,7 @@ if not load_resources():
 from .window import MainWindow
 from .platform_utils import is_macos, get_data_dir
 from .preferences import should_hide_file_manager_options
+from .startup_info import print_startup_info
 
 class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
@@ -56,6 +57,7 @@ class SshPilotApplication(Adw.Application):
 
         # Command line verbosity override
         self.verbose_override = verbose
+        self.isolated_mode = isolated
 
         # Track whether native connect mode should be used for this run
         self.native_connect_override = True if native_connect else None
@@ -63,6 +65,9 @@ class SshPilotApplication(Adw.Application):
 
         # Set up logging
         self.setup_logging()
+        
+        # Print startup information
+        print_startup_info(isolated=isolated, verbose=verbose)
         
         # Apply saved application theme (light/dark/system)
         self.config = None
