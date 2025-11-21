@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:4.4.0}
+Version:        %{?version}%{!?version:4.4.1}
 Release:        1%{?dist}
 Summary:        SSH connection manager with integrated terminal
 
@@ -67,5 +67,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Fri Nov 21 2025 mFat <newmfat@gmail.com> - 4.4.1
+- - New feature: Import/Export configuration
+- - Better log output
+
 * Wed Oct 08 2025 mFat <newmfat@gmail.com>
 - Automated COPR build
