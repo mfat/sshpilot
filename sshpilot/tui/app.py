@@ -12,6 +12,7 @@ from typing import List, Optional, Sequence
 from sshpilot.config import Config
 from sshpilot.connection_manager import ConnectionManager
 from sshpilot.tui.command_builder import build_ssh_command
+from sshpilot.tui.editor import ConnectionEditSession
 
 LOG = logging.getLogger(__name__)
 
@@ -265,14 +266,21 @@ class SshPilotTuiApp:
         data = getattr(conn, "data", None)
         if not remote_cmd and isinstance(data, dict):
             remote_cmd = data.get("remote_command", "") or ""
+        local_cmd = getattr(conn, "local_command", "") or ""
+        rules = [rule for rule in (getattr(conn, "forwarding_rules", []) or []) if rule.get("enabled", True)]
+
         details = [
             f"Nickname : {getattr(conn, 'nickname', '')}",
             f"Target   : {effective_host} (user: {getattr(conn, 'username', '') or '-'})",
             f"Port     : {getattr(conn, 'port', 22)}    Key: {identity}",
             f"Source   : {source}",
         ]
+        if local_cmd:
+            details.append(f"Local cmd : {local_cmd}")
         if remote_cmd:
             details.append(f"Remote cmd: {remote_cmd}")
+        if rules:
+            details.append(f"Forwarding: {len(rules)} rule(s) enabled")
 
         self._draw_wrapped(start_row, end_row, width, "\n".join(details))
 
@@ -292,7 +300,7 @@ class SshPilotTuiApp:
             msg = self.status_message
         else:
             attr = curses.color_pair(4) if curses.has_colors() else 0
-            msg = "Enter: connect  /: filter  r: reload  ?: help  q: quit"
+            msg = "Enter: connect  e: edit  /: filter  r: reload  ?: help  q: quit"
         self._safe_addnstr(row, 0, msg.ljust(width), width, attr)
 
     def _draw_help(self, height: int, width: int):
@@ -303,6 +311,7 @@ class SshPilotTuiApp:
             "PgUp / PgDn      : Scroll a page",
             "Home / End       : Jump to start or end",
             "Enter / c        : Connect to highlighted host",
+            "e                : Edit highlighted host",
             "r                : Reload SSH config",
             "/                : Filter connections",
             "Esc              : Cancel filter / exit help",
@@ -358,6 +367,8 @@ class SshPilotTuiApp:
             self._connect_selected()
         elif key in (ord("r"), curses.KEY_F5):
             self.reload_connections()
+        elif key in (ord("e"),):
+            self._edit_selected()
         elif key == ord("/"):
             self.mode = "filter"
             curses.curs_set(1)
@@ -418,6 +429,35 @@ class SshPilotTuiApp:
             self.set_status("SSH session ended", error=False)
         else:
             self.set_status(f"SSH exited with code {rc}", error=True)
+
+    def _edit_selected(self):
+        conn = self.get_selected_connection()
+        if not conn:
+            self.set_status("No connection selected", error=True)
+            return
+
+        self._suspend_curses()
+        try:
+            session = ConnectionEditSession(conn)
+            new_data = session.run()
+        finally:
+            self._resume_curses()
+
+        if not new_data:
+            self.set_status("Edit cancelled", error=False)
+            return
+
+        try:
+            updated = self.connection_manager.update_connection(conn, new_data)
+        except Exception:
+            LOG.exception("Failed to update connection from TUI")
+            updated = False
+
+        if updated:
+            self.reload_connections(initial=True)
+            self.set_status("Connection updated", persist=True)
+        else:
+            self.set_status("Failed to update connection", error=True)
 
     def _suspend_curses(self):
         curses.def_prog_mode()
