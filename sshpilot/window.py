@@ -3627,6 +3627,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             error_dialog.add_response('ok', _('OK'))
                             error_dialog.present()
                             
+                except GLib.Error as e:
+                    # Check if user cancelled the dialog (error code 2 = GTK_DIALOG_ERROR_DISMISSED)
+                    if e.code == 2:
+                        logger.info("Export cancelled by user")
+                    else:
+                        logger.error(f"Export failed: {e}")
+                        error_dialog = Adw.MessageDialog(
+                            transient_for=self,
+                            modal=True,
+                            heading=_("Export Failed"),
+                            body=_("An error occurred during export:\n{}").format(str(e))
+                        )
+                        error_dialog.add_response('ok', _('OK'))
+                        error_dialog.present()
                 except Exception as e:
                     logger.error(f"Export failed: {e}")
                     error_dialog = Adw.MessageDialog(
@@ -3683,9 +3697,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         # Show import mode selection dialog
                         self._show_import_mode_dialog(import_path)
                         
-                except Exception as e:
-                    if 'dismissed' not in str(e).lower():
+                except GLib.Error as e:
+                    # Check if user cancelled the dialog (error code 2 = GTK_DIALOG_ERROR_DISMISSED)
+                    if e.code == 2:
+                        logger.info("Import cancelled by user")
+                    else:
                         logger.error(f"Import file selection failed: {e}")
+                except Exception as e:
+                    logger.error(f"Import file selection failed: {e}")
             
             file_dialog.open(self, None, on_open_response)
             
