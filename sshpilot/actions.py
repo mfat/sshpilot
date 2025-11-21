@@ -567,6 +567,22 @@ class WindowActions:
         except Exception as e:
             logger.error(f"Failed to move connection to ungrouped: {e}")
 
+    def on_export_config_action(self, action, param=None):
+        """Handle export configuration action"""
+        try:
+            if hasattr(self, 'show_export_dialog'):
+                self.show_export_dialog()
+        except Exception as e:
+            logger.error(f"Failed to show export dialog: {e}")
+
+    def on_import_config_action(self, action, param=None):
+        """Handle import configuration action"""
+        try:
+            if hasattr(self, 'show_import_dialog'):
+                self.show_import_dialog()
+        except Exception as e:
+            logger.error(f"Failed to show import dialog: {e}")
+
     def on_move_to_group_action(self, action, param=None):
         """Handle move to group action"""
         try:
@@ -896,3 +912,14 @@ def register_window_actions(window):
             window._update_sidebar_accelerators()
     except Exception as e:
         logger.error(f"Failed to register sidebar toggle action: {e}")
+
+    # Import/Export configuration actions
+    if hasattr(window, 'on_export_config_action'):
+        window.export_config_action = Gio.SimpleAction.new('export-config', None)
+        window.export_config_action.connect('activate', window.on_export_config_action)
+        window.add_action(window.export_config_action)
+
+    if hasattr(window, 'on_import_config_action'):
+        window.import_config_action = Gio.SimpleAction.new('import-config', None)
+        window.import_config_action.connect('activate', window.on_import_config_action)
+        window.add_action(window.import_config_action)
