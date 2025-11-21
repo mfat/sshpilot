@@ -167,15 +167,15 @@ class SshPilotTuiApp(App[None]):
         layout: vertical;
     }
 
-    HelpScreen {
-        align: center middle;
-    }
+      HelpScreen {
+          align: center middle;
+      }
 
-    #body {
-        height: 1fr;
-        padding: 1 2;
-        column-gap: 2;
-    }
+      #body {
+          height: 1fr;
+          padding: 1 2;
+          gap: 2;
+      }
 
     #list-panel, #details-panel {
         height: 1fr;
