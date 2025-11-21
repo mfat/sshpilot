@@ -7,8 +7,8 @@ assignees: ''
 
 ---
 
-To help us fix bugs, please provide as much information as you can:
+_To help us fix bugs, please provide as much information as you can:
 Operating system and version
 Source of installation (deb, rpm, flatpak, etc.)
 Steps to reproduce the issue
-Log output (run sshpilot from the commandline with --verbose flag)
+Log output (run sshpilot from the commandline with --verbose flag)_
