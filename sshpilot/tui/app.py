@@ -96,6 +96,36 @@ class SshPilotTuiApp:
             self.status_message = ""
             self.status_expiry = None
 
+    # ----------------------------------------------------------------- safe UI
+    def _safe_addstr(self, row: int, col: int, text: str, attr: int = 0):
+        if not self.screen:
+            return
+        try:
+            self.screen.addstr(row, col, text, attr)
+        except curses.error:
+            pass
+
+    def _safe_addnstr(self, row: int, col: int, text: str, max_len: int, attr: int = 0):
+        if not self.screen:
+            return
+        if max_len < 0:
+            max_len = 0
+        try:
+            self.screen.addnstr(row, col, text, max_len, attr)
+        except curses.error:
+            pass
+
+    def _safe_move(self, row: int, col: int):
+        if not self.screen:
+            return
+        try:
+            max_row, max_col = self.screen.getmaxyx()
+            row = min(max(row, 0), max_row - 1)
+            col = min(max(col, 0), max_col - 1)
+            self.screen.move(row, col)
+        except curses.error:
+            pass
+
     def get_selected_connection(self):
         if not self.filtered_connections:
             return None
@@ -167,7 +197,7 @@ class SshPilotTuiApp:
         self.screen.erase()
         height, width = self.screen.getmaxyx()
         if height < 10 or width < 60:
-            self.screen.addstr(0, 0, "Window too small for sshpilot-tui (min 60x10)")
+            self._safe_addstr(0, 0, "Window too small for sshpilot-tui (min 60x10)")
             self.screen.refresh()
             return
 
@@ -178,17 +208,17 @@ class SshPilotTuiApp:
 
         title = f"sshPilot TUI — {len(self.filtered_connections)} of {len(self.connections)} connections"
         mode_suffix = " FILTER" if self.mode == "filter" else ""
-        self.screen.addnstr(0, 0, title + mode_suffix, width)
+        self._safe_addnstr(0, 0, title + mode_suffix, width)
 
         filter_line = f"/ {self.filter_text}" if self.mode == "filter" else f"Filter: {self.filter_text or '(none)'}"
-        self.screen.addnstr(1, 0, filter_line.ljust(width), width)
+        self._safe_addnstr(1, 0, filter_line.ljust(width), width)
         if self.mode == "filter":
             cursor_col = min(2 + len(self.filter_text), width - 1)
-            self.screen.move(1, cursor_col)
+            self._safe_move(1, cursor_col)
 
         header = "{:<28} {:<20} {:<12} {:>5}".format("Nickname", "Host/Hostname", "User", "Port")
         header_attr = curses.color_pair(2) | curses.A_BOLD if curses.has_colors() else curses.A_BOLD
-        self.screen.addnstr(2, 0, header.ljust(width), width, header_attr)
+        self._safe_addnstr(2, 0, header.ljust(width), width, header_attr)
 
         list_start = 3
         status_row = height - 1
@@ -202,7 +232,7 @@ class SshPilotTuiApp:
             conn_idx = self.scroll_offset + row_idx
             screen_row = list_start + row_idx
             if conn_idx >= len(self.filtered_connections):
-                self.screen.addnstr(screen_row, 0, "".ljust(width), width)
+                self._safe_addnstr(screen_row, 0, "".ljust(width), width)
                 continue
             conn = self.filtered_connections[conn_idx]
             nickname = getattr(conn, "nickname", "") or "(unnamed)"
@@ -212,9 +242,9 @@ class SshPilotTuiApp:
             line = "{:<28} {:<20} {:<12} {:>5}".format(nickname[:28], host[:20], user[:12], str(port))
             if conn_idx == self.selected_index:
                 attr = curses.color_pair(1) | curses.A_BOLD if curses.has_colors() else curses.A_REVERSE
-                self.screen.addnstr(screen_row, 0, line.ljust(width), width, attr)
+                self._safe_addnstr(screen_row, 0, line.ljust(width), width, attr)
             else:
-                self.screen.addnstr(screen_row, 0, line.ljust(width), width)
+                self._safe_addnstr(screen_row, 0, line.ljust(width), width)
 
         self._draw_details(detail_start, status_row - 1, width)
         self._draw_status(status_row, width)
@@ -254,7 +284,7 @@ class SshPilotTuiApp:
                 paragraph = paragraph[width - 1 :]
         lines = lines[: max(0, end_row - start_row + 1)]
         for idx, line in enumerate(lines):
-            self.screen.addnstr(start_row + idx, 0, line.ljust(width), width)
+            self._safe_addnstr(start_row + idx, 0, line.ljust(width), width)
 
     def _draw_status(self, row: int, width: int):
         if self.status_message:
@@ -263,7 +293,7 @@ class SshPilotTuiApp:
         else:
             attr = curses.color_pair(4) if curses.has_colors() else 0
             msg = "Enter: connect  /: filter  r: reload  ?: help  q: quit"
-        self.screen.addnstr(row, 0, msg.ljust(width), width, attr)
+        self._safe_addnstr(row, 0, msg.ljust(width), width, attr)
 
     def _draw_help(self, height: int, width: int):
         help_lines = [
@@ -283,7 +313,7 @@ class SshPilotTuiApp:
         start_row = max(0, (height - len(help_lines)) // 2)
         for idx, line in enumerate(help_lines):
             centered = line.center(width)
-            self.screen.addnstr(start_row + idx, 0, centered[:width], width, curses.A_BOLD if idx == 0 else 0)
+            self._safe_addnstr(start_row + idx, 0, centered[:width], width, curses.A_BOLD if idx == 0 else 0)
 
     # --------------------------------------------------------------- key input
     def _handle_filter_key(self, key: int) -> bool:
