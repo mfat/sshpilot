@@ -3795,10 +3795,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             self.config.config_data = self.config.load_json_config()
                             if self.connection_manager:
                                 self.connection_manager.load_ssh_config()
+                            # Reload group manager to pick up imported groups and colors
+                            if self.group_manager:
+                                self.group_manager._load_groups()
                             self.rebuild_connection_list()
                             
                             # Show confirmation
-                            Adw.Toast.new(_("Configuration reloaded")).present()
+                            self.toast_overlay.add_toast(Adw.Toast.new(_("Configuration reloaded")))
                         except Exception as e:
                             logger.error(f"Failed to reload configuration: {e}")
                     dialog.destroy()
