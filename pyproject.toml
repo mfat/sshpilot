@@ -24,6 +24,13 @@ dependencies = [
     "psutil>=5.9.0",
 ]
 
+[project.scripts]
+sshpilot = "sshpilot.main:main"
+sshpilot-tui = "sshpilot.tui.app:main"
+
+[project.gui-scripts]
+sshpilot = "sshpilot.main:main"
+
 [tool.setuptools.packages.find]
 where = ["", "src"]
 include = ["sshpilot*", "sshpilot_dnd*"]

@@ -55,6 +55,7 @@
 - File management using SFTP
 - Organize servers in groups
 - Option to use the built-in terminal or your favorite one
+- Built-in terminal user interface (`sshpilot-tui`) for headless workflows
 - Broadcast commands to all open tabs
 - Full support for Local, Remote and Dynamic port forwarding 
 - SCP support for quickly uploading or downloading files to/from remote servers
@@ -171,6 +172,23 @@ python3 run.py --verbose
 `
 
 
+
+## Terminal UI
+
+The same connection database is available in a keyboard-driven terminal UI, ideal for servers and headless environments.
+
+```
+sshpilot-tui             # read ~/.ssh/config and launch from your terminal
+sshpilot-tui --isolated  # use sshPilot's managed ssh_config/known_hosts
+```
+
+Key bindings:
+- Arrow keys / `j` `k`, `PgUp`/`PgDn`, `Home`/`End` for navigation
+- `/` toggles live filtering, `r` reloads `~/.ssh/config`
+- `Enter` or `c` opens the highlighted host and streams the session in-place
+- `?` shows the built-in cheat sheet, `q` quits
+
+The TUI shares the same SSH option builder as the GTK app, so port forwarding, advanced flags, identities, and remote/local commands behave exactly the same.
 
 ## Runtime Dependencies
 
