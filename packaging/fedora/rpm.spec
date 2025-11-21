@@ -24,9 +24,8 @@ Requires:       sshpass
 Requires:       openssh-askpass
 
 %description
-sshPilot provides SSH connection management, integrated terminal using VTE,
-tunneling, key management, and tabbed interface. Built with GTK4 and Adwaita
-for a modern Linux desktop experience.
+SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed terminal, remote file management, key transfer, port forwarding and more. It's an alternative to Putty, Termius and Mobaxterm.
+
 
 %prep
 %autosetup -n sshpilot-dev
