@@ -22,6 +22,7 @@ dependencies = [
     "cryptography>=42.0",
     "keyring>=24.3",
     "psutil>=5.9.0",
+    "textual>=0.58.0",
 ]
 
 [project.scripts]

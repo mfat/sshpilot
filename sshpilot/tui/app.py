@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import argparse
-import curses
-import locale
 import logging
 import shlex
 import subprocess
-import time
-from typing import List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
+
+from textual import events
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
+from textual.message import Message
+from textual.screen import ModalScreen
+from textual.timer import Timer
+from textual.widgets import DataTable, Footer, Header, Input, Static
 
 from sshpilot.config import Config
 from sshpilot.connection_manager import ConnectionManager
@@ -17,12 +23,223 @@ from sshpilot.tui.editor import ConnectionEditSession
 LOG = logging.getLogger(__name__)
 
 
-class SshPilotTuiApp:
-    """
-    Curses-based interface for browsing and launching sshPilot connections.
+class ConnectionTable(DataTable):
+    """Connection list that emits a message when Enter is pressed."""
+
+    BINDINGS = [Binding("enter", "connect_row", "Connect", show=False)]
+
+    class ConnectRequested(Message):
+        """Sent when the user activates the current row."""
+
+        def __init__(self, sender: "ConnectionTable"):
+            super().__init__(sender)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.cursor_type = "row"
+        self.zebra_stripes = True
+
+    def action_connect_row(self) -> None:
+        self.post_message(self.ConnectRequested(self))
+
+
+class HelpScreen(ModalScreen[None]):
+    """Modal overlay listing keyboard shortcuts."""
+
+    def compose(self) -> ComposeResult:
+        lines = [
+            "[b]sshPilot Textual TUI[/b]",
+            "",
+            "Navigation:",
+            "  ↑/↓ or j/k  Move selection",
+            "  PgUp/PgDn    Scroll a page",
+            "  Home/End     Jump to start or end",
+            "",
+            "Actions:",
+            "  Enter / c    Connect to highlighted host",
+            "  e            Edit connection",
+            "  r / F5       Reload SSH config",
+            "  / or Ctrl+F  Focus the filter",
+            "  Esc          Return focus to the list",
+            "  q or Ctrl+C  Quit",
+            "",
+            "Press Esc, q, or ? to close this help.",
+        ]
+        text = "\n".join(lines)
+        yield Static(text, id="help-panel")
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key in {"escape", "q", "?"}:
+            event.stop()
+            self.dismiss()
+
+
+class DetailsPanel(Static):
+    """Shows information about the selected connection."""
+
+    def show_empty(self, message: str = "Select a connection to see details.") -> None:
+        self.update(message)
+
+    def show_connection(self, connection) -> None:
+        if not connection:
+            self.show_empty()
+            return
+
+        nickname = getattr(connection, "nickname", "") or "(unnamed)"
+        username = getattr(connection, "username", "") or "-"
+        host = self._effective_host(connection) or "?"
+        port = getattr(connection, "port", 22)
+        source = getattr(connection, "source", "") or "ssh config"
+        identity = getattr(connection, "keyfile", "") or "default"
+        local_cmd = self._extract(connection, "local_command")
+        remote_cmd = self._extract(connection, "remote_command")
+        rules = [rule for rule in (getattr(connection, "forwarding_rules", []) or []) if rule.get("enabled", True)]
+
+        lines = [
+            f"[b]Nickname[/b]  {nickname}",
+            f"[b]Target[/b]    {host} (user: {username})",
+            f"[b]Port[/b]      {port}",
+            f"[b]Identity[/b]  {identity}",
+            f"[b]Source[/b]    {source}",
+        ]
+        if local_cmd:
+            lines.append(f"[b]Local cmd[/b] {local_cmd}")
+        if remote_cmd:
+            lines.append(f"[b]Remote cmd[/b] {remote_cmd}")
+        if rules:
+            lines.append(f"[b]Forwarding ({len(rules)})[/b]")
+            for rule in rules:
+                lines.append(f"  • {self._summarize_rule(rule)}")
+
+        self.update("\n".join(lines))
+
+    @staticmethod
+    def _extract(connection, field: str) -> str:
+        value = getattr(connection, field, "")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        data = getattr(connection, "data", None)
+        if isinstance(data, dict):
+            candidate = data.get(field)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        return ""
+
+    @staticmethod
+    def _effective_host(connection) -> str:
+        getter = getattr(connection, "get_effective_host", None)
+        if callable(getter):
+            try:
+                host = getter()
+                if host:
+                    return host
+            except Exception:
+                LOG.debug("get_effective_host failed for %s", connection, exc_info=True)
+        return getattr(connection, "hostname", "") or getattr(connection, "host", "")
+
+    @staticmethod
+    def _summarize_rule(rule: Dict[str, object]) -> str:
+        rtype = rule.get("type", "local")
+        listen = f"{rule.get('listen_addr', 'localhost')}:{rule.get('listen_port')}"
+        if rtype == "dynamic":
+            return f"Dynamic SOCKS on {listen}"
+        target_host = rule.get("remote_host") or rule.get("local_host") or "localhost"
+        target_port = rule.get("remote_port") or rule.get("local_port") or 0
+        if rtype == "remote":
+            return f"Remote {listen} → {target_host}:{target_port}"
+        return f"Local {listen} → {target_host}:{target_port}"
+
+
+class StatusBar(Static):
+    """Single-line status indicator."""
+
+    def set_message(self, message: str, *, error: bool = False) -> None:
+        self.set_class(error, "error")
+        self.update(message or "")
+
+
+class SshPilotTuiApp(App[None]):
+    """Textual-based interface for browsing and launching sshPilot connections."""
+
+    TITLE = "sshPilot TUI"
+    CSS = """
+    Screen {
+        layout: vertical;
+    }
+
+    HelpScreen {
+        align: center middle;
+    }
+
+    #body {
+        height: 1fr;
+        padding: 1 2;
+        column-gap: 2;
+    }
+
+    #list-panel, #details-panel {
+        height: 1fr;
+    }
+
+    #details-panel {
+        border: round $secondary;
+        padding: 1;
+    }
+
+    #details {
+        height: 1fr;
+        overflow-y: auto;
+    }
+
+    #connection-table {
+        height: 1fr;
+    }
+
+    #status {
+        height: 3;
+        content-align: left middle;
+        padding: 0 1;
+        background: $boost;
+    }
+
+    #status.error {
+        background: $error;
+        color: $text;
+    }
+
+    .panel-title {
+        text-style: bold;
+        padding-bottom: 1;
+    }
+
+    #filter {
+        margin-bottom: 1;
+    }
+
+    #help-panel {
+        width: 70%;
+        background: $surface;
+        border: round $secondary;
+        padding: 2;
+        content-align: left top;
+    }
     """
 
-    def __init__(self, *, isolated_mode: bool = False):
+    BINDINGS = [
+        Binding("q", "quit_app", "Quit"),
+        Binding("ctrl+c", "quit_app", "Quit", show=False),
+        Binding("c", "connect", "Connect"),
+        Binding("e", "edit", "Edit"),
+        Binding("r", "reload", "Reload"),
+        Binding("f5", "reload", "Reload", show=False),
+        Binding("/", "focus_filter", "Filter"),
+        Binding("ctrl+f", "focus_filter", "Filter", show=False),
+        Binding("escape", "focus_list", "Focus list", show=False),
+        Binding("?", "show_help", "Help"),
+    ]
+
+    def __init__(self, *, isolated_mode: bool = False, **kwargs):
+        super().__init__(**kwargs)
         self.isolated_mode = isolated_mode
         self.config = Config()
         self.connection_manager = ConnectionManager(self.config, isolated_mode=isolated_mode)
@@ -31,443 +248,244 @@ class SshPilotTuiApp:
         except Exception:
             LOG.debug("Post init slow path failed", exc_info=True)
 
-        self.connections = []
+        self.connections: List = []
         self.filtered_connections: List = []
-        self.selected_index = 0
-        self.scroll_offset = 0
+        self.row_map: Dict[str, object] = {}
         self.filter_text = ""
-        self.mode = "navigate"
-        self.show_help = False
-        self.status_message = ""
-        self.status_error = False
-        self.status_expiry: Optional[float] = None
-        self.visible_list_rows = 1
-        self.screen = None
+        self._selected_row_key: Optional[str] = None
+        self._last_selection_token: Optional[Tuple[str, str, str, str]] = None
+        self._status_timer: Optional[Timer] = None
 
-        self.reload_connections(initial=True)
+    # --------------------------------------------------------------------- UI
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Horizontal(id="body"):
+            with Vertical(id="list-panel"):
+                yield Static("Connections", classes="panel-title")
+                yield Input(placeholder="Filter connections…", id="filter")
+                table = ConnectionTable(id="connection-table")
+                table.add_columns("Nickname", "Host", "User", "Port")
+                yield table
+            with Vertical(id="details-panel"):
+                yield Static("Details", classes="panel-title")
+                yield DetailsPanel(id="details")
+        yield Footer()
+        yield StatusBar(id="status")
 
-    # ------------------------------------------------------------------ helpers
-    def reload_connections(self, *, initial: bool = False):
+    async def on_mount(self) -> None:
+        self.status_bar = self.query_one(StatusBar)
+        self.details_panel = self.query_one(DetailsPanel)
+        self.filter_input = self.query_one("#filter", Input)
+        self.connection_table = self.query_one(ConnectionTable)
+        self.connection_table.focus()
+        self.details_panel.show_empty()
+        await self._load_connections(initial=True)
+
+    # ---------------------------------------------------------------- bindings
+    def action_quit_app(self) -> None:
+        self.exit()
+
+    async def action_reload(self) -> None:
+        await self._load_connections(initial=False)
+
+    async def action_connect(self) -> None:
+        conn = self.get_selected_connection()
+        if not conn:
+            self.set_status("No connection selected", error=True)
+            return
+        try:
+            cmd = build_ssh_command(
+                conn,
+                self.config,
+                known_hosts_path=self.connection_manager.known_hosts_path,
+            )
+        except Exception as exc:
+            LOG.exception("Failed to build SSH command")
+            self.set_status(f"Failed to prepare SSH command: {exc}", error=True, persist=True)
+            return
+
+        display_cmd = " ".join(shlex.quote(part) for part in cmd)
+        self.set_status(f"Connecting with: {display_cmd}", persist=True)
+        async with self.suspend():
+            try:
+                rc = subprocess.run(cmd).returncode
+            except FileNotFoundError:
+                rc = -1
+                print("ssh executable was not found on PATH.")
+            except Exception as exc:
+                rc = -1
+                print(f"Connection failed: {exc}")
+        if rc == 0:
+            self.set_status("SSH session ended")
+        else:
+            self.set_status(f"SSH exited with code {rc}", error=True)
+
+    async def action_edit(self) -> None:
+        conn = self.get_selected_connection()
+        if not conn:
+            self.set_status("No connection selected", error=True)
+            return
+
+        async with self.suspend():
+            session = ConnectionEditSession(conn)
+            new_data = session.run()
+
+        if not new_data:
+            self.set_status("Edit cancelled")
+            return
+
+        try:
+            updated = await self.call_in_thread(self.connection_manager.update_connection, conn, new_data)
+        except Exception:
+            LOG.exception("Failed to update connection from Textual TUI")
+            updated = False
+
+        if updated:
+            await self._load_connections(initial=True)
+            self.set_status("Connection updated", persist=True)
+        else:
+            self.set_status("Failed to update connection", error=True)
+
+    def action_focus_filter(self) -> None:
+        self.filter_input.focus()
+        self.filter_input.cursor_position = len(self.filter_input.value)
+
+    def action_focus_list(self) -> None:
+        self.connection_table.focus()
+
+    def action_show_help(self) -> None:
+        self.push_screen(HelpScreen())
+
+    # ----------------------------------------------------------------- events
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input is self.filter_input:
+            self.filter_text = event.value
+            self.apply_filter()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input is self.filter_input:
+            self.connection_table.focus()
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.data_table is not self.connection_table:
+            return
+        conn = self.row_map.get(event.row_key)
+        if conn:
+            self._selected_row_key = event.row_key
+            self._last_selection_token = self._connection_token(conn)
+            self.details_panel.show_connection(conn)
+
+    def on_connection_table_connect_requested(self, event: ConnectionTable.ConnectRequested) -> None:
+        event.stop()
+        self.call_later(lambda: self.create_task(self.action_connect()))
+
+    # ----------------------------------------------------------------- data ops
+    async def _load_connections(self, *, initial: bool) -> None:
+        self.set_status("Loading connections…")
+        try:
+            connections = await self.call_in_thread(self._load_connections_sync)
+        except Exception as exc:
+            LOG.exception("Failed to load connections")
+            self.set_status(f"Unable to load connections: {exc}", error=True, persist=True)
+            return
+
+        self.connections = connections
+        self.apply_filter(preserve_selection=not initial)
+        self.set_status(f"Loaded {len(connections)} connection(s)")
+
+    def _load_connections_sync(self) -> List:
         self.connection_manager.load_ssh_config()
-        self.connections = sorted(
-            list(self.connection_manager.connections),
-            key=lambda c: (str(getattr(c, "nickname", "") or "").lower(), str(getattr(c, "hostname", "") or "").lower()),
+        items = list(self.connection_manager.connections)
+        items.sort(
+            key=lambda c: (
+                str(getattr(c, "nickname", "") or "").lower(),
+                str(getattr(c, "hostname", "") or getattr(c, "host", "") or "").lower(),
+            )
         )
-        self.apply_filter()
-        if not initial:
-            self.set_status(f"Loaded {len(self.connections)} connection(s)")
+        return items
 
-    def apply_filter(self):
-        if not self.filter_text:
-            self.filtered_connections = list(self.connections)
+    def apply_filter(self, *, preserve_selection: bool = True) -> None:
+        table = self.connection_table
+        needle = (self.filter_text or "").strip().lower()
+        filtered: List = []
+        for conn in self.connections:
+            if not needle or self._matches(conn, needle):
+                filtered.append(conn)
+
+        self.filtered_connections = filtered
+        table.clear(columns=False)
+        self.row_map.clear()
+
+        target_token = self._last_selection_token if preserve_selection else None
+        selected_key: Optional[str] = None
+
+        for idx, conn in enumerate(filtered):
+            row_key = f"row-{idx}"
+            nickname = getattr(conn, "nickname", "") or "(unnamed)"
+            host = getattr(conn, "hostname", "") or getattr(conn, "host", "") or "?"
+            user = getattr(conn, "username", "") or "-"
+            port = getattr(conn, "port", 22)
+            table.add_row(nickname, host, user, str(port), key=row_key)
+            self.row_map[row_key] = conn
+            token = self._connection_token(conn)
+            if target_token and token == target_token:
+                selected_key = row_key
+
+        if self.row_map:
+            row_key = selected_key or next(iter(self.row_map.keys()))
+            table.select_row(row_key)
+            table.scroll_to_row(row_key)
+            self._selected_row_key = row_key
+            conn = self.row_map[row_key]
+            self._last_selection_token = self._connection_token(conn)
+            self.details_panel.show_connection(conn)
         else:
-            needle = self.filter_text.lower()
-            self.filtered_connections = [
-                conn
-                for conn in self.connections
-                if self._matches(conn, needle)
-            ]
-        if self.filtered_connections:
-            self.selected_index = max(0, min(self.selected_index, len(self.filtered_connections) - 1))
-        else:
-            self.selected_index = 0
-        self.scroll_offset = 0
+            message = "No matches for current filter" if needle else "No connections available"
+            self.details_panel.show_empty(message)
+            self._selected_row_key = None
+
+    def get_selected_connection(self):
+        if not self._selected_row_key:
+            return None
+        return self.row_map.get(self._selected_row_key)
 
     @staticmethod
     def _matches(connection, needle: str) -> bool:
-        fields = [
+        fields = (
             getattr(connection, "nickname", ""),
             getattr(connection, "hostname", ""),
             getattr(connection, "host", ""),
             getattr(connection, "username", ""),
             getattr(connection, "source", ""),
-        ]
+        )
         for field in fields:
             if field and needle in str(field).lower():
                 return True
         return False
 
-    def set_status(self, message: str, *, error: bool = False, persist: bool = False):
-        self.status_message = message
-        self.status_error = error
-        self.status_expiry = None if persist else (time.time() + 6)
+    @staticmethod
+    def _connection_token(connection) -> Tuple[str, str, str, str]:
+        return (
+            str(getattr(connection, "nickname", "") or ""),
+            str(getattr(connection, "hostname", "") or getattr(connection, "host", "") or ""),
+            str(getattr(connection, "username", "") or ""),
+            str(getattr(connection, "port", 22)),
+        )
 
-    def clear_status_if_needed(self):
-        if self.status_message and self.status_expiry and time.time() > self.status_expiry:
-            self.status_message = ""
-            self.status_expiry = None
-
-    # ----------------------------------------------------------------- safe UI
-    def _safe_addstr(self, row: int, col: int, text: str, attr: int = 0):
-        if not self.screen:
+    # ----------------------------------------------------------------- status
+    def set_status(self, message: str, *, error: bool = False, persist: bool = False) -> None:
+        if not hasattr(self, "status_bar"):
             return
-        try:
-            self.screen.addstr(row, col, text, attr)
-        except curses.error:
-            pass
+        if self._status_timer:
+            self._status_timer.stop()
+            self._status_timer = None
+        self.status_bar.set_message(message, error=error)
+        if not persist:
+            self._status_timer = self.set_timer(6, self._clear_status, name="status-clear")
 
-    def _safe_addnstr(self, row: int, col: int, text: str, max_len: int, attr: int = 0):
-        if not self.screen:
-            return
-        if max_len < 0:
-            max_len = 0
-        try:
-            self.screen.addnstr(row, col, text, max_len, attr)
-        except curses.error:
-            pass
-
-    def _safe_move(self, row: int, col: int):
-        if not self.screen:
-            return
-        try:
-            max_row, max_col = self.screen.getmaxyx()
-            row = min(max(row, 0), max_row - 1)
-            col = min(max(col, 0), max_col - 1)
-            self.screen.move(row, col)
-        except curses.error:
-            pass
-
-    def get_selected_connection(self):
-        if not self.filtered_connections:
-            return None
-        try:
-            return self.filtered_connections[self.selected_index]
-        except IndexError:
-            return None
-
-    # ------------------------------------------------------------------- curses
-    def run(self):
-        locale.setlocale(locale.LC_ALL, "")
-        curses.wrapper(self._curses_main)
-
-    def _curses_main(self, stdscr):
-        self.screen = stdscr
-        try:
-            curses.start_color()
-            curses.use_default_colors()
-        except curses.error:
-            pass
-        curses.noecho()
-        curses.cbreak()
-        stdscr.keypad(True)
-        try:
-            curses.curs_set(0)
-        except curses.error:
-            pass
-        self._init_colors()
-        try:
-            self._main_loop()
-        finally:
-            try:
-                curses.curs_set(1)
-            except curses.error:
-                pass
-            curses.echo()
-            curses.nocbreak()
-            stdscr.keypad(False)
-
-    def _init_colors(self):
-        try:
-            curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_CYAN)
-            curses.init_pair(2, curses.COLOR_CYAN, -1)
-            curses.init_pair(3, curses.COLOR_RED, -1)
-            curses.init_pair(4, curses.COLOR_GREEN, -1)
-        except Exception:
-            pass
-
-    def _main_loop(self):
-        while True:
-            self.clear_status_if_needed()
-            self._draw()
-            key = self.screen.getch()
-            if key == -1:
-                continue
-            if self.show_help:
-                if key in (ord("?"), 27, curses.KEY_EXIT, ord("q")):
-                    self.show_help = False
-                continue
-            if self.mode == "filter":
-                if self._handle_filter_key(key):
-                    break
-                continue
-            if self._handle_nav_key(key):
-                break
-
-    # ------------------------------------------------------------------ drawing
-    def _draw(self):
-        self.screen.erase()
-        height, width = self.screen.getmaxyx()
-        if height < 10 or width < 60:
-            self._safe_addstr(0, 0, "Window too small for sshpilot-tui (min 60x10)")
-            self.screen.refresh()
-            return
-
-        if self.show_help:
-            self._draw_help(height, width)
-            self.screen.refresh()
-            return
-
-        title = f"sshPilot TUI — {len(self.filtered_connections)} of {len(self.connections)} connections"
-        mode_suffix = " FILTER" if self.mode == "filter" else ""
-        self._safe_addnstr(0, 0, title + mode_suffix, width)
-
-        filter_line = f"/ {self.filter_text}" if self.mode == "filter" else f"Filter: {self.filter_text or '(none)'}"
-        self._safe_addnstr(1, 0, filter_line.ljust(width), width)
-        if self.mode == "filter":
-            cursor_col = min(2 + len(self.filter_text), width - 1)
-            self._safe_move(1, cursor_col)
-
-        header = "{:<28} {:<20} {:<12} {:>5}".format("Nickname", "Host/Hostname", "User", "Port")
-        header_attr = curses.color_pair(2) | curses.A_BOLD if curses.has_colors() else curses.A_BOLD
-        self._safe_addnstr(2, 0, header.ljust(width), width, header_attr)
-
-        list_start = 3
-        status_row = height - 1
-        detail_height = max(3, min(6, height // 3))
-        detail_start = max(list_start + 1, status_row - detail_height)
-        list_height = max(1, detail_start - list_start)
-        self.visible_list_rows = list_height
-        self._ensure_visible(list_height)
-
-        for row_idx in range(list_height):
-            conn_idx = self.scroll_offset + row_idx
-            screen_row = list_start + row_idx
-            if conn_idx >= len(self.filtered_connections):
-                self._safe_addnstr(screen_row, 0, "".ljust(width), width)
-                continue
-            conn = self.filtered_connections[conn_idx]
-            nickname = getattr(conn, "nickname", "") or "(unnamed)"
-            host = getattr(conn, "hostname", "") or getattr(conn, "host", "") or "?"
-            user = getattr(conn, "username", "") or "-"
-            port = getattr(conn, "port", 22)
-            line = "{:<28} {:<20} {:<12} {:>5}".format(nickname[:28], host[:20], user[:12], str(port))
-            if conn_idx == self.selected_index:
-                attr = curses.color_pair(1) | curses.A_BOLD if curses.has_colors() else curses.A_REVERSE
-                self._safe_addnstr(screen_row, 0, line.ljust(width), width, attr)
-            else:
-                self._safe_addnstr(screen_row, 0, line.ljust(width), width)
-
-        self._draw_details(detail_start, status_row - 1, width)
-        self._draw_status(status_row, width)
-        self.screen.refresh()
-
-    def _draw_details(self, start_row: int, end_row: int, width: int):
-        conn = self.get_selected_connection()
-        if not conn:
-            message = "No connections available" if not self.connections else "No matches for current filter"
-            self._draw_wrapped(start_row, end_row, width, message)
-            return
-
-        host_fn = getattr(conn, "get_effective_host", None)
-        effective_host = host_fn() if callable(host_fn) else (getattr(conn, "hostname", "") or getattr(conn, "host", ""))
-        source = getattr(conn, "source", "") or "ssh config"
-        identity = getattr(conn, "keyfile", "") or "default"
-        remote_cmd = getattr(conn, "remote_command", "") or ""
-        data = getattr(conn, "data", None)
-        if not remote_cmd and isinstance(data, dict):
-            remote_cmd = data.get("remote_command", "") or ""
-        local_cmd = getattr(conn, "local_command", "") or ""
-        rules = [rule for rule in (getattr(conn, "forwarding_rules", []) or []) if rule.get("enabled", True)]
-
-        details = [
-            f"Nickname : {getattr(conn, 'nickname', '')}",
-            f"Target   : {effective_host} (user: {getattr(conn, 'username', '') or '-'})",
-            f"Port     : {getattr(conn, 'port', 22)}    Key: {identity}",
-            f"Source   : {source}",
-        ]
-        if local_cmd:
-            details.append(f"Local cmd : {local_cmd}")
-        if remote_cmd:
-            details.append(f"Remote cmd: {remote_cmd}")
-        if rules:
-            details.append(f"Forwarding: {len(rules)} rule(s) enabled")
-
-        self._draw_wrapped(start_row, end_row, width, "\n".join(details))
-
-    def _draw_wrapped(self, start_row: int, end_row: int, width: int, text: str):
-        lines = []
-        for paragraph in text.split("\n"):
-            while paragraph:
-                lines.append(paragraph[: width - 1])
-                paragraph = paragraph[width - 1 :]
-        lines = lines[: max(0, end_row - start_row + 1)]
-        for idx, line in enumerate(lines):
-            self._safe_addnstr(start_row + idx, 0, line.ljust(width), width)
-
-    def _draw_status(self, row: int, width: int):
-        if self.status_message:
-            attr = curses.color_pair(3) if self.status_error and curses.has_colors() else 0
-            msg = self.status_message
-        else:
-            attr = curses.color_pair(4) if curses.has_colors() else 0
-            msg = "Enter: connect  e: edit  /: filter  r: reload  ?: help  q: quit"
-        self._safe_addnstr(row, 0, msg.ljust(width), width, attr)
-
-    def _draw_help(self, height: int, width: int):
-        help_lines = [
-            "sshPilot TUI — key bindings",
-            "",
-            "Arrow keys / j k : Navigate",
-            "PgUp / PgDn      : Scroll a page",
-            "Home / End       : Jump to start or end",
-            "Enter / c        : Connect to highlighted host",
-            "e                : Edit highlighted host",
-            "r                : Reload SSH config",
-            "/                : Filter connections",
-            "Esc              : Cancel filter / exit help",
-            "q                : Quit",
-            "",
-            "Press ? again or Esc to return",
-        ]
-        start_row = max(0, (height - len(help_lines)) // 2)
-        for idx, line in enumerate(help_lines):
-            centered = line.center(width)
-            self._safe_addnstr(start_row + idx, 0, centered[:width], width, curses.A_BOLD if idx == 0 else 0)
-
-    # --------------------------------------------------------------- key input
-    def _handle_filter_key(self, key: int) -> bool:
-        if key in (curses.KEY_ENTER, 10, 13):
-            self.mode = "navigate"
-            curses.curs_set(0)
-            self.apply_filter()
-            return False
-        if key in (27, curses.KEY_EXIT):
-            self.mode = "navigate"
-            curses.curs_set(0)
-            self.filter_text = ""
-            self.apply_filter()
-            return False
-        if key in (curses.KEY_BACKSPACE, 127, 8):
-            self.filter_text = self.filter_text[:-1]
-            self.apply_filter()
-            return False
-        if 32 <= key <= 126:
-            self.filter_text += chr(key)
-            self.apply_filter()
-            return False
-        return False
-
-    def _handle_nav_key(self, key: int) -> bool:
-        if key in (ord("q"), 27):
-            return True
-        if key in (curses.KEY_DOWN, ord("j")):
-            self._move_selection(1)
-        elif key in (curses.KEY_UP, ord("k")):
-            self._move_selection(-1)
-        elif key in (curses.KEY_NPAGE,):
-            self._move_selection(self.visible_list_rows)
-        elif key in (curses.KEY_PPAGE,):
-            self._move_selection(-self.visible_list_rows)
-        elif key in (curses.KEY_HOME,):
-            self.selected_index = 0
-        elif key in (curses.KEY_END,):
-            if self.filtered_connections:
-                self.selected_index = len(self.filtered_connections) - 1
-        elif key in (10, 13, ord("c")):
-            self._connect_selected()
-        elif key in (ord("r"), curses.KEY_F5):
-            self.reload_connections()
-        elif key in (ord("e"),):
-            self._edit_selected()
-        elif key == ord("/"):
-            self.mode = "filter"
-            curses.curs_set(1)
-        elif key in (ord("?"), curses.KEY_F1):
-            self.show_help = True
-        return False
-
-    def _move_selection(self, delta: int):
-        if not self.filtered_connections:
-            return
-        self.selected_index = min(max(0, self.selected_index + delta), len(self.filtered_connections) - 1)
-        self._ensure_visible(self.visible_list_rows)
-
-    def _ensure_visible(self, list_height: int):
-        if not list_height:
-            list_height = 1
-        max_index = len(self.filtered_connections) - 1
-        if self.selected_index > max_index:
-            self.selected_index = max_index
-        if self.selected_index < 0:
-            self.selected_index = 0
-        if self.selected_index < self.scroll_offset:
-            self.scroll_offset = self.selected_index
-        elif self.selected_index >= self.scroll_offset + list_height:
-            self.scroll_offset = self.selected_index - list_height + 1
-        max_offset = max(0, len(self.filtered_connections) - list_height)
-        if self.scroll_offset > max_offset:
-            self.scroll_offset = max_offset
-
-    # ------------------------------------------------------------- connections
-    def _connect_selected(self):
-        conn = self.get_selected_connection()
-        if not conn:
-            self.set_status("No connection selected", error=True)
-            return
-        try:
-            cmd = build_ssh_command(conn, self.config, known_hosts_path=self.connection_manager.known_hosts_path)
-        except Exception as exc:
-            LOG.exception("Failed to build SSH command")
-            self.set_status(f"Failed to prepare SSH command: {exc}", error=True)
-            return
-
-        display_cmd = " ".join(shlex.quote(part) for part in cmd)
-        self.set_status(f"Connecting with: {display_cmd}", persist=True)
-        self._suspend_curses()
-        try:
-            proc = subprocess.run(cmd)
-            rc = proc.returncode
-        except FileNotFoundError:
-            rc = -1
-            print("ssh executable was not found on PATH.")
-        except Exception as exc:
-            rc = -1
-            print(f"Connection failed: {exc}")
-        finally:
-            self._resume_curses()
-        if rc == 0:
-            self.set_status("SSH session ended", error=False)
-        else:
-            self.set_status(f"SSH exited with code {rc}", error=True)
-
-    def _edit_selected(self):
-        conn = self.get_selected_connection()
-        if not conn:
-            self.set_status("No connection selected", error=True)
-            return
-
-        self._suspend_curses()
-        try:
-            session = ConnectionEditSession(conn)
-            new_data = session.run()
-        finally:
-            self._resume_curses()
-
-        if not new_data:
-            self.set_status("Edit cancelled", error=False)
-            return
-
-        try:
-            updated = self.connection_manager.update_connection(conn, new_data)
-        except Exception:
-            LOG.exception("Failed to update connection from TUI")
-            updated = False
-
-        if updated:
-            self.reload_connections(initial=True)
-            self.set_status("Connection updated", persist=True)
-        else:
-            self.set_status("Failed to update connection", error=True)
-
-    def _suspend_curses(self):
-        curses.def_prog_mode()
-        curses.endwin()
-
-    def _resume_curses(self):
-        curses.reset_prog_mode()
-        curses.curs_set(0)
-        if self.screen:
-            self.screen.refresh()
+    def _clear_status(self) -> None:
+        self.status_bar.set_message("")
+        self._status_timer = None
 
 
 def parse_args(argv: Optional[Sequence[str]] = None):
