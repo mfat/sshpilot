@@ -853,11 +853,7 @@ class WindowActions:
         if not self.update_banner:
             return
         
-        # Import here to avoid circular imports
-        from .update_checker import get_platform_install_method
-        
-        platform_method = get_platform_install_method()
-        title = f"SSH Pilot {version} is available ({platform_method})"
+        title = f"SSH Pilot {version} is available"
         
         self.update_banner.set_title(title)
         self.update_banner.set_button_label("Download")
