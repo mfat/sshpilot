@@ -204,15 +204,23 @@ def _set_tint_card_color(row: Gtk.Widget, rgba: Gdk.RGBA):
 
         .tinted:selected {{
             background-color: {selected_color};
-            box-shadow: inset 0 0 0 1px {border_color};
+            box-shadow: inset 0 0 0 2px {border_color};
+            outline: 2px solid {border_color};
+            outline-offset: -2px;
         }}
 
         .tinted:selected:hover {{
             background-color: {selected_hover_color};
+            box-shadow: inset 0 0 0 2px {border_color};
+            outline: 2px solid {border_color};
+            outline-offset: -2px;
         }}
 
         .tinted:selected:active {{
             background-color: {selected_active_color};
+            box-shadow: inset 0 0 0 2px {border_color};
+            outline: 2px solid {border_color};
+            outline-offset: -2px;
         }}
         """
         provider.load_from_data(css_data.encode('utf-8'))
