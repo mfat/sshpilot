@@ -1664,6 +1664,26 @@ class PreferencesWindow(Gtk.Window):
                 no_file_manager_group.add(no_file_manager_row)
                 file_management_page.add(no_file_manager_group)
 
+            # Updates page
+            updates_page = Adw.PreferencesPage()
+            updates_page.set_title("Updates")
+            updates_page.set_icon_name("software-update-available-symbolic")
+            
+            updates_group = Adw.PreferencesGroup(title="Update Notifications")
+            updates_group.set_description("Configure how SSH Pilot checks for updates")
+            
+            # Check for updates on startup switch
+            self.check_updates_switch = Adw.SwitchRow()
+            self.check_updates_switch.set_title("Check for updates on startup")
+            self.check_updates_switch.set_subtitle("Automatically check for new versions when the application starts")
+            self.check_updates_switch.set_active(
+                self.config.get_setting('updates.check_on_startup', True)
+            )
+            self.check_updates_switch.connect('notify::active', self.on_check_updates_changed)
+            updates_group.add(self.check_updates_switch)
+            
+            updates_page.add(updates_group)
+
             # Add pages to the custom layout
             self.add_page_to_layout("Interface", "applications-graphics-symbolic", interface_page)
             self.add_page_to_layout("Terminal", "utilities-terminal-symbolic", terminal_page)
@@ -1671,6 +1691,7 @@ class PreferencesWindow(Gtk.Window):
             self.add_page_to_layout("Shortcuts", "preferences-desktop-keyboard-shortcuts-symbolic", shortcuts_page)
             self.add_page_to_layout("Groups", "folder-open-symbolic", groups_page)
             self.add_page_to_layout("SSH Options", "network-workgroup-symbolic", ssh_settings_page)
+            self.add_page_to_layout("Updates", "software-update-available-symbolic", updates_page)
             self.add_page_to_layout("Advanced", "applications-system-symbolic", advanced_page)
             
             logger.info("Preferences window initialized")
@@ -3046,6 +3067,12 @@ class PreferencesWindow(Gtk.Window):
         confirm = switch.get_active()
         logger.info(f"Confirm before disconnect setting changed to: {confirm}")
         self.config.set_setting('confirm-disconnect', confirm)
+    
+    def on_check_updates_changed(self, switch, *args):
+        """Handle check for updates on startup setting change"""
+        check_on_startup = switch.get_active()
+        logger.info(f"Check for updates on startup changed to: {check_on_startup}")
+        self.config.set_setting('updates.check_on_startup', check_on_startup)
     
     def on_startup_behavior_changed(self, radio_button, *args):
         """Handle startup behavior radio button change"""
