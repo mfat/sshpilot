@@ -853,7 +853,7 @@ class WindowActions:
         if not self.update_banner:
             return
         
-        title = f"SSH Pilot {version} is available"
+        title = f"SSH Pilot {version} is available!"
         
         self.update_banner.set_title(title)
         self.update_banner.set_button_label("Download")
