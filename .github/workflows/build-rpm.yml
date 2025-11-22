@@ -105,16 +105,27 @@ jobs:
           # No build step needed - standalone Python application
           
           %install
-          # Install the main executable
-          install -D -m 755 run.py %{buildroot}%{_bindir}/sshpilot
-          
-          # Install Python modules
-          install -d %{buildroot}%{python3_sitelib}/sshpilot
-          cp -a sshpilot/*.py %{buildroot}%{python3_sitelib}/sshpilot/
+          # Install Python modules to version-independent location
+          install -d %{buildroot}%{_datadir}/sshpilot/sshpilot
+          cp -a sshpilot/*.py %{buildroot}%{_datadir}/sshpilot/sshpilot/
           
           # Install resources
-          install -d %{buildroot}%{python3_sitelib}/sshpilot/resources
-          cp -a sshpilot/resources/* %{buildroot}%{python3_sitelib}/sshpilot/resources/
+          install -d %{buildroot}%{_datadir}/sshpilot/sshpilot/resources
+          cp -a sshpilot/resources/* %{buildroot}%{_datadir}/sshpilot/sshpilot/resources/
+          
+          # Create wrapper script that sets PYTHONPATH
+          cat > sshpilot-wrapper << 'WRAPPER_EOF'
+          #!/usr/bin/env python3
+          import sys
+          import os
+          sys.path.insert(0, '/usr/share/sshpilot')
+          from sshpilot.main import main
+          if __name__ == '__main__':
+              main()
+          WRAPPER_EOF
+          
+          # Install the wrapper as the main executable
+          install -D -m 755 sshpilot-wrapper %{buildroot}%{_bindir}/sshpilot
           
           # Install desktop file and icon
           install -D -m 644 io.github.mfat.sshpilot.desktop %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
@@ -128,7 +139,7 @@ jobs:
           %license LICENSE*
           %doc README*
           %{_bindir}/sshpilot
-          %{python3_sitelib}/sshpilot/
+          %{_datadir}/sshpilot/
           %{_datadir}/applications/io.github.mfat.sshpilot.desktop
           %{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
           
