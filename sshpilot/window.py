@@ -47,6 +47,7 @@ from .terminal import TerminalWidget
 from .terminal_manager import TerminalManager
 from .config import Config
 from .key_manager import KeyManager, SSHKey
+from .update_checker import check_for_updates_async, get_update_url, get_platform_install_method
 from .connection_display import (
     get_connection_alias,
     get_connection_host,
@@ -579,6 +580,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._is_quitting = False  # Flag to prevent multiple quit attempts
         self._is_controlled_reconnect = False  # Flag to track controlled reconnection
         self._internal_file_manager_windows: List[Any] = []
+        
+        # Update notification
+        self.update_banner = None
+        self._latest_version = None
 
         # Initialize managers
         app = self.get_application()
@@ -774,6 +779,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 logger.debug(f"Failed to execute pending focus operation: {e}")
         
         self._pending_focus_operations.clear()
+        
+        # Check for updates if enabled in preferences
+        try:
+            check_on_startup = self.config.get_setting('updates.check_on_startup', True)
+            if check_on_startup:
+                logger.debug("Checking for updates on startup")
+                
+                def on_update_check_complete(latest_version):
+                    """Callback when startup update check completes"""
+                    if latest_version:
+                        GLib.idle_add(self._handle_update_check_result, latest_version)
+                
+                check_for_updates_async(on_update_check_complete)
+        except Exception as e:
+            logger.debug(f"Failed to check for updates on startup: {e}")
+        
         return False  # Don't repeat
     
     def _queue_focus_operation(self, focus_func):
@@ -1195,6 +1216,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Set up the user interface"""
         # Create main container
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        
+        # Create update notification banner (hidden by default)
+        self.update_banner = Adw.Banner()
+        self.update_banner.set_revealed(False)
+        main_box.append(self.update_banner)
         
         # Create header bar
         self.header_bar = Gtk.HeaderBar()
@@ -2685,6 +2711,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         help_menu = Gio.Menu()
         help_menu.append('Keyboard Shortcuts', 'app.shortcuts')
         help_menu.append('Documentation', 'app.help')
+        help_menu.append('Check for Updates', 'win.check-for-updates')
         menu.append_submenu('Help', help_menu)
 
         menu.append('About', 'app.about')

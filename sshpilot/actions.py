@@ -822,6 +822,74 @@ class WindowActions:
         except Exception as e:
             logger.error(f"Failed to show move to group dialog: {e}")
 
+    def on_check_for_updates_action(self, action, param=None):
+        """Handle check for updates action from menu"""
+        logger.info("Checking for updates...")
+        
+        # Import here to avoid circular imports
+        from .update_checker import check_for_updates_async
+        
+        def on_update_check_complete(latest_version):
+            """Callback when update check completes"""
+            GLib.idle_add(self._handle_update_check_result, latest_version)
+        
+        # Check for updates in background
+        check_for_updates_async(on_update_check_complete)
+    
+    def _handle_update_check_result(self, latest_version):
+        """Handle the result of an update check (runs on main thread)"""
+        if latest_version:
+            self._latest_version = latest_version
+            self._show_update_banner(latest_version)
+        else:
+            # No update available - show a toast
+            toast = Adw.Toast.new("You're running the latest version")
+            toast.set_timeout(3)
+            if hasattr(self, 'toast_overlay'):
+                self.toast_overlay.add_toast(toast)
+    
+    def _show_update_banner(self, version):
+        """Show the update notification banner"""
+        if not self.update_banner:
+            return
+        
+        # Import here to avoid circular imports
+        from .update_checker import get_platform_install_method
+        
+        platform_method = get_platform_install_method()
+        title = f"SSH Pilot {version} is available ({platform_method})"
+        
+        self.update_banner.set_title(title)
+        self.update_banner.set_button_label("Download")
+        
+        # Connect button clicked signal
+        try:
+            # Disconnect any previous handler
+            if hasattr(self, '_update_banner_handler_id'):
+                self.update_banner.disconnect(self._update_banner_handler_id)
+        except Exception:
+            pass
+        
+        self._update_banner_handler_id = self.update_banner.connect(
+            'button-clicked',
+            self._on_update_banner_clicked
+        )
+        
+        self.update_banner.set_revealed(True)
+    
+    def _on_update_banner_clicked(self, banner):
+        """Handle update banner button click"""
+        # Import here to avoid circular imports
+        from .update_checker import get_update_url
+        
+        url = get_update_url()
+        logger.info(f"Opening update URL: {url}")
+        
+        try:
+            Gtk.show_uri(self, url, Gdk.CURRENT_TIME)
+        except Exception as e:
+            logger.error(f"Failed to open update URL: {e}")
+
 
 def register_window_actions(window):
     """Register SimpleActions with the provided main window."""
@@ -923,3 +991,9 @@ def register_window_actions(window):
         window.import_config_action = Gio.SimpleAction.new('import-config', None)
         window.import_config_action.connect('activate', window.on_import_config_action)
         window.add_action(window.import_config_action)
+    
+    # Check for updates action
+    if hasattr(window, 'on_check_for_updates_action'):
+        window.check_for_updates_action = Gio.SimpleAction.new('check-for-updates', None)
+        window.check_for_updates_action.connect('activate', window.on_check_for_updates_action)
+        window.add_action(window.check_for_updates_action)
