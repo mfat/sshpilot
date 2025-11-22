@@ -1218,9 +1218,26 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         
         # Create update notification banner (hidden by default)
+        # Use overlay to position dismiss button on top of banner
+        banner_overlay = Gtk.Overlay()
+        banner_overlay.set_visible(False)  # Hidden by default
+        
         self.update_banner = Adw.Banner()
         self.update_banner.set_revealed(False)
-        main_box.append(self.update_banner)
+        banner_overlay.set_child(self.update_banner)
+        
+        # Create dismiss button with text, positioned at the left
+        dismiss_button = Gtk.Button()
+        dismiss_button.set_label('Dismiss')
+        dismiss_button.set_halign(Gtk.Align.START)
+        dismiss_button.set_valign(Gtk.Align.CENTER)
+        dismiss_button.set_margin_start(12)
+        dismiss_button.connect('clicked', self._on_update_banner_dismiss)
+        banner_overlay.add_overlay(dismiss_button)
+        
+        self.update_banner_container = banner_overlay
+        self.update_banner_dismiss_button = dismiss_button
+        main_box.append(banner_overlay)
         
         # Create header bar
         self.header_bar = Gtk.HeaderBar()

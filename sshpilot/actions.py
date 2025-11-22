@@ -858,6 +858,9 @@ class WindowActions:
         self.update_banner.set_title(title)
         self.update_banner.set_button_label("Download")
         
+        # Apply CSS styling for blue button
+        self._apply_update_banner_css()
+        
         # Connect button clicked signal
         try:
             # Disconnect any previous handler
@@ -871,7 +874,10 @@ class WindowActions:
             self._on_update_banner_clicked
         )
         
+        # Show the banner and its container
         self.update_banner.set_revealed(True)
+        if hasattr(self, 'update_banner_container'):
+            self.update_banner_container.set_visible(True)
     
     def _on_update_banner_clicked(self, banner):
         """Handle update banner button click"""
@@ -885,6 +891,56 @@ class WindowActions:
             Gtk.show_uri(self, url, Gdk.CURRENT_TIME)
         except Exception as e:
             logger.error(f"Failed to open update URL: {e}")
+    
+    def _on_update_banner_dismiss(self, button):
+        """Handle dismiss button click on update banner"""
+        logger.info("Update banner dismissed by user")
+        self.update_banner.set_revealed(False)
+        if hasattr(self, 'update_banner_container'):
+            self.update_banner_container.set_visible(False)
+    
+    def _apply_update_banner_css(self):
+        """Apply CSS styling to update banner"""
+        try:
+            from gi.repository import Gdk
+            
+            display = Gdk.Display.get_default()
+            if not display:
+                logger.warning("No display available for banner CSS installation")
+                return
+            
+            # Check if CSS is already installed
+            if getattr(display, '_update_banner_css_installed', False):
+                return
+            
+            provider = Gtk.CssProvider()
+            css = """
+            /* Blue download button */
+            banner button {
+                background-image: none;
+                background-color: #3b82f6;
+                color: white;
+                border: none;
+                font-weight: bold;
+                min-height: 32px;
+                padding: 0 16px;
+                border-radius: 6px;
+            }
+            
+            banner button:hover {
+                background-color: #2563eb;
+            }
+            
+            banner button:active {
+                background-color: #1d4ed8;
+            }
+            """
+            provider.load_from_data(css.encode('utf-8'))
+            Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            setattr(display, '_update_banner_css_installed', True)
+            logger.debug("Update banner CSS installed successfully")
+        except Exception as e:
+            logger.error(f"Failed to install update banner CSS: {e}")
 
 
 def register_window_actions(window):
