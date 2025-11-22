@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:4.4.2}
+Version:        %{?version}%{!?version:4.4.3}
 Release:        1%{?dist}
 Summary:        SSH connection manager with integrated terminal
 
@@ -69,6 +69,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Sat Nov 22 2025 mFat <newmfat@gmail.com> - 4.4.3
+- - Bug fixes
+
 * Sat Nov 22 2025 mFat <newmfat@gmail.com> - 4.4.2
 - - Added update notifier
 
