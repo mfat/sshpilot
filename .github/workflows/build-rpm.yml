@@ -69,7 +69,7 @@ jobs:
           cat > ~/rpmbuild/SPECS/sshpilot.spec << 'EOF'
           Name:           sshpilot
           Version:        ${{ steps.version.outputs.version }}
-          Release:        1%{?dist}
+          Release:        1
           Summary:        SSH connection manager with integrated terminal
           
           License:        GPL-3.0-or-later
@@ -79,6 +79,9 @@ jobs:
           BuildArch:      noarch
           BuildRequires:  python3-devel
           BuildRequires:  desktop-file-utils
+          
+          # Exclude automatic Python ABI dependency to allow compatibility across Python 3.x versions
+          %global __requires_exclude ^python\\(abi\\)
           
           Requires:       python3
           Requires:       python3-gobject
@@ -93,9 +96,7 @@ jobs:
           Requires:       openssh-askpass
           
           %description
-          sshPilot provides SSH connection management, integrated terminal using VTE,
-          tunneling, key management, and tabbed interface. Built with GTK4 and Adwaita
-          for a modern Linux desktop experience.
+          SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed terminal, remote file management, key transfer, port forwarding and more. It's an alternative to Putty, Termius and Mobaxterm.
           
           %prep
           %autosetup -n sshpilot-%{version}
