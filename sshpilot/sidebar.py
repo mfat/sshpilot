@@ -103,7 +103,7 @@ def _fill_rgba(rgba: Optional[Gdk.RGBA]) -> Optional[Gdk.RGBA]:
     fill.red = rgba.red
     fill.green = rgba.green
     fill.blue = rgba.blue
-    fill.alpha = 0.4 if rgba.alpha >= 1.0 else max(0.3, min(rgba.alpha, 0.5))
+    fill.alpha = 0.6 if rgba.alpha >= 1.0 else max(0.5, min(rgba.alpha, 0.7))
     return fill
 
 
