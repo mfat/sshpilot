@@ -51,18 +51,21 @@ class WelcomePage(Gtk.Overlay):
         self.config = window.config
         self.set_hexpand(True)
         self.set_vexpand(True)
+        self.set_can_focus(False)
         
         # Create a scrolled window to hold all content
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.set_vexpand(True)
         scrolled.set_hexpand(True)
+        scrolled.set_can_focus(False)
         
         # Main content box
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         content_box.set_margin_top(12)
         content_box.set_margin_bottom(24)
         content_box.set_valign(Gtk.Align.START)
+        content_box.set_can_focus(False)
         
         # Clamp for proper width
         clamp = Adw.Clamp()
@@ -70,6 +73,7 @@ class WelcomePage(Gtk.Overlay):
         clamp.set_tightening_threshold(400)
         clamp.set_child(content_box)
         clamp.set_vexpand(False)
+        clamp.set_can_focus(False)
         scrolled.set_child(clamp)
         self.set_child(scrolled)
         
@@ -83,10 +87,12 @@ class WelcomePage(Gtk.Overlay):
         header_box.set_margin_top(24)
         header_box.set_margin_bottom(24)
         header_box.set_vexpand(False)
+        header_box.set_can_focus(False)
         
         # App icon
         icon = Gtk.Image.new_from_icon_name('io.github.mfat.sshpilot')
         icon.set_pixel_size(64)
+        icon.set_can_focus(False)
         header_box.append(icon)
         
         # Welcome title
@@ -94,6 +100,7 @@ class WelcomePage(Gtk.Overlay):
         title_label.set_text(_('Welcome to SSH Pilot'))
         title_label.add_css_class('title-1')
         title_label.set_halign(Gtk.Align.CENTER)
+        title_label.set_can_focus(False)
         header_box.append(title_label)
         
         # Description
@@ -103,6 +110,7 @@ class WelcomePage(Gtk.Overlay):
         desc_label.set_halign(Gtk.Align.CENTER)
         desc_label.set_wrap(True)
         desc_label.set_justify(Gtk.Justification.CENTER)
+        desc_label.set_can_focus(False)
         header_box.append(desc_label)
         
         content_box.append(header_box)
@@ -113,6 +121,7 @@ class WelcomePage(Gtk.Overlay):
         getting_started_group.set_margin_end(12)
         getting_started_group.set_margin_top(12)
         getting_started_group.set_vexpand(False)
+        getting_started_group.set_can_focus(False)
         content_box.append(getting_started_group)
         
         # Quick Connect action row
@@ -121,8 +130,13 @@ class WelcomePage(Gtk.Overlay):
         quick_connect_row.set_title(_('Quick Connect'))
         quick_connect_row.set_subtitle(_('Connect instantly using an SSH command'))
         quick_connect_row.set_activatable(True)
-        quick_connect_row.add_prefix(Gtk.Image.new_from_icon_name('network-server-symbolic'))
-        quick_connect_row.add_suffix(Gtk.Image.new_from_icon_name('go-next-symbolic'))
+        quick_connect_row.set_can_focus(False)
+        prefix_img = Gtk.Image.new_from_icon_name('network-server-symbolic')
+        prefix_img.set_can_focus(False)
+        quick_connect_row.add_prefix(prefix_img)
+        suffix_img = Gtk.Image.new_from_icon_name('go-next-symbolic')
+        suffix_img.set_can_focus(False)
+        quick_connect_row.add_suffix(suffix_img)
         if quick_connect_accel:
             quick_connect_row.set_subtitle(_('Connect instantly using an SSH command') + f' • {quick_connect_accel}')
         quick_connect_row.connect('activated', lambda *_: self.on_quick_connect_clicked(None))
@@ -134,8 +148,13 @@ class WelcomePage(Gtk.Overlay):
         new_connection_row.set_title(_('Add a New Connection'))
         new_connection_row.set_subtitle(_('Create and save a new SSH connection profile'))
         new_connection_row.set_activatable(True)
-        new_connection_row.add_prefix(Gtk.Image.new_from_icon_name('list-add-symbolic'))
-        new_connection_row.add_suffix(Gtk.Image.new_from_icon_name('go-next-symbolic'))
+        new_connection_row.set_can_focus(False)
+        prefix_img = Gtk.Image.new_from_icon_name('list-add-symbolic')
+        prefix_img.set_can_focus(False)
+        new_connection_row.add_prefix(prefix_img)
+        suffix_img = Gtk.Image.new_from_icon_name('go-next-symbolic')
+        suffix_img.set_can_focus(False)
+        new_connection_row.add_suffix(suffix_img)
         if new_connection_accel:
             new_connection_row.set_subtitle(_('Create and save a new SSH connection profile') + f' • {new_connection_accel}')
         new_connection_row.connect('activated', lambda *_: self.window.get_application().activate_action('new-connection'))
@@ -154,8 +173,13 @@ class WelcomePage(Gtk.Overlay):
         edit_config_row.set_title(_('View and Edit SSH Config'))
         edit_config_row.set_subtitle(_('Directly edit your SSH configuration file') + f' • {config_location}')
         edit_config_row.set_activatable(True)
-        edit_config_row.add_prefix(Gtk.Image.new_from_icon_name('document-edit-symbolic'))
-        edit_config_row.add_suffix(Gtk.Image.new_from_icon_name('go-next-symbolic'))
+        edit_config_row.set_can_focus(False)
+        prefix_img = Gtk.Image.new_from_icon_name('document-edit-symbolic')
+        prefix_img.set_can_focus(False)
+        edit_config_row.add_prefix(prefix_img)
+        suffix_img = Gtk.Image.new_from_icon_name('go-next-symbolic')
+        suffix_img.set_can_focus(False)
+        edit_config_row.add_suffix(suffix_img)
         if edit_config_accel:
             edit_config_row.set_subtitle(_('Directly edit your SSH configuration file') + f' • {config_location} • {edit_config_accel}')
         edit_config_row.connect('activated', lambda *_: self.window.get_application().activate_action('edit-ssh-config'))
@@ -167,8 +191,13 @@ class WelcomePage(Gtk.Overlay):
         local_terminal_row.set_title(_('Open Local Terminal'))
         local_terminal_row.set_subtitle(_('Work on your local machine without connecting to a server'))
         local_terminal_row.set_activatable(True)
-        local_terminal_row.add_prefix(Gtk.Image.new_from_icon_name('utilities-terminal-symbolic'))
-        local_terminal_row.add_suffix(Gtk.Image.new_from_icon_name('go-next-symbolic'))
+        local_terminal_row.set_can_focus(False)
+        prefix_img = Gtk.Image.new_from_icon_name('utilities-terminal-symbolic')
+        prefix_img.set_can_focus(False)
+        local_terminal_row.add_prefix(prefix_img)
+        suffix_img = Gtk.Image.new_from_icon_name('go-next-symbolic')
+        suffix_img.set_can_focus(False)
+        local_terminal_row.add_suffix(suffix_img)
         if local_terminal_accel:
             local_terminal_row.set_subtitle(_('Work on your local machine without connecting to a server') + f' • {local_terminal_accel}')
         local_terminal_row.connect('activated', lambda *_: window.terminal_manager.show_local_terminal())
@@ -180,6 +209,7 @@ class WelcomePage(Gtk.Overlay):
         help_group.set_margin_end(12)
         help_group.set_margin_top(24)
         help_group.set_vexpand(False)
+        help_group.set_can_focus(False)
         content_box.append(help_group)
         
         # Shortcuts action row
@@ -188,8 +218,13 @@ class WelcomePage(Gtk.Overlay):
         shortcuts_row.set_title(_('Keyboard Shortcuts'))
         shortcuts_row.set_subtitle(_('Learn keyboard shortcuts to work faster'))
         shortcuts_row.set_activatable(True)
-        shortcuts_row.add_prefix(Gtk.Image.new_from_icon_name('preferences-desktop-keyboard-symbolic'))
-        shortcuts_row.add_suffix(Gtk.Image.new_from_icon_name('go-next-symbolic'))
+        shortcuts_row.set_can_focus(False)
+        prefix_img = Gtk.Image.new_from_icon_name('preferences-desktop-keyboard-symbolic')
+        prefix_img.set_can_focus(False)
+        shortcuts_row.add_prefix(prefix_img)
+        suffix_img = Gtk.Image.new_from_icon_name('go-next-symbolic')
+        suffix_img.set_can_focus(False)
+        shortcuts_row.add_suffix(suffix_img)
         if shortcuts_accel:
             shortcuts_row.set_subtitle(_('Learn keyboard shortcuts to work faster') + f' • {shortcuts_accel}')
         shortcuts_row.connect('activated', lambda *_: window.show_shortcuts_window())
@@ -201,8 +236,13 @@ class WelcomePage(Gtk.Overlay):
         preferences_row.set_title(_('Preferences'))
         preferences_row.set_subtitle(_('Customize SSH Pilot and modify settings'))
         preferences_row.set_activatable(True)
-        preferences_row.add_prefix(Gtk.Image.new_from_icon_name('preferences-system-symbolic'))
-        preferences_row.add_suffix(Gtk.Image.new_from_icon_name('go-next-symbolic'))
+        preferences_row.set_can_focus(False)
+        prefix_img = Gtk.Image.new_from_icon_name('preferences-system-symbolic')
+        prefix_img.set_can_focus(False)
+        preferences_row.add_prefix(prefix_img)
+        suffix_img = Gtk.Image.new_from_icon_name('go-next-symbolic')
+        suffix_img.set_can_focus(False)
+        preferences_row.add_suffix(suffix_img)
         if preferences_accel:
             preferences_row.set_subtitle(_('Customize SSH Pilot and modify settings') + f' • {preferences_accel}')
         preferences_row.connect('activated', lambda *_: window.show_preferences())
@@ -213,8 +253,13 @@ class WelcomePage(Gtk.Overlay):
         help_row.set_title(_('Online Documentation'))
         help_row.set_subtitle(_('Visit the wiki for guides and troubleshooting'))
         help_row.set_activatable(True)
-        help_row.add_prefix(Gtk.Image.new_from_icon_name('help-browser-symbolic'))
-        help_row.add_suffix(Gtk.Image.new_from_icon_name('go-next-symbolic'))
+        help_row.set_can_focus(False)
+        prefix_img = Gtk.Image.new_from_icon_name('help-browser-symbolic')
+        prefix_img.set_can_focus(False)
+        help_row.add_prefix(prefix_img)
+        suffix_img = Gtk.Image.new_from_icon_name('go-next-symbolic')
+        suffix_img.set_can_focus(False)
+        help_row.add_suffix(suffix_img)
         help_row.connect('activated', lambda *_: self.open_online_help())
         help_group.add(help_row)
     
