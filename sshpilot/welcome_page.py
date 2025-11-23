@@ -51,184 +51,116 @@ class WelcomePage(Gtk.Overlay):
         self.config = window.config
         self.set_hexpand(True)
         self.set_vexpand(True)
-        
-        # Create a scrolled window to hold all content
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled.set_vexpand(True)
-        scrolled.set_hexpand(True)
-        
-        # Main content box
-        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        content_box.set_margin_top(12)
-        content_box.set_margin_bottom(24)
-        content_box.set_valign(Gtk.Align.START)
-        
-        # Clamp for proper width
         clamp = Adw.Clamp()
-        clamp.set_maximum_size(800)
-        clamp.set_tightening_threshold(400)
-        clamp.set_child(content_box)
-        clamp.set_vexpand(False)
-        scrolled.set_child(clamp)
-        self.set_child(scrolled)
+        clamp.set_halign(Gtk.Align.CENTER)
+        clamp.set_valign(Gtk.Align.CENTER)
+        grid = Gtk.Grid(column_spacing=24, row_spacing=24)
+        grid.set_column_homogeneous(True)
+        grid.set_row_homogeneous(True)
+        grid.set_halign(Gtk.Align.CENTER)
+        grid.set_valign(Gtk.Align.CENTER)
+        clamp.set_child(grid)
+        self.set_child(clamp)
+
         
-        # Get current shortcuts for tooltips
+        # Create welcome page cards with keyboard shortcuts in tooltips
+        mac = is_macos()
+        # Fetch current (possibly customized) shortcuts from the application
         current_shortcuts = self._get_safe_current_shortcuts()
         
-        # Welcome header - custom layout for better control
-        header_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        header_box.set_halign(Gtk.Align.CENTER)
-        header_box.set_valign(Gtk.Align.START)
-        header_box.set_margin_top(24)
-        header_box.set_margin_bottom(24)
-        header_box.set_vexpand(False)
-        
-        # App icon
-        icon = Gtk.Image.new_from_icon_name('io.github.mfat.sshpilot')
-        icon.set_pixel_size(64)
-        header_box.append(icon)
-        
-        # Welcome title
-        title_label = Gtk.Label()
-        title_label.set_text(_('Welcome to SSH Pilot'))
-        title_label.add_css_class('title-1')
-        title_label.set_halign(Gtk.Align.CENTER)
-        header_box.append(title_label)
-        
-        # Description
-        desc_label = Gtk.Label()
-        #desc_label.set_text(_('A modern SSH connection manager with integrated terminal'))
-        desc_label.add_css_class('dim-label')
-        desc_label.set_halign(Gtk.Align.CENTER)
-        desc_label.set_wrap(True)
-        desc_label.set_justify(Gtk.Justification.CENTER)
-        header_box.append(desc_label)
-        
-        content_box.append(header_box)
-        
-        # Getting Started section
-        getting_started_group = Adw.PreferencesGroup()
-        getting_started_group.set_margin_start(12)
-        getting_started_group.set_margin_end(12)
-        getting_started_group.set_margin_top(12)
-        getting_started_group.set_vexpand(False)
-        content_box.append(getting_started_group)
-        
-        # Quick Connect action row
         quick_connect_accel = self._get_action_accel_display(current_shortcuts, 'quick-connect')
-        quick_connect_row = Adw.ActionRow()
-        quick_connect_row.set_title(_('Quick Connect'))
-        quick_connect_row.set_subtitle(_('Connect instantly using an SSH command'))
-        quick_connect_row.set_activatable(True)
-        quick_connect_row.add_prefix(Gtk.Image.new_from_icon_name('network-server-symbolic'))
-        quick_connect_row.add_suffix(Gtk.Image.new_from_icon_name('go-next-symbolic'))
-        if quick_connect_accel:
-            quick_connect_row.set_subtitle(_('Connect instantly using an SSH command') + f' • {quick_connect_accel}')
-        quick_connect_row.connect('activated', lambda *_: self.on_quick_connect_clicked(None))
-        getting_started_group.add(quick_connect_row)
-        
-        # Add New Connection action row
-        new_connection_accel = self._get_action_accel_display(current_shortcuts, 'new-connection')
-        new_connection_row = Adw.ActionRow()
-        new_connection_row.set_title(_('Add a New Connection'))
-        new_connection_row.set_subtitle(_('Create and save a new SSH connection profile'))
-        new_connection_row.set_activatable(True)
-        new_connection_row.add_prefix(Gtk.Image.new_from_icon_name('list-add-symbolic'))
-        new_connection_row.add_suffix(Gtk.Image.new_from_icon_name('go-next-symbolic'))
-        if new_connection_accel:
-            new_connection_row.set_subtitle(_('Create and save a new SSH connection profile') + f' • {new_connection_accel}')
-        new_connection_row.connect('activated', lambda *_: self.window.get_application().activate_action('new-connection'))
-        getting_started_group.add(new_connection_row)
-        
-        # Edit SSH Config action row
-        edit_config_accel = self._get_action_accel_display(current_shortcuts, 'edit-ssh-config')
-        
-        # Check if using isolated mode or default SSH config
-        if hasattr(self.config, 'isolated_mode') and self.config.isolated_mode:
-            config_location = '~/.config/sshpilot/config'
-        else:
-            config_location = '~/.ssh/config'
-        
-        edit_config_row = Adw.ActionRow()
-        edit_config_row.set_title(_('View and Edit SSH Config'))
-        edit_config_row.set_subtitle(_('Directly edit your SSH configuration file') + f' • {config_location}')
-        edit_config_row.set_activatable(True)
-        edit_config_row.add_prefix(Gtk.Image.new_from_icon_name('document-edit-symbolic'))
-        edit_config_row.add_suffix(Gtk.Image.new_from_icon_name('go-next-symbolic'))
-        if edit_config_accel:
-            edit_config_row.set_subtitle(_('Directly edit your SSH configuration file') + f' • {config_location} • {edit_config_accel}')
-        edit_config_row.connect('activated', lambda *_: self.window.get_application().activate_action('edit-ssh-config'))
-        getting_started_group.add(edit_config_row)
-        
-        # Local Terminal action row
+        quick_connect_tooltip = _('Connect to a server using SSH command') + (f"\n({quick_connect_accel})" if quick_connect_accel else '')
+        quick_connect_card = self.create_card(
+            _('Quick Connect'),
+            quick_connect_tooltip,
+            'network-server-symbolic',
+            self.on_quick_connect_clicked
+        )
+
         local_terminal_accel = self._get_action_accel_display(current_shortcuts, 'local-terminal')
-        local_terminal_row = Adw.ActionRow()
-        local_terminal_row.set_title(_('Open Local Terminal'))
-        local_terminal_row.set_subtitle(_('Work on your local machine without connecting to a server'))
-        local_terminal_row.set_activatable(True)
-        local_terminal_row.add_prefix(Gtk.Image.new_from_icon_name('utilities-terminal-symbolic'))
-        local_terminal_row.add_suffix(Gtk.Image.new_from_icon_name('go-next-symbolic'))
-        if local_terminal_accel:
-            local_terminal_row.set_subtitle(_('Work on your local machine without connecting to a server') + f' • {local_terminal_accel}')
-        local_terminal_row.connect('activated', lambda *_: window.terminal_manager.show_local_terminal())
-        getting_started_group.add(local_terminal_row)
-        
-        # Help & Resources section
-        help_group = Adw.PreferencesGroup()
-        help_group.set_margin_start(12)
-        help_group.set_margin_end(12)
-        help_group.set_margin_top(24)
-        help_group.set_vexpand(False)
-        content_box.append(help_group)
-        
-        # Shortcuts action row
+        local_terminal_tooltip = _('Open a local terminal session') + (f"\n({local_terminal_accel})" if local_terminal_accel else '')
+        local_terminal_card = self.create_card(
+            _('Local Terminal'),
+            local_terminal_tooltip,
+            'utilities-terminal-symbolic',
+            lambda *_: window.terminal_manager.show_local_terminal()
+        )
+
         shortcuts_accel = self._get_action_accel_display(current_shortcuts, 'shortcuts')
-        shortcuts_row = Adw.ActionRow()
-        shortcuts_row.set_title(_('Keyboard Shortcuts'))
-        shortcuts_row.set_subtitle(_('Learn keyboard shortcuts to work faster'))
-        shortcuts_row.set_activatable(True)
-        shortcuts_row.add_prefix(Gtk.Image.new_from_icon_name('preferences-desktop-keyboard-symbolic'))
-        shortcuts_row.add_suffix(Gtk.Image.new_from_icon_name('go-next-symbolic'))
-        if shortcuts_accel:
-            shortcuts_row.set_subtitle(_('Learn keyboard shortcuts to work faster') + f' • {shortcuts_accel}')
-        shortcuts_row.connect('activated', lambda *_: window.show_shortcuts_window())
-        help_group.add(shortcuts_row)
-        
-        # Preferences action row
+        shortcuts_tooltip = _('View and learn keyboard shortcuts') + (f"\n({shortcuts_accel})" if shortcuts_accel else '')
+        shortcuts_card = self.create_card(
+            _('Shortcuts'),
+            shortcuts_tooltip,
+            'preferences-desktop-keyboard-symbolic',
+            lambda *_: window.show_shortcuts_window()
+        )
+
         preferences_accel = self._get_action_accel_display(current_shortcuts, 'preferences')
-        preferences_row = Adw.ActionRow()
-        preferences_row.set_title(_('Preferences'))
-        preferences_row.set_subtitle(_('Customize SSH Pilot and modify settings'))
-        preferences_row.set_activatable(True)
-        preferences_row.add_prefix(Gtk.Image.new_from_icon_name('preferences-system-symbolic'))
-        preferences_row.add_suffix(Gtk.Image.new_from_icon_name('go-next-symbolic'))
-        if preferences_accel:
-            preferences_row.set_subtitle(_('Customize SSH Pilot and modify settings') + f' • {preferences_accel}')
-        preferences_row.connect('activated', lambda *_: window.show_preferences())
-        help_group.add(preferences_row)
+        preferences_tooltip = _('Open application preferences') + (f"\n({preferences_accel})" if preferences_accel else '')
+        preferences_card = self.create_card(
+            _('Preferences'),
+            preferences_tooltip,
+            'preferences-system-symbolic',
+            lambda *_: window.show_preferences()
+        )
+
+        # Add cards to grid (2 columns, 2 rows)
+        grid.attach(quick_connect_card, 0, 0, 1, 1)
+        grid.attach(local_terminal_card, 1, 0, 1, 1)
+        grid.attach(shortcuts_card, 0, 1, 1, 1)
+        grid.attach(preferences_card, 1, 1, 1, 1)
+
+
+    def create_card(self, title, tooltip_text, icon_name, callback):
+        """Create an activatable card with icon and title"""
+        # Create a vertical box for icon and text
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        content.set_halign(Gtk.Align.CENTER)
+        content.set_valign(Gtk.Align.CENTER)
+        content.set_margin_top(24)
+        content.set_margin_bottom(24)
+        content.set_margin_start(24)
+        content.set_margin_end(24)
         
-        # Online help action row
-        help_row = Adw.ActionRow()
-        help_row.set_title(_('Online Documentation'))
-        help_row.set_subtitle(_('Visit the wiki for guides and troubleshooting'))
-        help_row.set_activatable(True)
-        help_row.add_prefix(Gtk.Image.new_from_icon_name('help-browser-symbolic'))
-        help_row.add_suffix(Gtk.Image.new_from_icon_name('go-next-symbolic'))
-        help_row.connect('activated', lambda *_: self.open_online_help())
-        help_group.add(help_row)
-    
-    def show_sidebar_hint(self):
-        """Show a hint about using the sidebar to manage connections"""
-        toast = Adw.Toast.new(_('Use the sidebar to add and manage your SSH connections'))
-        toast.set_timeout(3)
-        if hasattr(self.window, 'add_toast'):
-            self.window.add_toast(toast)
-        else:
-            # Fallback for older API
-            overlay = self.window.get_child()
-            if isinstance(overlay, Adw.ToastOverlay):
-                overlay.add_toast(toast)
+        # Create larger icon
+        icon = Gtk.Image.new_from_icon_name(icon_name)
+        icon.set_icon_size(Gtk.IconSize.LARGE)  # Use large icon size
+        icon.set_pixel_size(64)  # Set specific pixel size for even larger icons
+        content.append(icon)
+        
+        # Create title label
+        title_label = Gtk.Label(label=title)
+        title_label.set_halign(Gtk.Align.CENTER)
+        title_label.set_css_classes(['title-5'])  # Use larger text style
+        content.append(title_label)
+
+        card = Adw.Bin()
+        card.add_css_class("activatable")
+        card.add_css_class("welcome-card")
+        card.set_child(content)
+        card.set_tooltip_text(tooltip_text)
+        card.set_focusable(True)
+        card.set_accessible_role(Gtk.AccessibleRole.BUTTON)
+        card.set_hexpand(True)
+        card.set_vexpand(True)
+        card.set_valign(Gtk.Align.FILL)
+
+        click = Gtk.GestureClick()
+        click.connect("released", lambda *_: callback(card))
+        card.add_controller(click)
+
+        key = Gtk.EventControllerKey()
+        key.connect(
+            "key-released",
+            lambda _c, keyval, *_: (
+                callback(card)
+                if keyval in (Gdk.KEY_Return, Gdk.KEY_space)
+                else False
+            ),
+        )
+        card.add_controller(key)
+
+        return card
 
     def _get_safe_current_shortcuts(self):
         """Safely get current shortcuts including user customizations from the app.
@@ -352,7 +284,7 @@ class WelcomePage(Gtk.Overlay):
             dialog = Adw.MessageDialog.new(
                 self.window,
                 "Online Help",
-                "Visit the SSH Pilot documentation at:\nhttps://github.com/mfat/sshpilot/wiki"
+                "Visit the sshPilot documentation at:\nhttps://github.com/mfat/sshpilot/wiki"
             )
             dialog.add_response("ok", "OK")
             dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
