@@ -249,6 +249,7 @@ class WelcomePage(Gtk.Overlay):
         help_group.add(preferences_row)
         
         # Online help action row
+        help_accel = self._get_action_accel_display(current_shortcuts, 'help')
         help_row = Adw.ActionRow()
         help_row.set_title(_('Online Documentation'))
         help_row.set_subtitle(_('Visit the wiki for guides and troubleshooting'))
@@ -257,6 +258,11 @@ class WelcomePage(Gtk.Overlay):
         prefix_img = Gtk.Image.new_from_icon_name('help-browser-symbolic')
         prefix_img.set_can_focus(False)
         help_row.add_prefix(prefix_img)
+        if help_accel:
+            shortcut_label = Gtk.Label(label=help_accel)
+            shortcut_label.add_css_class('dim-label')
+            shortcut_label.set_can_focus(False)
+            help_row.add_suffix(shortcut_label)
         help_row.connect('activated', lambda *_: self.open_online_help())
         help_group.add(help_row)
     
