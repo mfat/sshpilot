@@ -4891,16 +4891,6 @@ class FileManagerWindow(Adw.Window):
         password_entry.set_margin_start(12)
         password_entry.set_margin_end(12)
         
-        # Handle Enter key to activate default response
-        key_controller = Gtk.EventControllerKey()
-        def on_key_pressed(_controller, keyval, _keycode, _state):
-            if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
-                dialog.respond("connect")
-                return True
-            return False
-        key_controller.connect("key-pressed", on_key_pressed)
-        password_entry.add_controller(key_controller)
-        
         # Add entry to dialog's extra child area
         dialog.set_extra_child(password_entry)
         
@@ -4909,6 +4899,31 @@ class FileManagerWindow(Adw.Window):
         dialog.add_response("connect", "Connect")
         dialog.set_default_response("connect")
         dialog.set_close_response("cancel")
+        
+        # Handle Enter key - try multiple approaches for maximum compatibility
+        def on_entry_activate(_entry):
+            """Handle Enter key press in password entry"""
+            dialog.respond("connect")
+        
+        # Try to set activates-default property (works for Gtk.Entry)
+        try:
+            password_entry.set_property("activates-default", True)
+        except (TypeError, AttributeError):
+            pass
+        
+        # Also connect to activate signal as fallback
+        try:
+            password_entry.connect("activate", on_entry_activate)
+        except (TypeError, AttributeError):
+            # Fallback to key controller if activate signal is not available
+            key_controller = Gtk.EventControllerKey()
+            def on_key_pressed(_controller, keyval, _keycode, _state):
+                if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+                    dialog.respond("connect")
+                    return True
+                return False
+            key_controller.connect("key-pressed", on_key_pressed)
+            password_entry.add_controller(key_controller)
         
         # Focus password entry when dialog is shown
         def on_dialog_shown(_dialog):
@@ -4974,16 +4989,6 @@ class FileManagerWindow(Adw.Window):
         password_entry.set_margin_start(12)
         password_entry.set_margin_end(12)
         
-        # Handle Enter key to activate default response
-        key_controller = Gtk.EventControllerKey()
-        def on_key_pressed(_controller, keyval, _keycode, _state):
-            if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
-                dialog.respond("connect")
-                return True
-            return False
-        key_controller.connect("key-pressed", on_key_pressed)
-        password_entry.add_controller(key_controller)
-        
         # Add entry to dialog's extra child area
         dialog.set_extra_child(password_entry)
         
@@ -4992,6 +4997,31 @@ class FileManagerWindow(Adw.Window):
         dialog.add_response("connect", "Connect")
         dialog.set_default_response("connect")
         dialog.set_close_response("cancel")
+        
+        # Handle Enter key - try multiple approaches for maximum compatibility
+        def on_entry_activate(_entry):
+            """Handle Enter key press in password entry"""
+            dialog.respond("connect")
+        
+        # Try to set activates-default property (works for Gtk.Entry)
+        try:
+            password_entry.set_property("activates-default", True)
+        except (TypeError, AttributeError):
+            pass
+        
+        # Also connect to activate signal as fallback
+        try:
+            password_entry.connect("activate", on_entry_activate)
+        except (TypeError, AttributeError):
+            # Fallback to key controller if activate signal is not available
+            key_controller = Gtk.EventControllerKey()
+            def on_key_pressed(_controller, keyval, _keycode, _state):
+                if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+                    dialog.respond("connect")
+                    return True
+                return False
+            key_controller.connect("key-pressed", on_key_pressed)
+            password_entry.add_controller(key_controller)
         
         # Focus password entry when dialog is shown
         def on_dialog_shown(_dialog):
