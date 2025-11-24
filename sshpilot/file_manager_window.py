@@ -2165,7 +2165,6 @@ def _mode_to_str(mode: int) -> str:
 
 class PropertiesDialog(Adw.Window):
     """Nautilus-style properties dialog using card-based design."""
-    __gtype_name__ = "PropertiesDialog"
 
     def __init__(self, entry: "FileEntry", current_path: str, parent: Gtk.Window):
         super().__init__()
@@ -4339,6 +4338,11 @@ class FileManagerWindow(Adw.Window):
         
         # Progress state
         self._current_future: Optional[Future] = None
+        
+        # Password dialog state
+        self._password_dialog_shown = False
+        self._password_retry_count = 0
+        self._max_password_retries = 3
 
         # Use ToolbarView like other Adw.Window instances
         toolbar_view = Adw.ToolbarView()
@@ -4633,17 +4637,21 @@ class FileManagerWindow(Adw.Window):
             pass
         
         # If no password found and password auth is enabled, show dialog before connecting
-        if not initial_password and connection_manager is not None:
+        # Check for both None and empty string
+        has_password = initial_password and initial_password.strip()
+        logger.debug(f"Built-in file manager: Password check - initial_password={'***' if initial_password else 'None'}, has_password={bool(has_password)}, password_auth_enabled={self._is_password_auth_enabled(connection) if connection else False}")
+        
+        if not has_password and connection_manager is not None:
             if self._is_password_auth_enabled(connection):
                 logger.debug("Built-in file manager: No password found, password auth enabled, showing password dialog before connection")
                 password = self._show_password_dialog_before_connect(username, host, connection)
                 if password:
-                    # Update initial password and retry connection
-                    initial_password = password
                     # Update the manager's password
                     self._manager._password = password
+                    logger.debug("Built-in file manager: Password provided via dialog, updating manager")
                 elif password is None:
                     # User cancelled, don't attempt connection
+                    logger.debug("Built-in file manager: User cancelled password dialog")
                     self._on_connection_error(None, "Authentication cancelled")
                     return
             else:
@@ -4654,6 +4662,25 @@ class FileManagerWindow(Adw.Window):
             self._manager.connect_to_server()
         except Exception as exc:
             print(f"Error connecting to server: {exc}")
+    
+    def _on_connected(self, _manager) -> None:
+        """Handle successful connection - reset password dialog state."""
+        self._password_dialog_shown = False
+        self._password_retry_count = 0
+        logger.debug("Built-in file manager: Connection successful, reset password dialog state")
+    
+    def _on_connection_error(self, _manager, error_message: str) -> None:
+        """Handle connection error - reset password dialog state if not authentication error."""
+        # Only reset if this is not an authentication error (which would trigger authentication-required)
+        # Authentication errors are handled by _on_authentication_required
+        if "authentication" not in error_message.lower() and "password" not in error_message.lower():
+            self._password_dialog_shown = False
+            self._password_retry_count = 0
+            logger.debug("Built-in file manager: Non-authentication connection error, reset password dialog state")
+        
+        # Show error toast
+        self._clear_progress_toast()
+        self._right_pane.show_toast(f"Connection error: {error_message}")
 
     def detach_for_embedding(self, parent: Optional[Gtk.Widget] = None) -> Gtk.Widget:
         """Detach the window content for embedding in another container."""
@@ -4778,18 +4805,27 @@ class FileManagerWindow(Adw.Window):
 
     def _on_connection_error(self, _manager, message: str) -> None:
         """Handle connection error with toast."""
-        self._clear_progress_toast()
+        # Use GLib.idle_add to ensure we're on the main thread
+        def show_error():
+            try:
+                self._clear_progress_toast()
+                
+                if getattr(self, '_connection_error_reported', False):
+                    return
+                
+                # Try to show toast on right pane (remote pane) which is more reliable
+                if hasattr(self, '_right_pane') and self._right_pane:
+                    self._right_pane.show_toast(message or "Connection failed", timeout=5000)
+                elif hasattr(self, '_toast_overlay') and self._toast_overlay:
+                    toast = Adw.Toast.new(message or "Connection failed")
+                    toast.set_priority(Adw.ToastPriority.HIGH)
+                    self._toast_overlay.add_toast(toast)
+            except (AttributeError, RuntimeError, GLib.GError, TypeError) as exc:
+                # Overlay might be destroyed or invalid, ignore
+                logger.debug(f"Error showing connection error toast: {exc}")
+            return False  # Don't repeat
         
-        if self._connection_error_reported:
-            return
-        
-        try:
-            toast = Adw.Toast.new(message or "Connection failed")
-            toast.set_priority(Adw.ToastPriority.HIGH)
-            self._toast_overlay.add_toast(toast)
-        except (AttributeError, RuntimeError, GLib.GError):
-            # Overlay might be destroyed or invalid, ignore
-            pass
+        GLib.idle_add(show_error)
 
     def _is_password_auth_enabled(self, connection: Any = None) -> bool:
         """Check if password authentication is enabled/required for this connection.
@@ -4903,7 +4939,7 @@ class FileManagerWindow(Adw.Window):
         # Handle Enter key - try multiple approaches for maximum compatibility
         def on_entry_activate(_entry):
             """Handle Enter key press in password entry"""
-            dialog.respond("connect")
+            dialog.emit("response", "connect")
         
         # Try to set activates-default property (works for Gtk.Entry)
         try:
@@ -4919,7 +4955,7 @@ class FileManagerWindow(Adw.Window):
             key_controller = Gtk.EventControllerKey()
             def on_key_pressed(_controller, keyval, _keycode, _state):
                 if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
-                    dialog.respond("connect")
+                    dialog.emit("response", "connect")
                     return True
                 return False
             key_controller.connect("key-pressed", on_key_pressed)
@@ -4953,120 +4989,163 @@ class FileManagerWindow(Adw.Window):
 
     def _on_authentication_required(self, _manager, error_message: str) -> None:
         """Handle authentication failure by showing password dialog."""
-        self._clear_progress_toast()
+        logger.debug(f"Built-in file manager: _on_authentication_required called, error_message={error_message}")
+        logger.debug(f"Built-in file manager: _password_dialog_shown={self._password_dialog_shown}, _password_retry_count={self._password_retry_count}")
         
-        # Only show password dialog if password authentication is enabled
-        if not self._is_password_auth_enabled(self._connection):
-            logger.debug("Built-in file manager: Authentication failed but password auth not enabled, showing error")
-            self._on_connection_error(_manager, "Authentication failed. Please check your SSH keys or enable password authentication.")
-            return
-        
-        # Don't show multiple password dialogs
-        if getattr(self, '_password_dialog_shown', False):
-            return
-        
-        self._password_dialog_shown = True
-        
-        # Get connection info for dialog
-        username = self._manager._username
-        host = self._manager._host
-        nickname = getattr(self._connection, 'nickname', None) if self._connection else None
-        display_name = nickname or f"{username}@{host}"
-        
-        # Create password dialog
-        dialog = Adw.MessageDialog(
-            transient_for=self,
-            modal=True,
-            heading="Password Required",
-            body=f"Authentication failed for {display_name}.\n\nPlease enter your password:",
-        )
-        
-        # Add password entry
-        password_entry = Gtk.PasswordEntry()
-        password_entry.set_property("placeholder-text", "Password")
-        password_entry.set_margin_top(12)
-        password_entry.set_margin_bottom(12)
-        password_entry.set_margin_start(12)
-        password_entry.set_margin_end(12)
-        
-        # Add entry to dialog's extra child area
-        dialog.set_extra_child(password_entry)
-        
-        # Add responses
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("connect", "Connect")
-        dialog.set_default_response("connect")
-        dialog.set_close_response("cancel")
-        
-        # Handle Enter key - try multiple approaches for maximum compatibility
-        def on_entry_activate(_entry):
-            """Handle Enter key press in password entry"""
-            dialog.respond("connect")
-        
-        # Try to set activates-default property (works for Gtk.Entry)
-        try:
-            password_entry.set_property("activates-default", True)
-        except (TypeError, AttributeError):
-            pass
-        
-        # Also connect to activate signal as fallback
-        try:
-            password_entry.connect("activate", on_entry_activate)
-        except (TypeError, AttributeError):
-            # Fallback to key controller if activate signal is not available
-            key_controller = Gtk.EventControllerKey()
-            def on_key_pressed(_controller, keyval, _keycode, _state):
-                if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
-                    dialog.respond("connect")
-                    return True
-                return False
-            key_controller.connect("key-pressed", on_key_pressed)
-            password_entry.add_controller(key_controller)
-        
-        # Focus password entry when dialog is shown
-        def on_dialog_shown(_dialog):
-            password_entry.grab_focus()
-        dialog.connect("notify::visible", lambda d, _: on_dialog_shown(d) if d.get_visible() else None)
-        
-        def on_response(_dialog, response: str) -> None:
-            self._password_dialog_shown = False
-            
-            if response == "connect":
-                password = password_entry.get_text()
-                if password:
-                    # Store password in connection manager if available
-                    if self._connection_manager is not None:
-                        try:
-                            lookup_host = host
-                            if self._connection is not None:
-                                hostname = getattr(self._connection, "hostname", None)
-                                host_attr = getattr(self._connection, "host", None)
-                                nickname_attr = getattr(self._connection, "nickname", None)
-                                lookup_host = hostname or host_attr or nickname_attr or lookup_host
-                            
-                            lookup_user = username
-                            if self._connection is not None:
-                                lookup_user = getattr(self._connection, "username", None) or lookup_user
-                            
-                            # Optionally save password (user can choose in future)
-                            # For now, just use it for this connection
-                            logger.debug("Using password from dialog for connection")
-                        except Exception as exc:
-                            logger.debug(f"Failed to process password: {exc}")
+        # Use GLib.idle_add to ensure we're on the main thread
+        def show_password_dialog():
+            try:
+                self._clear_progress_toast()
+                
+                # Only show password dialog if password authentication is enabled
+                if not self._is_password_auth_enabled(self._connection):
+                    logger.debug("Built-in file manager: Authentication failed but password auth not enabled, showing error")
+                    self._on_connection_error(_manager, "Authentication failed. Please check your SSH keys or enable password authentication.")
+                    return False
+                
+                # Don't show multiple password dialogs
+                if self._password_dialog_shown:
+                    logger.debug("Built-in file manager: Password dialog already shown, ignoring duplicate authentication-required signal")
+                    return False
+                
+                # Check retry limit
+                if self._password_retry_count >= self._max_password_retries:
+                    logger.warning(f"Built-in file manager: Maximum password retry limit ({self._max_password_retries}) reached")
+                    self._on_connection_error(_manager, f"Authentication failed after {self._max_password_retries} attempts. Please check your password.")
+                    return False
+                
+                self._password_dialog_shown = True
+                self._password_retry_count += 1
+                logger.debug(f"Built-in file manager: Showing password dialog (attempt {self._password_retry_count}/{self._max_password_retries})")
+                
+                # Get connection info for dialog
+                username = self._manager._username
+                host = self._manager._host
+                nickname = getattr(self._connection, 'nickname', None) if self._connection else None
+                display_name = nickname or f"{username}@{host}"
+                
+                # Create password dialog
+                dialog = Adw.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    heading="Password Required",
+                    body=f"Authentication failed for {display_name}.\n\nPlease enter your password:",
+                )
+                
+                # Add password entry
+                password_entry = Gtk.PasswordEntry()
+                password_entry.set_property("placeholder-text", "Password")
+                password_entry.set_margin_top(12)
+                password_entry.set_margin_bottom(12)
+                password_entry.set_margin_start(12)
+                password_entry.set_margin_end(12)
+                
+                # Add entry to dialog's extra child area
+                dialog.set_extra_child(password_entry)
+                
+                # Add responses
+                dialog.add_response("cancel", "Cancel")
+                dialog.add_response("connect", "Connect")
+                dialog.set_default_response("connect")
+                dialog.set_close_response("cancel")
+                
+                # Handle Enter key - try multiple approaches for maximum compatibility
+                def on_entry_activate(_entry):
+                    """Handle Enter key press in password entry"""
+                    dialog.emit("response", "connect")
+                
+                # Try to set activates-default property (works for Gtk.Entry)
+                try:
+                    password_entry.set_property("activates-default", True)
+                except (TypeError, AttributeError):
+                    pass
+                
+                # Also connect to activate signal as fallback
+                try:
+                    password_entry.connect("activate", on_entry_activate)
+                except (TypeError, AttributeError):
+                    # Fallback to key controller if activate signal is not available
+                    key_controller = Gtk.EventControllerKey()
+                    def on_key_pressed(_controller, keyval, _keycode, _state):
+                        if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+                            dialog.emit("response", "connect")
+                            return True
+                        return False
+                    key_controller.connect("key-pressed", on_key_pressed)
+                    password_entry.add_controller(key_controller)
+                
+                # Focus password entry when dialog is shown
+                def on_dialog_shown(_dialog):
+                    password_entry.grab_focus()
+                dialog.connect("notify::visible", lambda d, _: on_dialog_shown(d) if d.get_visible() else None)
+                
+                def on_response(_dialog, response: str) -> None:
+                    # Get password before destroying dialog
+                    entered_password = password_entry.get_text() if response == "connect" else None
                     
-                    # Retry connection with password
-                    self._manager.connect_to_server(password=password)
-                else:
-                    # Empty password, show error
-                    self._on_connection_error(_manager, "Password cannot be empty")
-            else:
-                # User cancelled
-                self._on_connection_error(_manager, "Authentication cancelled")
-            
-            dialog.destroy()
+                    # Destroy dialog first
+                    dialog.destroy()
+                    
+                    # Reset the flag when dialog is closed so it can be shown again if authentication fails
+                    # This allows the dialog to be shown again if the password is wrong
+                    self._password_dialog_shown = False
+                    
+                    # Use GLib.idle_add to ensure UI operations happen on main thread
+                    # and avoid race conditions with dialog destruction
+                    def handle_response():
+                        if response == "connect":
+                            if entered_password:
+                                # Store password in connection manager if available
+                                if self._connection_manager is not None:
+                                    try:
+                                        lookup_host = host
+                                        if self._connection is not None:
+                                            hostname = getattr(self._connection, "hostname", None)
+                                            host_attr = getattr(self._connection, "host", None)
+                                            nickname_attr = getattr(self._connection, "nickname", None)
+                                            lookup_host = hostname or host_attr or nickname_attr or lookup_host
+                                        
+                                        lookup_user = username
+                                        if self._connection is not None:
+                                            lookup_user = getattr(self._connection, "username", None) or lookup_user
+                                        
+                                        # Optionally save password (user can choose in future)
+                                        # For now, just use it for this connection
+                                        logger.debug("Using password from dialog for connection")
+                                    except Exception as exc:
+                                        logger.debug(f"Failed to process password: {exc}")
+                                
+                                # Retry connection with password
+                                # If authentication fails again, _on_authentication_required will be called
+                                # and can show the dialog again since _password_dialog_shown is now False
+                                try:
+                                    self._manager.connect_to_server(password=entered_password)
+                                except Exception as exc:
+                                    logger.error(f"Error calling connect_to_server: {exc}")
+                                    self._on_connection_error(self._manager, f"Failed to connect: {exc}")
+                            else:
+                                # Empty password, show error
+                                self._on_connection_error(self._manager, "Password cannot be empty")
+                        else:
+                            # User cancelled - reset retry count
+                            self._password_retry_count = 0
+                            self._on_connection_error(self._manager, "Authentication cancelled")
+                        return False  # Don't repeat
+                    
+                    GLib.idle_add(handle_response)
+                
+                dialog.connect("response", on_response)
+                dialog.present()
+                logger.debug("Built-in file manager: Password dialog presented")
+                
+                return False  # Don't repeat
+            except Exception as exc:
+                logger.error(f"Built-in file manager: Error in show_password_dialog: {exc}", exc_info=True)
+                self._password_dialog_shown = False  # Reset flag on error
+                return False
         
-        dialog.connect("response", on_response)
-        dialog.present()
+        # Schedule dialog creation on main thread
+        GLib.idle_add(show_password_dialog)
 
     def _on_directory_loaded(
         self, _manager, path: str, entries: Iterable[FileEntry]

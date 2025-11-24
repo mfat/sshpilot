@@ -132,7 +132,7 @@ def _show_password_dialog_for_mount(
     # Handle Enter key - try multiple approaches for maximum compatibility
     def on_entry_activate(_entry):
         """Handle Enter key press in password entry"""
-        dialog.respond("connect")
+        dialog.emit("response", "connect")
     
     # Try to set activates-default property (works for Gtk.Entry)
     try:
@@ -148,7 +148,7 @@ def _show_password_dialog_for_mount(
         key_controller = Gtk.EventControllerKey()
         def on_key_pressed(_controller, keyval, _keycode, _state):
             if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
-                dialog.respond("connect")
+                dialog.emit("response", "connect")
                 return True
             return False
         key_controller.connect("key-pressed", on_key_pressed)
