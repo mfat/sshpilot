@@ -115,7 +115,46 @@ class WelcomePage(Gtk.Overlay):
         
         content_box.append(header_box)
         
-        # Cards grid
+        # Stack to hold both layouts
+        self.layout_stack = Gtk.Stack()
+        self.layout_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.layout_stack.set_transition_duration(200)
+        content_box.append(self.layout_stack)
+        
+        # Build both layouts
+        cards_widget = self._build_cards_layout(current_shortcuts)
+        rows_widget = self._build_action_rows_layout(current_shortcuts)
+        
+        self.layout_stack.add_named(cards_widget, 'cards')
+        self.layout_stack.add_named(rows_widget, 'rows')
+        
+        # Load saved layout preference
+        saved_layout = self.config.get_setting('ui.welcome_page_layout', 'cards')
+        use_cards = saved_layout == 'cards'
+        
+        # Layout toggle button in top right (as overlay)
+        self.layout_toggle = Gtk.ToggleButton()
+        self.layout_toggle.set_active(use_cards)  # active = cards, inactive = rows
+        self.layout_toggle.connect('toggled', self._on_layout_toggle_changed)
+        self.layout_toggle.set_margin_start(12)
+        self.layout_toggle.set_margin_end(12)
+        self.layout_toggle.set_margin_top(12)
+        self.layout_toggle.set_halign(Gtk.Align.END)
+        self.layout_toggle.set_valign(Gtk.Align.START)
+        self.add_overlay(self.layout_toggle)
+        
+        # Set initial layout and update toggle icon
+        if use_cards:
+            self.layout_stack.set_visible_child_name('cards')
+            self.layout_toggle.set_icon_name('view-list-symbolic')
+            self.layout_toggle.set_tooltip_text(_('Switch to list view'))
+        else:
+            self.layout_stack.set_visible_child_name('rows')
+            self.layout_toggle.set_icon_name('view-grid-symbolic')
+            self.layout_toggle.set_tooltip_text(_('Switch to grid view'))
+    
+    def _build_cards_layout(self, current_shortcuts):
+        """Build the cards grid layout"""
         cards_grid = Gtk.FlowBox()
         cards_grid.set_selection_mode(Gtk.SelectionMode.NONE)
         cards_grid.set_max_children_per_line(3)
@@ -126,7 +165,6 @@ class WelcomePage(Gtk.Overlay):
         cards_grid.set_margin_end(12)
         cards_grid.set_margin_top(12)
         cards_grid.set_homogeneous(True)
-        content_box.append(cards_grid)
         
         # Quick Connect card
         quick_connect_accel = self._get_action_accel_display(current_shortcuts, 'quick-connect')
@@ -276,7 +314,7 @@ class WelcomePage(Gtk.Overlay):
             card_box.append(shortcut_label)
         
         local_terminal_btn.set_child(card_box)
-        local_terminal_btn.connect('clicked', lambda *_: window.terminal_manager.show_local_terminal())
+        local_terminal_btn.connect('clicked', lambda *_: self.window.terminal_manager.show_local_terminal())
         cards_grid.append(local_terminal_btn)
         
         # Keyboard Shortcuts card
@@ -312,7 +350,7 @@ class WelcomePage(Gtk.Overlay):
             card_box.append(shortcut_label)
         
         shortcuts_btn.set_child(card_box)
-        shortcuts_btn.connect('clicked', lambda *_: window.show_shortcuts_window())
+        shortcuts_btn.connect('clicked', lambda *_: self.window.show_shortcuts_window())
         cards_grid.append(shortcuts_btn)
         
         # Preferences card
@@ -348,7 +386,7 @@ class WelcomePage(Gtk.Overlay):
             card_box.append(shortcut_label)
         
         preferences_btn.set_child(card_box)
-        preferences_btn.connect('clicked', lambda *_: window.show_preferences())
+        preferences_btn.connect('clicked', lambda *_: self.window.show_preferences())
         cards_grid.append(preferences_btn)
         
         # Online Documentation card
@@ -371,7 +409,7 @@ class WelcomePage(Gtk.Overlay):
         prefix_img.set_pixel_size(32)
         card_box.append(prefix_img)
         
-        title_label = Gtk.Label(label=_('Online Help'))
+        title_label = Gtk.Label(label=_('Online Documentation'))
         title_label.set_halign(Gtk.Align.CENTER)
         title_label.add_css_class('title-4')
         card_box.append(title_label)
@@ -422,6 +460,199 @@ class WelcomePage(Gtk.Overlay):
         create_group_btn.set_child(card_box)
         create_group_btn.connect('clicked', lambda *_: self.window.create_group_action.activate(None))
         cards_grid.append(create_group_btn)
+        
+        return cards_grid
+    
+    def _build_action_rows_layout(self, current_shortcuts):
+        """Build the action rows layout"""
+        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        
+        # Getting Started section
+        getting_started_group = Adw.PreferencesGroup()
+        getting_started_group.set_margin_start(12)
+        getting_started_group.set_margin_end(12)
+        getting_started_group.set_margin_top(12)
+        getting_started_group.set_vexpand(False)
+        getting_started_group.set_can_focus(False)
+        getting_started_group.add_css_class('separate')
+        container.append(getting_started_group)
+        
+        # Quick Connect action row
+        quick_connect_accel = self._get_action_accel_display(current_shortcuts, 'quick-connect')
+        quick_connect_row = Adw.ActionRow()
+        quick_connect_row.set_title(_('Quick Connect'))
+        quick_connect_row.set_subtitle(_('Connect instantly using an SSH command'))
+        quick_connect_row.set_activatable(True)
+        quick_connect_row.set_can_focus(False)
+        prefix_img = Gtk.Image.new_from_icon_name('network-server-symbolic')
+        prefix_img.set_can_focus(False)
+        quick_connect_row.add_prefix(prefix_img)
+        if quick_connect_accel:
+            shortcut_label = Gtk.Label(label=quick_connect_accel)
+            shortcut_label.add_css_class('dim-label')
+            shortcut_label.set_can_focus(False)
+            quick_connect_row.add_suffix(shortcut_label)
+        quick_connect_row.connect('activated', lambda *_: self.on_quick_connect_clicked(None))
+        getting_started_group.add(quick_connect_row)
+        
+        # Add New Connection action row
+        new_connection_accel = self._get_action_accel_display(current_shortcuts, 'new-connection')
+        new_connection_row = Adw.ActionRow()
+        new_connection_row.set_title(_('Add a New Connection'))
+        new_connection_row.set_subtitle(_('Create and save a new SSH connection profile'))
+        new_connection_row.set_activatable(True)
+        new_connection_row.set_can_focus(False)
+        prefix_img = Gtk.Image.new_from_icon_name('list-add-symbolic')
+        prefix_img.set_can_focus(False)
+        new_connection_row.add_prefix(prefix_img)
+        if new_connection_accel:
+            shortcut_label = Gtk.Label(label=new_connection_accel)
+            shortcut_label.add_css_class('dim-label')
+            shortcut_label.set_can_focus(False)
+            new_connection_row.add_suffix(shortcut_label)
+        new_connection_row.connect('activated', lambda *_: self.window.get_application().activate_action('new-connection'))
+        getting_started_group.add(new_connection_row)
+        
+        # Edit SSH Config action row
+        edit_config_accel = self._get_action_accel_display(current_shortcuts, 'edit-ssh-config')
+        if hasattr(self.config, 'isolated_mode') and self.config.isolated_mode:
+            config_location = '~/.config/sshpilot/config'
+        else:
+            config_location = '~/.ssh/config'
+        edit_config_row = Adw.ActionRow()
+        edit_config_row.set_title(_('View and Edit SSH Config'))
+        edit_config_row.set_subtitle(_('Directly edit your SSH configuration file') + f' ({config_location})')
+        edit_config_row.set_activatable(True)
+        edit_config_row.set_can_focus(False)
+        prefix_img = Gtk.Image.new_from_icon_name('document-edit-symbolic')
+        prefix_img.set_can_focus(False)
+        edit_config_row.add_prefix(prefix_img)
+        if edit_config_accel:
+            shortcut_label = Gtk.Label(label=edit_config_accel)
+            shortcut_label.add_css_class('dim-label')
+            shortcut_label.set_can_focus(False)
+            edit_config_row.add_suffix(shortcut_label)
+        edit_config_row.connect('activated', lambda *_: self.window.get_application().activate_action('edit-ssh-config'))
+        getting_started_group.add(edit_config_row)
+        
+        # Local Terminal action row
+        local_terminal_accel = self._get_action_accel_display(current_shortcuts, 'local-terminal')
+        local_terminal_row = Adw.ActionRow()
+        local_terminal_row.set_title(_('Open Local Terminal'))
+        local_terminal_row.set_subtitle(_('Work on your local machine without connecting to a server'))
+        local_terminal_row.set_activatable(True)
+        local_terminal_row.set_can_focus(False)
+        prefix_img = Gtk.Image.new_from_icon_name('utilities-terminal-symbolic')
+        prefix_img.set_can_focus(False)
+        local_terminal_row.add_prefix(prefix_img)
+        if local_terminal_accel:
+            shortcut_label = Gtk.Label(label=local_terminal_accel)
+            shortcut_label.add_css_class('dim-label')
+            shortcut_label.set_can_focus(False)
+            local_terminal_row.add_suffix(shortcut_label)
+        local_terminal_row.connect('activated', lambda *_: self.window.terminal_manager.show_local_terminal())
+        getting_started_group.add(local_terminal_row)
+        
+        # Help & Resources section
+        help_group = Adw.PreferencesGroup()
+        help_group.set_margin_start(12)
+        help_group.set_margin_end(12)
+        help_group.set_margin_top(24)
+        help_group.set_vexpand(False)
+        help_group.set_can_focus(False)
+        help_group.add_css_class('separate')
+        container.append(help_group)
+        
+        # Shortcuts action row
+        shortcuts_accel = self._get_action_accel_display(current_shortcuts, 'shortcuts')
+        shortcuts_row = Adw.ActionRow()
+        shortcuts_row.set_title(_('Keyboard Shortcuts'))
+        shortcuts_row.set_subtitle(_('View keyboard shortcuts'))
+        shortcuts_row.set_activatable(True)
+        shortcuts_row.set_can_focus(False)
+        prefix_img = Gtk.Image.new_from_icon_name('preferences-desktop-keyboard-symbolic')
+        prefix_img.set_can_focus(False)
+        shortcuts_row.add_prefix(prefix_img)
+        if shortcuts_accel:
+            shortcut_label = Gtk.Label(label=shortcuts_accel)
+            shortcut_label.add_css_class('dim-label')
+            shortcut_label.set_can_focus(False)
+            shortcuts_row.add_suffix(shortcut_label)
+        shortcuts_row.connect('activated', lambda *_: self.window.show_shortcuts_window())
+        help_group.add(shortcuts_row)
+        
+        # Preferences action row
+        preferences_accel = self._get_action_accel_display(current_shortcuts, 'preferences')
+        preferences_row = Adw.ActionRow()
+        preferences_row.set_title(_('Preferences'))
+        preferences_row.set_subtitle(_('Customize SSH Pilot and modify settings'))
+        preferences_row.set_activatable(True)
+        preferences_row.set_can_focus(False)
+        prefix_img = Gtk.Image.new_from_icon_name('preferences-system-symbolic')
+        prefix_img.set_can_focus(False)
+        preferences_row.add_prefix(prefix_img)
+        if preferences_accel:
+            shortcut_label = Gtk.Label(label=preferences_accel)
+            shortcut_label.add_css_class('dim-label')
+            shortcut_label.set_can_focus(False)
+            preferences_row.add_suffix(shortcut_label)
+        preferences_row.connect('activated', lambda *_: self.window.show_preferences())
+        help_group.add(preferences_row)
+        
+        # Online help action row
+        help_accel = self._get_action_accel_display(current_shortcuts, 'help')
+        help_row = Adw.ActionRow()
+        help_row.set_title(_('Online Documentation'))
+        help_row.set_subtitle(_('Visit the wiki for guides and troubleshooting'))
+        help_row.set_activatable(True)
+        help_row.set_can_focus(False)
+        prefix_img = Gtk.Image.new_from_icon_name('help-browser-symbolic')
+        prefix_img.set_can_focus(False)
+        help_row.add_prefix(prefix_img)
+        if help_accel:
+            shortcut_label = Gtk.Label(label=help_accel)
+            shortcut_label.add_css_class('dim-label')
+            shortcut_label.set_can_focus(False)
+            help_row.add_suffix(shortcut_label)
+        help_row.connect('activated', lambda *_: self.open_online_help())
+        help_group.add(help_row)
+        
+        # New Group action row
+        create_group_accel = self._get_action_accel_display(current_shortcuts, 'create-group')
+        create_group_row = Adw.ActionRow()
+        create_group_row.set_title(_('New Group'))
+        create_group_row.set_subtitle(_('Create a new connection group'))
+        create_group_row.set_activatable(True)
+        create_group_row.set_can_focus(False)
+        prefix_img = Gtk.Image.new_from_icon_name('folder-new-symbolic')
+        prefix_img.set_can_focus(False)
+        create_group_row.add_prefix(prefix_img)
+        if create_group_accel:
+            shortcut_label = Gtk.Label(label=create_group_accel)
+            shortcut_label.add_css_class('dim-label')
+            shortcut_label.set_can_focus(False)
+            create_group_row.add_suffix(shortcut_label)
+        create_group_row.connect('activated', lambda *_: self.window.create_group_action.activate(None))
+        help_group.add(create_group_row)
+        
+        return container
+    
+    def _on_layout_toggle_changed(self, toggle):
+        """Handle layout toggle change"""
+        if toggle.get_active():
+            # Cards view
+            self.layout_stack.set_visible_child_name('cards')
+            toggle.set_icon_name('view-list-symbolic')
+            toggle.set_tooltip_text(_('Switch to list view'))
+            # Save preference
+            self.config.set_setting('ui.welcome_page_layout', 'cards')
+        else:
+            # List view
+            self.layout_stack.set_visible_child_name('rows')
+            toggle.set_icon_name('view-grid-symbolic')
+            toggle.set_tooltip_text(_('Switch to grid view'))
+            # Save preference
+            self.config.set_setting('ui.welcome_page_layout', 'rows')
     
     def show_sidebar_hint(self):
         """Show a hint about using the sidebar to manage connections"""
