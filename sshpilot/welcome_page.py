@@ -465,6 +465,13 @@ class WelcomePage(Gtk.Overlay):
     
     def _build_action_rows_layout(self, current_shortcuts):
         """Build the action rows layout"""
+        # Wrap in clamp to constrain width
+        clamp = Adw.Clamp()
+        clamp.set_maximum_size(600)
+        clamp.set_tightening_threshold(400)
+        clamp.set_vexpand(False)
+        clamp.set_can_focus(False)
+        
         container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         
         # Getting Started section
@@ -635,7 +642,10 @@ class WelcomePage(Gtk.Overlay):
         create_group_row.connect('activated', lambda *_: self.window.create_group_action.activate(None))
         help_group.add(create_group_row)
         
-        return container
+        # Set container as child of clamp
+        clamp.set_child(container)
+        
+        return clamp
     
     def _on_layout_toggle_changed(self, toggle):
         """Handle layout toggle change"""
