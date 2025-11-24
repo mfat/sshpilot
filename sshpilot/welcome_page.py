@@ -95,24 +95,6 @@ class WelcomePage(Gtk.Overlay):
         icon.set_can_focus(False)
         header_box.append(icon)
         
-        # Welcome title
-        title_label = Gtk.Label()
-        title_label.set_text(_('Welcome to SSH Pilot'))
-        title_label.add_css_class('title-1')
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.set_can_focus(False)
-        header_box.append(title_label)
-        
-        # Description
-        desc_label = Gtk.Label()
-        #desc_label.set_text(_('A modern SSH connection manager with integrated terminal'))
-        desc_label.add_css_class('dim-label')
-        desc_label.set_halign(Gtk.Align.CENTER)
-        desc_label.set_wrap(True)
-        desc_label.set_justify(Gtk.Justification.CENTER)
-        desc_label.set_can_focus(False)
-        header_box.append(desc_label)
-        
         content_box.append(header_box)
         
         # Stack to hold both layouts
