@@ -16,6 +16,156 @@ from .platform_utils import is_flatpak, is_macos
 logger = logging.getLogger(__name__)
 
 
+def _is_password_auth_enabled(connection: Any = None) -> bool:
+    """Check if password authentication is enabled/required for this connection.
+    
+    Returns True only if password auth is explicitly required or preferred:
+    - auth_method == 1 (password auth explicitly selected)
+    - pubkey_auth_no == True (pubkey disabled, password required)
+    - preferred_authentications contains 'password' as the primary/preferred method
+    
+    Returns False for:
+    - auth_method == 0 (key-based auth) with pubkey enabled
+    - Combined auth scenarios (key-based with password fallback)
+    - All key_select_mode values (0=try all, 1=specific key with IdentitiesOnly, 2=specific key without IdentitiesOnly)
+    """
+    if connection is None:
+        return False
+    
+    try:
+        # Check auth_method (1 = password, 0 = key-based)
+        # This is the PRIMARY indicator - if it's 0, it's key-based auth, period
+        auth_method = int(getattr(connection, "auth_method", 0) or 0)
+        
+        # If auth_method is 0 (key-based), don't show password prompt
+        # Even if password is in PreferredAuthentications, it's just a fallback
+        if auth_method == 0:
+            logger.debug("Password auth disabled: auth_method == 0 (key-based auth)")
+            return False
+        
+        # If auth_method is 1, password auth is explicitly selected
+        if auth_method == 1:
+            logger.debug("Password auth enabled: auth_method == 1")
+            return True
+        
+        # Check if pubkey auth is disabled (forces password auth)
+        if getattr(connection, "pubkey_auth_no", False):
+            logger.debug("Password auth enabled: pubkey_auth_no == True")
+            return True
+        
+        # Check preferred_authentications - only if password is the primary/preferred method
+        # If publickey comes before password, it's key-based with password fallback - don't show prompt
+        preferred_auth = getattr(connection, "preferred_authentications", None)
+        if preferred_auth:
+            auth_list = []
+            if isinstance(preferred_auth, (list, tuple)):
+                auth_list = [str(a).lower() for a in preferred_auth]
+            elif isinstance(preferred_auth, str):
+                auth_list = [a.strip().lower() for a in preferred_auth.split(',')]
+            
+            if auth_list:
+                # Only return True if password is the first/preferred method
+                if auth_list[0] == "password":
+                    return True
+                
+                # If publickey comes before password, it's key-based auth (password is just fallback)
+                password_idx = auth_list.index("password") if "password" in auth_list else -1
+                publickey_idx = auth_list.index("publickey") if "publickey" in auth_list else -1
+                
+                # If publickey is not in the list at all and password is, password might be required
+                if publickey_idx == -1 and password_idx >= 0:
+                    return True
+                
+                # If publickey comes before password, it's key-based auth - don't show prompt
+                if publickey_idx >= 0 and password_idx >= 0 and publickey_idx < password_idx:
+                    return False
+    except Exception as exc:
+        logger.debug(f"Error checking password auth status: {exc}")
+    
+    # Default: key-based auth (auth_method == 0) - don't show password prompt
+    return False
+
+
+def _show_password_dialog_for_mount(
+    user: str,
+    host: str,
+    connection: Any = None,
+    parent_window=None,
+) -> Optional[str]:
+    """Show password dialog for external file manager mount.
+    
+    Returns the password if user provided it, None if cancelled.
+    Uses GLib main loop to handle dialog interaction properly.
+    """
+    password_result = [None]  # Use list to allow modification in nested function
+    main_loop = GLib.MainLoop()
+    
+    # Get display name
+    nickname = getattr(connection, 'nickname', None) if connection else None
+    display_name = nickname or f"{user}@{host}"
+    
+    # Create password dialog
+    dialog = Adw.MessageDialog(
+        transient_for=parent_window,
+        modal=True,
+        heading="Password Required",
+        body=f"Please enter your password for {display_name}:",
+    )
+    
+    # Add password entry
+    password_entry = Gtk.PasswordEntry()
+    password_entry.set_property("placeholder-text", "Password")
+    password_entry.set_margin_top(12)
+    password_entry.set_margin_bottom(12)
+    password_entry.set_margin_start(12)
+    password_entry.set_margin_end(12)
+    
+    # Handle Enter key to activate default response
+    key_controller = Gtk.EventControllerKey()
+    def on_key_pressed(_controller, keyval, _keycode, _state):
+        if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+            dialog.respond("connect")
+            return True
+        return False
+    key_controller.connect("key-pressed", on_key_pressed)
+    password_entry.add_controller(key_controller)
+    
+    # Add entry to dialog's extra child area
+    dialog.set_extra_child(password_entry)
+    
+    # Add responses
+    dialog.add_response("cancel", "Cancel")
+    dialog.add_response("connect", "Connect")
+    dialog.set_default_response("connect")
+    dialog.set_close_response("cancel")
+    
+    # Focus password entry when dialog is shown
+    def on_dialog_shown(_dialog):
+        password_entry.grab_focus()
+    dialog.connect("notify::visible", lambda d, _: on_dialog_shown(d) if d.get_visible() else None)
+    
+    def on_response(_dialog, response: str) -> None:
+        if response == "connect":
+            entered_password = password_entry.get_text()
+            if entered_password:
+                password_result[0] = entered_password
+            else:
+                password_result[0] = None  # Empty password treated as cancel
+        else:
+            password_result[0] = None  # User cancelled
+        dialog.destroy()
+        main_loop.quit()
+    
+    dialog.connect("response", on_response)
+    dialog.present()
+    
+    # Run main loop to wait for dialog response
+    # This blocks until the dialog is closed
+    main_loop.run()
+    
+    return password_result[0]
+
+
 class PasswordMountOperation(Gio.MountOperation):
     """Custom MountOperation that automatically provides passwords from keyring"""
     
@@ -25,9 +175,8 @@ class PasswordMountOperation(Gio.MountOperation):
         self._username = username
         self._password_provided = False
         
-        # Connect to ask-password signal
-        if password:
-            self.connect("ask-password", self._on_ask_password)
+        # Always connect to ask-password signal to handle password requests
+        self.connect("ask-password", self._on_ask_password)
     
     def _on_ask_password(self, op, message: str, default_user: str, default_domain: str, flags: Gio.AskPasswordFlags):
         """Handle password requests from GVFS via signal"""
@@ -40,8 +189,9 @@ class PasswordMountOperation(Gio.MountOperation):
             self.reply(Gio.MountOperationResult.HANDLED)
             self._password_provided = True
         else:
-            # No password available, let user provide it
-            logger.debug("PasswordMountOperation: No saved password, using default behavior")
+            # No password available - this shouldn't happen if we showed dialog before mounting
+            # But if it does, reply UNHANDLED so gvfs can show its own prompt
+            logger.warning("PasswordMountOperation: No password available when gvfs requested it")
             self.reply(Gio.MountOperationResult.UNHANDLED)
 
 
@@ -105,6 +255,8 @@ def open_remote_in_file_manager(
 
     # Check if we have connection info and can get password - if so, skip verification
     has_password = False
+    dialog_password = None  # Store password from dialog if needed
+    
     if connection_manager is not None:
         # Try to get password using the same logic as mount
         lookup_hosts = []
@@ -137,6 +289,27 @@ def open_remote_in_file_manager(
             except Exception:
                 pass
 
+    # If no password found and password auth is enabled, show password dialog before verification
+    if not has_password and connection_manager is not None:
+        if _is_password_auth_enabled(connection):
+            logger.debug("External file manager: No password found, password auth enabled, showing password dialog before verification")
+            dialog_password = _show_password_dialog_for_mount(user, host, connection, progress_dialog)
+            if dialog_password:
+                logger.debug("External file manager: Password provided via dialog")
+                has_password = True
+            else:
+                # User cancelled password dialog
+                logger.info("User cancelled password entry for external file manager")
+                progress_dialog.update_progress(0.0, "Password entry cancelled")
+                progress_dialog.show_error("Password entry cancelled")
+                GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
+                if error_callback:
+                    error_callback("Password entry cancelled")
+                return False, "Password entry cancelled"
+        else:
+            logger.debug("External file manager: No password found, but password auth not enabled, proceeding with key-based auth")
+            # No password needed, proceed with key-based authentication
+
     # Skip verification for localhost or if we have password
     if host in ("localhost", "127.0.0.1") or has_password:
         if has_password:
@@ -149,7 +322,7 @@ def open_remote_in_file_manager(
                 uri, user, host, port, error_callback, progress_dialog
             )
         else:
-            _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog, connection, connection_manager)
+            _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog, connection, connection_manager, provided_password=dialog_password)
         return True, None
 
     progress_dialog.update_progress(0.05, "Verifying SSH connection...")
@@ -174,7 +347,7 @@ def open_remote_in_file_manager(
                 uri, user, host, port, error_callback, progress_dialog
             )
         else:
-            _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog, connection, connection_manager)
+            _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog, connection, connection_manager, provided_password=dialog_password)
 
     _verify_ssh_connection_async(user, host, port, _on_verify_complete)
 
@@ -238,6 +411,7 @@ def _mount_and_open_sftp(
     progress_dialog=None,
     connection: Any = None,
     connection_manager: Any = None,
+    provided_password: Optional[str] = None,
 ):
     """Mount SFTP location and open in file manager"""
     try:
@@ -249,11 +423,12 @@ def _mount_and_open_sftp(
             progress_dialog.present()
 
         # Try to retrieve password using the same logic as built-in file manager
-        password = None
-        logger.debug("External file manager: _mount_and_open_sftp called with connection_manager=%s, connection=%s", 
+        password = provided_password  # Use provided password if available
+        logger.debug("External file manager: _mount_and_open_sftp called with connection_manager=%s, connection=%s, provided_password=%s", 
                     "present" if connection_manager is not None else "None",
-                    "present" if connection is not None else "None")
-        if connection_manager is not None:
+                    "present" if connection is not None else "None",
+                    "present" if provided_password else "None")
+        if not password and connection_manager is not None:
             # Try multiple host identifiers to match storage logic
             lookup_hosts = []
             if connection is not None:
@@ -313,12 +488,33 @@ def _mount_and_open_sftp(
                         exc
                     )
 
+        # If no password found and password auth is enabled, show password dialog before mounting
+        if not password and connection_manager is not None:
+            if _is_password_auth_enabled(connection):
+                logger.debug("External file manager: No password found, password auth enabled, showing password dialog")
+                password = _show_password_dialog_for_mount(user, host, connection, progress_dialog)
+                if not password:
+                    # User cancelled password dialog
+                    logger.info("User cancelled password entry for external file manager")
+                    progress_dialog.update_progress(0.0, "Password entry cancelled")
+                    progress_dialog.show_error("Password entry cancelled")
+            else:
+                logger.debug("External file manager: No password found, but password auth not enabled, proceeding with key-based auth")
+                # No password needed - proceed with mount using key-based authentication
+                password = None
+
         gfile = Gio.File.new_for_uri(uri)
-        # Use custom MountOperation with password if available
+        # Use custom MountOperation with password
         lookup_user = user
         if connection is not None:
             lookup_user = getattr(connection, "username", None) or user
-        op = PasswordMountOperation(password, lookup_user) if password else Gio.MountOperation()
+        
+        if password:
+            logger.debug("External file manager: Creating PasswordMountOperation with password for %s@%s", lookup_user, host)
+            op = PasswordMountOperation(password, lookup_user)
+        else:
+            logger.warning("External file manager: No password available for mount operation - this may cause terminal prompts")
+            op = Gio.MountOperation()
 
         def on_mounted(source, res, data=None):
             try:
