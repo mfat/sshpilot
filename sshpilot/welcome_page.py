@@ -422,42 +422,6 @@ class WelcomePage(Gtk.Overlay):
         create_group_btn.set_child(card_box)
         create_group_btn.connect('clicked', lambda *_: self.window.create_group_action.activate(None))
         cards_grid.append(create_group_btn)
-        
-        # Copy Key to Server card
-        copy_key_accel = self._get_action_accel_display(current_shortcuts, 'new-key')
-        copy_key_btn = Gtk.Button()
-        copy_key_btn.set_can_focus(False)
-        copy_key_btn.add_css_class('card')
-        copy_key_btn.set_size_request(160, 160)
-        
-        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card_box.set_margin_start(16)
-        card_box.set_margin_end(16)
-        card_box.set_margin_top(16)
-        card_box.set_margin_bottom(16)
-        card_box.set_halign(Gtk.Align.CENTER)
-        card_box.set_valign(Gtk.Align.CENTER)
-        
-        prefix_img = Gtk.Image.new_from_icon_name('document-send-symbolic')
-        prefix_img.set_can_focus(False)
-        prefix_img.set_pixel_size(32)
-        card_box.append(prefix_img)
-        
-        title_label = Gtk.Label(label=_('Copy Key to Server'))
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.add_css_class('title-4')
-        card_box.append(title_label)
-        
-        if copy_key_accel:
-            shortcut_label = Gtk.Label(label=copy_key_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcut_label.set_halign(Gtk.Align.CENTER)
-            card_box.append(shortcut_label)
-        
-        copy_key_btn.set_child(card_box)
-        copy_key_btn.connect('clicked', lambda *_: self.window.show_connection_selection_for_ssh_copy())
-        cards_grid.append(copy_key_btn)
     
     def show_sidebar_hint(self):
         """Show a hint about using the sidebar to manage connections"""
