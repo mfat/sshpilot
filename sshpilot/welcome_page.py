@@ -133,7 +133,7 @@ class WelcomePage(Gtk.Overlay):
         quick_connect_btn = Gtk.Button()
         quick_connect_btn.set_can_focus(False)
         quick_connect_btn.add_css_class('card')
-        quick_connect_btn.set_size_request(160, 160)
+        quick_connect_btn.set_size_request(120, 120)
         
         card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         card_box.set_margin_start(16)
@@ -169,7 +169,7 @@ class WelcomePage(Gtk.Overlay):
         new_connection_btn = Gtk.Button()
         new_connection_btn.set_can_focus(False)
         new_connection_btn.add_css_class('card')
-        new_connection_btn.set_size_request(160, 160)
+        new_connection_btn.set_size_request(120, 120)
         
         card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         card_box.set_margin_start(16)
@@ -212,7 +212,7 @@ class WelcomePage(Gtk.Overlay):
         edit_config_btn = Gtk.Button()
         edit_config_btn.set_can_focus(False)
         edit_config_btn.add_css_class('card')
-        edit_config_btn.set_size_request(160, 160)
+        edit_config_btn.set_size_request(120, 120)
         
         card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         card_box.set_margin_start(16)
@@ -248,7 +248,7 @@ class WelcomePage(Gtk.Overlay):
         local_terminal_btn = Gtk.Button()
         local_terminal_btn.set_can_focus(False)
         local_terminal_btn.add_css_class('card')
-        local_terminal_btn.set_size_request(160, 160)
+        local_terminal_btn.set_size_request(120, 120)
         
         card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         card_box.set_margin_start(16)
@@ -284,7 +284,7 @@ class WelcomePage(Gtk.Overlay):
         shortcuts_btn = Gtk.Button()
         shortcuts_btn.set_can_focus(False)
         shortcuts_btn.add_css_class('card')
-        shortcuts_btn.set_size_request(160, 160)
+        shortcuts_btn.set_size_request(120, 120)
         
         card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         card_box.set_margin_start(16)
@@ -320,7 +320,7 @@ class WelcomePage(Gtk.Overlay):
         preferences_btn = Gtk.Button()
         preferences_btn.set_can_focus(False)
         preferences_btn.add_css_class('card')
-        preferences_btn.set_size_request(160, 160)
+        preferences_btn.set_size_request(120, 120)
         
         card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         card_box.set_margin_start(16)
@@ -356,7 +356,7 @@ class WelcomePage(Gtk.Overlay):
         help_btn = Gtk.Button()
         help_btn.set_can_focus(False)
         help_btn.add_css_class('card')
-        help_btn.set_size_request(160, 160)
+        help_btn.set_size_request(120, 120)
         
         card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         card_box.set_margin_start(16)
@@ -392,7 +392,7 @@ class WelcomePage(Gtk.Overlay):
         create_group_btn = Gtk.Button()
         create_group_btn.set_can_focus(False)
         create_group_btn.add_css_class('card')
-        create_group_btn.set_size_request(160, 160)
+        create_group_btn.set_size_request(120, 120)
         
         card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         card_box.set_margin_start(16)
