@@ -40,6 +40,13 @@
 
 
 
+
+    <release version="4.5.1" date="2025-11-24">
+
+      <description>
+        <p>- Fixed file manager bug when password authentication is selected</p>
+      </description>
+    </release>
     <release version="4.5.0" date="2025-11-24">
 
       <description>

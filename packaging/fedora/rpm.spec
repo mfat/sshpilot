@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:4.5.0}
+Version:        %{?version}%{!?version:4.5.1}
 Release:        1%{?dist}
 Summary:        SSH connection manager with integrated terminal
 
@@ -69,6 +69,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Mon Nov 24 2025 mFat <newmfat@gmail.com> - 4.5.1
+- - Fixed file manager bug when password authentication is seected
+
 * Mon Nov 24 2025 mFat <newmfat@gmail.com> - 4.5.0
 - - Redesigned start page, with card and list layouts
 - - Minor UI fixes
