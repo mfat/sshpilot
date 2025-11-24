@@ -3278,13 +3278,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             body=_("Choose a server to copy your SSH key to:")
         )
         
-        # Add a list box with connections
+        # Create a scrollable list box with connections
         list_box = Gtk.ListBox()
         list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        list_box.set_show_separators(True)
         
         for connection in connections:
             row = Gtk.ListBoxRow()
             box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            box.set_margin_start(12)
+            box.set_margin_end(12)
+            box.set_margin_top(8)
+            box.set_margin_bottom(8)
             
             # Connection info
             info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -3308,8 +3313,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             row.connection = connection
             list_box.append(row)
         
-        # Add the list box to the dialog
-        dialog.set_extra_child(list_box)
+        # Wrap list box in a scrollable window with size constraints
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_child(list_box)
+        scrolled.set_min_content_height(200)
+        scrolled.set_max_content_height(400)
+        scrolled.set_vexpand(True)
+        scrolled.set_hexpand(True)
+        
+        # Add the scrollable list to the dialog
+        dialog.set_extra_child(scrolled)
         
         # Add response buttons
         dialog.add_response('cancel', _('Cancel'))

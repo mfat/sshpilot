@@ -1,9 +1,9 @@
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=sshPilot
+Name=SSH Pilot
 GenericName=SSH Connection Manager
-Comment=SSH connection manager with integrated terminal, tunneling, and keys
+Comment=SSH connection manager with integrated terminal, tunneling, and SFTP
 Exec=sshpilot
 Icon=io.github.mfat.sshpilot
 Terminal=false
