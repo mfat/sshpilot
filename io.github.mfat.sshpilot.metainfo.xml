@@ -39,6 +39,14 @@
 
 
 
+
+    <release version="4.5.0" date="2025-11-24">
+
+      <description>
+        <p>- Redesigned start page, with card and list layouts</p>
+        <p>- Minor UI fixes</p>
+      </description>
+    </release>
     <release version="4.4.4" date="2025-11-22">
 
       <description>
