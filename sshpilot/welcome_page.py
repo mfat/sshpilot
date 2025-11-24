@@ -129,7 +129,7 @@ class WelcomePage(Gtk.Overlay):
         self.layout_stack.add_named(rows_widget, 'rows')
         
         # Load saved layout preference
-        saved_layout = self.config.get_setting('ui.welcome_page_layout', 'cards')
+        saved_layout = self.config.get_setting('ui.welcome_page_layout', 'rows')
         use_cards = saved_layout == 'cards'
         
         # Layout toggle button in top right (as overlay)
