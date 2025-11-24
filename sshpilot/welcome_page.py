@@ -389,6 +389,42 @@ class WelcomePage(Gtk.Overlay):
         preferences_btn.connect('clicked', lambda *_: self.window.show_preferences())
         cards_grid.append(preferences_btn)
         
+        # New Group card
+        create_group_accel = self._get_action_accel_display(current_shortcuts, 'create-group')
+        create_group_btn = Gtk.Button()
+        create_group_btn.set_can_focus(False)
+        create_group_btn.add_css_class('card')
+        create_group_btn.set_size_request(160, 160)
+        
+        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card_box.set_margin_start(16)
+        card_box.set_margin_end(16)
+        card_box.set_margin_top(16)
+        card_box.set_margin_bottom(16)
+        card_box.set_halign(Gtk.Align.CENTER)
+        card_box.set_valign(Gtk.Align.CENTER)
+        
+        prefix_img = Gtk.Image.new_from_icon_name('folder-new-symbolic')
+        prefix_img.set_can_focus(False)
+        prefix_img.set_pixel_size(32)
+        card_box.append(prefix_img)
+        
+        title_label = Gtk.Label(label=_('New Group'))
+        title_label.set_halign(Gtk.Align.CENTER)
+        title_label.add_css_class('title-4')
+        card_box.append(title_label)
+        
+        if create_group_accel:
+            shortcut_label = Gtk.Label(label=create_group_accel)
+            shortcut_label.add_css_class('dim-label')
+            shortcut_label.set_can_focus(False)
+            shortcut_label.set_halign(Gtk.Align.CENTER)
+            card_box.append(shortcut_label)
+        
+        create_group_btn.set_child(card_box)
+        create_group_btn.connect('clicked', lambda *_: self.window.create_group_action.activate(None))
+        cards_grid.append(create_group_btn)
+        
         # Online Documentation card
         help_accel = self._get_action_accel_display(current_shortcuts, 'help')
         help_btn = Gtk.Button()
@@ -425,12 +461,12 @@ class WelcomePage(Gtk.Overlay):
         help_btn.connect('clicked', lambda *_: self.open_online_help())
         cards_grid.append(help_btn)
         
-        # New Group card
-        create_group_accel = self._get_action_accel_display(current_shortcuts, 'create-group')
-        create_group_btn = Gtk.Button()
-        create_group_btn.set_can_focus(False)
-        create_group_btn.add_css_class('card')
-        create_group_btn.set_size_request(160, 160)
+        # About card
+        about_accel = self._get_action_accel_display(current_shortcuts, 'about')
+        about_btn = Gtk.Button()
+        about_btn.set_can_focus(False)
+        about_btn.add_css_class('card')
+        about_btn.set_size_request(160, 160)
         
         card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         card_box.set_margin_start(16)
@@ -440,26 +476,26 @@ class WelcomePage(Gtk.Overlay):
         card_box.set_halign(Gtk.Align.CENTER)
         card_box.set_valign(Gtk.Align.CENTER)
         
-        prefix_img = Gtk.Image.new_from_icon_name('folder-new-symbolic')
+        prefix_img = Gtk.Image.new_from_icon_name('help-about-symbolic')
         prefix_img.set_can_focus(False)
         prefix_img.set_pixel_size(32)
         card_box.append(prefix_img)
         
-        title_label = Gtk.Label(label=_('New Group'))
+        title_label = Gtk.Label(label=_('About'))
         title_label.set_halign(Gtk.Align.CENTER)
         title_label.add_css_class('title-4')
         card_box.append(title_label)
         
-        if create_group_accel:
-            shortcut_label = Gtk.Label(label=create_group_accel)
+        if about_accel:
+            shortcut_label = Gtk.Label(label=about_accel)
             shortcut_label.add_css_class('dim-label')
             shortcut_label.set_can_focus(False)
             shortcut_label.set_halign(Gtk.Align.CENTER)
             card_box.append(shortcut_label)
         
-        create_group_btn.set_child(card_box)
-        create_group_btn.connect('clicked', lambda *_: self.window.create_group_action.activate(None))
-        cards_grid.append(create_group_btn)
+        about_btn.set_child(card_box)
+        about_btn.connect('clicked', lambda *_: self.window.get_application().activate_action('about'))
+        cards_grid.append(about_btn)
         
         return cards_grid
     
