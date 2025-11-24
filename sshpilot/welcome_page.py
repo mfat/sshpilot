@@ -69,7 +69,7 @@ class WelcomePage(Gtk.Overlay):
         
         # Clamp for proper width
         clamp = Adw.Clamp()
-        clamp.set_maximum_size(800)
+        clamp.set_maximum_size(1200)
         clamp.set_tightening_threshold(400)
         clamp.set_child(content_box)
         clamp.set_vexpand(False)
@@ -115,50 +115,90 @@ class WelcomePage(Gtk.Overlay):
         
         content_box.append(header_box)
         
-        # Getting Started section
-        getting_started_group = Adw.PreferencesGroup()
-        getting_started_group.set_margin_start(12)
-        getting_started_group.set_margin_end(12)
-        getting_started_group.set_margin_top(12)
-        getting_started_group.set_vexpand(False)
-        getting_started_group.set_can_focus(False)
-        content_box.append(getting_started_group)
+        # Cards grid
+        cards_grid = Gtk.FlowBox()
+        cards_grid.set_selection_mode(Gtk.SelectionMode.NONE)
+        cards_grid.set_max_children_per_line(3)
+        cards_grid.set_min_children_per_line(1)
+        cards_grid.set_column_spacing(12)
+        cards_grid.set_row_spacing(12)
+        cards_grid.set_margin_start(12)
+        cards_grid.set_margin_end(12)
+        cards_grid.set_margin_top(12)
+        cards_grid.set_homogeneous(True)
+        content_box.append(cards_grid)
         
-        # Quick Connect action row
+        # Quick Connect card
         quick_connect_accel = self._get_action_accel_display(current_shortcuts, 'quick-connect')
-        quick_connect_row = Adw.ActionRow()
-        quick_connect_row.set_title(_('Quick Connect'))
-        quick_connect_row.set_subtitle(_('Connect instantly using an SSH command'))
-        quick_connect_row.set_activatable(True)
-        quick_connect_row.set_can_focus(False)
+        quick_connect_btn = Gtk.Button()
+        quick_connect_btn.set_can_focus(False)
+        quick_connect_btn.add_css_class('card')
+        quick_connect_btn.set_size_request(160, 160)
+        
+        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card_box.set_margin_start(16)
+        card_box.set_margin_end(16)
+        card_box.set_margin_top(16)
+        card_box.set_margin_bottom(16)
+        card_box.set_halign(Gtk.Align.CENTER)
+        card_box.set_valign(Gtk.Align.CENTER)
+        
         prefix_img = Gtk.Image.new_from_icon_name('network-server-symbolic')
         prefix_img.set_can_focus(False)
-        quick_connect_row.add_prefix(prefix_img)
+        prefix_img.set_pixel_size(32)
+        card_box.append(prefix_img)
+        
+        title_label = Gtk.Label(label=_('Quick Connect'))
+        title_label.set_halign(Gtk.Align.CENTER)
+        title_label.add_css_class('title-4')
+        card_box.append(title_label)
+        
         if quick_connect_accel:
             shortcut_label = Gtk.Label(label=quick_connect_accel)
             shortcut_label.add_css_class('dim-label')
             shortcut_label.set_can_focus(False)
-            quick_connect_row.add_suffix(shortcut_label)
-        quick_connect_row.connect('activated', lambda *_: self.on_quick_connect_clicked(None))
-        getting_started_group.add(quick_connect_row)
+            shortcut_label.set_halign(Gtk.Align.CENTER)
+            card_box.append(shortcut_label)
         
-        # Add New Connection action row
+        quick_connect_btn.set_child(card_box)
+        quick_connect_btn.connect('clicked', lambda *_: self.on_quick_connect_clicked(None))
+        cards_grid.append(quick_connect_btn)
+        
+        # Add New Connection card
         new_connection_accel = self._get_action_accel_display(current_shortcuts, 'new-connection')
-        new_connection_row = Adw.ActionRow()
-        new_connection_row.set_title(_('Add a New Connection'))
-        new_connection_row.set_subtitle(_('Create and save a new SSH connection profile'))
-        new_connection_row.set_activatable(True)
-        new_connection_row.set_can_focus(False)
+        new_connection_btn = Gtk.Button()
+        new_connection_btn.set_can_focus(False)
+        new_connection_btn.add_css_class('card')
+        new_connection_btn.set_size_request(160, 160)
+        
+        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card_box.set_margin_start(16)
+        card_box.set_margin_end(16)
+        card_box.set_margin_top(16)
+        card_box.set_margin_bottom(16)
+        card_box.set_halign(Gtk.Align.CENTER)
+        card_box.set_valign(Gtk.Align.CENTER)
+        
         prefix_img = Gtk.Image.new_from_icon_name('list-add-symbolic')
         prefix_img.set_can_focus(False)
-        new_connection_row.add_prefix(prefix_img)
+        prefix_img.set_pixel_size(32)
+        card_box.append(prefix_img)
+        
+        title_label = Gtk.Label(label=_('Add a New Connection'))
+        title_label.set_halign(Gtk.Align.CENTER)
+        title_label.add_css_class('title-4')
+        card_box.append(title_label)
+        
         if new_connection_accel:
             shortcut_label = Gtk.Label(label=new_connection_accel)
             shortcut_label.add_css_class('dim-label')
             shortcut_label.set_can_focus(False)
-            new_connection_row.add_suffix(shortcut_label)
-        new_connection_row.connect('activated', lambda *_: self.window.get_application().activate_action('new-connection'))
-        getting_started_group.add(new_connection_row)
+            shortcut_label.set_halign(Gtk.Align.CENTER)
+            card_box.append(shortcut_label)
+        
+        new_connection_btn.set_child(card_box)
+        new_connection_btn.connect('clicked', lambda *_: self.window.get_application().activate_action('new-connection'))
+        cards_grid.append(new_connection_btn)
         
         # Edit SSH Config action row
         edit_config_accel = self._get_action_accel_display(current_shortcuts, 'edit-ssh-config')
@@ -169,102 +209,255 @@ class WelcomePage(Gtk.Overlay):
         else:
             config_location = '~/.ssh/config'
         
-        edit_config_row = Adw.ActionRow()
-        edit_config_row.set_title(_('View and Edit SSH Config'))
-        edit_config_row.set_subtitle(_('Directly edit your SSH configuration file') + f' ({config_location})')
-        edit_config_row.set_activatable(True)
-        edit_config_row.set_can_focus(False)
+        edit_config_btn = Gtk.Button()
+        edit_config_btn.set_can_focus(False)
+        edit_config_btn.add_css_class('card')
+        edit_config_btn.set_size_request(160, 160)
+        
+        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card_box.set_margin_start(16)
+        card_box.set_margin_end(16)
+        card_box.set_margin_top(16)
+        card_box.set_margin_bottom(16)
+        card_box.set_halign(Gtk.Align.CENTER)
+        card_box.set_valign(Gtk.Align.CENTER)
+        
         prefix_img = Gtk.Image.new_from_icon_name('document-edit-symbolic')
         prefix_img.set_can_focus(False)
-        edit_config_row.add_prefix(prefix_img)
+        prefix_img.set_pixel_size(32)
+        card_box.append(prefix_img)
+        
+        title_label = Gtk.Label(label=_('View and Edit SSH Config'))
+        title_label.set_halign(Gtk.Align.CENTER)
+        title_label.add_css_class('title-4')
+        card_box.append(title_label)
+        
         if edit_config_accel:
             shortcut_label = Gtk.Label(label=edit_config_accel)
             shortcut_label.add_css_class('dim-label')
             shortcut_label.set_can_focus(False)
-            edit_config_row.add_suffix(shortcut_label)
-        edit_config_row.connect('activated', lambda *_: self.window.get_application().activate_action('edit-ssh-config'))
-        getting_started_group.add(edit_config_row)
+            shortcut_label.set_halign(Gtk.Align.CENTER)
+            card_box.append(shortcut_label)
         
-        # Local Terminal action row
+        edit_config_btn.set_child(card_box)
+        edit_config_btn.connect('clicked', lambda *_: self.window.get_application().activate_action('edit-ssh-config'))
+        cards_grid.append(edit_config_btn)
+        
+        # Local Terminal card
         local_terminal_accel = self._get_action_accel_display(current_shortcuts, 'local-terminal')
-        local_terminal_row = Adw.ActionRow()
-        local_terminal_row.set_title(_('Open Local Terminal'))
-        local_terminal_row.set_subtitle(_('Work on your local machine without connecting to a server'))
-        local_terminal_row.set_activatable(True)
-        local_terminal_row.set_can_focus(False)
+        local_terminal_btn = Gtk.Button()
+        local_terminal_btn.set_can_focus(False)
+        local_terminal_btn.add_css_class('card')
+        local_terminal_btn.set_size_request(160, 160)
+        
+        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card_box.set_margin_start(16)
+        card_box.set_margin_end(16)
+        card_box.set_margin_top(16)
+        card_box.set_margin_bottom(16)
+        card_box.set_halign(Gtk.Align.CENTER)
+        card_box.set_valign(Gtk.Align.CENTER)
+        
         prefix_img = Gtk.Image.new_from_icon_name('utilities-terminal-symbolic')
         prefix_img.set_can_focus(False)
-        local_terminal_row.add_prefix(prefix_img)
+        prefix_img.set_pixel_size(32)
+        card_box.append(prefix_img)
+        
+        title_label = Gtk.Label(label=_('Open Local Terminal'))
+        title_label.set_halign(Gtk.Align.CENTER)
+        title_label.add_css_class('title-4')
+        card_box.append(title_label)
+        
         if local_terminal_accel:
             shortcut_label = Gtk.Label(label=local_terminal_accel)
             shortcut_label.add_css_class('dim-label')
             shortcut_label.set_can_focus(False)
-            local_terminal_row.add_suffix(shortcut_label)
-        local_terminal_row.connect('activated', lambda *_: window.terminal_manager.show_local_terminal())
-        getting_started_group.add(local_terminal_row)
+            shortcut_label.set_halign(Gtk.Align.CENTER)
+            card_box.append(shortcut_label)
         
-        # Help & Resources section
-        help_group = Adw.PreferencesGroup()
-        help_group.set_margin_start(12)
-        help_group.set_margin_end(12)
-        help_group.set_margin_top(24)
-        help_group.set_vexpand(False)
-        help_group.set_can_focus(False)
-        content_box.append(help_group)
+        local_terminal_btn.set_child(card_box)
+        local_terminal_btn.connect('clicked', lambda *_: window.terminal_manager.show_local_terminal())
+        cards_grid.append(local_terminal_btn)
         
-        # Shortcuts action row
+        # Keyboard Shortcuts card
         shortcuts_accel = self._get_action_accel_display(current_shortcuts, 'shortcuts')
-        shortcuts_row = Adw.ActionRow()
-        shortcuts_row.set_title(_('Keyboard Shortcuts'))
-        shortcuts_row.set_subtitle(_('View keyboard shortcuts'))
-        shortcuts_row.set_activatable(True)
-        shortcuts_row.set_can_focus(False)
+        shortcuts_btn = Gtk.Button()
+        shortcuts_btn.set_can_focus(False)
+        shortcuts_btn.add_css_class('card')
+        shortcuts_btn.set_size_request(160, 160)
+        
+        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card_box.set_margin_start(16)
+        card_box.set_margin_end(16)
+        card_box.set_margin_top(16)
+        card_box.set_margin_bottom(16)
+        card_box.set_halign(Gtk.Align.CENTER)
+        card_box.set_valign(Gtk.Align.CENTER)
+        
         prefix_img = Gtk.Image.new_from_icon_name('preferences-desktop-keyboard-symbolic')
         prefix_img.set_can_focus(False)
-        shortcuts_row.add_prefix(prefix_img)
+        prefix_img.set_pixel_size(32)
+        card_box.append(prefix_img)
+        
+        title_label = Gtk.Label(label=_('Keyboard Shortcuts'))
+        title_label.set_halign(Gtk.Align.CENTER)
+        title_label.add_css_class('title-4')
+        card_box.append(title_label)
+        
         if shortcuts_accel:
             shortcut_label = Gtk.Label(label=shortcuts_accel)
             shortcut_label.add_css_class('dim-label')
             shortcut_label.set_can_focus(False)
-            shortcuts_row.add_suffix(shortcut_label)
-        shortcuts_row.connect('activated', lambda *_: window.show_shortcuts_window())
-        help_group.add(shortcuts_row)
+            shortcut_label.set_halign(Gtk.Align.CENTER)
+            card_box.append(shortcut_label)
         
-        # Preferences action row
+        shortcuts_btn.set_child(card_box)
+        shortcuts_btn.connect('clicked', lambda *_: window.show_shortcuts_window())
+        cards_grid.append(shortcuts_btn)
+        
+        # Preferences card
         preferences_accel = self._get_action_accel_display(current_shortcuts, 'preferences')
-        preferences_row = Adw.ActionRow()
-        preferences_row.set_title(_('Preferences'))
-        preferences_row.set_subtitle(_('Customize SSH Pilot and modify settings'))
-        preferences_row.set_activatable(True)
-        preferences_row.set_can_focus(False)
+        preferences_btn = Gtk.Button()
+        preferences_btn.set_can_focus(False)
+        preferences_btn.add_css_class('card')
+        preferences_btn.set_size_request(160, 160)
+        
+        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card_box.set_margin_start(16)
+        card_box.set_margin_end(16)
+        card_box.set_margin_top(16)
+        card_box.set_margin_bottom(16)
+        card_box.set_halign(Gtk.Align.CENTER)
+        card_box.set_valign(Gtk.Align.CENTER)
+        
         prefix_img = Gtk.Image.new_from_icon_name('preferences-system-symbolic')
         prefix_img.set_can_focus(False)
-        preferences_row.add_prefix(prefix_img)
+        prefix_img.set_pixel_size(32)
+        card_box.append(prefix_img)
+        
+        title_label = Gtk.Label(label=_('Preferences'))
+        title_label.set_halign(Gtk.Align.CENTER)
+        title_label.add_css_class('title-4')
+        card_box.append(title_label)
+        
         if preferences_accel:
             shortcut_label = Gtk.Label(label=preferences_accel)
             shortcut_label.add_css_class('dim-label')
             shortcut_label.set_can_focus(False)
-            preferences_row.add_suffix(shortcut_label)
-        preferences_row.connect('activated', lambda *_: window.show_preferences())
-        help_group.add(preferences_row)
+            shortcut_label.set_halign(Gtk.Align.CENTER)
+            card_box.append(shortcut_label)
         
-        # Online help action row
+        preferences_btn.set_child(card_box)
+        preferences_btn.connect('clicked', lambda *_: window.show_preferences())
+        cards_grid.append(preferences_btn)
+        
+        # Online Documentation card
         help_accel = self._get_action_accel_display(current_shortcuts, 'help')
-        help_row = Adw.ActionRow()
-        help_row.set_title(_('Online Documentation'))
-        help_row.set_subtitle(_('Visit the wiki for guides and troubleshooting'))
-        help_row.set_activatable(True)
-        help_row.set_can_focus(False)
+        help_btn = Gtk.Button()
+        help_btn.set_can_focus(False)
+        help_btn.add_css_class('card')
+        help_btn.set_size_request(160, 160)
+        
+        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card_box.set_margin_start(16)
+        card_box.set_margin_end(16)
+        card_box.set_margin_top(16)
+        card_box.set_margin_bottom(16)
+        card_box.set_halign(Gtk.Align.CENTER)
+        card_box.set_valign(Gtk.Align.CENTER)
+        
         prefix_img = Gtk.Image.new_from_icon_name('help-browser-symbolic')
         prefix_img.set_can_focus(False)
-        help_row.add_prefix(prefix_img)
+        prefix_img.set_pixel_size(32)
+        card_box.append(prefix_img)
+        
+        title_label = Gtk.Label(label=_('Online Help'))
+        title_label.set_halign(Gtk.Align.CENTER)
+        title_label.add_css_class('title-4')
+        card_box.append(title_label)
+        
         if help_accel:
             shortcut_label = Gtk.Label(label=help_accel)
             shortcut_label.add_css_class('dim-label')
             shortcut_label.set_can_focus(False)
-            help_row.add_suffix(shortcut_label)
-        help_row.connect('activated', lambda *_: self.open_online_help())
-        help_group.add(help_row)
+            shortcut_label.set_halign(Gtk.Align.CENTER)
+            card_box.append(shortcut_label)
+        
+        help_btn.set_child(card_box)
+        help_btn.connect('clicked', lambda *_: self.open_online_help())
+        cards_grid.append(help_btn)
+        
+        # New Group card
+        create_group_accel = self._get_action_accel_display(current_shortcuts, 'create-group')
+        create_group_btn = Gtk.Button()
+        create_group_btn.set_can_focus(False)
+        create_group_btn.add_css_class('card')
+        create_group_btn.set_size_request(160, 160)
+        
+        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card_box.set_margin_start(16)
+        card_box.set_margin_end(16)
+        card_box.set_margin_top(16)
+        card_box.set_margin_bottom(16)
+        card_box.set_halign(Gtk.Align.CENTER)
+        card_box.set_valign(Gtk.Align.CENTER)
+        
+        prefix_img = Gtk.Image.new_from_icon_name('folder-new-symbolic')
+        prefix_img.set_can_focus(False)
+        prefix_img.set_pixel_size(32)
+        card_box.append(prefix_img)
+        
+        title_label = Gtk.Label(label=_('New Group'))
+        title_label.set_halign(Gtk.Align.CENTER)
+        title_label.add_css_class('title-4')
+        card_box.append(title_label)
+        
+        if create_group_accel:
+            shortcut_label = Gtk.Label(label=create_group_accel)
+            shortcut_label.add_css_class('dim-label')
+            shortcut_label.set_can_focus(False)
+            shortcut_label.set_halign(Gtk.Align.CENTER)
+            card_box.append(shortcut_label)
+        
+        create_group_btn.set_child(card_box)
+        create_group_btn.connect('clicked', lambda *_: self.window.create_group_action.activate(None))
+        cards_grid.append(create_group_btn)
+        
+        # Copy Key to Server card
+        copy_key_accel = self._get_action_accel_display(current_shortcuts, 'new-key')
+        copy_key_btn = Gtk.Button()
+        copy_key_btn.set_can_focus(False)
+        copy_key_btn.add_css_class('card')
+        copy_key_btn.set_size_request(160, 160)
+        
+        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card_box.set_margin_start(16)
+        card_box.set_margin_end(16)
+        card_box.set_margin_top(16)
+        card_box.set_margin_bottom(16)
+        card_box.set_halign(Gtk.Align.CENTER)
+        card_box.set_valign(Gtk.Align.CENTER)
+        
+        prefix_img = Gtk.Image.new_from_icon_name('document-send-symbolic')
+        prefix_img.set_can_focus(False)
+        prefix_img.set_pixel_size(32)
+        card_box.append(prefix_img)
+        
+        title_label = Gtk.Label(label=_('Copy Key to Server'))
+        title_label.set_halign(Gtk.Align.CENTER)
+        title_label.add_css_class('title-4')
+        card_box.append(title_label)
+        
+        if copy_key_accel:
+            shortcut_label = Gtk.Label(label=copy_key_accel)
+            shortcut_label.add_css_class('dim-label')
+            shortcut_label.set_can_focus(False)
+            shortcut_label.set_halign(Gtk.Align.CENTER)
+            card_box.append(shortcut_label)
+        
+        copy_key_btn.set_child(card_box)
+        copy_key_btn.connect('clicked', lambda *_: self.window.show_connection_selection_for_ssh_copy())
+        cards_grid.append(copy_key_btn)
     
     def show_sidebar_hint(self):
         """Show a hint about using the sidebar to manage connections"""
