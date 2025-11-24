@@ -16,6 +16,35 @@ from .platform_utils import is_flatpak, is_macos
 logger = logging.getLogger(__name__)
 
 
+class PasswordMountOperation(Gio.MountOperation):
+    """Custom MountOperation that automatically provides passwords from keyring"""
+    
+    def __init__(self, password: Optional[str] = None, username: Optional[str] = None):
+        super().__init__()
+        self._password = password
+        self._username = username
+        self._password_provided = False
+        
+        # Connect to ask-password signal
+        if password:
+            self.connect("ask-password", self._on_ask_password)
+    
+    def _on_ask_password(self, op, message: str, default_user: str, default_domain: str, flags: Gio.AskPasswordFlags):
+        """Handle password requests from GVFS via signal"""
+        if self._password and not self._password_provided:
+            logger.debug("PasswordMountOperation: Providing saved password for user %s", default_user)
+            self.set_password(self._password)
+            # Use provided username if available, otherwise use default_user from mount operation
+            username_to_use = self._username if self._username else default_user
+            self.set_username(username_to_use)
+            self.reply(Gio.MountOperationResult.HANDLED)
+            self._password_provided = True
+        else:
+            # No password available, let user provide it
+            logger.debug("PasswordMountOperation: No saved password, using default behavior")
+            self.reply(Gio.MountOperationResult.UNHANDLED)
+
+
 def open_remote_in_file_manager(
     user: str,
     host: str,
@@ -74,16 +103,53 @@ def open_remote_in_file_manager(
     progress_dialog.present()
     progress_dialog.start_progress_updates()
 
-    # Skip verification for localhost
-    if host in ("localhost", "127.0.0.1"):
-        logger.info("Localhost detected, skipping SSH verification")
+    # Check if we have connection info and can get password - if so, skip verification
+    has_password = False
+    if connection_manager is not None:
+        # Try to get password using the same logic as mount
+        lookup_hosts = []
+        if connection is not None:
+            hostname = getattr(connection, "hostname", None)
+            host_attr = getattr(connection, "host", None)
+            nickname = getattr(connection, "nickname", None)
+            
+            if hostname:
+                lookup_hosts.append(hostname)
+            if host_attr and host_attr not in lookup_hosts:
+                lookup_hosts.append(host_attr)
+            if nickname and nickname not in lookup_hosts:
+                lookup_hosts.append(nickname)
+        
+        if not lookup_hosts:
+            lookup_hosts = [host]
+        
+        lookup_user = user
+        if connection is not None:
+            lookup_user = getattr(connection, "username", None) or user
+        
+        for lookup_host in lookup_hosts:
+            try:
+                retrieved = connection_manager.get_password(lookup_host, lookup_user)
+                if retrieved:
+                    logger.debug("External file manager: Found password, skipping SSH verification")
+                    has_password = True
+                    break
+            except Exception:
+                pass
+
+    # Skip verification for localhost or if we have password
+    if host in ("localhost", "127.0.0.1") or has_password:
+        if has_password:
+            logger.info("Password available, skipping SSH verification")
+        else:
+            logger.info("Localhost detected, skipping SSH verification")
         progress_dialog.update_progress(0.3, "Mounting...")
         if is_flatpak():
             _open_sftp_flatpak_compatible(
                 uri, user, host, port, error_callback, progress_dialog
             )
         else:
-            _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog)
+            _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog, connection, connection_manager)
         return True, None
 
     progress_dialog.update_progress(0.05, "Verifying SSH connection...")
@@ -108,7 +174,7 @@ def open_remote_in_file_manager(
                 uri, user, host, port, error_callback, progress_dialog
             )
         else:
-            _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog)
+            _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog, connection, connection_manager)
 
     _verify_ssh_connection_async(user, host, port, _on_verify_complete)
 
@@ -170,6 +236,8 @@ def _mount_and_open_sftp(
     host: str,
     error_callback=None,
     progress_dialog=None,
+    connection: Any = None,
+    connection_manager: Any = None,
 ):
     """Mount SFTP location and open in file manager"""
     try:
@@ -180,8 +248,77 @@ def _mount_and_open_sftp(
             progress_dialog = _create_mount_progress_dialog(user, host)
             progress_dialog.present()
 
+        # Try to retrieve password using the same logic as built-in file manager
+        password = None
+        logger.debug("External file manager: _mount_and_open_sftp called with connection_manager=%s, connection=%s", 
+                    "present" if connection_manager is not None else "None",
+                    "present" if connection is not None else "None")
+        if connection_manager is not None:
+            # Try multiple host identifiers to match storage logic
+            lookup_hosts = []
+            if connection is not None:
+                hostname = getattr(connection, "hostname", None)
+                host_attr = getattr(connection, "host", None)
+                nickname = getattr(connection, "nickname", None)
+                
+                # Add in storage priority order: hostname -> host -> nickname
+                if hostname:
+                    lookup_hosts.append(hostname)
+                if host_attr and host_attr not in lookup_hosts:
+                    lookup_hosts.append(host_attr)
+                if nickname and nickname not in lookup_hosts:
+                    lookup_hosts.append(nickname)
+            
+            # Fallback to provided host if no connection or no identifiers found
+            if not lookup_hosts:
+                lookup_hosts = [host]
+            
+            lookup_user = user
+            if connection is not None:
+                lookup_user = getattr(connection, "username", None) or user
+            
+            logger.debug(
+                "External file manager: Attempting password lookup for %s@%s (trying identifiers: %s)",
+                lookup_user,
+                host,
+                lookup_hosts
+            )
+            
+            # Try each identifier until we find a password
+            for lookup_host in lookup_hosts:
+                try:
+                    retrieved = connection_manager.get_password(lookup_host, lookup_user)
+                    if retrieved:
+                        logger.debug(
+                            "External file manager: Password found for %s@%s using identifier '%s'",
+                            lookup_user,
+                            lookup_host,
+                            lookup_host
+                        )
+                        password = retrieved
+                        break
+                    else:
+                        logger.debug(
+                            "External file manager: No password found for %s@%s using identifier '%s'",
+                            lookup_user,
+                            lookup_host,
+                            lookup_host
+                        )
+                except Exception as exc:
+                    logger.debug(
+                        "Password lookup failed for %s@%s (identifier '%s'): %s",
+                        lookup_user,
+                        lookup_host,
+                        lookup_host,
+                        exc
+                    )
+
         gfile = Gio.File.new_for_uri(uri)
-        op = Gio.MountOperation()
+        # Use custom MountOperation with password if available
+        lookup_user = user
+        if connection is not None:
+            lookup_user = getattr(connection, "username", None) or user
+        op = PasswordMountOperation(password, lookup_user) if password else Gio.MountOperation()
 
         def on_mounted(source, res, data=None):
             try:

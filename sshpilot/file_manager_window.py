@@ -1196,27 +1196,67 @@ class AsyncSFTPManager(GObject.GObject):
             password = getattr(connection, "password", None) or None
 
         if not password and self._connection_manager is not None:
-            lookup_host = self._host
-            if connection is not None:
-                # Use nickname first (for SSH config lookup), then hostname, then IP
-                lookup_host = (
-                    getattr(connection, "nickname", None)
-                    or getattr(connection, "hostname", None)
-                    or getattr(connection, "host", None)
-                    or self._host
-                )
             lookup_user = self._username
             if connection is not None:
                 lookup_user = getattr(connection, "username", None) or self._username
 
-            try:
-                retrieved = self._connection_manager.get_password(lookup_host, lookup_user)
-                if retrieved:
-                    password = retrieved
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug(
-                    "Password lookup failed for %s@%s: %s", lookup_user, lookup_host, exc
-                )
+            # Try multiple host identifiers to match storage logic
+            # Storage uses: hostname -> host -> nickname
+            # We should try all of them to ensure we find the password
+            lookup_hosts = []
+            if connection is not None:
+                # Collect all possible host identifiers
+                hostname = getattr(connection, "hostname", None)
+                host = getattr(connection, "host", None)
+                nickname = getattr(connection, "nickname", None)
+                
+                # Add in storage priority order: hostname -> host -> nickname
+                if hostname:
+                    lookup_hosts.append(hostname)
+                if host and host not in lookup_hosts:
+                    lookup_hosts.append(host)
+                if nickname and nickname not in lookup_hosts:
+                    lookup_hosts.append(nickname)
+            
+            # Fallback to self._host if no connection or no identifiers found
+            if not lookup_hosts:
+                lookup_hosts = [self._host]
+            
+            logger.debug(
+                "File manager: Attempting password lookup for %s@%s (trying identifiers: %s)",
+                lookup_user,
+                self._host,
+                lookup_hosts
+            )
+            
+            # Try each identifier until we find a password
+            for lookup_host in lookup_hosts:
+                try:
+                    retrieved = self._connection_manager.get_password(lookup_host, lookup_user)
+                    if retrieved:
+                        logger.debug(
+                            "File manager: Password found for %s@%s using identifier '%s'",
+                            lookup_user,
+                            lookup_host,
+                            lookup_host
+                        )
+                        password = retrieved
+                        break
+                    else:
+                        logger.debug(
+                            "File manager: No password found for %s@%s using identifier '%s'",
+                            lookup_user,
+                            lookup_host,
+                            lookup_host
+                        )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug(
+                        "Password lookup failed for %s@%s (identifier '%s'): %s",
+                        lookup_user,
+                        lookup_host,
+                        lookup_host,
+                        exc
+                    )
 
         allow_agent = True
         look_for_keys = True
