@@ -1692,6 +1692,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         sort_button = self._build_sort_button()
         header.append(sort_button)
 
+        preferences_button = self._build_preferences_button()
+        header.append(preferences_button)
 
         # Add spacer to push menu button to far right
         spacer = Gtk.Box()
@@ -2380,6 +2382,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         button.connect("clicked", self._on_sort_button_clicked)
         self.sort_button = button
         self._update_sort_button()
+        return button
+
+    def _build_preferences_button(self):
+        button = Gtk.Button.new_from_icon_name("preferences-system-symbolic")
+        button.set_can_focus(False)
+        button.set_tooltip_text(_("Preferences"))
+        button.connect("clicked", lambda *_: self.show_preferences())
         return button
 
     def _next_sort_preset_id(self, current_id: str) -> str:
