@@ -4991,6 +4991,16 @@ class FileManagerWindow(Adw.Window):
         paned separator {
             background-color: @borders;
             border: none;
+            min-width: 1px;
+            min-height: 1px;
+        }
+        
+        paned.horizontal separator {
+            min-width: 1px;
+        }
+        
+        paned.vertical separator {
+            min-height: 1px;
         }
         
         /* Action bar styling */
@@ -5016,7 +5026,7 @@ class FileManagerWindow(Adw.Window):
 
         # Create the main content area and set it as toast overlay child
         panes = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
-        panes.set_wide_handle(True)
+        panes.set_wide_handle(False)
         # Set position to split evenly by default (50%)
         panes.set_position(500)  # This will be adjusted when window is resized
         # Enable resizing and shrinking for both panes following GNOME HIG
