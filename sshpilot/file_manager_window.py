@@ -5037,6 +5037,11 @@ class FileManagerWindow(Adw.Window):
         }
         # Track which panes are being refreshed (to show success toast)
         self._refreshing_panes: set = set()
+        # Track loading toast timeouts per pane (to cancel them if loading completes quickly)
+        self._loading_toast_timeouts: Dict[FilePane, Optional[int]] = {
+            self._left_pane: None,
+            self._right_pane: None,
+        }
 
         for pane in (self._left_pane, self._right_pane):
             initial_show_hidden = getattr(pane, "_show_hidden", False)
@@ -5333,6 +5338,17 @@ class FileManagerWindow(Adw.Window):
 
     def _on_operation_error(self, _manager, message: str) -> None:
         """Handle operation error with toast."""
+        # Cancel any pending loading toast timeouts since operation failed
+        for pane, timeout_id in self._loading_toast_timeouts.items():
+            if timeout_id is not None:
+                GLib.source_remove(timeout_id)
+                self._loading_toast_timeouts[pane] = None
+                # Dismiss any loading toast that might be showing
+                try:
+                    pane.dismiss_toasts()
+                except (AttributeError, RuntimeError, GLib.GError):
+                    pass
+        
         try:
             toast = Adw.Toast.new(message)
             toast.set_priority(Adw.ToastPriority.HIGH)
@@ -5744,6 +5760,13 @@ class FileManagerWindow(Adw.Window):
         # Clear the pending flag for the resolved pane
         logger.debug(f"_on_directory_loaded: clearing pending path for target pane")
         self._pending_paths[target] = None
+        
+        # Cancel loading toast timeout if still pending
+        timeout_id = self._loading_toast_timeouts.get(target)
+        if timeout_id is not None:
+            GLib.source_remove(timeout_id)
+            self._loading_toast_timeouts[target] = None
+            logger.debug(f"_on_directory_loaded: cancelled loading toast timeout for target pane")
 
         logger.debug(f"_on_directory_loaded: calling show_entries on target pane")
         target.show_entries(path, entries_list)
@@ -5751,15 +5774,9 @@ class FileManagerWindow(Adw.Window):
         target.push_history(path)
         
         # Dismiss any loading toast after directory load is fully complete
-        # The loading toast was shown on the right pane, so dismiss it specifically
         try:
-            if target == self._right_pane:
-                target.dismiss_toasts()
-                logger.debug(f"_on_directory_loaded: dismissed loading toasts for right pane")
-            else:
-                # If target is not right pane, still dismiss any loading toasts on right pane
-                self._right_pane.dismiss_toasts()
-                logger.debug(f"_on_directory_loaded: dismissed loading toasts for right pane (fallback)")
+            target.dismiss_toasts()
+            logger.debug(f"_on_directory_loaded: dismissed loading toasts for target pane")
         except (AttributeError, RuntimeError, GLib.GError):
             # Method might not exist or overlay might be destroyed, ignore
             pass
@@ -5866,6 +5883,13 @@ class FileManagerWindow(Adw.Window):
         else:
             # Remote pane: use SFTP manager
             self._pending_paths[pane] = path
+            
+            # Cancel any existing loading toast timeout for this pane
+            timeout_id = self._loading_toast_timeouts.get(pane)
+            if timeout_id is not None:
+                GLib.source_remove(timeout_id)
+                self._loading_toast_timeouts[pane] = None
+            
             # Mark as refreshing if it's a refresh
             if is_refresh:
                 self._refreshing_panes.add(pane)
@@ -5874,6 +5898,24 @@ class FileManagerWindow(Adw.Window):
                 pane._suppress_history_push = False
             else:
                 pane.push_history(path)
+            
+            # Start a timeout to show loading toast if directory takes a while to load
+            def show_loading_toast():
+                """Show loading toast after delay if still loading."""
+                # Check if this path is still pending (hasn't loaded yet)
+                if self._pending_paths.get(pane) == path:
+                    try:
+                        pane.show_toast("Loading directory…", timeout=-1)
+                        logger.debug(f"Showing loading toast for pane at path: {path}")
+                    except (AttributeError, RuntimeError, GLib.GError):
+                        pass
+                self._loading_toast_timeouts[pane] = None
+                return False  # Don't repeat
+            
+            # Show loading toast after 500ms if directory hasn't loaded yet
+            timeout_id = GLib.timeout_add(500, show_loading_toast)
+            self._loading_toast_timeouts[pane] = timeout_id
+            
             self._manager.listdir(path)
 
     def _restore_flatpak_folder(self) -> bool:
