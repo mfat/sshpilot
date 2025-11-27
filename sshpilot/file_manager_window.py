@@ -4911,6 +4911,8 @@ class FileManagerWindow(Adw.Window):
             self._left_pane: None,
             self._right_pane: None,
         }
+        # Track which panes are being refreshed (to show success toast)
+        self._refreshing_panes: set = set()
 
         for pane in (self._left_pane, self._right_pane):
             initial_show_hidden = getattr(pane, "_show_hidden", False)
@@ -5638,6 +5640,16 @@ class FileManagerWindow(Adw.Window):
             # Method might not exist or overlay might be destroyed, ignore
             pass
         
+        # Show success toast if this was a refresh
+        if target in self._refreshing_panes:
+            try:
+                target.show_toast("Directory refreshed", timeout=2)
+                logger.debug(f"_on_directory_loaded: showed refresh success toast for {('remote' if target._is_remote else 'local')} pane")
+            except (AttributeError, RuntimeError, GLib.GError):
+                pass
+            finally:
+                self._refreshing_panes.discard(target)
+        
         logger.debug(f"_on_directory_loaded: completed directory load for {path}")
 
     # -- local filesystem helpers ---------------------------------------
@@ -5687,16 +5699,35 @@ class FileManagerWindow(Adw.Window):
             # Show results in the left pane
             self._left_pane.show_entries(path, entries)
             self._apply_pending_highlight(self._left_pane)
+            
+            # Show success toast if this was a refresh
+            if self._left_pane in self._refreshing_panes:
+                try:
+                    self._left_pane.show_toast("Directory reloadeds", timeout=2)
+                    logger.debug(f"_load_local: showed refresh success toast for local pane")
+                except (AttributeError, RuntimeError, GLib.GError):
+                    pass
+                finally:
+                    self._refreshing_panes.discard(self._left_pane)
         except Exception as exc:
             self._left_pane.show_toast(str(exc))
+            # Clear refresh flag on error
+            self._refreshing_panes.discard(self._left_pane)
 
     def _on_path_changed(self, pane: FilePane, path: str, user_data=None) -> None:
+        # Detect if this is a refresh (same path as current)
+        current_path = getattr(pane, "_current_path", None)
+        is_refresh = current_path and os.path.normpath(path) == os.path.normpath(current_path)
+        
         # Route local vs remote browsing
         if pane is self._left_pane:
             # Local pane: expand ~ and navigate local filesystem
             local_path = os.path.expanduser(path) if path.startswith("~") else path
             if not local_path:
                 local_path = os.path.expanduser("~")
+            # Mark as refreshing if it's a refresh
+            if is_refresh:
+                self._refreshing_panes.add(pane)
             try:
                 self._load_local(local_path)
                 # Only push history if not triggered by Back
@@ -5706,9 +5737,14 @@ class FileManagerWindow(Adw.Window):
                     pane.push_history(local_path)
             except Exception as exc:
                 pane.show_toast(str(exc))
+                # Clear refresh flag on error
+                self._refreshing_panes.discard(pane)
         else:
             # Remote pane: use SFTP manager
             self._pending_paths[pane] = path
+            # Mark as refreshing if it's a refresh
+            if is_refresh:
+                self._refreshing_panes.add(pane)
             # Only push history if not triggered by Back
             if getattr(pane, "_suppress_history_push", False):
                 pane._suppress_history_push = False
@@ -6511,6 +6547,9 @@ class FileManagerWindow(Adw.Window):
         path = pane.toolbar.path_entry.get_text() or "/"
         logger.debug(f"_force_refresh_pane: refreshing {('remote' if pane._is_remote else 'local')} pane for path: {path}")
         
+        # Mark as refreshing to show success toast
+        self._refreshing_panes.add(pane)
+        
         if highlight_name:
             self._pending_highlights[pane] = highlight_name
             logger.debug(f"_force_refresh_pane: set pending highlight {highlight_name}")
@@ -6524,6 +6563,8 @@ class FileManagerWindow(Adw.Window):
             except Exception as e:
                 logger.error(f"_force_refresh_pane: listdir failed: {e}")
                 pane.show_toast(f"Refresh failed: {e}")
+                # Clear refresh flag on error
+                self._refreshing_panes.discard(pane)
         else:
             # For local pane, refresh directly
             try:
@@ -6531,6 +6572,8 @@ class FileManagerWindow(Adw.Window):
             except Exception as e:
                 logger.error(f"_force_refresh_pane: local refresh failed: {e}")
                 pane.show_toast(f"Refresh failed: {e}")
+                # Clear refresh flag on error
+                self._refreshing_panes.discard(pane)
 
     def _refresh_remote_listing(self, pane: FilePane) -> bool:
         """Legacy method - use _force_refresh_pane instead"""
