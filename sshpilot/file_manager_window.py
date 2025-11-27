@@ -2293,14 +2293,22 @@ def _mode_to_str(mode: int) -> str:
     return is_dir + perm
 
 
+def _mode_to_octal(mode: int) -> str:
+    """Convert file mode to octal representation like 755."""
+    # Extract only the permission bits (last 9 bits)
+    perm_bits = mode & 0o777
+    return oct(perm_bits)[2:]  # Remove '0o' prefix
+
+
 class PropertiesDialog(Adw.Window):
     """Nautilus-style properties dialog using card-based design."""
 
-    def __init__(self, entry: "FileEntry", current_path: str, parent: Gtk.Window):
+    def __init__(self, entry: "FileEntry", current_path: str, parent: Gtk.Window, sftp_manager: Optional["AsyncSFTPManager"] = None):
         super().__init__()
         self._entry = entry
         self._current_path = current_path
         self._parent_window = parent
+        self._sftp_manager = sftp_manager
         self.set_title("Properties")
         
         # Set window properties
@@ -2488,6 +2496,8 @@ class PropertiesDialog(Adw.Window):
 
     def _create_permissions_row(self) -> Gtk.Widget:
         """Create the permissions row."""
+        perms_text = "—"
+        
         # Get actual permissions for local files
         if not self._is_remote_file():
             try:
@@ -2495,28 +2505,120 @@ class PropertiesDialog(Adw.Window):
                 if os.path.exists(path):
                     stat_result = os.stat(path)
                     mode = stat_result.st_mode
-                    perms_text = _mode_to_str(mode)
+                    # Show both letter format and numeric format
+                    letter_format = _mode_to_str(mode)
+                    numeric_format = _mode_to_octal(mode)
+                    perms_text = f"{letter_format} ({numeric_format})"
                 else:
                     perms_text = "—"
             except Exception:
                 perms_text = "—"
         else:
-            # For remote files, show simplified permissions
-            if self._entry.is_dir:
-                perms_text = "Create and Delete Files"
+            # For remote files, try to get permissions from SFTP asynchronously
+            # Start with a placeholder, will be updated when stat completes
+            perms_text = "Loading…"
+            
+            logger.debug(f"PropertiesDialog: Checking SFTP manager for remote file permissions")
+            logger.debug(f"PropertiesDialog: _sftp_manager={self._sftp_manager}")
+            
+            if self._sftp_manager:
+                has_sftp = hasattr(self._sftp_manager, '_sftp')
+                logger.debug(f"PropertiesDialog: hasattr(_sftp_manager, '_sftp')={has_sftp}")
+                if has_sftp:
+                    sftp_client = getattr(self._sftp_manager, '_sftp', None)
+                    logger.debug(f"PropertiesDialog: _sftp_manager._sftp={sftp_client}")
+                
+                if has_sftp and sftp_client:
+                    # Build the full remote path
+                    if self._current_path.endswith('/'):
+                        remote_path = self._current_path + self._entry.name
+                    else:
+                        remote_path = posixpath.join(self._current_path, self._entry.name)
+                    
+                    logger.debug(f"PropertiesDialog: Fetching permissions for remote path: {remote_path}")
+                    
+                    # Get file attributes from SFTP asynchronously
+                    def _get_attr():
+                        assert self._sftp_manager._sftp is not None
+                        logger.debug(f"PropertiesDialog: Background thread calling stat({remote_path})")
+                        attr = self._sftp_manager._sftp.stat(remote_path)
+                        logger.debug(f"PropertiesDialog: stat() returned: {attr}, st_mode={getattr(attr, 'st_mode', None)}")
+                        return attr
+                    
+                    def _update_permissions(future):
+                        try:
+                            logger.debug(f"PropertiesDialog: Future completed, getting result")
+                            attr = future.result()
+                            logger.debug(f"PropertiesDialog: Got attr: {attr}, has st_mode: {hasattr(attr, 'st_mode')}")
+                            if attr and hasattr(attr, 'st_mode'):
+                                mode = attr.st_mode
+                                # Show both letter format and numeric format
+                                letter_format = _mode_to_str(mode)
+                                numeric_format = _mode_to_octal(mode)
+                                new_text = f"{letter_format} ({numeric_format})"
+                                logger.debug(f"PropertiesDialog: Setting permissions to: {new_text}")
+                            else:
+                                # Fallback to simplified permissions
+                                if self._entry.is_dir:
+                                    new_text = "Create and Delete Files"
+                                else:
+                                    new_text = "Read and Write"
+                                logger.debug(f"PropertiesDialog: No st_mode, using fallback: {new_text}")
+                        except Exception as e:
+                            logger.debug(f"Failed to get remote file permissions: {e}", exc_info=True)
+                            # Fallback to simplified permissions if we can't get mode
+                            if self._entry.is_dir:
+                                new_text = "Create and Delete Files"
+                            else:
+                                new_text = "Read and Write"
+                        
+                        # Update the row subtitle on the main thread
+                        GLib.idle_add(lambda: self._update_permissions_row(new_text))
+                    
+                    # Submit stat operation to background thread
+                    logger.debug(f"PropertiesDialog: Submitting stat operation to background thread")
+                    future = self._sftp_manager._submit(_get_attr)
+                    future.add_done_callback(_update_permissions)
+                    logger.debug(f"PropertiesDialog: Future submitted, callback added")
+                else:
+                    logger.debug(f"PropertiesDialog: No SFTP client available")
+                    # No SFTP manager available, show simplified permissions
+                    if self._entry.is_dir:
+                        perms_text = "Create and Delete Files"
+                    else:
+                        perms_text = "Read and Write"
             else:
-                perms_text = "Read and Write"
+                logger.debug(f"PropertiesDialog: No SFTP manager available")
+                # No SFTP manager available, show simplified permissions
+                if self._entry.is_dir:
+                    perms_text = "Create and Delete Files"
+                else:
+                    perms_text = "Read and Write"
         
         row = Adw.ActionRow(title="Permissions", subtitle=perms_text)
         row.add_css_class("card")
+        # Store reference to row for async updates
+        self._permissions_row = row
         
         return row
+    
+    def _update_permissions_row(self, text: str) -> None:
+        """Update the permissions row subtitle."""
+        if hasattr(self, '_permissions_row'):
+            self._permissions_row.set_subtitle(text)
 
     def _is_remote_file(self) -> bool:
         """Check if this is a remote file (from SFTP)."""
-        # Simple heuristic - in a real implementation, you'd pass connection info
-        return "://" in self._current_path or (self._current_path.startswith("/") and 
+        # Check if we have an SFTP manager - that's the most reliable indicator
+        if self._sftp_manager is not None:
+            logger.debug(f"PropertiesDialog: Detected remote file (has SFTP manager)")
+            return True
+        
+        # Fallback heuristic - in a real implementation, you'd pass connection info
+        is_remote = "://" in self._current_path or (self._current_path.startswith("/") and 
                 not os.path.exists(os.path.join(self._current_path, self._entry.name)))
+        logger.debug(f"PropertiesDialog: _is_remote_file()={is_remote}, path={self._current_path}, has_sftp_manager={self._sftp_manager is not None}")
+        return is_remote
 
     def _on_open_parent(self, *_) -> None:
         """Open parent directory in system file manager."""
@@ -3678,6 +3780,14 @@ class FilePane(Gtk.Box):
             self._window = root
             return root
 
+        # When embedded as a tab, traverse up the widget tree to find FileManagerWindow
+        parent = self.get_parent()
+        while parent is not None:
+            if isinstance(parent, FileManagerWindow):
+                self._window = parent
+                return parent
+            parent = parent.get_parent()
+
         return None
 
     def _on_upload_clicked(self, _button: Gtk.Button) -> None:
@@ -3912,10 +4022,25 @@ class FilePane(Gtk.Box):
             return
         
         try:
+            # Get SFTP manager if this is a remote pane
+            # Use _get_file_manager_window() to find the FileManagerWindow even when embedded as a tab
+            sftp_manager = None
+            if self._is_remote:
+                file_manager_window = self._get_file_manager_window()
+                if file_manager_window is not None:
+                    sftp_manager = getattr(file_manager_window, '_manager', None)
+                    logger.debug(f"FilePane: Getting SFTP manager for properties dialog: is_remote={self._is_remote}, file_manager_window={file_manager_window}, manager={sftp_manager}")
+                else:
+                    logger.debug(f"FilePane: Could not find FileManagerWindow for remote pane")
+            else:
+                logger.debug(f"FilePane: Not getting SFTP manager: is_remote={self._is_remote}")
+            
             # Create and show the modern properties dialog
-            dialog = PropertiesDialog(entry, self._current_path, window)
+            dialog = PropertiesDialog(entry, self._current_path, window, sftp_manager)
+            logger.debug(f"FilePane: Created PropertiesDialog with sftp_manager={sftp_manager}")
             dialog.present()
         except Exception as e:
+            logger.error(f"FilePane: Failed to show properties dialog: {e}", exc_info=True)
             # Fallback to simple message dialog if modern dialog fails
             self._show_fallback_properties_dialog(entry, details, window)
 
