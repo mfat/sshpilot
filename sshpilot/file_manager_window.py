@@ -3418,9 +3418,22 @@ class FilePane(Gtk.Box):
         """Handle right-click on a list item: select it and show context menu."""
         position = list_item.get_position()
         if position is not None and 0 <= position < len(self._entries):
-            # Select this item
-            self._selection_model.unselect_all()
-            self._selection_model.select_item(position, False)
+            # Check if the clicked item is already selected
+            is_selected = False
+            if hasattr(self._selection_model, "is_selected"):
+                try:
+                    is_selected = self._selection_model.is_selected(position)
+                except Exception:
+                    is_selected = False
+            
+            # If the clicked item is not already selected, clear selection and select only this item
+            # If it is already selected, preserve the current selection
+            if not is_selected:
+                self._selection_model.unselect_all()
+                self._selection_model.select_item(position, False)
+            else:
+                # Ensure the clicked item is selected (should already be, but be safe)
+                self._selection_model.select_item(position, False)
             self._selection_anchor = position
         
         # Show context menu at click position
@@ -3439,9 +3452,22 @@ class FilePane(Gtk.Box):
         """Handle right-click on a grid item: select it and show context menu."""
         position = list_item.get_position()
         if position is not None and 0 <= position < len(self._entries):
-            # Select this item
-            self._selection_model.unselect_all()
-            self._selection_model.select_item(position, False)
+            # Check if the clicked item is already selected
+            is_selected = False
+            if hasattr(self._selection_model, "is_selected"):
+                try:
+                    is_selected = self._selection_model.is_selected(position)
+                except Exception:
+                    is_selected = False
+            
+            # If the clicked item is not already selected, clear selection and select only this item
+            # If it is already selected, preserve the current selection
+            if not is_selected:
+                self._selection_model.unselect_all()
+                self._selection_model.select_item(position, False)
+            else:
+                # Ensure the clicked item is selected (should already be, but be safe)
+                self._selection_model.select_item(position, False)
             self._selection_anchor = position
         
         # Show context menu at click position
