@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:4.5.1}
+Version:        %{?version}%{!?version:4.6.0}
 Release:        1%{?dist}
 Summary:        SSH connection manager with integrated terminal
 
@@ -19,6 +19,7 @@ Requires:       python3-gobject
 Requires:       gtk4 >= 4.6
 Requires:       libadwaita >= 1.4
 Requires:       vte291-gtk4 >= 0.70
+Requires:       gtksourceview5 >= 5.0
 Requires:       python3-paramiko
 Requires:       python3-cryptography
 Requires:       python3-secretstorage 
@@ -69,6 +70,11 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Thu Nov 27 2025 mFat <newmfat@gmail.com> - 4.6.0
+- - Improvements to built-in file manager, new text editor
+- - Added file mmanager button to connection rows
+- - Sort button now sorts groups too
+
 * Mon Nov 24 2025 mFat <newmfat@gmail.com> - 4.5.1
 - - Fixed file manager bug when password authentication is seected
 

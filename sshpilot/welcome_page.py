@@ -353,78 +353,6 @@ class WelcomePage(Gtk.Overlay):
         shortcuts_btn.connect('clicked', lambda *_: self.window.show_shortcuts_window())
         cards_grid.append(shortcuts_btn)
         
-        # Preferences card
-        preferences_accel = self._get_action_accel_display(current_shortcuts, 'preferences')
-        preferences_btn = Gtk.Button()
-        preferences_btn.set_can_focus(False)
-        preferences_btn.add_css_class('card')
-        preferences_btn.set_size_request(120, 120)
-        
-        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card_box.set_margin_start(8)
-        card_box.set_margin_end(8)
-        card_box.set_margin_top(8)
-        card_box.set_margin_bottom(8)
-        card_box.set_halign(Gtk.Align.CENTER)
-        card_box.set_valign(Gtk.Align.CENTER)
-        
-        prefix_img = Gtk.Image.new_from_icon_name('preferences-system-symbolic')
-        prefix_img.set_can_focus(False)
-        prefix_img.set_pixel_size(32)
-        card_box.append(prefix_img)
-        
-        title_label = Gtk.Label(label=_('Preferences'))
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.add_css_class('title-4')
-        card_box.append(title_label)
-        
-        if preferences_accel:
-            shortcut_label = Gtk.Label(label=preferences_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcut_label.set_halign(Gtk.Align.CENTER)
-            card_box.append(shortcut_label)
-        
-        preferences_btn.set_child(card_box)
-        preferences_btn.connect('clicked', lambda *_: self.window.show_preferences())
-        cards_grid.append(preferences_btn)
-        
-        # New Group card
-        create_group_accel = self._get_action_accel_display(current_shortcuts, 'create-group')
-        create_group_btn = Gtk.Button()
-        create_group_btn.set_can_focus(False)
-        create_group_btn.add_css_class('card')
-        create_group_btn.set_size_request(120, 120)
-        
-        card_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        card_box.set_margin_start(8)
-        card_box.set_margin_end(8)
-        card_box.set_margin_top(8)
-        card_box.set_margin_bottom(8)
-        card_box.set_halign(Gtk.Align.CENTER)
-        card_box.set_valign(Gtk.Align.CENTER)
-        
-        prefix_img = Gtk.Image.new_from_icon_name('folder-new-symbolic')
-        prefix_img.set_can_focus(False)
-        prefix_img.set_pixel_size(32)
-        card_box.append(prefix_img)
-        
-        title_label = Gtk.Label(label=_('New Group'))
-        title_label.set_halign(Gtk.Align.CENTER)
-        title_label.add_css_class('title-4')
-        card_box.append(title_label)
-        
-        if create_group_accel:
-            shortcut_label = Gtk.Label(label=create_group_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            shortcut_label.set_halign(Gtk.Align.CENTER)
-            card_box.append(shortcut_label)
-        
-        create_group_btn.set_child(card_box)
-        create_group_btn.connect('clicked', lambda *_: self.window.create_group_action.activate(None))
-        cards_grid.append(create_group_btn)
-        
         # Online Documentation card
         help_accel = self._get_action_accel_display(current_shortcuts, 'help')
         help_btn = Gtk.Button()
@@ -624,24 +552,6 @@ class WelcomePage(Gtk.Overlay):
         shortcuts_row.connect('activated', lambda *_: self.window.show_shortcuts_window())
         help_group.add(shortcuts_row)
         
-        # Preferences action row
-        preferences_accel = self._get_action_accel_display(current_shortcuts, 'preferences')
-        preferences_row = Adw.ActionRow()
-        preferences_row.set_title(_('Preferences'))
-        preferences_row.set_subtitle(_('Customize SSH Pilot and modify settings'))
-        preferences_row.set_activatable(True)
-        preferences_row.set_can_focus(False)
-        prefix_img = Gtk.Image.new_from_icon_name('preferences-system-symbolic')
-        prefix_img.set_can_focus(False)
-        preferences_row.add_prefix(prefix_img)
-        if preferences_accel:
-            shortcut_label = Gtk.Label(label=preferences_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            preferences_row.add_suffix(shortcut_label)
-        preferences_row.connect('activated', lambda *_: self.window.show_preferences())
-        help_group.add(preferences_row)
-        
         # Online help action row
         help_accel = self._get_action_accel_display(current_shortcuts, 'help')
         help_row = Adw.ActionRow()
@@ -659,24 +569,6 @@ class WelcomePage(Gtk.Overlay):
             help_row.add_suffix(shortcut_label)
         help_row.connect('activated', lambda *_: self.open_online_help())
         help_group.add(help_row)
-        
-        # New Group action row
-        create_group_accel = self._get_action_accel_display(current_shortcuts, 'create-group')
-        create_group_row = Adw.ActionRow()
-        create_group_row.set_title(_('New Group'))
-        create_group_row.set_subtitle(_('Create a new connection group'))
-        create_group_row.set_activatable(True)
-        create_group_row.set_can_focus(False)
-        prefix_img = Gtk.Image.new_from_icon_name('folder-new-symbolic')
-        prefix_img.set_can_focus(False)
-        create_group_row.add_prefix(prefix_img)
-        if create_group_accel:
-            shortcut_label = Gtk.Label(label=create_group_accel)
-            shortcut_label.add_css_class('dim-label')
-            shortcut_label.set_can_focus(False)
-            create_group_row.add_suffix(shortcut_label)
-        create_group_row.connect('activated', lambda *_: self.window.create_group_action.activate(None))
-        help_group.add(create_group_row)
         
         # Set container as child of clamp
         clamp.set_child(container)

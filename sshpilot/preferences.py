@@ -3138,6 +3138,7 @@ class PreferencesWindow(Gtk.Window):
             # Mapping of terminal labels to their launch commands
             common_terminals = [
                 ("gnome-terminal", "gnome-terminal"),
+                ("ptyxis", "ptyxis"),
                 ("konsole", "konsole"),
                 ("xfce4-terminal", "xfce4-terminal"),
                 ("alacritty", "alacritty"),

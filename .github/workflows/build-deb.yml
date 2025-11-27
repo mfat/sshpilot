@@ -71,6 +71,7 @@ jobs:
             echo "         libgtk-4-1 (>= 4.6), gir1.2-gtk-4.0 (>= 4.6),"
             echo "         libadwaita-1-0 (>= 1.4), gir1.2-adw-1 (>= 1.4),"
             echo "         libvte-2.91-gtk4-0 (>= 0.70), gir1.2-vte-3.91 (>= 0.70),"
+            echo "         libgtksourceview-5-0 (>= 5.0), gir1.2-gtksource-5 (>= 5.0),"
             echo "         python3-paramiko,"
             echo "         python3-cryptography,"
             echo "         python3-secretstorage,"

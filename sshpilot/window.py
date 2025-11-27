@@ -1692,6 +1692,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         sort_button = self._build_sort_button()
         header.append(sort_button)
 
+        preferences_button = self._build_preferences_button()
+        header.append(preferences_button)
 
         # Add spacer to push menu button to far right
         spacer = Gtk.Box()
@@ -2382,6 +2384,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self._update_sort_button()
         return button
 
+    def _build_preferences_button(self):
+        button = Gtk.Button.new_from_icon_name("preferences-system-symbolic")
+        button.set_can_focus(False)
+        button.set_tooltip_text(_("Preferences"))
+        button.connect("clicked", lambda *_: self.show_preferences())
+        return button
+
     def _next_sort_preset_id(self, current_id: str) -> str:
         if current_id == "name-desc":
             return "name-asc"
@@ -2900,7 +2909,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     def add_connection_row(self, connection: Connection, indent_level: int = 0):
         """Add a connection row to the list with optional indentation"""
-        row = ConnectionRow(connection, self.group_manager, self.config)
+        row = ConnectionRow(connection, self.group_manager, self.config, file_manager_callback=self._open_manage_files_for_connection)
         
         # Apply indentation preference for grouped connections
         row.set_indentation(indent_level)
@@ -8086,7 +8095,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             if not terminal_command:
                 common_terminals = [
-                    'gnome-terminal', 'konsole', 'xterm', 'alacritty',
+                    'gnome-terminal', 'ptyxis', 'konsole', 'xterm', 'alacritty',
                     'kitty', 'terminator', 'tilix', 'xfce4-terminal'
                 ]
                 for term in common_terminals:
@@ -8175,7 +8184,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     cmd = terminal_command + ['--args', 'bash', '-lc', f'{ssh_command}; exec bash']
             else:
                 terminal_basename = os.path.basename(terminal_command[0])
-                if terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal', 'foot', 'blackbox']:
+                if terminal_basename == 'ptyxis':
+                    cmd = terminal_command + ['--new-window', '--', 'bash', '-c', f'{ssh_command}; exec bash']
+                elif terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal', 'foot', 'blackbox']:
                     cmd = terminal_command + ['--', 'bash', '-c', f'{ssh_command}; exec bash']
                 elif terminal_basename in ['konsole', 'terminator', 'guake']:
                     cmd = terminal_command + ['-e', f'bash -c "{ssh_command}; exec bash"']
@@ -8308,7 +8319,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
 
             if 'gnome' in desktop:
-                return ['gnome-terminal']
+                # Try gnome-terminal first, then ptyxis as fallback
+                try:
+                    result = subprocess.run(['which', 'gnome-terminal'], capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0:
+                        return ['gnome-terminal']
+                except Exception:
+                    pass
+                # Try ptyxis if gnome-terminal is not available
+                try:
+                    result = subprocess.run(['which', 'ptyxis'], capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0:
+                        return ['ptyxis']
+                except Exception:
+                    pass
+                return None
             elif 'kde' in desktop or 'plasma' in desktop:
                 return ['konsole']
             elif 'xfce' in desktop:
@@ -8323,7 +8348,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 return ['lxterminal']
 
             common_terminals = [
-                'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty',
+                'gnome-terminal', 'ptyxis', 'konsole', 'xfce4-terminal', 'alacritty',
                 'kitty', 'terminator', 'tilix', 'guake'
             ]
 
@@ -8466,6 +8491,50 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Actually quit the application - FINAL STEP"""
         try:
             logger.info("Quitting application")
+            
+            # Close all file manager windows first
+            if hasattr(self, '_internal_file_manager_windows'):
+                count = len(self._internal_file_manager_windows)
+                logger.info(f"Closing {count} file manager windows")
+                if count > 0:
+                    for window in list(self._internal_file_manager_windows):
+                        try:
+                            logger.info(f"Closing file manager window: {window}")
+                            # Try to clean up the manager first
+                            if hasattr(window, '_manager') and window._manager is not None:
+                                logger.info("Closing AsyncSFTPManager in file manager window")
+                                window._manager.close()
+                                window._manager = None
+                                logger.info("AsyncSFTPManager closed")
+                            # Close the window
+                            if hasattr(window, 'close'):
+                                window.close()
+                            elif hasattr(window, 'destroy'):
+                                window.destroy()
+                        except Exception as exc:
+                            logger.error(f"Error closing file manager window: {exc}", exc_info=True)
+                self._internal_file_manager_windows.clear()
+                logger.info("All file manager windows closed")
+            
+            # Also check all application windows for file manager windows (defensive)
+            try:
+                app = self.get_application()
+                if app:
+                    all_windows = list(app.get_windows())
+                    for window in all_windows:
+                        # Check if it's a file manager window that wasn't tracked
+                        if hasattr(window, '_manager') and hasattr(window, '_on_close_request'):
+                            if not hasattr(self, '_internal_file_manager_windows') or window not in self._internal_file_manager_windows:
+                                logger.info(f"Found untracked file manager window, closing: {window}")
+                                try:
+                                    if hasattr(window, '_manager') and window._manager is not None:
+                                        logger.info("Closing AsyncSFTPManager in untracked window")
+                                        window._manager.close()
+                                        window._manager = None
+                                except Exception as exc:
+                                    logger.error(f"Error closing untracked file manager window: {exc}", exc_info=True)
+            except Exception as exc:
+                logger.debug(f"Error checking for untracked file manager windows: {exc}")
             
             # Save window geometry
             self._save_window_state()

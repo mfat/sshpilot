@@ -26,7 +26,7 @@ jobs:
           echo "=== DEBUG: Starting Homebrew dependency installation ==="
           brew update
           echo "=== DEBUG: Installing packages ==="
-          brew install python@3.13 gtk4 libadwaita vte3 adwaita-icon-theme gobject-introspection pygobject3 py3cairo create-dmg sshpass
+          brew install python@3.13 gtk4 libadwaita vte3 gtksourceview5 adwaita-icon-theme gobject-introspection pygobject3 py3cairo create-dmg sshpass
           echo "=== DEBUG: Linking libadwaita ==="
           brew link --overwrite libadwaita
           echo "=== DEBUG: Verifying installations ==="

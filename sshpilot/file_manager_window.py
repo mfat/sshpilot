@@ -28,8 +28,10 @@ import posixpath
 import shutil
 import stat
 import threading
+import weakref
 import time
 import re
+import tempfile
 from datetime import datetime
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
@@ -37,6 +39,16 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import paramiko
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
+
+# Try to import GtkSourceView for syntax highlighting
+try:
+    import gi
+    gi.require_version('GtkSource', '5')
+    from gi.repository import GtkSource
+    _HAS_GTKSOURCE = True
+except (ImportError, ValueError, AttributeError):
+    _HAS_GTKSOURCE = False
+    GtkSource = None
 
 from .platform_utils import is_flatpak, is_macos
 
@@ -760,14 +772,24 @@ class AsyncSFTPManager(GObject.GObject):
         )
 
     def close(self) -> None:
+        logger.info("AsyncSFTPManager.close() called")
+        # Stop keepalive worker first
         self._stop_keepalive_worker()
         with self._lock:
             if self._sftp is not None:
-                self._sftp.close()
-                self._sftp = None
+                try:
+                    self._sftp.close()
+                except Exception as exc:
+                    logger.debug(f"Error closing SFTP client: {exc}")
+                finally:
+                    self._sftp = None
             if self._client is not None:
-                self._client.close()
-                self._client = None
+                try:
+                    self._client.close()
+                except Exception as exc:
+                    logger.debug(f"Error closing SSH client: {exc}")
+                finally:
+                    self._client = None
             if self._jump_clients:
                 for jump_client in self._jump_clients:
                     try:
@@ -783,7 +805,18 @@ class AsyncSFTPManager(GObject.GObject):
                     logger.debug("Error closing proxy socket: %s", exc)
                 finally:
                     self._proxy_sock = None
-        self._executor.shutdown(wait=False)
+        # Shutdown executor - use wait=False since connections are closed and will interrupt operations
+        # This prevents hanging if there are stuck operations (like hanging listdir calls)
+        logger.debug("Shutting down executor (connections closed, operations should be interrupted)")
+        try:
+            # Use wait=False to avoid hanging on stuck operations
+            # The connections are already closed, so operations should fail quickly
+            # Threads are daemon threads, so they'll be cleaned up when process exits
+            self._executor.shutdown(wait=False)
+            logger.debug("Executor shutdown initiated (non-blocking)")
+        except Exception as exc:
+            logger.debug(f"Error shutting down executor: {exc}")
+        logger.info("AsyncSFTPManager.close() completed")
 
     def _start_keepalive_worker(self) -> None:
         with self._lock:
@@ -1727,15 +1760,123 @@ class AsyncSFTPManager(GObject.GObject):
         return self._submit(_impl)
 
     def remove(self, path: str) -> Future:
-        def _impl() -> None:
+        def _remove_recursive(target_path: str) -> None:
+            """Recursively remove a file or directory synchronously."""
             assert self._sftp is not None
+            logger.info(f"Attempting to remove: {target_path}")
             try:
-                self._sftp.remove(path)
-            except IOError:
-                # fallback to directory remove
-                for entry in self._sftp.listdir(path):
-                    self.remove(os.path.join(path, entry))
-                self._sftp.rmdir(path)
+                # Try to remove as a file first (most common case)
+                logger.info(f"Calling _sftp.remove('{target_path}')")
+                self._sftp.remove(target_path)
+                logger.info(f"_sftp.remove() returned successfully for {target_path}")
+                logger.info(f"Successfully removed file {target_path}")
+                return
+            except (IOError, OSError) as file_error:
+                # If remove() fails, it's likely a directory - remove contents recursively
+                logger.info(f"Path {target_path} is a directory (remove failed: {file_error}), removing recursively")
+            except paramiko.ssh_exception.SSHException as ssh_error:
+                # Handle paramiko-specific exceptions
+                logger.error(f"SSH error calling remove() on {target_path}: {ssh_error}", exc_info=True)
+                raise
+            except Exception as unexpected_error:
+                # Catch any other exceptions from remove()
+                logger.error(f"Unexpected error calling remove() on {target_path}: {unexpected_error}", exc_info=True)
+                raise
+            
+            # Handle directory removal
+            try:
+                logger.info(f"Calling listdir on {target_path}")
+                if self._sftp is None:
+                    raise RuntimeError("SFTP connection is not available")
+                
+                # First check if directory still exists (might have been deleted by parallel operation)
+                try:
+                    stat_result = self._sftp.stat(target_path)
+                    if not stat.S_ISDIR(stat_result.st_mode):
+                        logger.info(f"Path {target_path} is not a directory, skipping recursive removal")
+                        return
+                except (IOError, OSError) as stat_error:
+                    error_code = getattr(stat_error, "errno", None)
+                    if error_code in {errno.ENOENT, errno.EINVAL}:
+                        logger.info(f"Directory {target_path} no longer exists (deleted by parallel operation?), skipping")
+                        return
+                    # If stat fails for other reasons, continue with listdir attempt
+                    logger.debug(f"stat() failed for {target_path}: {stat_error}, continuing with listdir")
+                
+                # Try to get directory contents
+                entries = None
+                try:
+                    logger.info(f"About to call _sftp.listdir('{target_path}')")
+                    entries = self._sftp.listdir(target_path)
+                    logger.info(f"listdir call completed, checking result...")
+                    if entries is not None:
+                        logger.debug(f"listdir returned {len(entries)} entries for {target_path}")
+                        if entries:
+                            logger.debug(f"Entries to delete: {entries[:5]}{'...' if len(entries) > 5 else ''}")
+                        else:
+                            logger.debug(f"Directory {target_path} is empty")
+                    else:
+                        logger.error(f"listdir returned None for {target_path}")
+                except IOError as listdir_io_error:
+                    # Check if directory no longer exists (might have been deleted by parallel operation)
+                    error_code = getattr(listdir_io_error, "errno", None)
+                    if error_code in {errno.ENOENT, errno.EINVAL}:
+                        logger.debug(f"Directory {target_path} no longer exists, skipping")
+                        return
+                    logger.error(f"listdir IOError for {target_path}: {listdir_io_error}", exc_info=True)
+                    raise
+                except OSError as listdir_os_error:
+                    error_code = getattr(listdir_os_error, "errno", None)
+                    if error_code in {errno.ENOENT, errno.EINVAL}:
+                        logger.debug(f"Directory {target_path} no longer exists, skipping")
+                        return
+                    logger.error(f"listdir OSError for {target_path}: {listdir_os_error}", exc_info=True)
+                    raise
+                except Exception as listdir_error:
+                    logger.error(f"listdir failed for {target_path}: {listdir_error}", exc_info=True)
+                    raise
+                
+                if entries is None:
+                    logger.error(f"listdir returned None for {target_path}")
+                    raise RuntimeError(f"listdir returned None for {target_path}")
+                
+                logger.debug(f"Directory {target_path} contains {len(entries)} entries")
+                for entry in entries:
+                    entry_path = posixpath.join(target_path, entry)
+                    logger.debug(f"Recursively removing entry: {entry_path}")
+                    _remove_recursive(entry_path)
+                # After all children are removed, remove the directory itself
+                logger.debug(f"Removing empty directory: {target_path}")
+                if self._sftp is None:
+                    raise RuntimeError("SFTP connection is not available")
+                try:
+                    self._sftp.rmdir(target_path)
+                    logger.debug(f"Successfully removed directory {target_path}")
+                except IOError as rmdir_error:
+                    # Check if directory was already deleted
+                    error_code = getattr(rmdir_error, "errno", None)
+                    if error_code in {errno.ENOENT, errno.EINVAL}:
+                        logger.debug(f"Directory {target_path} already removed")
+                        return
+                    raise
+            except (IOError, OSError) as dir_error:
+                # If listdir or rmdir fails, log and re-raise
+                logger.error(f"Failed to remove directory {target_path}: {dir_error}", exc_info=True)
+                raise
+            except Exception as e:
+                # Catch any other unexpected errors from directory operations
+                logger.error(f"Unexpected error removing directory {target_path}: {e}", exc_info=True)
+                raise
+
+        def _impl() -> None:
+            try:
+                logger.info(f"Starting remove operation for {path}")
+                _remove_recursive(path)
+                logger.info(f"Successfully completed remove operation for {path}")
+            except Exception as e:
+                logger.error(f"Error in remove operation for {path}: {e}", exc_info=True)
+                # Re-raise so the future will have the exception
+                raise
 
         parent = os.path.dirname(path) or "/"
         return self._submit(_impl)  # Don't call listdir from callback - let the UI handle refresh
@@ -1983,6 +2124,486 @@ def walk_remote(sftp: paramiko.SFTPClient, root: str) -> Iterable[Tuple[str, Lis
 # UI widgets
 
 
+class RemoteFileEditorWindow(Adw.Window):
+    """FileZilla-style text editor window using GTK SourceView.
+    
+    Supports both remote (SFTP) and local file editing:
+    - Remote: Downloads to temp location, edits, uploads back when saved
+    - Local: Edits file directly, saves locally
+    """
+    
+    def __init__(
+        self,
+        parent: Adw.Window,
+        file_path: str,
+        file_name: str,
+        is_local: bool = False,
+        sftp_manager: Optional["AsyncSFTPManager"] = None,
+        file_manager_window: Optional["FileManagerWindow"] = None,
+    ) -> None:
+        super().__init__()
+        self.set_transient_for(parent)
+        self.set_modal(False)  # Allow multiple editors
+        self.set_default_size(900, 600)
+        self.set_title(f"Edit {file_name}")
+        
+        self._is_local = is_local
+        self._file_path = file_path  # Can be remote path or local path
+        self._file_name = file_name
+        self._sftp_manager = sftp_manager
+        self._file_manager_window = file_manager_window
+        self._temp_file: Optional[pathlib.Path] = None
+        self._file_monitor: Optional[Gio.FileMonitor] = None
+        self._file_modified_time: float = 0.0
+        self._has_unsaved_changes = False
+        self._upload_dialog: Optional[Adw.AlertDialog] = None
+        self._is_closing = False
+        self._is_loading = True  # Flag to track initial file loading
+        
+        if self._is_local:
+            # For local files, use the file path directly
+            self._temp_file = pathlib.Path(file_path)
+        else:
+            # For remote files, create temp file using Python's tempfile module
+            # Use NamedTemporaryFile with delete=False for manual cleanup
+            # This is the recommended pattern per Python docs for persistent temp files
+            temp_file_obj = tempfile.NamedTemporaryFile(
+                mode='w+b',
+                prefix=f"sshpilot_edit_{os.getpid()}_",
+                suffix=f"_{file_name}",
+                delete=False  # Don't auto-delete, we'll clean up manually in _do_close()
+            )
+            temp_file_obj.close()  # Close the file handle, we'll open it later when needed
+            self._temp_file = pathlib.Path(temp_file_obj.name)
+        
+        # Create UI
+        self._setup_ui()
+        
+        # Load file (download if remote, direct load if local)
+        if self._is_local:
+            self._load_file_content()
+        else:
+            self._download_and_load()
+    
+    def _setup_ui(self) -> None:
+        """Set up the editor UI."""
+        toolbar_view = Adw.ToolbarView()
+        self.set_content(toolbar_view)
+        
+        # Header bar
+        header_bar = Adw.HeaderBar()
+        self._title_label = Gtk.Label(label=f"Edit {self._file_name}")
+        header_bar.set_title_widget(self._title_label)
+        
+        # Save button - label depends on local vs remote
+        save_label = "Save" if self._is_local else "Save"
+        self._save_button = Gtk.Button(label=save_label)
+        self._save_button.add_css_class("suggested-action")
+        self._save_button.set_sensitive(False)
+        self._save_button.connect("clicked", self._on_save_clicked)
+        header_bar.pack_end(self._save_button)
+        
+        # Cancel/Close button
+        cancel_button = Gtk.Button(label="Close")
+        cancel_button.connect("clicked", self._on_close_clicked)
+        header_bar.pack_start(cancel_button)
+        
+        toolbar_view.add_top_bar(header_bar)
+        
+        # Editor area
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_vexpand(True)
+        scrolled.set_hexpand(True)
+        
+        # Create editor widget (SourceView if available, otherwise TextView)
+        if _HAS_GTKSOURCE:
+            self._source_view = GtkSource.View()
+            self._source_view.set_show_line_numbers(True)
+            self._source_view.set_highlight_current_line(True)
+            self._source_view.set_auto_indent(True)
+            self._source_view.set_indent_width(4)
+            self._source_view.set_tab_width(4)
+            self._source_view.set_insert_spaces_instead_of_tabs(False)
+            
+            # Detect language from file extension
+            language_manager = GtkSource.LanguageManager.get_default()
+            _, ext = os.path.splitext(self._file_name)
+            language = language_manager.guess_language(self._file_name, None)
+            if language:
+                buffer = GtkSource.Buffer.new_with_language(language)
+                self._source_view.set_buffer(buffer)
+            else:
+                buffer = GtkSource.Buffer()
+                self._source_view.set_buffer(buffer)
+        else:
+            # Fallback to regular TextView
+            self._source_view = Gtk.TextView()
+            self._source_view.set_monospace(True)
+            buffer = Gtk.TextBuffer()
+            self._source_view.set_buffer(buffer)
+        
+        # Connect to buffer changes
+        buffer.connect("modified-changed", self._on_buffer_modified_changed)
+        
+        scrolled.set_child(self._source_view)
+        
+        # Wrap editor in toast overlay for status messages (same style as file manager)
+        toast_overlay = Adw.ToastOverlay()
+        toast_overlay.set_child(scrolled)
+        self._toast_overlay = toast_overlay
+        self._current_toast = None  # Keep reference for dismissal
+        
+        toolbar_view.set_content(toast_overlay)
+        
+        # Apply same toast CSS styling as file manager
+        self._apply_toast_css()
+        
+        # Connect close request
+        self.connect("close-request", self._on_close_request)
+        
+        # Show initial loading toast
+        self._show_toast("Loading…" if self._is_local else "Downloading…", timeout=2)
+    
+    def _apply_toast_css(self) -> None:
+        """Apply the same toast CSS styling as file manager."""
+        try:
+            css_provider = Gtk.CssProvider()
+            toast_css = """
+            toast {
+                /* Frosted glass effect */
+                background-color: alpha(black, 0.6);
+
+                /* Pill shape */
+                border-radius: 99px; /* A large value creates the pill shape */
+
+                /* Clean typography */
+                color: white;
+                font-weight: 500; /* Medium weight for a modern feel */
+                font-size: 1.05em;
+
+                /* Subtle details */
+                padding: 8px 20px;
+                margin: 10px;
+                border: 1px solid alpha(white, 0.1);
+                box-shadow: 0 5px 15px alpha(black, 0.2);
+            }
+            
+            toast label {
+                /* Style toast labels */
+                color: white;
+                font-weight: 500;
+            }
+            
+            toast button {
+                /* Style toast buttons if any */
+                color: white;
+                background-color: alpha(white, 0.2);
+                border: 1px solid alpha(white, 0.3);
+                border-radius: 6px;
+                padding: 4px 8px;
+            }
+            
+            toast button.circular.flat {
+                /* Style close button */
+                color: white;
+                background-color: alpha(black, 0.6);
+                border: 1px solid alpha(white, 0.1);
+            }
+            """
+            css_provider.load_from_data(toast_css.encode())
+            display = Gdk.Display.get_default()
+            if display:
+                Gtk.StyleContext.add_provider_for_display(
+                    display, css_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+                )
+        except Exception as e:
+            logger.debug(f"Failed to apply toast CSS: {e}")
+    
+    def _show_toast(self, text: str, timeout: int = 3) -> None:
+        """Show a toast message safely (same style as FilePane)."""
+        try:
+            # Dismiss any existing toast first
+            if self._current_toast:
+                self._current_toast.dismiss()
+                self._current_toast = None
+            
+            toast = Adw.Toast.new(text)
+            if timeout >= 0:
+                toast.set_timeout(timeout)
+            self._toast_overlay.add_toast(toast)
+            self._current_toast = toast  # Keep reference for dismissal
+        except (AttributeError, RuntimeError, GLib.GError):
+            # Overlay might be destroyed or invalid, ignore
+            pass
+    
+    def _download_and_load(self) -> None:
+        """Download the remote file and load it into the editor."""
+        def download_complete(future: Future) -> None:
+            try:
+                future.result()  # Wait for download to complete
+                GLib.idle_add(self._load_file_content)
+            except Exception as e:
+                logger.error(f"Failed to download file for editing: {e}", exc_info=True)
+                GLib.idle_add(self._show_error, f"Failed to download file: {e}")
+        
+        # Download file (use _file_path which contains the remote path for remote files)
+        future = self._sftp_manager.download(self._file_path, self._temp_file)
+        future.add_done_callback(download_complete)
+    
+    def _load_file_content(self) -> None:
+        """Load the file content into the editor (downloaded for remote, direct for local)."""
+        try:
+            if not self._temp_file.exists():
+                error_msg = "File not found" if self._is_local else "Downloaded file not found"
+                self._show_error(error_msg)
+                return
+            
+            # Read file content
+            with open(self._temp_file, 'rb') as f:
+                content = f.read()
+            
+            # Try to decode as UTF-8, fall back to latin-1 if needed
+            try:
+                text = content.decode('utf-8')
+            except UnicodeDecodeError:
+                try:
+                    text = content.decode('latin-1')
+                except UnicodeDecodeError:
+                    text = content.decode('utf-8', errors='replace')
+            
+            # Set content in buffer
+            buffer = self._source_view.get_buffer()
+            buffer.set_text(text)
+            buffer.set_modified(False)
+            
+            # Get initial modification time
+            self._file_modified_time = self._temp_file.stat().st_mtime
+            
+            # Set up file monitoring
+            self._setup_file_monitoring()
+            
+            # Mark loading as complete - now modification events will be handled
+            self._is_loading = False
+            
+        except Exception as e:
+            logger.error(f"Failed to load file content: {e}", exc_info=True)
+            self._show_error(f"Failed to load file: {e}")
+            # Ensure loading flag is reset even on error
+            self._is_loading = False
+    
+    def _setup_file_monitoring(self) -> None:
+        """Set up file monitoring to detect external saves."""
+        try:
+            gfile = Gio.File.new_for_path(str(self._temp_file))
+            self._file_monitor = gfile.monitor_file(Gio.FileMonitorFlags.WATCH_MOVES, None)
+            self._file_monitor.connect("changed", self._on_file_changed)
+        except Exception as e:
+            logger.warning(f"Failed to set up file monitoring: {e}")
+    
+    def _on_file_changed(
+        self,
+        monitor: Gio.FileMonitor,
+        file: Gio.File,
+        other_file: Optional[Gio.File],
+        event_type: Gio.FileMonitorEvent,
+    ) -> None:
+        """Handle file system changes to the temp file."""
+        if self._is_closing:
+            return
+        
+        # Only care about changes (not moves/deletes)
+        if event_type in (Gio.FileMonitorEvent.CHANGED, Gio.FileMonitorEvent.CHANGES_DONE_HINT):
+            try:
+                if self._temp_file.exists():
+                    new_mtime = self._temp_file.stat().st_mtime
+                    if new_mtime > self._file_modified_time:
+                        self._file_modified_time = new_mtime
+                        GLib.idle_add(self._on_file_saved_externally)
+            except Exception:
+                pass
+    
+    def _update_title(self, modified: bool = None) -> None:
+        """Update the headerbar title to show modified state."""
+        if modified is None:
+            buffer = self._source_view.get_buffer()
+            modified = buffer.get_modified() if buffer else False
+        
+        if modified:
+            self._title_label.set_label(f"* (modified) Edit {self._file_name}")
+        else:
+            self._title_label.set_label(f"Edit {self._file_name}")
+    
+    def _on_file_saved_externally(self) -> None:
+        """Handle when the file is saved externally (from the editor)."""
+        self._has_unsaved_changes = True
+        self._save_button.set_sensitive(True)
+        self._update_title(True)
+    
+    def _on_buffer_modified_changed(self, buffer: Gtk.TextBuffer) -> None:
+        """Handle buffer modification state changes."""
+        # Ignore modification events during initial file loading
+        if self._is_loading:
+            return
+        
+        modified = buffer.get_modified()
+        if modified:
+            if not self._has_unsaved_changes:
+                self._has_unsaved_changes = True
+                self._save_button.set_sensitive(True)
+            self._update_title(True)
+        else:
+            # Buffer is no longer modified
+            self._update_title(False)
+    
+    def _on_save_clicked(self, _button: Gtk.Button) -> None:
+        """Handle save button click - save buffer content locally, upload if remote."""
+        if not self._temp_file:
+            self._show_error("File not found")
+            return
+        
+        # Always save buffer content to file
+        buffer = self._source_view.get_buffer()
+        start, end = buffer.get_bounds()
+        text = buffer.get_text(start, end, False)
+        try:
+            with open(self._temp_file, 'w', encoding='utf-8') as f:
+                f.write(text)
+            buffer.set_modified(False)
+            self._file_modified_time = self._temp_file.stat().st_mtime
+            self._has_unsaved_changes = False
+            self._update_title(False)
+            
+            if self._is_local:
+                # For local files, just save and refresh the pane
+                self._show_toast("Saved", timeout=2)
+                self._save_button.set_sensitive(False)
+                # Refresh the file manager to show updated file
+                if self._file_manager_window:
+                    pane = self._file_manager_window._left_pane
+                    if pane:
+                        GLib.idle_add(lambda: pane.emit("path-changed", pane._current_path))
+                return
+        except Exception as e:
+            self._show_error(f"Failed to save file: {e}")
+            return
+        
+        # For remote files, upload after saving
+        if not self._is_local:
+            self._upload_file()
+    
+    def _upload_file(self) -> None:
+        """Upload the modified file back to the remote server."""
+        self._show_toast("Uploading…", timeout=-1)  # Show until upload completes
+        self._save_button.set_sensitive(False)
+        
+        def upload_complete(future: Future) -> None:
+            try:
+                future.result()
+                GLib.idle_add(self._on_upload_success)
+            except Exception as e:
+                logger.error(f"Failed to upload file: {e}", exc_info=True)
+                GLib.idle_add(self._on_upload_error, str(e))
+        
+        future = self._sftp_manager.upload(self._temp_file, self._file_path)
+        future.add_done_callback(upload_complete)
+    
+    def _on_upload_success(self) -> None:
+        """Handle successful upload."""
+        self._has_unsaved_changes = False
+        self._save_button.set_sensitive(False)
+        self._update_title(False)
+        self._show_toast("Uploaded successfully", timeout=2)
+        
+        # Reset buffer modified flag since changes have been saved
+        buffer = self._source_view.get_buffer()
+        buffer.set_modified(False)
+        
+        # Refresh the file manager to show updated file
+        if self._file_manager_window:
+            pane = self._file_manager_window._right_pane
+            if pane:
+                pane.emit("path-changed", pane._current_path)
+    
+    def _on_upload_error(self, error: str) -> None:
+        """Handle upload error."""
+        self._show_toast(f"Upload failed: {error}", timeout=4)
+        self._save_button.set_sensitive(True)
+        self._show_error(f"Failed to upload file: {error}")
+    
+    def _on_close_clicked(self, _button: Gtk.Button) -> None:
+        """Handle close button click."""
+        self._check_and_close()
+    
+    def _on_close_request(self, _window: Adw.Window) -> bool:
+        """Handle window close request."""
+        self._check_and_close()
+        return True  # Prevent default close
+    
+    def _check_and_close(self) -> None:
+        """Check for unsaved changes and close if okay."""
+        # Only check if the buffer has been modified (user made actual changes)
+        buffer = self._source_view.get_buffer()
+        has_changes = buffer.get_modified()
+        
+        if has_changes:
+            # Show confirmation dialog - text differs for local vs remote
+            if self._is_local:
+                dialog_text = f"You have unsaved changes to {self._file_name}. Save changes before closing?"
+                save_label = "Save"
+            else:
+                dialog_text = f"You have unsaved changes to {self._file_name}. Upload changes before closing?"
+                save_label = "Save & Upload"
+            
+            dialog = Adw.AlertDialog.new(
+                "Unsaved Changes",
+                dialog_text
+            )
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response("discard", "Discard Changes")
+            dialog.add_response("save", save_label)
+            dialog.set_default_response("save")
+            dialog.set_close_response("cancel")
+            
+            def on_response(_dialog: Adw.AlertDialog, response: str) -> None:
+                if response == "save":
+                    self._on_save_clicked(None)
+                    # Wait a bit then close
+                    GLib.timeout_add(500, self._do_close)
+                elif response == "discard":
+                    self._do_close()
+            
+            dialog.connect("response", on_response)
+            dialog.present(self)
+        else:
+            self._do_close()
+    
+    def _do_close(self) -> None:
+        """Actually close the window and clean up."""
+        self._is_closing = True
+        
+        # Stop monitoring
+        if self._file_monitor:
+            self._file_monitor.cancel()
+            self._file_monitor = None
+        
+        # Clean up temp file (only for remote files - local files shouldn't be deleted)
+        if not self._is_local and self._temp_file and self._temp_file.exists():
+            try:
+                self._temp_file.unlink()
+            except Exception:
+                pass
+        
+        self.destroy()
+    
+    def _show_error(self, message: str) -> None:
+        """Show an error dialog."""
+        dialog = Adw.AlertDialog.new("Error", message)
+        dialog.add_response("ok", "OK")
+        dialog.set_default_response("ok")
+        dialog.set_close_response("ok")
+        dialog.present(self)
+
+
 class PathEntry(Gtk.Entry):
     """Simple entry used for the editable pathbar."""
 
@@ -2163,14 +2784,22 @@ def _mode_to_str(mode: int) -> str:
     return is_dir + perm
 
 
+def _mode_to_octal(mode: int) -> str:
+    """Convert file mode to octal representation like 755."""
+    # Extract only the permission bits (last 9 bits)
+    perm_bits = mode & 0o777
+    return oct(perm_bits)[2:]  # Remove '0o' prefix
+
+
 class PropertiesDialog(Adw.Window):
     """Nautilus-style properties dialog using card-based design."""
 
-    def __init__(self, entry: "FileEntry", current_path: str, parent: Gtk.Window):
+    def __init__(self, entry: "FileEntry", current_path: str, parent: Gtk.Window, sftp_manager: Optional["AsyncSFTPManager"] = None):
         super().__init__()
         self._entry = entry
         self._current_path = current_path
         self._parent_window = parent
+        self._sftp_manager = sftp_manager
         self.set_title("Properties")
         
         # Set window properties
@@ -2358,6 +2987,8 @@ class PropertiesDialog(Adw.Window):
 
     def _create_permissions_row(self) -> Gtk.Widget:
         """Create the permissions row."""
+        perms_text = "—"
+        
         # Get actual permissions for local files
         if not self._is_remote_file():
             try:
@@ -2365,28 +2996,120 @@ class PropertiesDialog(Adw.Window):
                 if os.path.exists(path):
                     stat_result = os.stat(path)
                     mode = stat_result.st_mode
-                    perms_text = _mode_to_str(mode)
+                    # Show both letter format and numeric format
+                    letter_format = _mode_to_str(mode)
+                    numeric_format = _mode_to_octal(mode)
+                    perms_text = f"{letter_format} ({numeric_format})"
                 else:
                     perms_text = "—"
             except Exception:
                 perms_text = "—"
         else:
-            # For remote files, show simplified permissions
-            if self._entry.is_dir:
-                perms_text = "Create and Delete Files"
+            # For remote files, try to get permissions from SFTP asynchronously
+            # Start with a placeholder, will be updated when stat completes
+            perms_text = "Loading…"
+            
+            logger.debug(f"PropertiesDialog: Checking SFTP manager for remote file permissions")
+            logger.debug(f"PropertiesDialog: _sftp_manager={self._sftp_manager}")
+            
+            if self._sftp_manager:
+                has_sftp = hasattr(self._sftp_manager, '_sftp')
+                logger.debug(f"PropertiesDialog: hasattr(_sftp_manager, '_sftp')={has_sftp}")
+                if has_sftp:
+                    sftp_client = getattr(self._sftp_manager, '_sftp', None)
+                    logger.debug(f"PropertiesDialog: _sftp_manager._sftp={sftp_client}")
+                
+                if has_sftp and sftp_client:
+                    # Build the full remote path
+                    if self._current_path.endswith('/'):
+                        remote_path = self._current_path + self._entry.name
+                    else:
+                        remote_path = posixpath.join(self._current_path, self._entry.name)
+                    
+                    logger.debug(f"PropertiesDialog: Fetching permissions for remote path: {remote_path}")
+                    
+                    # Get file attributes from SFTP asynchronously
+                    def _get_attr():
+                        assert self._sftp_manager._sftp is not None
+                        logger.debug(f"PropertiesDialog: Background thread calling stat({remote_path})")
+                        attr = self._sftp_manager._sftp.stat(remote_path)
+                        logger.debug(f"PropertiesDialog: stat() returned: {attr}, st_mode={getattr(attr, 'st_mode', None)}")
+                        return attr
+                    
+                    def _update_permissions(future):
+                        try:
+                            logger.debug(f"PropertiesDialog: Future completed, getting result")
+                            attr = future.result()
+                            logger.debug(f"PropertiesDialog: Got attr: {attr}, has st_mode: {hasattr(attr, 'st_mode')}")
+                            if attr and hasattr(attr, 'st_mode'):
+                                mode = attr.st_mode
+                                # Show both letter format and numeric format
+                                letter_format = _mode_to_str(mode)
+                                numeric_format = _mode_to_octal(mode)
+                                new_text = f"{letter_format} ({numeric_format})"
+                                logger.debug(f"PropertiesDialog: Setting permissions to: {new_text}")
+                            else:
+                                # Fallback to simplified permissions
+                                if self._entry.is_dir:
+                                    new_text = "Create and Delete Files"
+                                else:
+                                    new_text = "Read and Write"
+                                logger.debug(f"PropertiesDialog: No st_mode, using fallback: {new_text}")
+                        except Exception as e:
+                            logger.debug(f"Failed to get remote file permissions: {e}", exc_info=True)
+                            # Fallback to simplified permissions if we can't get mode
+                            if self._entry.is_dir:
+                                new_text = "Create and Delete Files"
+                            else:
+                                new_text = "Read and Write"
+                        
+                        # Update the row subtitle on the main thread
+                        GLib.idle_add(lambda: self._update_permissions_row(new_text))
+                    
+                    # Submit stat operation to background thread
+                    logger.debug(f"PropertiesDialog: Submitting stat operation to background thread")
+                    future = self._sftp_manager._submit(_get_attr)
+                    future.add_done_callback(_update_permissions)
+                    logger.debug(f"PropertiesDialog: Future submitted, callback added")
+                else:
+                    logger.debug(f"PropertiesDialog: No SFTP client available")
+                    # No SFTP manager available, show simplified permissions
+                    if self._entry.is_dir:
+                        perms_text = "Create and Delete Files"
+                    else:
+                        perms_text = "Read and Write"
             else:
-                perms_text = "Read and Write"
+                logger.debug(f"PropertiesDialog: No SFTP manager available")
+                # No SFTP manager available, show simplified permissions
+                if self._entry.is_dir:
+                    perms_text = "Create and Delete Files"
+                else:
+                    perms_text = "Read and Write"
         
         row = Adw.ActionRow(title="Permissions", subtitle=perms_text)
         row.add_css_class("card")
+        # Store reference to row for async updates
+        self._permissions_row = row
         
         return row
+    
+    def _update_permissions_row(self, text: str) -> None:
+        """Update the permissions row subtitle."""
+        if hasattr(self, '_permissions_row'):
+            self._permissions_row.set_subtitle(text)
 
     def _is_remote_file(self) -> bool:
         """Check if this is a remote file (from SFTP)."""
-        # Simple heuristic - in a real implementation, you'd pass connection info
-        return "://" in self._current_path or (self._current_path.startswith("/") and 
+        # Check if we have an SFTP manager - that's the most reliable indicator
+        if self._sftp_manager is not None:
+            logger.debug(f"PropertiesDialog: Detected remote file (has SFTP manager)")
+            return True
+        
+        # Fallback heuristic - in a real implementation, you'd pass connection info
+        is_remote = "://" in self._current_path or (self._current_path.startswith("/") and 
                 not os.path.exists(os.path.join(self._current_path, self._entry.name)))
+        logger.debug(f"PropertiesDialog: _is_remote_file()={is_remote}, path={self._current_path}, has_sftp_manager={self._sftp_manager is not None}")
+        return is_remote
 
     def _on_open_parent(self, *_) -> None:
         """Open parent directory in system file manager."""
@@ -2697,9 +3420,10 @@ class FilePane(Gtk.Box):
         self._selection_model.connect("selection-changed", self._on_selection_changed)
 
         self._menu_actions: Dict[str, Gio.SimpleAction] = {}
+        self._menu_action_callbacks: Dict[str, Callable[[], None]] = {}  # Store callbacks for direct access
         self._menu_action_group = Gio.SimpleActionGroup()
         self.insert_action_group("pane", self._menu_action_group)
-        self._menu_popover: Gtk.PopoverMenu = self._create_menu_model()
+        self._menu_popover: Gtk.Popover = self._create_menu_model()
         self._add_context_controller(list_view)
         self._add_context_controller(grid_view)
 
@@ -2829,6 +3553,12 @@ class FilePane(Gtk.Box):
         drag_source.connect("drag-end", self._on_drag_end)
         box.add_controller(drag_source)
         
+        # Add right-click gesture to select item and show context menu
+        right_click_gesture = Gtk.GestureClick()
+        right_click_gesture.set_button(Gdk.BUTTON_SECONDARY)
+        right_click_gesture.connect("pressed", self._on_list_item_right_click, item)
+        box.add_controller(right_click_gesture)
+        
         item.set_child(box)
 
     def _on_list_bind(self, factory: Gtk.SignalListItemFactory, item):
@@ -2943,6 +3673,12 @@ class FilePane(Gtk.Box):
                 pass
         click_gesture.connect("pressed", self._on_grid_cell_pressed, button)
         button.add_controller(click_gesture)
+        
+        # Add right-click gesture to select item and show context menu
+        right_click_gesture = Gtk.GestureClick()
+        right_click_gesture.set_button(Gdk.BUTTON_SECONDARY)
+        right_click_gesture.connect("pressed", self._on_grid_item_right_click, item)
+        button.add_controller(right_click_gesture)
         
         # Add drag source for file operations
         drag_source = Gtk.DragSource()
@@ -3127,14 +3863,21 @@ class FilePane(Gtk.Box):
         asc_action.set_state(GLib.Variant.new_boolean(not self._sort_descending))
         desc_action.set_state(GLib.Variant.new_boolean(self._sort_descending))
 
-    def _create_menu_model(self) -> Gtk.PopoverMenu:
+    def _create_menu_model(self) -> Gtk.Popover:
         # Create menu actions first
         def _add_action(name: str, callback: Callable[[], None]) -> None:
             if name not in self._menu_actions:
                 action = Gio.SimpleAction.new(name, None)
+                # Store callback for direct access
+                self._menu_action_callbacks[name] = callback
 
                 def _on_activate(_action: Gio.SimpleAction, _param: Optional[GLib.Variant]) -> None:
-                    callback()
+                    try:
+                        logger.debug(f"_add_action: _on_activate called for action '{name}'")
+                        callback()
+                        logger.debug(f"_add_action: callback for '{name}' completed successfully")
+                    except Exception as e:
+                        logger.error(f"_add_action: Error in callback for '{name}': {e}", exc_info=True)
 
                 action.connect("activate", _on_activate)
                 self._menu_action_group.add_action(action)
@@ -3142,6 +3885,7 @@ class FilePane(Gtk.Box):
 
         _add_action("download", self._on_menu_download)
         _add_action("upload", self._on_menu_upload)
+        _add_action("edit", self._on_menu_edit)
         _add_action("copy", lambda: self._emit_entry_operation("copy"))
         _add_action("cut", lambda: self._emit_entry_operation("cut"))
         _add_action("paste", self._emit_paste_operation)
@@ -3150,67 +3894,96 @@ class FilePane(Gtk.Box):
         _add_action("new_folder", lambda: self.emit("request-operation", "mkdir", None))
         _add_action("properties", self._on_menu_properties)
 
-        # Create menu model dynamically based on pane type and selection state
-        menu_model = self._create_context_menu_model()
-
-        # Create popover and connect action group
-        popover = Gtk.PopoverMenu.new_from_model(menu_model)
+        # Create popover with listbox (same style as connection list)
+        popover = Gtk.Popover.new()
         popover.set_has_arrow(True)
-        popover.insert_action_group("pane", self._menu_action_group)
+        
+        # Create listbox for menu items (same margins as connection list)
+        listbox = Gtk.ListBox(margin_top=2, margin_bottom=2, margin_start=2, margin_end=2)
+        listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        popover.set_child(listbox)
+        
         return popover
 
-    def _create_context_menu_model(self) -> Gio.Menu:
-        """Create context menu model based on current selection state."""
-        menu_model = Gio.Menu()
-        
-        # Check if items are selected
-        try:
-            # Check if _entries is initialized
-            if not hasattr(self, '_entries') or not self._entries:
-                has_selection = False
+
+    def _on_list_item_right_click(self, gesture: Gtk.GestureClick, n_press: int, x: float, y: float, list_item: Gtk.ListItem) -> None:
+        """Handle right-click on a list item: select it and show context menu."""
+        position = list_item.get_position()
+        if position is not None and 0 <= position < len(self._entries):
+            # Check if the clicked item is already selected
+            is_selected = False
+            if hasattr(self._selection_model, "is_selected"):
+                try:
+                    is_selected = self._selection_model.is_selected(position)
+                except Exception:
+                    is_selected = False
+            
+            # If the clicked item is not already selected, clear selection and select only this item
+            # If it is already selected, preserve the current selection
+            if not is_selected:
+                self._selection_model.unselect_all()
+                self._selection_model.select_item(position, False)
             else:
-                selected_entries = self.get_selected_entries()
-                has_selection = len(selected_entries) > 0
-        except AttributeError:
-            # Handle case where _entries is not initialized yet (during testing)
-            has_selection = False
+                # Ensure the clicked item is selected (should already be, but be safe)
+                self._selection_model.select_item(position, False)
+            self._selection_anchor = position
         
-        # Add Download/Upload based on pane type and selection
-        if self._is_remote and has_selection:
-            menu_model.append("Download", "pane.download")
-        elif not self._is_remote and has_selection:
-            menu_model.append("Upload…", "pane.upload")
+        # Show context menu at click position
+        box = list_item.get_child()
+        if box:
+            # Convert coordinates to the view widget's coordinate space
+            view_widget = self._list_view
+            widget_x, widget_y = box.translate_coordinates(view_widget, x, y)
+            if widget_x is not None and widget_y is not None:
+                self._show_context_menu(view_widget, widget_x, widget_y)
+            else:
+                # Fallback: use the box coordinates
+                self._show_context_menu(box, x, y)
 
-        if has_selection:
-            clipboard_section = Gio.Menu()
-            clipboard_section.append("Copy", "pane.copy")
-            clipboard_section.append("Cut", "pane.cut")
-            menu_model.append_section(None, clipboard_section)
-
-        if getattr(self, "_can_paste", False):
-            menu_model.append("Paste", "pane.paste")
-
-        # Add management section only if items are selected
-        if has_selection:
-            manage_section = Gio.Menu()
-            manage_section.append("Rename…", "pane.rename")
-            manage_section.append("Delete", "pane.delete")
-            menu_model.append_section(None, manage_section)
+    def _on_grid_item_right_click(self, gesture: Gtk.GestureClick, n_press: int, x: float, y: float, list_item: Gtk.ListItem) -> None:
+        """Handle right-click on a grid item: select it and show context menu."""
+        position = list_item.get_position()
+        if position is not None and 0 <= position < len(self._entries):
+            # Check if the clicked item is already selected
+            is_selected = False
+            if hasattr(self._selection_model, "is_selected"):
+                try:
+                    is_selected = self._selection_model.is_selected(position)
+                except Exception:
+                    is_selected = False
+            
+            # If the clicked item is not already selected, clear selection and select only this item
+            # If it is already selected, preserve the current selection
+            if not is_selected:
+                self._selection_model.unselect_all()
+                self._selection_model.select_item(position, False)
+            else:
+                # Ensure the clicked item is selected (should already be, but be safe)
+                self._selection_model.select_item(position, False)
+            self._selection_anchor = position
         
-        # Always add Properties (it will be enabled/disabled by _update_menu_state)
-        menu_model.append("Properties…", "pane.properties")
-        
-        # Add New Folder only if no items are selected (this is the main change)
-        if not has_selection:
-            menu_model.append("New Folder", "pane.new_folder")
-        
-        return menu_model
+        # Show context menu at click position
+        button = list_item.get_child()
+        if button:
+            # Convert coordinates to the view widget's coordinate space
+            view_widget = self._grid_view
+            widget_x, widget_y = button.translate_coordinates(view_widget, x, y)
+            if widget_x is not None and widget_y is not None:
+                self._show_context_menu(view_widget, widget_x, widget_y)
+            else:
+                # Fallback: use the button coordinates
+                self._show_context_menu(button, x, y)
 
     def _add_context_controller(self, widget: Gtk.Widget) -> None:
         gesture = Gtk.GestureClick()
         gesture.set_button(Gdk.BUTTON_SECONDARY)
 
         def _on_pressed(_gesture: Gtk.GestureClick, n_press: int, x: float, y: float) -> None:
+            # Check if click is on an item or empty space
+            # If on empty space, clear selection before showing menu
+            if self._is_click_on_empty_space(widget, x, y):
+                self._selection_model.unselect_all()
+                self._selection_anchor = None
             self._show_context_menu(widget, x, y)
 
         gesture.connect("pressed", _on_pressed)
@@ -3219,6 +3992,10 @@ class FilePane(Gtk.Box):
         long_press = Gtk.GestureLongPress()
 
         def _on_long_press(_gesture: Gtk.GestureLongPress, x: float, y: float) -> None:
+            # Check if click is on an item or empty space
+            if self._is_click_on_empty_space(widget, x, y):
+                self._selection_model.unselect_all()
+                self._selection_anchor = None
             self._show_context_menu(widget, x, y)
 
         long_press.connect("pressed", _on_long_press)
@@ -3231,16 +4008,95 @@ class FilePane(Gtk.Box):
         if getattr(self, '_suppress_next_context_menu', False):
             self._suppress_next_context_menu = False
             return
-        self._update_selection_for_menu(widget, x, y)
+        # Selection is now handled by item-level gestures or cleared for empty space
+        # No need to update selection here
         self._update_menu_state()
         try:
             widget.grab_focus()
         except Exception:
             pass
         
-        # Create a new menu model based on current selection state
-        new_menu_model = self._create_context_menu_model()
-        self._menu_popover.set_menu_model(new_menu_model)
+        # Get the listbox from the popover
+        listbox = self._menu_popover.get_child()
+        if not isinstance(listbox, Gtk.ListBox):
+            return
+        
+        # Clear existing items
+        while listbox.get_first_child() is not None:
+            listbox.remove(listbox.get_first_child())
+        
+        # Check if items are selected
+        try:
+            if not hasattr(self, '_entries') or not self._entries:
+                has_selection = False
+            else:
+                selected_entries = self.get_selected_entries()
+                has_selection = len(selected_entries) > 0
+        except AttributeError:
+            has_selection = False
+        
+        # Build menu items using Adw.ActionRow (same style as connection list)
+        def _add_menu_item(title: str, icon_name: str, action_name: str) -> None:
+            row = Adw.ActionRow(title=title)
+            icon = Gtk.Image.new_from_icon_name(icon_name)
+            row.add_prefix(icon)
+            row.set_activatable(True)
+            def _on_activated(*_):
+                try:
+                    logger.debug(f"_show_context_menu: Menu item '{title}' (action '{action_name}') activated")
+                    # Get the callback and call it directly
+                    callback = self._menu_action_callbacks.get(action_name)
+                    if callback:
+                        logger.debug(f"_show_context_menu: Found callback for '{action_name}', calling directly")
+                        callback()
+                        logger.debug(f"_show_context_menu: Callback for '{action_name}' completed")
+                    else:
+                        logger.error(f"_show_context_menu: Callback for '{action_name}' not found. Available callbacks: {list(self._menu_action_callbacks.keys())}")
+                        # Fallback: try to activate the action
+                        action = self._menu_actions.get(action_name)
+                        if action:
+                            logger.debug(f"_show_context_menu: Falling back to action.activate() for '{action_name}'")
+                            action.activate(None)
+                except Exception as e:
+                    logger.error(f"_show_context_menu: Failed to execute action '{action_name}': {e}", exc_info=True)
+                finally:
+                    self._menu_popover.popdown()
+            row.connect('activated', _on_activated)
+            listbox.append(row)
+        
+        # Add Download/Upload based on pane type and selection
+        if self._is_remote and has_selection:
+            _add_menu_item("Download", "document-save-symbolic", "download")
+        elif not self._is_remote and has_selection:
+            _add_menu_item("Upload…", "document-send-symbolic", "upload")
+        
+        # Add Edit for text files (both local and remote)
+        if has_selection:
+            selected_entries = self.get_selected_entries()
+            if len(selected_entries) == 1 and not selected_entries[0].is_dir:
+                if self._is_text_file(selected_entries[0]):
+                    _add_menu_item("Edit", "document-edit-symbolic", "edit")
+        
+        # Add clipboard operations if items are selected
+        if has_selection:
+            _add_menu_item("Copy", "edit-copy-symbolic", "copy")
+            _add_menu_item("Cut", "edit-cut-symbolic", "cut")
+        
+        # Add Paste if clipboard has items
+        if getattr(self, "_can_paste", False):
+            _add_menu_item("Paste", "edit-paste-symbolic", "paste")
+        
+        # Add management operations if items are selected
+        if has_selection:
+            _add_menu_item("Rename…", "document-edit-symbolic", "rename")
+            _add_menu_item("Delete", "user-trash-symbolic", "delete")
+        
+        # Add New Folder only if no items are selected (before Properties)
+        if not has_selection:
+            _add_menu_item("New Folder", "folder-new-symbolic", "new_folder")
+        
+        # Always add Properties (at the end)
+        _add_menu_item("Properties…", "document-properties-symbolic", "properties")
         
         # Create a rectangle for the popover positioning
         rect = Gdk.Rectangle()
@@ -3256,14 +4112,70 @@ class FilePane(Gtk.Box):
         self._menu_popover.set_pointing_to(rect)
         self._menu_popover.popup()
 
-    def _update_selection_for_menu(self, widget: Gtk.Widget, x: float, y: float) -> None:
-        # In GTK4, we can't easily get the item at a specific position
-        # Instead, we'll show the context menu based on the current selection
-        # The user should select items first, then right-click for context menu
-        # This is actually more consistent with modern file manager behavior
+    def _is_click_on_empty_space(self, widget: Gtk.Widget, x: float, y: float) -> bool:
+        """Check if the click is on empty space (not on an item)."""
+        # Determine which view is active
+        visible_child = self._stack.get_visible_child()
+        if visible_child is None:
+            return True
         
-        # Keep the current selection as-is for the context menu
-        pass
+        # Find the actual view widget (list or grid) in the scrolled window
+        view_widget = None
+        for child in visible_child:
+            if isinstance(child, Gtk.ScrolledWindow):
+                scrolled_child = child.get_child()
+                if scrolled_child == self._list_view:
+                    view_widget = self._list_view
+                elif scrolled_child == self._grid_view:
+                    view_widget = self._grid_view
+                break
+        
+        if view_widget is None:
+            return True
+        
+        try:
+            # Convert coordinates to view widget's coordinate space
+            widget_x, widget_y = widget.translate_coordinates(view_widget, x, y)
+            if widget_x is None or widget_y is None:
+                return True
+            
+            # Use pick() to find which child widget is at the coordinates
+            picked = view_widget.pick(widget_x, widget_y, Gtk.PickFlags.DEFAULT)
+            if picked is None:
+                return True
+            
+            # Check if we picked an actual item (not just the view widget itself)
+            # For ListView: check if we picked a list item or its child
+            if isinstance(view_widget, Gtk.ListView):
+                # Walk up the widget tree to see if we hit a list item
+                current = picked
+                while current and current != view_widget:
+                    # If we find a widget that has the drag_position attribute, it's an item
+                    if hasattr(current, 'drag_position'):
+                        return False
+                    # If we find a box that's a list item child, it's an item
+                    if isinstance(current, Gtk.Box) and hasattr(current, '_pane_entry'):
+                        return False
+                    current = current.get_parent()
+                # If we only hit the view widget itself, it's empty space
+                return picked == view_widget
+            
+            # For GridView: check if we picked a button (grid item)
+            elif isinstance(view_widget, Gtk.GridView):
+                # Walk up the widget tree to see if we hit a button
+                current = picked
+                while current and current != view_widget:
+                    # If we find a button with drag_position, it's an item
+                    if isinstance(current, Gtk.Button) and hasattr(current, 'drag_position'):
+                        return False
+                    current = current.get_parent()
+                # If we only hit the view widget itself, it's empty space
+                return picked == view_widget
+            
+            return True
+        except Exception as e:
+            logger.debug(f"Error checking if click is on empty space: {e}")
+            return True
 
     def _get_selected_indices(self) -> List[int]:
         indices: List[int] = []
@@ -3417,6 +4329,14 @@ class FilePane(Gtk.Box):
         if isinstance(root, FileManagerWindow):
             self._window = root
             return root
+
+        # When embedded as a tab, traverse up the widget tree to find FileManagerWindow
+        parent = self.get_parent()
+        while parent is not None:
+            if isinstance(parent, FileManagerWindow):
+                self._window = parent
+                return parent
+            parent = parent.get_parent()
 
         return None
 
@@ -3613,9 +4533,13 @@ class FilePane(Gtk.Box):
             return True
         return error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)
 
-    def _build_properties_details(self, entry: FileEntry) -> Dict[str, str]:
+    def _build_properties_details(self, entry: FileEntry, is_current_directory: bool = False) -> Dict[str, str]:
         base_path = self._current_path or "/"
-        location = os.path.join(base_path, entry.name)
+        if is_current_directory:
+            # For current directory, use the base path as location
+            location = base_path
+        else:
+            location = os.path.join(base_path, entry.name)
 
         entry_type = "Folder" if entry.is_dir else "File"
         if entry.is_dir:
@@ -3637,27 +4561,251 @@ class FilePane(Gtk.Box):
             "location": location,
         }
 
+    def _is_text_file(self, entry: FileEntry) -> bool:
+        """Check if a file is likely a text file based on name/extension."""
+        if entry.is_dir:
+            return False
+        
+        # Check mimetype
+        mimetype, _ = mimetypes.guess_type(entry.name)
+        if mimetype:
+            if mimetype.startswith('text/'):
+                return True
+            # Also allow common code file types
+            text_mimes = [
+                'application/json',
+                'application/javascript',
+                'application/xml',
+                'application/x-sh',
+                'application/x-python',
+            ]
+            if mimetype in text_mimes:
+                return True
+        
+        # Check by extension
+        _, ext = os.path.splitext(entry.name.lower())
+        text_extensions = {
+            '.txt', '.md', '.rst', '.log',
+            '.py', '.pyw', '.pyx', '.pyi',
+            '.js', '.jsx', '.ts', '.tsx',
+            '.html', '.htm', '.xhtml', '.xml', '.css', '.scss', '.sass',
+            '.json', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf',
+            '.sh', '.bash', '.zsh', '.fish', '.ps1',
+            '.c', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.hxx',
+            '.java', '.kt', '.scala', '.go', '.rs', '.rb', '.pl', '.pm',
+            '.php', '.php3', '.php4', '.php5', '.phtml',
+            '.sql', '.lua', '.vim', '.vimrc',
+            '.dockerfile', '.makefile', '.cmake',
+            '.properties', '.env', '.gitignore', '.gitattributes',
+        }
+        if ext in text_extensions:
+            return True
+        
+        # Check if filename suggests a text file
+        text_patterns = ['readme', 'license', 'changelog', 'authors', 'contributors', 'makefile']
+        name_lower = entry.name.lower()
+        for pattern in text_patterns:
+            if pattern in name_lower:
+                return True
+        
+        return False
+    
+    def _on_menu_edit(self) -> None:
+        """Handle Edit menu action - open file in editor."""
+        entry = self.get_selected_entry()
+        if entry is None:
+            self.show_toast("No file selected")
+            return
+        
+        if entry.is_dir:
+            self.show_toast("Cannot edit directories")
+            return
+        
+        if not self._is_text_file(entry):
+            self.show_toast("File type not supported for editing")
+            return
+        
+        # Get file manager window
+        window = self._get_file_manager_window()
+        if window is None or not isinstance(window, FileManagerWindow):
+            self.show_toast("Cannot edit file - window not available")
+            return
+        
+        if self._is_remote:
+            # Remote file editing
+            sftp_manager = getattr(window, '_manager', None)
+            if sftp_manager is None:
+                self.show_toast("Cannot edit file - connection not available")
+                return
+            
+            # Build remote path
+            file_path = posixpath.join(self._current_path or "/", entry.name)
+            
+            # Create editor window for remote file
+            try:
+                editor = RemoteFileEditorWindow(
+                    parent=window,
+                    file_path=file_path,
+                    file_name=entry.name,
+                    is_local=False,
+                    sftp_manager=sftp_manager,
+                    file_manager_window=window,
+                )
+                editor.present()
+            except Exception as e:
+                logger.error(f"Failed to open editor: {e}", exc_info=True)
+                self.show_toast(f"Failed to open editor: {e}")
+        else:
+            # Local file editing
+            file_path = os.path.join(self._current_path or os.path.expanduser("~"), entry.name)
+            file_path = os.path.abspath(os.path.expanduser(file_path))
+            
+            # Create editor window for local file
+            try:
+                editor = RemoteFileEditorWindow(
+                    parent=window,
+                    file_path=file_path,
+                    file_name=entry.name,
+                    is_local=True,
+                    sftp_manager=None,
+                    file_manager_window=window,
+                )
+                editor.present()
+            except Exception as e:
+                logger.error(f"Failed to open editor: {e}", exc_info=True)
+                self.show_toast(f"Failed to open editor: {e}")
+
     def _on_menu_properties(self) -> None:
         entry = self.get_selected_entry()
         if entry is None:
-            self.show_toast("Select a single item to view properties")
-            return
-        details = self._build_properties_details(entry)
-        self._show_properties_dialog(entry, details)
+            # No item selected - show properties for current directory
+            current_path = self._current_path or "/"
+            logger.debug(f"_on_menu_properties: No selection, showing properties for current directory: {current_path}")
+            
+            # Get directory name and parent path
+            # PropertiesDialog expects entry.name and current_path where entry is located
+            if current_path == "/":
+                # Special case for root directory
+                dir_name = "/"
+                parent_path = "/"
+            else:
+                # Normalize path (remove trailing slash)
+                normalized_path = current_path.rstrip("/")
+                dir_name = os.path.basename(normalized_path) or normalized_path
+                parent_path = os.path.dirname(normalized_path) or "/"
+                # If parent_path is empty after dirname, use "/"
+                if not parent_path:
+                    parent_path = "/"
+            
+            logger.debug(f"_on_menu_properties: dir_name={dir_name}, parent_path={parent_path}, is_remote={self._is_remote}")
+            
+            # Create a FileEntry for the current directory
+            try:
+                if self._is_remote:
+                    # For remote, create a basic entry with item count
+                    if hasattr(self, '_entries') and self._entries is not None:
+                        item_count = len(self._entries)
+                    else:
+                        item_count = None
+                    logger.debug(f"_on_menu_properties: Creating remote directory entry with item_count={item_count}")
+                    entry = FileEntry(
+                        name=dir_name,
+                        is_dir=True,
+                        size=0,
+                        modified=0.0,
+                        item_count=item_count
+                    )
+                else:
+                    # For local, get actual directory stats
+                    if os.path.isdir(current_path):
+                        stat_info = os.stat(current_path)
+                        # Count items in directory
+                        try:
+                            item_count = len(list(os.scandir(current_path)))
+                        except Exception:
+                            item_count = None
+                        
+                        entry = FileEntry(
+                            name=dir_name,
+                            is_dir=True,
+                            size=0,  # Directories don't have a meaningful size
+                            modified=stat_info.st_mtime,
+                            item_count=item_count
+                        )
+                        logger.debug(f"_on_menu_properties: Created local directory entry with modified={stat_info.st_mtime}, item_count={item_count}")
+                    else:
+                        logger.warning(f"_on_menu_properties: Current directory is not accessible: {current_path}")
+                        self.show_toast("Current directory is not accessible")
+                        return
+            except Exception as e:
+                logger.error(f"Error creating directory entry for properties: {e}", exc_info=True)
+                self.show_toast("Unable to get directory properties")
+                return
+            
+            # Mark that this is the current directory
+            # Use parent path for PropertiesDialog so it can construct the full path correctly
+            is_current_dir = True
+            properties_path = parent_path
+            logger.debug(f"_on_menu_properties: Using properties_path={properties_path} for current directory")
+        else:
+            is_current_dir = False
+            properties_path = None
+            logger.debug(f"_on_menu_properties: Showing properties for selected entry: {entry.name}")
+        
+        try:
+            details = self._build_properties_details(entry, is_current_directory=is_current_dir)
+            logger.debug(f"_on_menu_properties: Built properties details: {details}")
+            self._show_properties_dialog(entry, details, properties_path=properties_path)
+        except Exception as e:
+            logger.error(f"Error showing properties dialog: {e}", exc_info=True)
+            self.show_toast(f"Failed to show properties: {e}")
 
-    def _show_properties_dialog(self, entry: FileEntry, details: Dict[str, str]) -> None:
-        """Show modern properties dialog."""
+    def _show_properties_dialog(self, entry: FileEntry, details: Dict[str, str], properties_path: Optional[str] = None) -> None:
+        """Show modern properties dialog.
+        
+        Args:
+            entry: The file entry to show properties for
+            details: Properties details dictionary
+            properties_path: Optional path to use instead of self._current_path (for current directory)
+        """
         window = self.get_root()
         if window is None:
+            logger.error("FilePane: Cannot show properties dialog - window is None")
+            self.show_toast("Cannot show properties - window not available")
             return
         
         try:
+            # Get SFTP manager if this is a remote pane
+            # Use _get_file_manager_window() to find the FileManagerWindow even when embedded as a tab
+            sftp_manager = None
+            if self._is_remote:
+                file_manager_window = self._get_file_manager_window()
+                if file_manager_window is not None:
+                    sftp_manager = getattr(file_manager_window, '_manager', None)
+                    logger.debug(f"FilePane: Getting SFTP manager for properties dialog: is_remote={self._is_remote}, file_manager_window={file_manager_window}, manager={sftp_manager}")
+                else:
+                    logger.debug(f"FilePane: Could not find FileManagerWindow for remote pane")
+            else:
+                logger.debug(f"FilePane: Not getting SFTP manager: is_remote={self._is_remote}")
+            
+            # Use provided path or fall back to current path
+            path_for_dialog = properties_path if properties_path is not None else self._current_path
+            
+            logger.debug(f"FilePane: Creating PropertiesDialog with entry.name={entry.name}, path={path_for_dialog}, is_remote={self._is_remote}")
+            
             # Create and show the modern properties dialog
-            dialog = PropertiesDialog(entry, self._current_path, window)
+            dialog = PropertiesDialog(entry, path_for_dialog, window, sftp_manager)
+            logger.debug(f"FilePane: Created PropertiesDialog with sftp_manager={sftp_manager}, path={path_for_dialog}")
             dialog.present()
+            logger.debug(f"FilePane: PropertiesDialog presented successfully")
         except Exception as e:
+            logger.error(f"FilePane: Failed to show properties dialog: {e}", exc_info=True)
             # Fallback to simple message dialog if modern dialog fails
-            self._show_fallback_properties_dialog(entry, details, window)
+            try:
+                self._show_fallback_properties_dialog(entry, details, window)
+            except Exception as fallback_error:
+                logger.error(f"FilePane: Fallback properties dialog also failed: {fallback_error}", exc_info=True)
+                self.show_toast(f"Failed to show properties: {e}")
 
     def _show_fallback_properties_dialog(self, entry: FileEntry, details: Dict[str, str], window: Gtk.Window) -> None:
         """Fallback to simple properties dialog if modern dialog fails."""
@@ -4303,6 +5451,10 @@ class FilePane(Gtk.Box):
         self._scroll_to_position(match)
         return True
 
+# Global registry to track live file manager windows. Used to ensure
+# managers are cleaned up even if the application does not hold references.
+_file_manager_windows_registry: weakref.WeakSet = weakref.WeakSet()
+
 
 class FileManagerWindow(Adw.Window):
     """Top-level window hosting two :class:`FilePane` instances."""
@@ -4320,7 +5472,9 @@ class FileManagerWindow(Adw.Window):
         connection_manager: Any = None,
         ssh_config: Optional[Dict[str, Any]] = None,
     ) -> None:
-        super().__init__(title="")
+        super().__init__(application=application, title="")
+        # Register this window in the global registry for cleanup
+        _file_manager_windows_registry.add(self)
         self._host = host
         self._username = username
         self._nickname = nickname
@@ -4450,6 +5604,16 @@ class FileManagerWindow(Adw.Window):
         paned separator {
             background-color: @borders;
             border: none;
+            min-width: 1px;
+            min-height: 1px;
+        }
+        
+        paned.horizontal separator {
+            min-width: 1px;
+        }
+        
+        paned.vertical separator {
+            min-height: 1px;
         }
         
         /* Action bar styling */
@@ -4475,7 +5639,7 @@ class FileManagerWindow(Adw.Window):
 
         # Create the main content area and set it as toast overlay child
         panes = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
-        panes.set_wide_handle(True)
+        panes.set_wide_handle(False)
         # Set position to split evenly by default (50%)
         panes.set_position(500)  # This will be adjusted when window is resized
         # Enable resizing and shrinking for both panes following GNOME HIG
@@ -4517,6 +5681,13 @@ class FileManagerWindow(Adw.Window):
             self._right_pane: initial_path,
         }
         self._pending_highlights: Dict[FilePane, Optional[str]] = {
+            self._left_pane: None,
+            self._right_pane: None,
+        }
+        # Track which panes are being refreshed (to show success toast)
+        self._refreshing_panes: set = set()
+        # Track loading toast timeouts per pane (to cancel them if loading completes quickly)
+        self._loading_toast_timeouts: Dict[FilePane, Optional[int]] = {
             self._left_pane: None,
             self._right_pane: None,
         }
@@ -4623,6 +5794,10 @@ class FileManagerWindow(Adw.Window):
         except Exception as exc:
             print(f"Error connecting signals: {exc}")
         
+        # Connect close-request and destroy handlers to clean up resources
+        self.connect("close-request", self._on_close_request)
+        self.connect("destroy", self._on_destroy)
+        
         # Show initial progress before connecting
         try:
             self._show_progress(0.1, "Connecting…")
@@ -4681,6 +5856,23 @@ class FileManagerWindow(Adw.Window):
         # Show error toast
         self._clear_progress_toast()
         self._right_pane.show_toast(f"Connection error: {error_message}")
+
+    def _on_close_request(self, window) -> bool:
+        """Handle window close request - clean up resources."""
+        logger.debug("FileManagerWindow close-request received, cleaning up")
+        try:
+            if hasattr(self, '_manager') and self._manager is not None:
+                logger.debug("Closing AsyncSFTPManager")
+                self._manager.close()
+                self._manager = None
+        except Exception as exc:
+            logger.error(f"Error closing AsyncSFTPManager: {exc}", exc_info=True)
+        
+        # Clear progress dialog if it exists
+        self._clear_progress_toast()
+        
+        # Allow the window to close
+        return False
 
     def detach_for_embedding(self, parent: Optional[Gtk.Widget] = None) -> Gtk.Widget:
         """Detach the window content for embedding in another container."""
@@ -4795,6 +5987,17 @@ class FileManagerWindow(Adw.Window):
 
     def _on_operation_error(self, _manager, message: str) -> None:
         """Handle operation error with toast."""
+        # Cancel any pending loading toast timeouts since operation failed
+        for pane, timeout_id in self._loading_toast_timeouts.items():
+            if timeout_id is not None:
+                GLib.source_remove(timeout_id)
+                self._loading_toast_timeouts[pane] = None
+                # Dismiss any loading toast that might be showing
+                try:
+                    pane.dismiss_toasts()
+                except (AttributeError, RuntimeError, GLib.GError):
+                    pass
+        
         try:
             toast = Adw.Toast.new(message)
             toast.set_priority(Adw.ToastPriority.HIGH)
@@ -4826,6 +6029,35 @@ class FileManagerWindow(Adw.Window):
             return False  # Don't repeat
         
         GLib.idle_add(show_error)
+
+    def _cleanup_manager(self) -> None:
+        """Close the AsyncSFTPManager and clear UI state."""
+        manager = getattr(self, "_manager", None)
+        if manager is not None:
+            try:
+                logger.info("Cleaning up AsyncSFTPManager resources")
+                manager.close()
+            except Exception as exc:
+                logger.error(f"Error closing AsyncSFTPManager: {exc}", exc_info=True)
+            finally:
+                self._manager = None
+        self._clear_progress_toast()
+        try:
+            _file_manager_windows_registry.discard(self)
+        except Exception:
+            pass
+
+    def _on_close_request(self, window) -> bool:
+        """Handle window close request - clean up resources."""
+        logger.info("FileManagerWindow close-request received, cleaning up")
+        self._cleanup_manager()
+        # Allow the window to close
+        return False
+
+    def _on_destroy(self, window) -> None:
+        """Handle window destroy - ensure cleanup happens even if close-request wasn't called."""
+        logger.info("FileManagerWindow destroy received, ensuring cleanup")
+        self._cleanup_manager()
 
     def _is_password_auth_enabled(self, connection: Any = None) -> bool:
         """Check if password authentication is enabled/required for this connection.
@@ -5177,6 +6409,13 @@ class FileManagerWindow(Adw.Window):
         # Clear the pending flag for the resolved pane
         logger.debug(f"_on_directory_loaded: clearing pending path for target pane")
         self._pending_paths[target] = None
+        
+        # Cancel loading toast timeout if still pending
+        timeout_id = self._loading_toast_timeouts.get(target)
+        if timeout_id is not None:
+            GLib.source_remove(timeout_id)
+            self._loading_toast_timeouts[target] = None
+            logger.debug(f"_on_directory_loaded: cancelled loading toast timeout for target pane")
 
         logger.debug(f"_on_directory_loaded: calling show_entries on target pane")
         target.show_entries(path, entries_list)
@@ -5184,18 +6423,22 @@ class FileManagerWindow(Adw.Window):
         target.push_history(path)
         
         # Dismiss any loading toast after directory load is fully complete
-        # The loading toast was shown on the right pane, so dismiss it specifically
         try:
-            if target == self._right_pane:
-                target.dismiss_toasts()
-                logger.debug(f"_on_directory_loaded: dismissed loading toasts for right pane")
-            else:
-                # If target is not right pane, still dismiss any loading toasts on right pane
-                self._right_pane.dismiss_toasts()
-                logger.debug(f"_on_directory_loaded: dismissed loading toasts for right pane (fallback)")
+            target.dismiss_toasts()
+            logger.debug(f"_on_directory_loaded: dismissed loading toasts for target pane")
         except (AttributeError, RuntimeError, GLib.GError):
             # Method might not exist or overlay might be destroyed, ignore
             pass
+        
+        # Show success toast if this was a refresh
+        if target in self._refreshing_panes:
+            try:
+                target.show_toast("Directory refreshed", timeout=2)
+                logger.debug(f"_on_directory_loaded: showed refresh success toast for {('remote' if target._is_remote else 'local')} pane")
+            except (AttributeError, RuntimeError, GLib.GError):
+                pass
+            finally:
+                self._refreshing_panes.discard(target)
         
         logger.debug(f"_on_directory_loaded: completed directory load for {path}")
 
@@ -5246,16 +6489,35 @@ class FileManagerWindow(Adw.Window):
             # Show results in the left pane
             self._left_pane.show_entries(path, entries)
             self._apply_pending_highlight(self._left_pane)
+            
+            # Show success toast if this was a refresh
+            if self._left_pane in self._refreshing_panes:
+                try:
+                    self._left_pane.show_toast("Directory reloadeds", timeout=2)
+                    logger.debug(f"_load_local: showed refresh success toast for local pane")
+                except (AttributeError, RuntimeError, GLib.GError):
+                    pass
+                finally:
+                    self._refreshing_panes.discard(self._left_pane)
         except Exception as exc:
             self._left_pane.show_toast(str(exc))
+            # Clear refresh flag on error
+            self._refreshing_panes.discard(self._left_pane)
 
     def _on_path_changed(self, pane: FilePane, path: str, user_data=None) -> None:
+        # Detect if this is a refresh (same path as current)
+        current_path = getattr(pane, "_current_path", None)
+        is_refresh = current_path and os.path.normpath(path) == os.path.normpath(current_path)
+        
         # Route local vs remote browsing
         if pane is self._left_pane:
             # Local pane: expand ~ and navigate local filesystem
             local_path = os.path.expanduser(path) if path.startswith("~") else path
             if not local_path:
                 local_path = os.path.expanduser("~")
+            # Mark as refreshing if it's a refresh
+            if is_refresh:
+                self._refreshing_panes.add(pane)
             try:
                 self._load_local(local_path)
                 # Only push history if not triggered by Back
@@ -5265,14 +6527,44 @@ class FileManagerWindow(Adw.Window):
                     pane.push_history(local_path)
             except Exception as exc:
                 pane.show_toast(str(exc))
+                # Clear refresh flag on error
+                self._refreshing_panes.discard(pane)
         else:
             # Remote pane: use SFTP manager
             self._pending_paths[pane] = path
+            
+            # Cancel any existing loading toast timeout for this pane
+            timeout_id = self._loading_toast_timeouts.get(pane)
+            if timeout_id is not None:
+                GLib.source_remove(timeout_id)
+                self._loading_toast_timeouts[pane] = None
+            
+            # Mark as refreshing if it's a refresh
+            if is_refresh:
+                self._refreshing_panes.add(pane)
             # Only push history if not triggered by Back
             if getattr(pane, "_suppress_history_push", False):
                 pane._suppress_history_push = False
             else:
                 pane.push_history(path)
+            
+            # Start a timeout to show loading toast if directory takes a while to load
+            def show_loading_toast():
+                """Show loading toast after delay if still loading."""
+                # Check if this path is still pending (hasn't loaded yet)
+                if self._pending_paths.get(pane) == path:
+                    try:
+                        pane.show_toast("Loading directory…", timeout=-1)
+                        logger.debug(f"Showing loading toast for pane at path: {path}")
+                    except (AttributeError, RuntimeError, GLib.GError):
+                        pass
+                self._loading_toast_timeouts[pane] = None
+                return False  # Don't repeat
+            
+            # Show loading toast after 500ms if directory hasn't loaded yet
+            timeout_id = GLib.timeout_add(500, show_loading_toast)
+            self._loading_toast_timeouts[pane] = timeout_id
+            
             self._manager.listdir(path)
 
     def _restore_flatpak_folder(self) -> bool:
@@ -5490,6 +6782,7 @@ class FileManagerWindow(Adw.Window):
         if action == "mkdir":
             dialog = Adw.AlertDialog.new("New Folder", "Enter a name for the new folder")
             entry = Gtk.Entry()
+            entry.set_text("New Folder")
             dialog.set_extra_child(entry)
             dialog.add_response("cancel", "Cancel")
             dialog.add_response("ok", "Create")
@@ -5533,8 +6826,19 @@ class FileManagerWindow(Adw.Window):
                             future.add_done_callback(_on_mkdir_done)
                 dialog.close()
 
+            def _focus_entry():
+                entry.grab_focus()
+                entry.select_region(0, -1)  # Select all text
+
+            def _on_entry_activate(_entry):
+                # Trigger the "ok" response when Enter is pressed
+                _on_response(dialog, "ok")
+
+            entry.connect("activate", _on_entry_activate)
             dialog.connect("response", _on_response)
             dialog.present()
+            # Focus the entry after the dialog is shown
+            GLib.idle_add(_focus_entry)
         elif action == "rename" and isinstance(payload, dict):
             entries = payload.get("entries") or []
             directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
@@ -5600,8 +6904,19 @@ class FileManagerWindow(Adw.Window):
                     pane.show_toast(f"Renaming to {new_name}…")
                 dialog.close()
 
+            def _focus_entry():
+                name_entry.grab_focus()
+                name_entry.select_region(0, -1)  # Select all text
+
+            def _on_entry_activate(_entry):
+                # Trigger the "ok" response when Enter is pressed
+                _on_rename(dialog, "ok")
+
+            name_entry.connect("activate", _on_entry_activate)
             dialog.connect("response", _on_rename)
             dialog.present()
+            # Focus the entry after the dialog is shown
+            GLib.idle_add(_focus_entry)
         elif action == "delete" and isinstance(payload, dict):
             entries = payload.get("entries") or []
             directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
@@ -5657,10 +6972,51 @@ class FileManagerWindow(Adw.Window):
                     if errors:
                         pane.show_toast(errors[0])
                 else:
-                    for selected_entry in entries:
+                    # Delete entries sequentially to avoid race conditions and hangs
+                    errors: List[str] = []
+                    total_count = len(entries)
+                    
+                    logger.info(f"Starting sequential deletion of {total_count} remote entries")
+                    
+                    def _delete_next(index: int) -> None:
+                        """Delete the next entry in the list, then continue with the next one."""
+                        if index >= total_count:
+                            # All deletions complete
+                            logger.info(f"All {total_count} deletions completed, refreshing pane")
+                            GLib.idle_add(
+                                lambda: self._on_all_deletes_complete(pane, base_dir, errors, total_count)
+                            )
+                            return
+                        
+                        selected_entry = entries[index]
                         target_path = posixpath.join(base_dir, selected_entry.name)
-                        future = self._manager.remove(target_path)
-                        self._attach_refresh(future, refresh_remote=pane)
+                        entry_name = selected_entry.name
+                        
+                        logger.info(f"Deleting {index + 1}/{total_count}: '{entry_name}'")
+                        
+                        def _on_delete_done(future_result: Future) -> None:
+                            try:
+                                future_result.result()  # Check for errors
+                                logger.info(f"Successfully deleted '{entry_name}'")
+                            except Exception as e:
+                                error_msg = f"Failed to delete {entry_name}: {str(e)}"
+                                logger.error(f"Delete failed for '{entry_name}': {error_msg}", exc_info=True)
+                                errors.append(error_msg)
+                            
+                            # Continue with next deletion on the main loop
+                            GLib.idle_add(lambda: _delete_next(index + 1))
+                        
+                        try:
+                            future = self._manager.remove(target_path)
+                            future.add_done_callback(_on_delete_done)
+                        except Exception as exc:
+                            logger.error(f"Failed to create remove future for {entry_name}: {exc}", exc_info=True)
+                            errors.append(f"Failed to delete {entry_name}: {str(exc)}")
+                            GLib.idle_add(lambda: _delete_next(index + 1))
+                    
+                    # Start sequential deletion
+                    _delete_next(0)
+                    
                     pane.show_toast(
                         "Deleting 1 item…" if count == 1 else f"Deleting {count} items…"
                     )
@@ -5971,6 +7327,29 @@ class FileManagerWindow(Adw.Window):
 
         future.add_done_callback(_on_done)
 
+    def _on_all_deletes_complete(self, pane: FilePane, base_dir: str, errors: List[str], total_count: int) -> None:
+        """Handle completion of all delete operations."""
+        success_count = total_count - len(errors)
+        
+        if success_count > 0:
+            message = (
+                "Deleted 1 item"
+                if success_count == 1
+                else f"Deleted {success_count} items"
+            )
+            pane.show_toast(message)
+        
+        if errors:
+            # Show first error
+            pane.show_toast(errors[0])
+            logger.error(f"Delete operation completed with {len(errors)} errors out of {total_count} items")
+        
+        # Refresh the pane to show updated directory contents
+        if pane is self._right_pane:
+            self._refresh_remote_listing(pane)
+        else:
+            self._load_local(base_dir)
+
     def _apply_pending_highlight(self, pane: FilePane) -> None:
         name = self._pending_highlights.get(pane)
         if not name:
@@ -5983,6 +7362,9 @@ class FileManagerWindow(Adw.Window):
         path = pane.toolbar.path_entry.get_text() or "/"
         logger.debug(f"_force_refresh_pane: refreshing {('remote' if pane._is_remote else 'local')} pane for path: {path}")
         
+        # Mark as refreshing to show success toast
+        self._refreshing_panes.add(pane)
+        
         if highlight_name:
             self._pending_highlights[pane] = highlight_name
             logger.debug(f"_force_refresh_pane: set pending highlight {highlight_name}")
@@ -5990,20 +7372,14 @@ class FileManagerWindow(Adw.Window):
         if pane._is_remote:
             # For remote pane, use SFTP
             self._pending_paths[pane] = path
-            
-            def _refresh_impl():
-                try:
-                    logger.debug(f"_force_refresh_pane: calling manager.listdir for {path}")
-                    self._manager.listdir(path)
-                except Exception as e:
-                    logger.error(f"_force_refresh_pane: listdir failed: {e}")
-                    pane.show_toast(f"Refresh failed: {e}")
-            
-            # Submit directly to executor to avoid callback issues
-            if hasattr(self._manager, '_executor'):
-                self._manager._executor.submit(_refresh_impl)
-            else:
-                _refresh_impl()
+            try:
+                logger.debug(f"_force_refresh_pane: calling manager.listdir for {path}")
+                self._manager.listdir(path)
+            except Exception as e:
+                logger.error(f"_force_refresh_pane: listdir failed: {e}")
+                pane.show_toast(f"Refresh failed: {e}")
+                # Clear refresh flag on error
+                self._refreshing_panes.discard(pane)
         else:
             # For local pane, refresh directly
             try:
@@ -6011,6 +7387,8 @@ class FileManagerWindow(Adw.Window):
             except Exception as e:
                 logger.error(f"_force_refresh_pane: local refresh failed: {e}")
                 pane.show_toast(f"Refresh failed: {e}")
+                # Clear refresh flag on error
+                self._refreshing_panes.discard(pane)
 
     def _refresh_remote_listing(self, pane: FilePane) -> bool:
         """Legacy method - use _force_refresh_pane instead"""
