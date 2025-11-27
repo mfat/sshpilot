@@ -4,6 +4,7 @@ Primary UI with connection list, tabs, and terminal management
 """
 
 import asyncio
+import configparser
 import copy
 import os
 import logging
@@ -8307,34 +8308,75 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
 
-            if 'gnome' in desktop:
-                return ['gnome-terminal']
+            # Desktop-specific terminals (check if they exist before returning)
+            desktop_terminals = []
+            if 'gnome' in desktop or 'cinnamon' in desktop:
+                desktop_terminals = ['gnome-terminal']
             elif 'kde' in desktop or 'plasma' in desktop:
-                return ['konsole']
+                desktop_terminals = ['konsole']
             elif 'xfce' in desktop:
-                return ['xfce4-terminal']
-            elif 'cinnamon' in desktop:
-                return ['gnome-terminal']
+                desktop_terminals = ['xfce4-terminal']
             elif 'mate' in desktop:
-                return ['mate-terminal']
+                desktop_terminals = ['mate-terminal']
             elif 'lxqt' in desktop:
-                return ['qterminal']
+                desktop_terminals = ['qterminal']
             elif 'lxde' in desktop:
-                return ['lxterminal']
+                desktop_terminals = ['lxterminal']
+            
+            # Check if desktop-specific terminal exists
+            for term in desktop_terminals:
+                if shutil.which(term):
+                    logger.debug(f"Found desktop-specific terminal: {term}")
+                    return [term]
 
+            # Fallback to common terminals (check if they exist)
             common_terminals = [
                 'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty',
-                'kitty', 'terminator', 'tilix', 'guake'
+                'kitty', 'terminator', 'tilix', 'guake', 'xterm', 'foot',
+                'blackbox', 'ghostty', 'wezterm', 'st', 'urxvt', 'rxvt-unicode'
             ]
 
             for term in common_terminals:
-                try:
-                    result = subprocess.run(['which', term], capture_output=True, text=True, timeout=2)
-                    if result.returncode == 0:
-                        return [term]
-                except Exception:
-                    continue
+                if shutil.which(term):
+                    logger.debug(f"Found common terminal: {term}")
+                    return [term]
 
+            # Try to get default terminal from xdg-settings (if available)
+            try:
+                result = subprocess.run(
+                    ['xdg-settings', 'get', 'default-url-scheme-handler', 'terminal'],
+                    capture_output=True, text=True, timeout=2
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    desktop_file = result.stdout.strip()
+                    # Try to extract command from desktop file
+                    if desktop_file.endswith('.desktop'):
+                        try:
+                            import configparser
+                            desktop_path = os.path.join(
+                                os.path.expanduser('~/.local/share/applications'),
+                                desktop_file
+                            )
+                            if not os.path.exists(desktop_path):
+                                desktop_path = os.path.join('/usr/share/applications', desktop_file)
+                            
+                            if os.path.exists(desktop_path):
+                                config = configparser.ConfigParser()
+                                config.read(desktop_path)
+                                if 'Desktop Entry' in config:
+                                    exec_line = config['Desktop Entry'].get('Exec', '')
+                                    if exec_line:
+                                        # Extract command (before %)
+                                        cmd = exec_line.split('%')[0].strip()
+                                        if cmd:
+                                            logger.debug(f"Found terminal from xdg-settings: {cmd}")
+                                            return cmd.split()
+                        except Exception as e:
+                            logger.debug(f"Failed to parse desktop file: {e}")
+            except Exception as e:
+                logger.debug(f"xdg-settings not available or failed: {e}")
+
+            logger.warning("No terminal application found")
             return None
 
         except Exception as e:
