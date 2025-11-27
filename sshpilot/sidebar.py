@@ -543,13 +543,14 @@ class GroupRow(Gtk.ListBoxRow):
 class ConnectionRow(Gtk.ListBoxRow):
     """Row widget for connection list."""
 
-    def __init__(self, connection: Connection, group_manager: GroupManager, config):
+    def __init__(self, connection: Connection, group_manager: GroupManager, config, file_manager_callback=None):
         super().__init__()
         _install_sidebar_color_css()
         self.add_css_class("navigation-sidebar")
         self.connection = connection
         self.group_manager = group_manager
         self.config = config
+        self._file_manager_callback = file_manager_callback
         self._tint_provider = None
         self._indent_level = 0
         self._group_display_mode = None
@@ -596,6 +597,20 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.indicator_box.set_valign(Gtk.Align.CENTER)
         content.append(self.indicator_box)
 
+        # File manager button (before status icon) - only visible on hover
+        self.file_manager_button = Gtk.Button.new_from_icon_name("folder-symbolic")
+        self.file_manager_button.add_css_class("flat")
+        self.file_manager_button.add_css_class("file-manager-button")
+        self.file_manager_button.set_tooltip_text(_("Manage Files"))
+        self.file_manager_button.set_valign(Gtk.Align.CENTER)
+        self.file_manager_button.set_visible(False)  # Hidden by default
+        if file_manager_callback:
+            self.file_manager_button.connect("clicked", self._on_file_manager_clicked)
+        content.append(self.file_manager_button)
+        
+        # Set up hover events to show/hide button
+        self._setup_file_manager_button_hover()
+
         self.status_icon = Gtk.Image.new_from_icon_name("network-offline-symbolic")
         self.status_icon.set_pixel_size(16)
         content.append(self.status_icon)
@@ -616,6 +631,61 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._update_forwarding_indicators()
         self._setup_drag_source()
         self._apply_group_color_style()
+
+    def _on_file_manager_clicked(self, button):
+        """Handle file manager button click"""
+        if self._file_manager_callback:
+            try:
+                self._file_manager_callback(self.connection)
+            except Exception as e:
+                logger.error(f"Error opening file manager for {self.connection.nickname}: {e}")
+
+    def _setup_file_manager_button_hover(self):
+        """Set up hover events to show/hide file manager button"""
+        # Track hover state
+        self._is_hovering = False
+        
+        # Motion controller for the row
+        motion_controller = Gtk.EventControllerMotion()
+        motion_controller.connect("enter", self._on_row_enter)
+        motion_controller.connect("leave", self._on_row_leave)
+        self.add_controller(motion_controller)
+        
+        # Motion controller for the button itself (to keep it visible when hovering over button)
+        if self.file_manager_button:
+            button_motion_controller = Gtk.EventControllerMotion()
+            button_motion_controller.connect("enter", self._on_button_enter)
+            button_motion_controller.connect("leave", self._on_button_leave)
+            self.file_manager_button.add_controller(button_motion_controller)
+
+    def _on_row_enter(self, controller, x, y):
+        """Show file manager button when mouse enters row"""
+        self._is_hovering = True
+        if self.file_manager_button and self._file_manager_callback:
+            self.file_manager_button.set_visible(True)
+
+    def _on_row_leave(self, controller):
+        """Hide file manager button when mouse leaves row"""
+        self._is_hovering = False
+        # Use a small delay to allow moving to the button
+        GLib.timeout_add(100, self._maybe_hide_button)
+
+    def _on_button_enter(self, controller, x, y):
+        """Keep button visible when hovering over it"""
+        self._is_hovering = True
+        if self.file_manager_button:
+            self.file_manager_button.set_visible(True)
+
+    def _on_button_leave(self, controller):
+        """Handle mouse leaving the button"""
+        self._is_hovering = False
+        GLib.timeout_add(100, self._maybe_hide_button)
+
+    def _maybe_hide_button(self):
+        """Hide button if not hovering"""
+        if not self._is_hovering and self.file_manager_button:
+            self.file_manager_button.set_visible(False)
+        return False  # Don't repeat
 
     def show_drop_indicator(self, top: bool):
         """Show drop indicator line"""

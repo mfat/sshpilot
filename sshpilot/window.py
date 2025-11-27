@@ -2900,7 +2900,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     
     def add_connection_row(self, connection: Connection, indent_level: int = 0):
         """Add a connection row to the list with optional indentation"""
-        row = ConnectionRow(connection, self.group_manager, self.config)
+        row = ConnectionRow(connection, self.group_manager, self.config, file_manager_callback=self._open_manage_files_for_connection)
         
         # Apply indentation preference for grouped connections
         row.set_indentation(indent_level)
