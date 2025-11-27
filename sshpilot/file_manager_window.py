@@ -5676,6 +5676,7 @@ class FileManagerWindow(Adw.Window):
         if action == "mkdir":
             dialog = Adw.AlertDialog.new("New Folder", "Enter a name for the new folder")
             entry = Gtk.Entry()
+            entry.set_text("New Folder")
             dialog.set_extra_child(entry)
             dialog.add_response("cancel", "Cancel")
             dialog.add_response("ok", "Create")
@@ -5719,8 +5720,19 @@ class FileManagerWindow(Adw.Window):
                             future.add_done_callback(_on_mkdir_done)
                 dialog.close()
 
+            def _focus_entry():
+                entry.grab_focus()
+                entry.select_region(0, -1)  # Select all text
+
+            def _on_entry_activate(_entry):
+                # Trigger the "ok" response when Enter is pressed
+                _on_response(dialog, "ok")
+
+            entry.connect("activate", _on_entry_activate)
             dialog.connect("response", _on_response)
             dialog.present()
+            # Focus the entry after the dialog is shown
+            GLib.idle_add(_focus_entry)
         elif action == "rename" and isinstance(payload, dict):
             entries = payload.get("entries") or []
             directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
