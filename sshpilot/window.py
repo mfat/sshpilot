@@ -8086,7 +8086,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             if not terminal_command:
                 common_terminals = [
-                    'gnome-terminal', 'konsole', 'xterm', 'alacritty',
+                    'gnome-terminal', 'ptyxis', 'konsole', 'xterm', 'alacritty',
                     'kitty', 'terminator', 'tilix', 'xfce4-terminal'
                 ]
                 for term in common_terminals:
@@ -8175,7 +8175,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     cmd = terminal_command + ['--args', 'bash', '-lc', f'{ssh_command}; exec bash']
             else:
                 terminal_basename = os.path.basename(terminal_command[0])
-                if terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal', 'foot', 'blackbox']:
+                if terminal_basename == 'ptyxis':
+                    cmd = terminal_command + ['--new-window', '--', 'bash', '-c', f'{ssh_command}; exec bash']
+                elif terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal', 'foot', 'blackbox']:
                     cmd = terminal_command + ['--', 'bash', '-c', f'{ssh_command}; exec bash']
                 elif terminal_basename in ['konsole', 'terminator', 'guake']:
                     cmd = terminal_command + ['-e', f'bash -c "{ssh_command}; exec bash"']
@@ -8308,7 +8310,21 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
 
             if 'gnome' in desktop:
-                return ['gnome-terminal']
+                # Try gnome-terminal first, then ptyxis as fallback
+                try:
+                    result = subprocess.run(['which', 'gnome-terminal'], capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0:
+                        return ['gnome-terminal']
+                except Exception:
+                    pass
+                # Try ptyxis if gnome-terminal is not available
+                try:
+                    result = subprocess.run(['which', 'ptyxis'], capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0:
+                        return ['ptyxis']
+                except Exception:
+                    pass
+                return None
             elif 'kde' in desktop or 'plasma' in desktop:
                 return ['konsole']
             elif 'xfce' in desktop:
@@ -8323,7 +8339,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 return ['lxterminal']
 
             common_terminals = [
-                'gnome-terminal', 'konsole', 'xfce4-terminal', 'alacritty',
+                'gnome-terminal', 'ptyxis', 'konsole', 'xfce4-terminal', 'alacritty',
                 'kitty', 'terminator', 'tilix', 'guake'
             ]
 
