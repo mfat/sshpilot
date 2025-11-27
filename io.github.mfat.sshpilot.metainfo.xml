@@ -45,8 +45,9 @@
     <release version="4.6.0" date="2025-11-27">
 
       <description>
-        <p>- Improvements to built-in file manager, new text editor</p>
-        <p>- Added file mmanager button to connection rows</p>
+        <p>- Improvements to built-in file manager to make it more robust</p>
+        <p>- Introducing a new text editor to edit remote files</p>
+        <p>- Added file manager button to connection rows</p>
         <p>- Sort button now sorts groups too</p>
       </description>
     </release>
