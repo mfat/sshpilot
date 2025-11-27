@@ -19,6 +19,7 @@ Requires:       python3-gobject
 Requires:       gtk4 >= 4.6
 Requires:       libadwaita >= 1.4
 Requires:       vte291-gtk4 >= 0.70
+Requires:       gtksourceview5 >= 5.0
 Requires:       python3-paramiko
 Requires:       python3-cryptography
 Requires:       python3-secretstorage 

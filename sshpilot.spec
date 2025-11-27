@@ -33,6 +33,7 @@ gtk_libs_patterns = [
     "libgdk_pixbuf-2.0.*.dylib",
     "libvte-2.91.*.dylib",
     "libvte-2.91-gtk4.*.dylib",
+    "libgtksourceview-5.*.dylib",
     "libgraphene-1.0.*.dylib",
     "libpango-1.*.dylib",
     "libpangocairo-1.*.dylib",

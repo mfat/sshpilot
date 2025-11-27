@@ -17,7 +17,7 @@ _srcdir="${pkgname}-${pkgver}"
 package() {
         depends+=(
                 'python-gobject' 'python-cairo' 'python-paramiko' 'python-cryptography' 'python-matplotlib'
-                'libsecret' 'libadwaita' 'vte4' 'sshpass')
+                'libsecret' 'libadwaita' 'vte4' 'gtksourceview5' 'sshpass')
 
 	cd "${_srcdir}"
 
