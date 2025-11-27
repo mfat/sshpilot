@@ -5,7 +5,8 @@ Summary:        SSH connection manager with integrated terminal
 
 License:        GPL-3.0-or-later
 URL:            https://github.com/mfat/sshpilot
-Source0:        https://github.com/mfat/sshpilot/archive/%{version}/%{name}-%{version}.tar.gz
+Source0:        https://github.com/mfat/sshpilot/archive/refs/tags/v%{version}.tar.gz
+
 
 
 BuildArch:      noarch
@@ -33,7 +34,8 @@ SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed te
 
 
 %prep
-%autosetup -n %{name}-%{version}
+%autosetup -n sshpilot-%{version}
+
 
 %build
 # No build step needed - standalone Python application
