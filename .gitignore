@@ -23,3 +23,4 @@ scripts/screenshot_url.sh
 flatpak/io.github.mfat.sshpilot.yaml
 /flatpak
 *.pyc
+whip.md

@@ -233,6 +233,44 @@ class SshPilotApplication(Adw.Application):
     def on_shutdown(self, app):
         """Clean up all resources when application is shutting down"""
         logging.info("Application shutdown initiated, cleaning up...")
+        
+        # Close all file manager windows
+        try:
+            def _cleanup_window(window):
+                cleanup = getattr(window, "_cleanup_manager", None)
+                if callable(cleanup):
+                    cleanup()
+                elif hasattr(window, "_manager") and window._manager is not None:
+                    window._manager.close()
+                    window._manager = None
+            
+            windows = list(app.get_windows())
+            logging.info(f"Found {len(windows)} windows from application during shutdown")
+            for window in windows:
+                try:
+                    _cleanup_window(window)
+                except Exception as exc:
+                    logging.error(f"Error cleaning up window {window}: {exc}", exc_info=True)
+            
+            # Also check the global registry as a fallback
+            try:
+                from .file_manager_window import _file_manager_windows_registry
+                registry_windows = list(_file_manager_windows_registry)
+                logging.info(f"Found {len(registry_windows)} file manager windows in registry")
+                for window in registry_windows:
+                    if window in windows:
+                        continue
+                    try:
+                        _cleanup_window(window)
+                    except Exception as exc:
+                        logging.error(f"Error cleaning up registry window {window}: {exc}", exc_info=True)
+            except ImportError:
+                pass  # Module might not be loaded
+            except Exception as exc:
+                logging.debug(f"Error accessing file manager registry: {exc}")
+        except Exception as exc:
+            logging.error(f"Error closing file manager windows: {exc}", exc_info=True)
+        
         if self._config_handler is not None and self.config is not None:
             try:
                 self.config.disconnect(self._config_handler)

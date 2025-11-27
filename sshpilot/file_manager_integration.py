@@ -120,12 +120,19 @@ if isinstance(getattr(Gtk, 'Box', None), type):
 
             self._controller = None
 
-            manager = getattr(controller, '_manager', None)
-            if manager is not None and hasattr(manager, 'close'):
+            cleanup = getattr(controller, "_cleanup_manager", None)
+            if callable(cleanup):
                 try:
-                    manager.close()
+                    cleanup()
                 except Exception as exc:  # pragma: no cover - defensive cleanup
-                    logger.debug("Failed to close embedded file manager backend: %s", exc)
+                    logger.debug("Failed to cleanup embedded file manager backend: %s", exc)
+            else:
+                manager = getattr(controller, '_manager', None)
+                if manager is not None and hasattr(manager, 'close'):
+                    try:
+                        manager.close()
+                    except Exception as exc:  # pragma: no cover - defensive cleanup
+                        logger.debug("Failed to close embedded file manager backend: %s", exc)
 
             try:
                 controller.destroy()
@@ -196,6 +203,13 @@ def create_internal_file_manager_tab(
         connection_manager=connection_manager,
         ssh_config=ssh_config,
     )
+    # Remove the controller window from the application so it does not count
+    # as a top-level window while embedded in a tab.
+    if app is not None:
+        try:
+            app.remove_window(controller)
+        except Exception:
+            pass
 
     content = controller.detach_for_embedding(parent_window)
     widget = FileManagerTabEmbed(controller, content)

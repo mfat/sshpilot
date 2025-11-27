@@ -28,6 +28,7 @@ import posixpath
 import shutil
 import stat
 import threading
+import weakref
 import time
 import re
 from datetime import datetime
@@ -760,14 +761,24 @@ class AsyncSFTPManager(GObject.GObject):
         )
 
     def close(self) -> None:
+        logger.info("AsyncSFTPManager.close() called")
+        # Stop keepalive worker first
         self._stop_keepalive_worker()
         with self._lock:
             if self._sftp is not None:
-                self._sftp.close()
-                self._sftp = None
+                try:
+                    self._sftp.close()
+                except Exception as exc:
+                    logger.debug(f"Error closing SFTP client: {exc}")
+                finally:
+                    self._sftp = None
             if self._client is not None:
-                self._client.close()
-                self._client = None
+                try:
+                    self._client.close()
+                except Exception as exc:
+                    logger.debug(f"Error closing SSH client: {exc}")
+                finally:
+                    self._client = None
             if self._jump_clients:
                 for jump_client in self._jump_clients:
                     try:
@@ -783,7 +794,18 @@ class AsyncSFTPManager(GObject.GObject):
                     logger.debug("Error closing proxy socket: %s", exc)
                 finally:
                     self._proxy_sock = None
-        self._executor.shutdown(wait=False)
+        # Shutdown executor - use wait=False since connections are closed and will interrupt operations
+        # This prevents hanging if there are stuck operations (like hanging listdir calls)
+        logger.debug("Shutting down executor (connections closed, operations should be interrupted)")
+        try:
+            # Use wait=False to avoid hanging on stuck operations
+            # The connections are already closed, so operations should fail quickly
+            # Threads are daemon threads, so they'll be cleaned up when process exits
+            self._executor.shutdown(wait=False)
+            logger.debug("Executor shutdown initiated (non-blocking)")
+        except Exception as exc:
+            logger.debug(f"Error shutting down executor: {exc}")
+        logger.info("AsyncSFTPManager.close() completed")
 
     def _start_keepalive_worker(self) -> None:
         with self._lock:
@@ -1727,15 +1749,123 @@ class AsyncSFTPManager(GObject.GObject):
         return self._submit(_impl)
 
     def remove(self, path: str) -> Future:
-        def _impl() -> None:
+        def _remove_recursive(target_path: str) -> None:
+            """Recursively remove a file or directory synchronously."""
             assert self._sftp is not None
+            logger.info(f"Attempting to remove: {target_path}")
             try:
-                self._sftp.remove(path)
-            except IOError:
-                # fallback to directory remove
-                for entry in self._sftp.listdir(path):
-                    self.remove(os.path.join(path, entry))
-                self._sftp.rmdir(path)
+                # Try to remove as a file first (most common case)
+                logger.info(f"Calling _sftp.remove('{target_path}')")
+                self._sftp.remove(target_path)
+                logger.info(f"_sftp.remove() returned successfully for {target_path}")
+                logger.info(f"Successfully removed file {target_path}")
+                return
+            except (IOError, OSError) as file_error:
+                # If remove() fails, it's likely a directory - remove contents recursively
+                logger.info(f"Path {target_path} is a directory (remove failed: {file_error}), removing recursively")
+            except paramiko.ssh_exception.SSHException as ssh_error:
+                # Handle paramiko-specific exceptions
+                logger.error(f"SSH error calling remove() on {target_path}: {ssh_error}", exc_info=True)
+                raise
+            except Exception as unexpected_error:
+                # Catch any other exceptions from remove()
+                logger.error(f"Unexpected error calling remove() on {target_path}: {unexpected_error}", exc_info=True)
+                raise
+            
+            # Handle directory removal
+            try:
+                logger.info(f"Calling listdir on {target_path}")
+                if self._sftp is None:
+                    raise RuntimeError("SFTP connection is not available")
+                
+                # First check if directory still exists (might have been deleted by parallel operation)
+                try:
+                    stat_result = self._sftp.stat(target_path)
+                    if not stat.S_ISDIR(stat_result.st_mode):
+                        logger.info(f"Path {target_path} is not a directory, skipping recursive removal")
+                        return
+                except (IOError, OSError) as stat_error:
+                    error_code = getattr(stat_error, "errno", None)
+                    if error_code in {errno.ENOENT, errno.EINVAL}:
+                        logger.info(f"Directory {target_path} no longer exists (deleted by parallel operation?), skipping")
+                        return
+                    # If stat fails for other reasons, continue with listdir attempt
+                    logger.debug(f"stat() failed for {target_path}: {stat_error}, continuing with listdir")
+                
+                # Try to get directory contents
+                entries = None
+                try:
+                    logger.info(f"About to call _sftp.listdir('{target_path}')")
+                    entries = self._sftp.listdir(target_path)
+                    logger.info(f"listdir call completed, checking result...")
+                    if entries is not None:
+                        logger.debug(f"listdir returned {len(entries)} entries for {target_path}")
+                        if entries:
+                            logger.debug(f"Entries to delete: {entries[:5]}{'...' if len(entries) > 5 else ''}")
+                        else:
+                            logger.debug(f"Directory {target_path} is empty")
+                    else:
+                        logger.error(f"listdir returned None for {target_path}")
+                except IOError as listdir_io_error:
+                    # Check if directory no longer exists (might have been deleted by parallel operation)
+                    error_code = getattr(listdir_io_error, "errno", None)
+                    if error_code in {errno.ENOENT, errno.EINVAL}:
+                        logger.debug(f"Directory {target_path} no longer exists, skipping")
+                        return
+                    logger.error(f"listdir IOError for {target_path}: {listdir_io_error}", exc_info=True)
+                    raise
+                except OSError as listdir_os_error:
+                    error_code = getattr(listdir_os_error, "errno", None)
+                    if error_code in {errno.ENOENT, errno.EINVAL}:
+                        logger.debug(f"Directory {target_path} no longer exists, skipping")
+                        return
+                    logger.error(f"listdir OSError for {target_path}: {listdir_os_error}", exc_info=True)
+                    raise
+                except Exception as listdir_error:
+                    logger.error(f"listdir failed for {target_path}: {listdir_error}", exc_info=True)
+                    raise
+                
+                if entries is None:
+                    logger.error(f"listdir returned None for {target_path}")
+                    raise RuntimeError(f"listdir returned None for {target_path}")
+                
+                logger.debug(f"Directory {target_path} contains {len(entries)} entries")
+                for entry in entries:
+                    entry_path = posixpath.join(target_path, entry)
+                    logger.debug(f"Recursively removing entry: {entry_path}")
+                    _remove_recursive(entry_path)
+                # After all children are removed, remove the directory itself
+                logger.debug(f"Removing empty directory: {target_path}")
+                if self._sftp is None:
+                    raise RuntimeError("SFTP connection is not available")
+                try:
+                    self._sftp.rmdir(target_path)
+                    logger.debug(f"Successfully removed directory {target_path}")
+                except IOError as rmdir_error:
+                    # Check if directory was already deleted
+                    error_code = getattr(rmdir_error, "errno", None)
+                    if error_code in {errno.ENOENT, errno.EINVAL}:
+                        logger.debug(f"Directory {target_path} already removed")
+                        return
+                    raise
+            except (IOError, OSError) as dir_error:
+                # If listdir or rmdir fails, log and re-raise
+                logger.error(f"Failed to remove directory {target_path}: {dir_error}", exc_info=True)
+                raise
+            except Exception as e:
+                # Catch any other unexpected errors from directory operations
+                logger.error(f"Unexpected error removing directory {target_path}: {e}", exc_info=True)
+                raise
+
+        def _impl() -> None:
+            try:
+                logger.info(f"Starting remove operation for {path}")
+                _remove_recursive(path)
+                logger.info(f"Successfully completed remove operation for {path}")
+            except Exception as e:
+                logger.error(f"Error in remove operation for {path}: {e}", exc_info=True)
+                # Re-raise so the future will have the exception
+                raise
 
         parent = os.path.dirname(path) or "/"
         return self._submit(_impl)  # Don't call listdir from callback - let the UI handle refresh
@@ -4303,6 +4433,10 @@ class FilePane(Gtk.Box):
         self._scroll_to_position(match)
         return True
 
+# Global registry to track live file manager windows. Used to ensure
+# managers are cleaned up even if the application does not hold references.
+_file_manager_windows_registry: weakref.WeakSet = weakref.WeakSet()
+
 
 class FileManagerWindow(Adw.Window):
     """Top-level window hosting two :class:`FilePane` instances."""
@@ -4320,7 +4454,9 @@ class FileManagerWindow(Adw.Window):
         connection_manager: Any = None,
         ssh_config: Optional[Dict[str, Any]] = None,
     ) -> None:
-        super().__init__(title="")
+        super().__init__(application=application, title="")
+        # Register this window in the global registry for cleanup
+        _file_manager_windows_registry.add(self)
         self._host = host
         self._username = username
         self._nickname = nickname
@@ -4623,6 +4759,10 @@ class FileManagerWindow(Adw.Window):
         except Exception as exc:
             print(f"Error connecting signals: {exc}")
         
+        # Connect close-request and destroy handlers to clean up resources
+        self.connect("close-request", self._on_close_request)
+        self.connect("destroy", self._on_destroy)
+        
         # Show initial progress before connecting
         try:
             self._show_progress(0.1, "Connecting…")
@@ -4681,6 +4821,23 @@ class FileManagerWindow(Adw.Window):
         # Show error toast
         self._clear_progress_toast()
         self._right_pane.show_toast(f"Connection error: {error_message}")
+
+    def _on_close_request(self, window) -> bool:
+        """Handle window close request - clean up resources."""
+        logger.debug("FileManagerWindow close-request received, cleaning up")
+        try:
+            if hasattr(self, '_manager') and self._manager is not None:
+                logger.debug("Closing AsyncSFTPManager")
+                self._manager.close()
+                self._manager = None
+        except Exception as exc:
+            logger.error(f"Error closing AsyncSFTPManager: {exc}", exc_info=True)
+        
+        # Clear progress dialog if it exists
+        self._clear_progress_toast()
+        
+        # Allow the window to close
+        return False
 
     def detach_for_embedding(self, parent: Optional[Gtk.Widget] = None) -> Gtk.Widget:
         """Detach the window content for embedding in another container."""
@@ -4826,6 +4983,35 @@ class FileManagerWindow(Adw.Window):
             return False  # Don't repeat
         
         GLib.idle_add(show_error)
+
+    def _cleanup_manager(self) -> None:
+        """Close the AsyncSFTPManager and clear UI state."""
+        manager = getattr(self, "_manager", None)
+        if manager is not None:
+            try:
+                logger.info("Cleaning up AsyncSFTPManager resources")
+                manager.close()
+            except Exception as exc:
+                logger.error(f"Error closing AsyncSFTPManager: {exc}", exc_info=True)
+            finally:
+                self._manager = None
+        self._clear_progress_toast()
+        try:
+            _file_manager_windows_registry.discard(self)
+        except Exception:
+            pass
+
+    def _on_close_request(self, window) -> bool:
+        """Handle window close request - clean up resources."""
+        logger.info("FileManagerWindow close-request received, cleaning up")
+        self._cleanup_manager()
+        # Allow the window to close
+        return False
+
+    def _on_destroy(self, window) -> None:
+        """Handle window destroy - ensure cleanup happens even if close-request wasn't called."""
+        logger.info("FileManagerWindow destroy received, ensuring cleanup")
+        self._cleanup_manager()
 
     def _is_password_auth_enabled(self, connection: Any = None) -> bool:
         """Check if password authentication is enabled/required for this connection.
@@ -5657,10 +5843,51 @@ class FileManagerWindow(Adw.Window):
                     if errors:
                         pane.show_toast(errors[0])
                 else:
-                    for selected_entry in entries:
+                    # Delete entries sequentially to avoid race conditions and hangs
+                    errors: List[str] = []
+                    total_count = len(entries)
+                    
+                    logger.info(f"Starting sequential deletion of {total_count} remote entries")
+                    
+                    def _delete_next(index: int) -> None:
+                        """Delete the next entry in the list, then continue with the next one."""
+                        if index >= total_count:
+                            # All deletions complete
+                            logger.info(f"All {total_count} deletions completed, refreshing pane")
+                            GLib.idle_add(
+                                lambda: self._on_all_deletes_complete(pane, base_dir, errors, total_count)
+                            )
+                            return
+                        
+                        selected_entry = entries[index]
                         target_path = posixpath.join(base_dir, selected_entry.name)
-                        future = self._manager.remove(target_path)
-                        self._attach_refresh(future, refresh_remote=pane)
+                        entry_name = selected_entry.name
+                        
+                        logger.info(f"Deleting {index + 1}/{total_count}: '{entry_name}'")
+                        
+                        def _on_delete_done(future_result: Future) -> None:
+                            try:
+                                future_result.result()  # Check for errors
+                                logger.info(f"Successfully deleted '{entry_name}'")
+                            except Exception as e:
+                                error_msg = f"Failed to delete {entry_name}: {str(e)}"
+                                logger.error(f"Delete failed for '{entry_name}': {error_msg}", exc_info=True)
+                                errors.append(error_msg)
+                            
+                            # Continue with next deletion on the main loop
+                            GLib.idle_add(lambda: _delete_next(index + 1))
+                        
+                        try:
+                            future = self._manager.remove(target_path)
+                            future.add_done_callback(_on_delete_done)
+                        except Exception as exc:
+                            logger.error(f"Failed to create remove future for {entry_name}: {exc}", exc_info=True)
+                            errors.append(f"Failed to delete {entry_name}: {str(exc)}")
+                            GLib.idle_add(lambda: _delete_next(index + 1))
+                    
+                    # Start sequential deletion
+                    _delete_next(0)
+                    
                     pane.show_toast(
                         "Deleting 1 item…" if count == 1 else f"Deleting {count} items…"
                     )
@@ -5971,6 +6198,29 @@ class FileManagerWindow(Adw.Window):
 
         future.add_done_callback(_on_done)
 
+    def _on_all_deletes_complete(self, pane: FilePane, base_dir: str, errors: List[str], total_count: int) -> None:
+        """Handle completion of all delete operations."""
+        success_count = total_count - len(errors)
+        
+        if success_count > 0:
+            message = (
+                "Deleted 1 item"
+                if success_count == 1
+                else f"Deleted {success_count} items"
+            )
+            pane.show_toast(message)
+        
+        if errors:
+            # Show first error
+            pane.show_toast(errors[0])
+            logger.error(f"Delete operation completed with {len(errors)} errors out of {total_count} items")
+        
+        # Refresh the pane to show updated directory contents
+        if pane is self._right_pane:
+            self._refresh_remote_listing(pane)
+        else:
+            self._load_local(base_dir)
+
     def _apply_pending_highlight(self, pane: FilePane) -> None:
         name = self._pending_highlights.get(pane)
         if not name:
@@ -5990,20 +6240,12 @@ class FileManagerWindow(Adw.Window):
         if pane._is_remote:
             # For remote pane, use SFTP
             self._pending_paths[pane] = path
-            
-            def _refresh_impl():
-                try:
-                    logger.debug(f"_force_refresh_pane: calling manager.listdir for {path}")
-                    self._manager.listdir(path)
-                except Exception as e:
-                    logger.error(f"_force_refresh_pane: listdir failed: {e}")
-                    pane.show_toast(f"Refresh failed: {e}")
-            
-            # Submit directly to executor to avoid callback issues
-            if hasattr(self._manager, '_executor'):
-                self._manager._executor.submit(_refresh_impl)
-            else:
-                _refresh_impl()
+            try:
+                logger.debug(f"_force_refresh_pane: calling manager.listdir for {path}")
+                self._manager.listdir(path)
+            except Exception as e:
+                logger.error(f"_force_refresh_pane: listdir failed: {e}")
+                pane.show_toast(f"Refresh failed: {e}")
         else:
             # For local pane, refresh directly
             try:

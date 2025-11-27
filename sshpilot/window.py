@@ -8467,6 +8467,50 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         try:
             logger.info("Quitting application")
             
+            # Close all file manager windows first
+            if hasattr(self, '_internal_file_manager_windows'):
+                count = len(self._internal_file_manager_windows)
+                logger.info(f"Closing {count} file manager windows")
+                if count > 0:
+                    for window in list(self._internal_file_manager_windows):
+                        try:
+                            logger.info(f"Closing file manager window: {window}")
+                            # Try to clean up the manager first
+                            if hasattr(window, '_manager') and window._manager is not None:
+                                logger.info("Closing AsyncSFTPManager in file manager window")
+                                window._manager.close()
+                                window._manager = None
+                                logger.info("AsyncSFTPManager closed")
+                            # Close the window
+                            if hasattr(window, 'close'):
+                                window.close()
+                            elif hasattr(window, 'destroy'):
+                                window.destroy()
+                        except Exception as exc:
+                            logger.error(f"Error closing file manager window: {exc}", exc_info=True)
+                self._internal_file_manager_windows.clear()
+                logger.info("All file manager windows closed")
+            
+            # Also check all application windows for file manager windows (defensive)
+            try:
+                app = self.get_application()
+                if app:
+                    all_windows = list(app.get_windows())
+                    for window in all_windows:
+                        # Check if it's a file manager window that wasn't tracked
+                        if hasattr(window, '_manager') and hasattr(window, '_on_close_request'):
+                            if not hasattr(self, '_internal_file_manager_windows') or window not in self._internal_file_manager_windows:
+                                logger.info(f"Found untracked file manager window, closing: {window}")
+                                try:
+                                    if hasattr(window, '_manager') and window._manager is not None:
+                                        logger.info("Closing AsyncSFTPManager in untracked window")
+                                        window._manager.close()
+                                        window._manager = None
+                                except Exception as exc:
+                                    logger.error(f"Error closing untracked file manager window: {exc}", exc_info=True)
+            except Exception as exc:
+                logger.debug(f"Error checking for untracked file manager windows: {exc}")
+            
             # Save window geometry
             self._save_window_state()
             
