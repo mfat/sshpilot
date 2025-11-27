@@ -118,6 +118,44 @@ def apply_connection_sort(group_manager, connections: Iterable, preset_id: str) 
             group["connections"] = sorted_list
             changed = True
 
+    # Sort groups by name (updating their order field)
+    # Groups are sorted hierarchically: root groups first, then nested groups
+    def _sort_groups_recursive(parent_id=None):
+        """Recursively sort groups and update their order field"""
+        nonlocal changed
+        
+        # Get all groups with this parent_id
+        groups_with_parent = [
+            (group_id, group)
+            for group_id, group in groups.items()
+            if group.get('parent_id') == parent_id
+        ]
+        
+        if not groups_with_parent:
+            return
+        
+        # Sort groups by name
+        def _group_key(item):
+            group_id, group = item
+            group_name = group.get('name', '')
+            return group_name.casefold()
+        
+        sorted_groups = sorted(groups_with_parent, key=_group_key, reverse=preset.reverse)
+        
+        # Update order field for each group
+        for order, (group_id, group) in enumerate(sorted_groups):
+            old_order = group.get('order', 0)
+            if old_order != order:
+                group['order'] = order
+                changed = True
+        
+        # Recursively sort child groups
+        for group_id, group in sorted_groups:
+            _sort_groups_recursive(group_id)
+    
+    # Sort root groups (parent_id is None)
+    _sort_groups_recursive(parent_id=None)
+
     if changed and hasattr(group_manager, "_save_groups"):
         group_manager._save_groups()
 
