@@ -2929,6 +2929,7 @@ class FilePane(Gtk.Box):
         self._selection_model.connect("selection-changed", self._on_selection_changed)
 
         self._menu_actions: Dict[str, Gio.SimpleAction] = {}
+        self._menu_action_callbacks: Dict[str, Callable[[], None]] = {}  # Store callbacks for direct access
         self._menu_action_group = Gio.SimpleActionGroup()
         self.insert_action_group("pane", self._menu_action_group)
         self._menu_popover: Gtk.Popover = self._create_menu_model()
@@ -3376,9 +3377,16 @@ class FilePane(Gtk.Box):
         def _add_action(name: str, callback: Callable[[], None]) -> None:
             if name not in self._menu_actions:
                 action = Gio.SimpleAction.new(name, None)
+                # Store callback for direct access
+                self._menu_action_callbacks[name] = callback
 
                 def _on_activate(_action: Gio.SimpleAction, _param: Optional[GLib.Variant]) -> None:
-                    callback()
+                    try:
+                        logger.debug(f"_add_action: _on_activate called for action '{name}'")
+                        callback()
+                        logger.debug(f"_add_action: callback for '{name}' completed successfully")
+                    except Exception as e:
+                        logger.error(f"_add_action: Error in callback for '{name}': {e}", exc_info=True)
 
                 action.connect("activate", _on_activate)
                 self._menu_action_group.add_action(action)
@@ -3515,10 +3523,27 @@ class FilePane(Gtk.Box):
             icon = Gtk.Image.new_from_icon_name(icon_name)
             row.add_prefix(icon)
             row.set_activatable(True)
-            row.connect('activated', lambda *_: (
-                self._menu_action_group.activate_action(action_name, None),
-                self._menu_popover.popdown()
-            ))
+            def _on_activated(*_):
+                try:
+                    logger.debug(f"_show_context_menu: Menu item '{title}' (action '{action_name}') activated")
+                    # Get the callback and call it directly
+                    callback = self._menu_action_callbacks.get(action_name)
+                    if callback:
+                        logger.debug(f"_show_context_menu: Found callback for '{action_name}', calling directly")
+                        callback()
+                        logger.debug(f"_show_context_menu: Callback for '{action_name}' completed")
+                    else:
+                        logger.error(f"_show_context_menu: Callback for '{action_name}' not found. Available callbacks: {list(self._menu_action_callbacks.keys())}")
+                        # Fallback: try to activate the action
+                        action = self._menu_actions.get(action_name)
+                        if action:
+                            logger.debug(f"_show_context_menu: Falling back to action.activate() for '{action_name}'")
+                            action.activate(None)
+                except Exception as e:
+                    logger.error(f"_show_context_menu: Failed to execute action '{action_name}': {e}", exc_info=True)
+                finally:
+                    self._menu_popover.popdown()
+            row.connect('activated', _on_activated)
             listbox.append(row)
         
         # Add Download/Upload based on pane type and selection
@@ -3983,9 +4008,13 @@ class FilePane(Gtk.Box):
             return True
         return error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)
 
-    def _build_properties_details(self, entry: FileEntry) -> Dict[str, str]:
+    def _build_properties_details(self, entry: FileEntry, is_current_directory: bool = False) -> Dict[str, str]:
         base_path = self._current_path or "/"
-        location = os.path.join(base_path, entry.name)
+        if is_current_directory:
+            # For current directory, use the base path as location
+            location = base_path
+        else:
+            location = os.path.join(base_path, entry.name)
 
         entry_type = "Folder" if entry.is_dir else "File"
         if entry.is_dir:
@@ -4010,15 +4039,100 @@ class FilePane(Gtk.Box):
     def _on_menu_properties(self) -> None:
         entry = self.get_selected_entry()
         if entry is None:
-            self.show_toast("Select a single item to view properties")
-            return
-        details = self._build_properties_details(entry)
-        self._show_properties_dialog(entry, details)
+            # No item selected - show properties for current directory
+            current_path = self._current_path or "/"
+            logger.debug(f"_on_menu_properties: No selection, showing properties for current directory: {current_path}")
+            
+            # Get directory name and parent path
+            # PropertiesDialog expects entry.name and current_path where entry is located
+            if current_path == "/":
+                # Special case for root directory
+                dir_name = "/"
+                parent_path = "/"
+            else:
+                # Normalize path (remove trailing slash)
+                normalized_path = current_path.rstrip("/")
+                dir_name = os.path.basename(normalized_path) or normalized_path
+                parent_path = os.path.dirname(normalized_path) or "/"
+                # If parent_path is empty after dirname, use "/"
+                if not parent_path:
+                    parent_path = "/"
+            
+            logger.debug(f"_on_menu_properties: dir_name={dir_name}, parent_path={parent_path}, is_remote={self._is_remote}")
+            
+            # Create a FileEntry for the current directory
+            try:
+                if self._is_remote:
+                    # For remote, create a basic entry with item count
+                    if hasattr(self, '_entries') and self._entries is not None:
+                        item_count = len(self._entries)
+                    else:
+                        item_count = None
+                    logger.debug(f"_on_menu_properties: Creating remote directory entry with item_count={item_count}")
+                    entry = FileEntry(
+                        name=dir_name,
+                        is_dir=True,
+                        size=0,
+                        modified=0.0,
+                        item_count=item_count
+                    )
+                else:
+                    # For local, get actual directory stats
+                    if os.path.isdir(current_path):
+                        stat_info = os.stat(current_path)
+                        # Count items in directory
+                        try:
+                            item_count = len(list(os.scandir(current_path)))
+                        except Exception:
+                            item_count = None
+                        
+                        entry = FileEntry(
+                            name=dir_name,
+                            is_dir=True,
+                            size=0,  # Directories don't have a meaningful size
+                            modified=stat_info.st_mtime,
+                            item_count=item_count
+                        )
+                        logger.debug(f"_on_menu_properties: Created local directory entry with modified={stat_info.st_mtime}, item_count={item_count}")
+                    else:
+                        logger.warning(f"_on_menu_properties: Current directory is not accessible: {current_path}")
+                        self.show_toast("Current directory is not accessible")
+                        return
+            except Exception as e:
+                logger.error(f"Error creating directory entry for properties: {e}", exc_info=True)
+                self.show_toast("Unable to get directory properties")
+                return
+            
+            # Mark that this is the current directory
+            # Use parent path for PropertiesDialog so it can construct the full path correctly
+            is_current_dir = True
+            properties_path = parent_path
+            logger.debug(f"_on_menu_properties: Using properties_path={properties_path} for current directory")
+        else:
+            is_current_dir = False
+            properties_path = None
+            logger.debug(f"_on_menu_properties: Showing properties for selected entry: {entry.name}")
+        
+        try:
+            details = self._build_properties_details(entry, is_current_directory=is_current_dir)
+            logger.debug(f"_on_menu_properties: Built properties details: {details}")
+            self._show_properties_dialog(entry, details, properties_path=properties_path)
+        except Exception as e:
+            logger.error(f"Error showing properties dialog: {e}", exc_info=True)
+            self.show_toast(f"Failed to show properties: {e}")
 
-    def _show_properties_dialog(self, entry: FileEntry, details: Dict[str, str]) -> None:
-        """Show modern properties dialog."""
+    def _show_properties_dialog(self, entry: FileEntry, details: Dict[str, str], properties_path: Optional[str] = None) -> None:
+        """Show modern properties dialog.
+        
+        Args:
+            entry: The file entry to show properties for
+            details: Properties details dictionary
+            properties_path: Optional path to use instead of self._current_path (for current directory)
+        """
         window = self.get_root()
         if window is None:
+            logger.error("FilePane: Cannot show properties dialog - window is None")
+            self.show_toast("Cannot show properties - window not available")
             return
         
         try:
@@ -4035,14 +4149,24 @@ class FilePane(Gtk.Box):
             else:
                 logger.debug(f"FilePane: Not getting SFTP manager: is_remote={self._is_remote}")
             
+            # Use provided path or fall back to current path
+            path_for_dialog = properties_path if properties_path is not None else self._current_path
+            
+            logger.debug(f"FilePane: Creating PropertiesDialog with entry.name={entry.name}, path={path_for_dialog}, is_remote={self._is_remote}")
+            
             # Create and show the modern properties dialog
-            dialog = PropertiesDialog(entry, self._current_path, window, sftp_manager)
-            logger.debug(f"FilePane: Created PropertiesDialog with sftp_manager={sftp_manager}")
+            dialog = PropertiesDialog(entry, path_for_dialog, window, sftp_manager)
+            logger.debug(f"FilePane: Created PropertiesDialog with sftp_manager={sftp_manager}, path={path_for_dialog}")
             dialog.present()
+            logger.debug(f"FilePane: PropertiesDialog presented successfully")
         except Exception as e:
             logger.error(f"FilePane: Failed to show properties dialog: {e}", exc_info=True)
             # Fallback to simple message dialog if modern dialog fails
-            self._show_fallback_properties_dialog(entry, details, window)
+            try:
+                self._show_fallback_properties_dialog(entry, details, window)
+            except Exception as fallback_error:
+                logger.error(f"FilePane: Fallback properties dialog also failed: {fallback_error}", exc_info=True)
+                self.show_toast(f"Failed to show properties: {e}")
 
     def _show_fallback_properties_dialog(self, entry: FileEntry, details: Dict[str, str], window: Gtk.Window) -> None:
         """Fallback to simple properties dialog if modern dialog fails."""
