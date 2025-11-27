@@ -5808,8 +5808,19 @@ class FileManagerWindow(Adw.Window):
                     pane.show_toast(f"Renaming to {new_name}…")
                 dialog.close()
 
+            def _focus_entry():
+                name_entry.grab_focus()
+                name_entry.select_region(0, -1)  # Select all text
+
+            def _on_entry_activate(_entry):
+                # Trigger the "ok" response when Enter is pressed
+                _on_rename(dialog, "ok")
+
+            name_entry.connect("activate", _on_entry_activate)
             dialog.connect("response", _on_rename)
             dialog.present()
+            # Focus the entry after the dialog is shown
+            GLib.idle_add(_focus_entry)
         elif action == "delete" and isinstance(payload, dict):
             entries = payload.get("entries") or []
             directory = payload.get("directory") or pane.toolbar.path_entry.get_text() or "/"
