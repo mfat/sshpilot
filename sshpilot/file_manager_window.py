@@ -3439,12 +3439,12 @@ class FilePane(Gtk.Box):
             _add_menu_item("Rename…", "document-edit-symbolic", "rename")
             _add_menu_item("Delete", "user-trash-symbolic", "delete")
         
-        # Always add Properties
-        _add_menu_item("Properties…", "document-properties-symbolic", "properties")
-        
-        # Add New Folder only if no items are selected
+        # Add New Folder only if no items are selected (before Properties)
         if not has_selection:
             _add_menu_item("New Folder", "folder-new-symbolic", "new_folder")
+        
+        # Always add Properties (at the end)
+        _add_menu_item("Properties…", "document-properties-symbolic", "properties")
         
         # Create a rectangle for the popover positioning
         rect = Gdk.Rectangle()
