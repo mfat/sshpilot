@@ -2959,6 +2959,12 @@ class FilePane(Gtk.Box):
         drag_source.connect("drag-end", self._on_drag_end)
         box.add_controller(drag_source)
         
+        # Add right-click gesture to select item and show context menu
+        right_click_gesture = Gtk.GestureClick()
+        right_click_gesture.set_button(Gdk.BUTTON_SECONDARY)
+        right_click_gesture.connect("pressed", self._on_list_item_right_click, item)
+        box.add_controller(right_click_gesture)
+        
         item.set_child(box)
 
     def _on_list_bind(self, factory: Gtk.SignalListItemFactory, item):
@@ -3073,6 +3079,12 @@ class FilePane(Gtk.Box):
                 pass
         click_gesture.connect("pressed", self._on_grid_cell_pressed, button)
         button.add_controller(click_gesture)
+        
+        # Add right-click gesture to select item and show context menu
+        right_click_gesture = Gtk.GestureClick()
+        right_click_gesture.set_button(Gdk.BUTTON_SECONDARY)
+        right_click_gesture.connect("pressed", self._on_grid_item_right_click, item)
+        button.add_controller(right_click_gesture)
         
         # Add drag source for file operations
         drag_source = Gtk.DragSource()
@@ -3292,11 +3304,58 @@ class FilePane(Gtk.Box):
         return popover
 
 
+    def _on_list_item_right_click(self, gesture: Gtk.GestureClick, n_press: int, x: float, y: float, list_item: Gtk.ListItem) -> None:
+        """Handle right-click on a list item: select it and show context menu."""
+        position = list_item.get_position()
+        if position is not None and 0 <= position < len(self._entries):
+            # Select this item
+            self._selection_model.unselect_all()
+            self._selection_model.select_item(position, False)
+            self._selection_anchor = position
+        
+        # Show context menu at click position
+        box = list_item.get_child()
+        if box:
+            # Convert coordinates to the view widget's coordinate space
+            view_widget = self._list_view
+            widget_x, widget_y = box.translate_coordinates(view_widget, x, y)
+            if widget_x is not None and widget_y is not None:
+                self._show_context_menu(view_widget, widget_x, widget_y)
+            else:
+                # Fallback: use the box coordinates
+                self._show_context_menu(box, x, y)
+
+    def _on_grid_item_right_click(self, gesture: Gtk.GestureClick, n_press: int, x: float, y: float, list_item: Gtk.ListItem) -> None:
+        """Handle right-click on a grid item: select it and show context menu."""
+        position = list_item.get_position()
+        if position is not None and 0 <= position < len(self._entries):
+            # Select this item
+            self._selection_model.unselect_all()
+            self._selection_model.select_item(position, False)
+            self._selection_anchor = position
+        
+        # Show context menu at click position
+        button = list_item.get_child()
+        if button:
+            # Convert coordinates to the view widget's coordinate space
+            view_widget = self._grid_view
+            widget_x, widget_y = button.translate_coordinates(view_widget, x, y)
+            if widget_x is not None and widget_y is not None:
+                self._show_context_menu(view_widget, widget_x, widget_y)
+            else:
+                # Fallback: use the button coordinates
+                self._show_context_menu(button, x, y)
+
     def _add_context_controller(self, widget: Gtk.Widget) -> None:
         gesture = Gtk.GestureClick()
         gesture.set_button(Gdk.BUTTON_SECONDARY)
 
         def _on_pressed(_gesture: Gtk.GestureClick, n_press: int, x: float, y: float) -> None:
+            # Check if click is on an item or empty space
+            # If on empty space, clear selection before showing menu
+            if self._is_click_on_empty_space(widget, x, y):
+                self._selection_model.unselect_all()
+                self._selection_anchor = None
             self._show_context_menu(widget, x, y)
 
         gesture.connect("pressed", _on_pressed)
@@ -3305,6 +3364,10 @@ class FilePane(Gtk.Box):
         long_press = Gtk.GestureLongPress()
 
         def _on_long_press(_gesture: Gtk.GestureLongPress, x: float, y: float) -> None:
+            # Check if click is on an item or empty space
+            if self._is_click_on_empty_space(widget, x, y):
+                self._selection_model.unselect_all()
+                self._selection_anchor = None
             self._show_context_menu(widget, x, y)
 
         long_press.connect("pressed", _on_long_press)
@@ -3317,7 +3380,8 @@ class FilePane(Gtk.Box):
         if getattr(self, '_suppress_next_context_menu', False):
             self._suppress_next_context_menu = False
             return
-        self._update_selection_for_menu(widget, x, y)
+        # Selection is now handled by item-level gestures or cleared for empty space
+        # No need to update selection here
         self._update_menu_state()
         try:
             widget.grab_focus()
@@ -3396,14 +3460,70 @@ class FilePane(Gtk.Box):
         self._menu_popover.set_pointing_to(rect)
         self._menu_popover.popup()
 
-    def _update_selection_for_menu(self, widget: Gtk.Widget, x: float, y: float) -> None:
-        # In GTK4, we can't easily get the item at a specific position
-        # Instead, we'll show the context menu based on the current selection
-        # The user should select items first, then right-click for context menu
-        # This is actually more consistent with modern file manager behavior
+    def _is_click_on_empty_space(self, widget: Gtk.Widget, x: float, y: float) -> bool:
+        """Check if the click is on empty space (not on an item)."""
+        # Determine which view is active
+        visible_child = self._stack.get_visible_child()
+        if visible_child is None:
+            return True
         
-        # Keep the current selection as-is for the context menu
-        pass
+        # Find the actual view widget (list or grid) in the scrolled window
+        view_widget = None
+        for child in visible_child:
+            if isinstance(child, Gtk.ScrolledWindow):
+                scrolled_child = child.get_child()
+                if scrolled_child == self._list_view:
+                    view_widget = self._list_view
+                elif scrolled_child == self._grid_view:
+                    view_widget = self._grid_view
+                break
+        
+        if view_widget is None:
+            return True
+        
+        try:
+            # Convert coordinates to view widget's coordinate space
+            widget_x, widget_y = widget.translate_coordinates(view_widget, x, y)
+            if widget_x is None or widget_y is None:
+                return True
+            
+            # Use pick() to find which child widget is at the coordinates
+            picked = view_widget.pick(widget_x, widget_y, Gtk.PickFlags.DEFAULT)
+            if picked is None:
+                return True
+            
+            # Check if we picked an actual item (not just the view widget itself)
+            # For ListView: check if we picked a list item or its child
+            if isinstance(view_widget, Gtk.ListView):
+                # Walk up the widget tree to see if we hit a list item
+                current = picked
+                while current and current != view_widget:
+                    # If we find a widget that has the drag_position attribute, it's an item
+                    if hasattr(current, 'drag_position'):
+                        return False
+                    # If we find a box that's a list item child, it's an item
+                    if isinstance(current, Gtk.Box) and hasattr(current, '_pane_entry'):
+                        return False
+                    current = current.get_parent()
+                # If we only hit the view widget itself, it's empty space
+                return picked == view_widget
+            
+            # For GridView: check if we picked a button (grid item)
+            elif isinstance(view_widget, Gtk.GridView):
+                # Walk up the widget tree to see if we hit a button
+                current = picked
+                while current and current != view_widget:
+                    # If we find a button with drag_position, it's an item
+                    if isinstance(current, Gtk.Button) and hasattr(current, 'drag_position'):
+                        return False
+                    current = current.get_parent()
+                # If we only hit the view widget itself, it's empty space
+                return picked == view_widget
+            
+            return True
+        except Exception as e:
+            logger.debug(f"Error checking if click is on empty space: {e}")
+            return True
 
     def _get_selected_indices(self) -> List[int]:
         indices: List[int] = []
