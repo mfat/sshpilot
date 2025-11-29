@@ -19,6 +19,7 @@ dependencies = [
     "PyGObject>=3.42",
     "pycairo>=1.20.0",
     "paramiko>=3.4",
+    "pysftp==0.2.9",
     "cryptography>=42.0",
     "keyring>=24.3",
     "psutil>=5.9.0",

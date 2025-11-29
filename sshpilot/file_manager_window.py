@@ -38,6 +38,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 
 import paramiko
+import pysftp
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
 # Try to import GtkSourceView for syntax highlighting
@@ -58,7 +59,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def _sftp_path_exists(sftp: paramiko.SFTPClient, path: str) -> bool:
+def _sftp_path_exists(sftp: pysftp.Connection, path: str) -> bool:
     """Return ``True`` if *path* exists on the remote SFTP server."""
 
     try:
@@ -726,8 +727,8 @@ class AsyncSFTPManager(GObject.GObject):
         self._username = username
         self._password = password
         self._port = port or 22
-        self._client: Optional[paramiko.SSHClient] = None
-        self._sftp: Optional[paramiko.SFTPClient] = None
+        self._sftp_connection: Optional[pysftp.Connection] = None
+        self._sftp: Optional[pysftp.Connection] = None
         self._executor = ThreadPoolExecutor(max_workers=4)
         self._dispatcher = dispatcher or (
             lambda cb, args=(), kwargs=None: _MainThreadDispatcher.dispatch(
@@ -783,13 +784,13 @@ class AsyncSFTPManager(GObject.GObject):
                     logger.debug(f"Error closing SFTP client: {exc}")
                 finally:
                     self._sftp = None
-            if self._client is not None:
+            if self._sftp_connection is not None:
                 try:
-                    self._client.close()
+                    self._sftp_connection.close()
                 except Exception as exc:
-                    logger.debug(f"Error closing SSH client: {exc}")
+                    logger.debug(f"Error closing SFTP connection: {exc}")
                 finally:
-                    self._client = None
+                    self._sftp_connection = None
             if self._jump_clients:
                 for jump_client in self._jump_clients:
                     try:
@@ -1136,12 +1137,6 @@ class AsyncSFTPManager(GObject.GObject):
 
     def _connect_impl(self) -> None:
         self._stop_keepalive_worker()
-        client = paramiko.SSHClient()
-
-        try:
-            client.load_system_host_keys()
-        except Exception as exc:
-            logger.debug("Unable to load system host keys: %s", exc)
 
         ssh_cfg: Dict[str, Any] = {}
         file_manager_cfg: Dict[str, Any] = {}
@@ -1216,20 +1211,10 @@ class AsyncSFTPManager(GObject.GObject):
         strict_host = str(ssh_cfg.get("strict_host_key_checking", "") or "").strip()
         auto_add = bool(ssh_cfg.get("auto_add_host_keys", True))
         policy = self._select_host_key_policy(strict_host, auto_add)
-        client.set_missing_host_key_policy(policy)
 
         known_hosts_path = None
         if self._connection_manager is not None:
             known_hosts_path = getattr(self._connection_manager, "known_hosts_path", None)
-
-        if known_hosts_path:
-            try:
-                if os.path.exists(known_hosts_path):
-                    client.load_host_keys(known_hosts_path)
-                else:
-                    logger.debug("Known hosts file not found at %s", known_hosts_path)
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("Failed to load known hosts from %s: %s", known_hosts_path, exc)
 
         password = self._password or None
         connection = self._connection
@@ -1241,36 +1226,29 @@ class AsyncSFTPManager(GObject.GObject):
             if connection is not None:
                 lookup_user = getattr(connection, "username", None) or self._username
 
-            # Try multiple host identifiers to match storage logic
-            # Storage uses: hostname -> host -> nickname
-            # We should try all of them to ensure we find the password
             lookup_hosts = []
             if connection is not None:
-                # Collect all possible host identifiers
                 hostname = getattr(connection, "hostname", None)
                 host = getattr(connection, "host", None)
                 nickname = getattr(connection, "nickname", None)
-                
-                # Add in storage priority order: hostname -> host -> nickname
+
                 if hostname:
                     lookup_hosts.append(hostname)
                 if host and host not in lookup_hosts:
                     lookup_hosts.append(host)
                 if nickname and nickname not in lookup_hosts:
                     lookup_hosts.append(nickname)
-            
-            # Fallback to self._host if no connection or no identifiers found
+
             if not lookup_hosts:
                 lookup_hosts = [self._host]
-            
+
             logger.debug(
                 "File manager: Attempting password lookup for %s@%s (trying identifiers: %s)",
                 lookup_user,
                 self._host,
                 lookup_hosts
             )
-            
-            # Try each identifier until we find a password
+
             for lookup_host in lookup_hosts:
                 try:
                     retrieved = self._connection_manager.get_password(lookup_host, lookup_user)
@@ -1322,10 +1300,10 @@ class AsyncSFTPManager(GObject.GObject):
             keyfile = raw_keyfile.strip()
             if keyfile.lower().startswith("select key file"):
                 keyfile = ""
-            
-            logger.debug("File manager: connection nickname='%s', hostname='%s', key_mode=%d, keyfile='%s', auth_method=%d", 
-                        getattr(connection, 'nickname', 'None'), 
-                        getattr(connection, 'hostname', 'None'), 
+
+            logger.debug("File manager: connection nickname='%s', hostname='%s', key_mode=%d, keyfile='%s', auth_method=%d",
+                        getattr(connection, 'nickname', 'None'),
+                        getattr(connection, 'hostname', 'None'),
                         key_mode, keyfile, auth_method)
         else:
             logger.debug("File manager: No connection object provided")
@@ -1345,7 +1323,6 @@ class AsyncSFTPManager(GObject.GObject):
                 key_filename = keyfile
                 look_for_keys = False
                 logger.debug("File manager: Using specific key file: %s", keyfile)
-                # Prepare key for connection (add to ssh-agent if needed)
                 key_prepared = False
                 if identity_agent_disabled:
                     logger.debug(
@@ -1364,8 +1341,7 @@ class AsyncSFTPManager(GObject.GObject):
                     except Exception as exc:  # pragma: no cover - defensive
                         logger.warning("Error preparing key for file manager %s: %s", keyfile, exc)
                         key_prepared = False
-                
-                # If key preparation failed, we still try to connect but may prompt for passphrase
+
                 if not key_prepared:
                     logger.info("Key preparation failed for %s, connection may prompt for passphrase", keyfile)
 
@@ -1380,17 +1356,14 @@ class AsyncSFTPManager(GObject.GObject):
                     except Exception as exc:  # pragma: no cover - defensive
                         logger.debug("Failed to load key passphrase for %s: %s", keyfile, exc)
 
-                # Only disable agent if explicitly configured to do so
                 if getattr(connection, "pubkey_auth_no", False):
                     allow_agent = False
                     look_for_keys = False
                 elif key_prepared:
-                    # If we successfully prepared a key, ensure agent is enabled
                     allow_agent = True
                     look_for_keys = True
                     logger.debug("Key was prepared successfully, enabling SSH agent usage")
 
-                # Only disable agent for password auth method
                 if auth_method == 1:
                     allow_agent = False
                     look_for_keys = False
@@ -1484,7 +1457,8 @@ class AsyncSFTPManager(GObject.GObject):
                     if str(token).strip()
                 ]
 
-        alias_for_substitution = alias_for_config or target_alias or self._host
+        if proxy_command or proxy_jump:
+            raise RuntimeError("ProxyCommand and ProxyJump are not supported by the pysftp backend")
 
         def _coerce_port(value: Any, default: int) -> int:
             try:
@@ -1496,169 +1470,51 @@ class AsyncSFTPManager(GObject.GObject):
         resolved_port = _coerce_port(effective_cfg.get("port", self._port), self._port)
         resolved_username = str(effective_cfg.get("user", self._username) or self._username)
 
+        cnopts = pysftp.CnOpts()
+        try:
+            if known_hosts_path and os.path.exists(known_hosts_path):
+                cnopts.hostkeys.load(known_hosts_path)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Failed to load host keys from %s: %s", known_hosts_path, exc)
 
-        def _expand_proxy_tokens(raw_command: str) -> str:
-            if not raw_command:
-                return raw_command
-
-            substitution_host = str(resolved_host)
-            substitution_port = str(resolved_port)
-            substitution_user = str(resolved_username) if resolved_username else ""
-
-            substitution_alias = str(alias_for_substitution) if alias_for_substitution else substitution_host
-
-            token_pattern = re.compile(r"%(?:%|h|p|r|n)")
-
-            def _replace(match: re.Match[str]) -> str:
-                token = match.group(0)
-                if token == "%%":
-                    return "%"
-                if token == "%h":
-                    return substitution_host
-                if token == "%p":
-                    return substitution_port
-                if token == "%r":
-                    return substitution_user
-                if token == "%n":
-                    return substitution_alias
-                return token
-
-            return token_pattern.sub(_replace, raw_command)
-
-
-        proxy_sock: Optional[Any] = None
-        jump_clients: List[paramiko.SSHClient] = []
-        proxy_command = proxy_command.strip()
-        if proxy_command:
-            try:
-                from paramiko.proxy import ProxyCommand as ParamikoProxyCommand
-
-                expanded_command = _expand_proxy_tokens(proxy_command)
-                proxy_sock = ParamikoProxyCommand(expanded_command)
-                logger.debug(
-                    "File manager: using ProxyCommand '%s' (expanded from '%s')",
-                    expanded_command,
-                    proxy_command,
-                )
-
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning("Failed to set up ProxyCommand '%s': %s", proxy_command, exc)
-                proxy_sock = None
-        elif proxy_jump:
-            try:
-                proxy_sock, jump_clients = self._create_proxy_jump_socket(
-                    proxy_jump,
-                    config_override=config_override,
-                    policy=policy,
-                    known_hosts_path=known_hosts_path,
-                    allow_agent=allow_agent,
-                    look_for_keys=look_for_keys,
-                    key_filename=key_filename,
-                    passphrase=passphrase,
-                    resolved_host=resolved_host,
-                    resolved_port=resolved_port,
-                    base_username=resolved_username,
-                    connect_timeout=connect_timeout,
-                )
-                logger.debug(
-                    "File manager: using Paramiko ProxyJump chain via %s",
-                    ", ".join(proxy_jump),
-                )
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning("Failed to set up ProxyJump chain %s: %s", proxy_jump, exc)
-                proxy_sock = None
-                jump_clients = []
-        else:
-            jump_clients = []
-
-        if not proxy_jump:
-            jump_clients = []
-
+        if isinstance(policy, paramiko.AutoAddPolicy) or not strict_host or strict_host.lower() in {"no", "off", "accept-new", "accept_new"}:
+            cnopts.hostkeys = None
 
         connect_kwargs: Dict[str, Any] = {
-            "hostname": resolved_host,
+            "host": resolved_host,
             "username": resolved_username,
             "port": resolved_port,
-            "allow_agent": allow_agent,
-            "look_for_keys": look_for_keys,
+            "cnopts": cnopts,
+            "default_path": None,
         }
-
-        if connect_timeout is not None:
-            connect_kwargs["timeout"] = connect_timeout
 
         if password:
             connect_kwargs["password"] = password
-
         if key_filename:
-            connect_kwargs["key_filename"] = key_filename
-
+            connect_kwargs["private_key"] = key_filename
         if passphrase:
-            connect_kwargs["passphrase"] = passphrase
+            connect_kwargs["private_key_pass"] = passphrase
 
-        if proxy_sock is not None:
-            connect_kwargs["sock"] = proxy_sock
-
-        transport: Optional[Any] = None
         try:
-            client.connect(**connect_kwargs)
-            sftp = client.open_sftp()
-            transport = client.get_transport()
-            interval = 0
-            with self._lock:
+            connection_handle = pysftp.Connection(**connect_kwargs)
+            transport = getattr(connection_handle, "_transport", None)
+            if transport is not None:
                 interval = self._keepalive_interval
-            if (
-                transport is not None
-                and hasattr(transport, "set_keepalive")
-                and interval > 0
-            ):
-                try:
-                    transport.set_keepalive(interval)
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.debug("Failed to configure SSH keepalive: %s", exc)
-        except paramiko.AuthenticationException as auth_exc:
-            # Authentication failed - close connections and request password from UI
-            if proxy_sock is not None:
-                try:
-                    proxy_sock.close()
-                except Exception:  # pragma: no cover - defensive cleanup
-                    pass
-            if proxy_jump:
-                for jump_client in jump_clients:
+                if hasattr(transport, "set_keepalive") and interval > 0:
                     try:
-                        jump_client.close()
-                    except Exception:  # pragma: no cover - defensive cleanup
-                        pass
-            if client is not None:
-                try:
-                    client.close()
-                except Exception:  # pragma: no cover - defensive cleanup
-                    pass
-            
-            # Emit a special signal for authentication failure that will trigger password dialog
+                        transport.set_keepalive(interval)
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.debug("Failed to configure SSH keepalive: %s", exc)
+        except paramiko.AuthenticationException as auth_exc:
             logger.debug("Authentication failed, requesting password from user")
             self.emit("authentication-required", str(auth_exc))
-            return  # Don't raise, let the UI handle it
-        except Exception:
-            if proxy_sock is not None:
-                try:
-                    proxy_sock.close()
-                except Exception:  # pragma: no cover - defensive cleanup
-                    pass
-            if proxy_jump:
-                for jump_client in jump_clients:
-                    try:
-                        jump_client.close()
-                    except Exception:  # pragma: no cover - defensive cleanup
-                        pass
-
-            raise
-
+            return
         with self._lock:
-            self._client = client
-            self._sftp = sftp
+            self._sftp_connection = connection_handle
+            self._sftp = connection_handle
             self._password = password
-            self._proxy_sock = proxy_sock
-            self._jump_clients = jump_clients
+            self._proxy_sock = None
+            self._jump_clients = []
 
         self._start_keepalive_worker()
 
@@ -2104,7 +1960,7 @@ def stat_isdir(attr: paramiko.SFTPAttributes) -> bool:
     return bool(attr.st_mode & 0o40000)
 
 
-def walk_remote(sftp: paramiko.SFTPClient, root: str) -> Iterable[Tuple[str, List[str], List[str]]]:
+def walk_remote(sftp: pysftp.Connection, root: str) -> Iterable[Tuple[str, List[str], List[str]]]:
     """Yield a remote directory tree similar to :func:`os.walk`."""
 
     dirs: List[str] = []
@@ -7612,7 +7468,7 @@ class FileManagerWindow(Adw.Window):
         future.add_done_callback(_cleanup)
 
     @staticmethod
-    def _ensure_remote_directory(sftp: paramiko.SFTPClient, path: str) -> None:
+    def _ensure_remote_directory(sftp: pysftp.Connection, path: str) -> None:
         if not path:
             return
         components = []
@@ -7626,7 +7482,7 @@ class FileManagerWindow(Adw.Window):
                 continue
 
     @staticmethod
-    def _remote_path_exists(sftp: paramiko.SFTPClient, path: str) -> bool:
+    def _remote_path_exists(sftp: pysftp.Connection, path: str) -> bool:
         return _sftp_path_exists(sftp, path)
 
     @staticmethod
@@ -7643,7 +7499,7 @@ class FileManagerWindow(Adw.Window):
         return dest_norm.startswith(f"{source_prefix}/")
 
     def _copy_remote_file(
-        self, sftp: paramiko.SFTPClient, source_path: str, destination_path: str
+        self, sftp: pysftp.Connection, source_path: str, destination_path: str
     ) -> None:
         if self._remote_path_exists(sftp, destination_path):
             raise FileExistsError(f"{posixpath.basename(destination_path)} already exists")
@@ -7656,7 +7512,7 @@ class FileManagerWindow(Adw.Window):
                 dst_file.write(chunk)
 
     def _copy_remote_directory(
-        self, sftp: paramiko.SFTPClient, source_path: str, destination_path: str
+        self, sftp: pysftp.Connection, source_path: str, destination_path: str
     ) -> None:
         if self._is_remote_descendant(source_path, destination_path):
             raise ValueError(
