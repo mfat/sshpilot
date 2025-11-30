@@ -5675,13 +5675,16 @@ class FileManagerWindow(Adw.Window):
         }
         
         /* Pane toolbar styling to replace nested ToolbarView */
-        .toolbar {
+        /* Scope to file manager window only to avoid affecting sidebar toolbar */
+        .filemanagerwindow .toolbar,
+        .filemanagerwindow toolbar {
             background-color: @headerbar_bg_color;
             color: @headerbar_fg_color;
             border-bottom: 1px solid @borders;
         }
         
-        .toolbar windowhandle {
+        .filemanagerwindow .toolbar windowhandle,
+        .filemanagerwindow toolbar windowhandle {
             background-color: @headerbar_bg_color;
             color: @headerbar_fg_color;
         }
@@ -5718,10 +5721,11 @@ class FileManagerWindow(Adw.Window):
             css_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
         )
         
-        # Also apply to the main window's display for global coverage
-        display = Gdk.Display.get_default()
-        Gtk.StyleContext.add_provider_for_display(
-            display, css_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+        # Apply CSS only to this window, not globally, to avoid affecting sidebar toolbar
+        # Use a unique CSS name for the file manager window to scope the styles
+        self.add_css_class("filemanagerwindow")
+        self.get_style_context().add_provider(
+            css_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
         )
         
         toolbar_view.set_content(self._toast_overlay)
