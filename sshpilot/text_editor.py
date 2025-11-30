@@ -131,6 +131,12 @@ class RemoteFileEditorWindow(Adw.Window):
         self._redo_button.connect("clicked", self._on_redo_clicked)
         header_bar.pack_start(self._redo_button)
         
+        # Search button to toggle search bar
+        self._search_button = Gtk.Button.new_from_icon_name("system-search-symbolic")
+        self._search_button.set_tooltip_text("Search")
+        self._search_button.connect("clicked", self._on_search_button_clicked)
+        header_bar.pack_start(self._search_button)
+        
         # Cancel/Close button
         cancel_button = Gtk.Button(label="Close")
         cancel_button.connect("clicked", self._on_close_clicked)
@@ -139,7 +145,8 @@ class RemoteFileEditorWindow(Adw.Window):
         toolbar_view.add_top_bar(header_bar)
         
         # Toolbar for search/replace
-        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self._search_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        toolbar = self._search_toolbar
         toolbar.set_margin_start(6)
         toolbar.set_margin_end(6)
         toolbar.set_margin_top(6)
@@ -193,12 +200,13 @@ class RemoteFileEditorWindow(Adw.Window):
         if _HAS_GTKSOURCE:
             self._source_view = GtkSource.View()
             self._source_view.set_show_line_numbers(True)
-            self._source_view.set_highlight_current_line(True)
+            self._source_view.set_highlight_current_line(False)  # Disable to only highlight search string, not entire line
             self._source_view.set_auto_indent(True)
             self._source_view.set_indent_width(4)
             self._source_view.set_tab_width(4)
             self._source_view.set_insert_spaces_instead_of_tabs(False)
             self._source_view.set_monospace(True)  # Ensure monospace font
+            self._source_view.set_wrap_mode(Gtk.WrapMode.WORD)  # Enable word wrap
             
             # Detect language from file extension
             language_manager = GtkSource.LanguageManager.get_default()
@@ -219,6 +227,7 @@ class RemoteFileEditorWindow(Adw.Window):
             # Fallback to regular TextView
             self._source_view = Gtk.TextView()
             self._source_view.set_monospace(True)
+            self._source_view.set_wrap_mode(Gtk.WrapMode.WORD)  # Enable word wrap
             self._buffer = Gtk.TextBuffer()
             self._source_view.set_buffer(self._buffer)
             self._search_settings = None
@@ -236,6 +245,9 @@ class RemoteFileEditorWindow(Adw.Window):
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         content_box.append(toolbar)
         content_box.append(scrolled)
+        
+        # Hide search toolbar by default
+        self._search_toolbar.set_visible(False)
         
         scrolled.set_child(self._source_view)
         
@@ -795,6 +807,14 @@ class RemoteFileEditorWindow(Adw.Window):
             self._buffer.select_range(match_start, match_end)
             self._source_view.scroll_to_iter(match_start, 0.1, True, 0.0, 0.0)
     
+    def _on_search_button_clicked(self, button: Gtk.Button) -> None:
+        """Handle search button click - toggle search bar visibility."""
+        visible = self._search_toolbar.get_visible()
+        self._search_toolbar.set_visible(not visible)
+        if not visible and self._search_entry:
+            # Show and focus search entry when opening
+            self._search_entry.grab_focus()
+    
     def _on_search_changed(self, editable: Gtk.Editable) -> None:
         """Handle search entry text change."""
         self._update_search_settings()
@@ -913,8 +933,11 @@ class RemoteFileEditorWindow(Adw.Window):
         ctrl = state & Gdk.ModifierType.CONTROL_MASK
         shift = state & Gdk.ModifierType.SHIFT_MASK
         
-        # Ctrl+F -> focus search
+        # Ctrl+F -> show search bar and focus search
         if ctrl and keyval == Gdk.KEY_f:
+            # Show search bar if hidden
+            if not self._search_toolbar.get_visible():
+                self._search_toolbar.set_visible(True)
             if self._search_entry:
                 self._search_entry.grab_focus()
             return True
