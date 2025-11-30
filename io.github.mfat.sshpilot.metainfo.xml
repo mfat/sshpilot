@@ -42,7 +42,7 @@
 
 
 
-    <release version="4.6.1" date="2025-11-30">
+    <release version="4.6.2" date="2025-12-01">
 
       <description>
         <p>- Improvements to built-in file manager to make it more robust</p>
@@ -51,45 +51,45 @@
         <p>- Sort button now sorts groups too</p>
       </description>
     </release>
-    <release version="4.6.1" date="2025-11-30">
+    <release version="4.6.2" date="2025-12-01">
 
       <description>
         <p>- Fixed file manager bug when password authentication is selected</p>
       </description>
     </release>
-    <release version="4.6.1" date="2025-11-30">
+    <release version="4.6.2" date="2025-12-01">
 
       <description>
         <p>- Redesigned start page, with card and list layouts</p>
         <p>- Minor UI fixes</p>
       </description>
     </release>
-    <release version="4.6.1" date="2025-11-30">
+    <release version="4.6.2" date="2025-12-01">
 
       <description>
         <p>- Update notifier fixes</p>
       </description>
     </release>
-    <release version="4.6.1" date="2025-11-30">
+    <release version="4.6.2" date="2025-12-01">
 
       <description>
         <p>- Bug fixes</p>
       </description>
     </release>
-    <release version="4.6.1" date="2025-11-30">
+    <release version="4.6.2" date="2025-12-01">
 
       <description>
         <p>- Added update notifier</p>
       </description>
     </release>
-    <release version="4.6.1" date="2025-11-30">
+    <release version="4.6.2" date="2025-12-01">
 
       <description>
         <p>- New feature: Import/Export configuration</p>
         <p>- Better log output</p>
       </description>
     </release>
-    <release version="4.6.1" date="2025-11-30">
+    <release version="4.6.2" date="2025-12-01">
 
       <description>
         <p>Added sorting to connection list</p>
