@@ -6233,13 +6233,64 @@ class FileManagerWindow(Adw.Window):
         nickname = getattr(connection, 'nickname', None) if connection else None
         display_name = nickname or f"{user}@{host}"
         
+        # Get the correct parent window (handles both embedded tab and separate window cases)
+        # Adw.MessageDialog.transient_for requires a Gtk.Window, so we need to get the root window
+        dialog_parent_window: Optional[Gtk.Window] = None
+        try:
+            if self._embedded_parent is not None:
+                # If embedded as a tab, get the root window from the parent widget
+                root_window = self._embedded_parent.get_root()
+                if root_window is not None and isinstance(root_window, Gtk.Window):
+                    dialog_parent_window = root_window
+            else:
+                # If standalone window, try to get transient parent if any
+                transient = self.get_transient_for()
+                if transient is not None:
+                    dialog_parent_window = transient
+            
+            # Fallback: try to get application's active window
+            if dialog_parent_window is None:
+                try:
+                    app = self.get_application()
+                    if app is not None:
+                        active_window = app.get_active_window()
+                        if active_window is not None and isinstance(active_window, Gtk.Window):
+                            dialog_parent_window = active_window
+                except Exception:
+                    pass
+            
+            # Final fallback: use self if it's a window
+            if dialog_parent_window is None:
+                try:
+                    self_root = self.get_root()
+                    if self_root is not None and isinstance(self_root, Gtk.Window):
+                        dialog_parent_window = self_root
+                    else:
+                        dialog_parent_window = self
+                except Exception:
+                    dialog_parent_window = self
+        except Exception as e:
+            logger.error(f"Error determining password dialog parent: {e}", exc_info=True)
+            # Final fallback to self
+            dialog_parent_window = self
+        
+        # Log the parent window for debugging
+        logger.debug(f"Password dialog parent window: {dialog_parent_window}, type: {type(dialog_parent_window)}, embedded: {self._embedded_parent is not None}")
+        
         # Create password dialog
         dialog = Adw.MessageDialog(
-            transient_for=self,
+            transient_for=dialog_parent_window,
             modal=True,
             heading="Password Required",
             body=f"Please enter your password for {display_name}:",
         )
+        
+        # Ensure transient_for is set (in case it wasn't set in constructor)
+        if dialog_parent_window is not None:
+            try:
+                dialog.set_transient_for(dialog_parent_window)
+            except Exception:
+                pass
         
         # Add password entry
         password_entry = Gtk.PasswordEntry()
@@ -6346,13 +6397,64 @@ class FileManagerWindow(Adw.Window):
                 nickname = getattr(self._connection, 'nickname', None) if self._connection else None
                 display_name = nickname or f"{username}@{host}"
                 
+                # Get the correct parent window (handles both embedded tab and separate window cases)
+                # Adw.MessageDialog.transient_for requires a Gtk.Window, so we need to get the root window
+                dialog_parent_window: Optional[Gtk.Window] = None
+                try:
+                    if self._embedded_parent is not None:
+                        # If embedded as a tab, get the root window from the parent widget
+                        root_window = self._embedded_parent.get_root()
+                        if root_window is not None and isinstance(root_window, Gtk.Window):
+                            dialog_parent_window = root_window
+                    else:
+                        # If standalone window, try to get transient parent if any
+                        transient = self.get_transient_for()
+                        if transient is not None:
+                            dialog_parent_window = transient
+                    
+                    # Fallback: try to get application's active window
+                    if dialog_parent_window is None:
+                        try:
+                            app = self.get_application()
+                            if app is not None:
+                                active_window = app.get_active_window()
+                                if active_window is not None and isinstance(active_window, Gtk.Window):
+                                    dialog_parent_window = active_window
+                        except Exception:
+                            pass
+                    
+                    # Final fallback: use self if it's a window
+                    if dialog_parent_window is None:
+                        try:
+                            self_root = self.get_root()
+                            if self_root is not None and isinstance(self_root, Gtk.Window):
+                                dialog_parent_window = self_root
+                            else:
+                                dialog_parent_window = self
+                        except Exception:
+                            dialog_parent_window = self
+                except Exception as e:
+                    logger.error(f"Error determining password dialog parent: {e}", exc_info=True)
+                    # Final fallback to self
+                    dialog_parent_window = self
+                
+                # Log the parent window for debugging
+                logger.debug(f"Password dialog parent window: {dialog_parent_window}, type: {type(dialog_parent_window)}, embedded: {self._embedded_parent is not None}")
+                
                 # Create password dialog
                 dialog = Adw.MessageDialog(
-                    transient_for=self,
+                    transient_for=dialog_parent_window,
                     modal=True,
                     heading="Password Required",
                     body=f"Authentication failed for {display_name}.\n\nPlease enter your password:",
                 )
+                
+                # Ensure transient_for is set (in case it wasn't set in constructor)
+                if dialog_parent_window is not None:
+                    try:
+                        dialog.set_transient_for(dialog_parent_window)
+                    except Exception:
+                        pass
                 
                 # Add password entry
                 password_entry = Gtk.PasswordEntry()
@@ -6771,7 +6873,28 @@ class FileManagerWindow(Adw.Window):
                     callback(files_to_transfer)
 
             dialog.connect("response", _on_conflict_response)
-            dialog.present()
+            
+            # Get the correct parent widget (handles both embedded tab and separate window cases)
+            # Adw.AlertDialog.present() accepts a Gtk.Widget, so we can pass the embedded parent directly
+            try:
+                dialog_parent = self
+                if self._embedded_parent is not None:
+                    # If embedded as a tab, use the parent widget directly
+                    dialog_parent = self._embedded_parent
+                else:
+                    # If standalone window, try to get transient parent if any
+                    try:
+                        transient = self.get_transient_for()
+                        if transient is not None:
+                            dialog_parent = transient
+                    except Exception:
+                        pass
+                
+                dialog.present(dialog_parent)  # Present with correct parent to center properly
+            except Exception as e:
+                # Fallback: present without parent if there's an error
+                logger.error(f"Failed to present conflict dialog with parent: {e}", exc_info=True)
+                dialog.present()  # Present without parent as fallback
 
         def _idle_finalize(conflicts: List[Tuple[str, str]]) -> bool:
             _finalize_conflicts(conflicts)
@@ -7169,7 +7292,28 @@ class FileManagerWindow(Adw.Window):
                 dialog.close()
 
             dialog.connect("response", _on_delete)
-            dialog.present()
+            
+            # Get the correct parent widget (handles both embedded tab and separate window cases)
+            # Adw.AlertDialog.present() accepts a Gtk.Widget, so we can pass the embedded parent directly
+            try:
+                dialog_parent = self
+                if self._embedded_parent is not None:
+                    # If embedded as a tab, use the parent widget directly
+                    dialog_parent = self._embedded_parent
+                else:
+                    # If standalone window, try to get transient parent if any
+                    try:
+                        transient = self.get_transient_for()
+                        if transient is not None:
+                            dialog_parent = transient
+                    except Exception:
+                        pass
+                
+                dialog.present(dialog_parent)  # Present with correct parent to center properly
+            except Exception as e:
+                # Fallback: present without parent if there's an error
+                logger.error(f"Failed to present delete dialog with parent: {e}", exc_info=True)
+                dialog.present()  # Present without parent as fallback
         elif action == "upload":
             # Upload can be triggered from either pane, but we need to determine the target pane
             if pane is self._left_pane:
