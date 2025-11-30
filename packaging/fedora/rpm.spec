@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:4.6.0}
+Version:        %{?version}%{!?version:4.6.2}
 Release:        1%{?dist}
 Summary:        SSH connection manager with integrated terminal
 
