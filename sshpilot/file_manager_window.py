@@ -2836,50 +2836,132 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _update_search_settings(self) -> None:
         """Update search settings from search entry."""
-        if not _HAS_GTKSOURCE or not self._search_settings or not self._search_entry:
+        logger.debug("_update_search_settings: called")
+        
+        if not _HAS_GTKSOURCE:
+            logger.debug("_update_search_settings: _HAS_GTKSOURCE is False")
+            return
+        
+        if not self._search_settings:
+            logger.debug("_update_search_settings: _search_settings is None")
+            return
+        
+        if not self._search_entry:
+            logger.debug("_update_search_settings: _search_entry is None")
             return
         
         text = self._search_entry.get_text()
+        logger.debug(f"_update_search_settings: text='{text}'")
+        
         if text:
             self._search_settings.set_search_text(text)
+            logger.debug(f"_update_search_settings: set_search_text('{text}')")
         else:
             self._search_settings.set_search_text(None)
+            logger.debug("_update_search_settings: set_search_text(None)")
         
         # Configure search behavior
         self._search_settings.set_case_sensitive(False)
         self._search_settings.set_wrap_around(True)
+        logger.debug("_update_search_settings: configured case_sensitive=False, wrap_around=True")
     
     def _search_next(self) -> None:
         """Search for next occurrence."""
-        if not _HAS_GTKSOURCE or not self._search_context:
+        logger.debug("_search_next: called")
+        
+        if not _HAS_GTKSOURCE:
+            logger.debug("_search_next: _HAS_GTKSOURCE is False")
+            return
+        
+        if not self._search_context:
+            logger.debug("_search_next: _search_context is None")
+            return
+        
+        if not self._search_entry:
+            logger.debug("_search_next: _search_entry is None")
             return
         
         # Ensure search settings are up to date
         self._update_search_settings()
         
+        # Check search text
+        search_text = self._search_entry.get_text() if self._search_entry else None
+        logger.debug(f"_search_next: search_text='{search_text}'")
+        
+        if not search_text:
+            logger.debug("_search_next: no search text, returning")
+            return
+        
+        # Check search settings
+        if self._search_settings:
+            settings_text = self._search_settings.get_search_text()
+            logger.debug(f"_search_next: search_settings.search_text='{settings_text}'")
+        
         # If there's a selection, start from just after the end of the selection
         # Otherwise, start from the insert mark
         try:
-            has_selection, start, end = self._buffer.get_selection_bounds()
+            bounds_result = self._buffer.get_selection_bounds()
+            logger.debug(f"_search_next: get_selection_bounds() returned: {bounds_result}, len={len(bounds_result) if hasattr(bounds_result, '__len__') else 'N/A'}")
+            
+            # get_selection_bounds() returns (bool, start_iter, end_iter) or just bool
+            if isinstance(bounds_result, tuple) and len(bounds_result) >= 1:
+                has_selection = bounds_result[0]
+                if has_selection and len(bounds_result) >= 3:
+                    start = bounds_result[1]
+                    end = bounds_result[2]
+                else:
+                    start = None
+                    end = None
+            else:
+                has_selection = bool(bounds_result) if bounds_result else False
+                start = None
+                end = None
+            
+            logger.debug(f"_search_next: has_selection={has_selection}, start={start}, end={end}")
+            
             if has_selection and start is not None and end is not None:
                 # Start searching from just after the end of the current selection
                 iter_ = end.copy()
+                start_offset = iter_.get_offset()
                 # Advance by one character to skip the current match
                 if not iter_.is_end():
                     iter_.forward_char()
+                end_offset = iter_.get_offset()
+                logger.debug(f"_search_next: using selection end, start_offset={start_offset}, end_offset={end_offset}")
             else:
-                # No selection, start from insert mark
+                # No selection, start from insert mark (cursor position)
                 insert_mark = self._buffer.get_insert()
                 iter_ = self._buffer.get_iter_at_mark(insert_mark)
-        except (ValueError, TypeError):
+                offset = iter_.get_offset()
+                logger.debug(f"_search_next: using cursor position, offset={offset}")
+        except (ValueError, TypeError) as e:
             # Fallback to insert mark
+            logger.debug(f"_search_next: exception getting selection bounds: {e}")
             insert_mark = self._buffer.get_insert()
             iter_ = self._buffer.get_iter_at_mark(insert_mark)
+            offset = iter_.get_offset()
+            logger.debug(f"_search_next: fallback to cursor, offset={offset}")
+        
+        # Log iterator position before search
+        iter_offset = iter_.get_offset()
+        buffer_size = self._buffer.get_char_count()
+        logger.debug(f"_search_next: calling forward() with iter_offset={iter_offset}, buffer_size={buffer_size}")
         
         ok, match_start, match_end, wrapped = self._search_context.forward(iter_)
+        logger.debug(f"_search_next: forward() returned ok={ok}, wrapped={wrapped}")
+        
         if ok:
+            match_start_offset = match_start.get_offset()
+            match_end_offset = match_end.get_offset()
+            logger.debug(f"_search_next: match found at start_offset={match_start_offset}, end_offset={match_end_offset}")
             self._buffer.select_range(match_start, match_end)
+            # Move cursor to the end of the match so next search starts from after it
+            insert_mark = self._buffer.get_insert()
+            self._buffer.move_mark(insert_mark, match_end)
+            logger.debug(f"_search_next: moved cursor to end of match at offset={match_end_offset}")
             self._source_view.scroll_to_iter(match_start, 0.1, True, 0.0, 0.0)
+        else:
+            logger.debug("_search_next: no match found")
     
     def _search_prev(self) -> None:
         """Search for previous occurrence."""
@@ -2905,6 +2987,7 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _on_search_next_clicked(self, button: Gtk.Button) -> None:
         """Handle search next button click."""
+        logger.debug("_on_search_next_clicked: button clicked")
         self._update_search_settings()
         self._search_next()
     
