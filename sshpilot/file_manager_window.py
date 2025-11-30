@@ -3430,6 +3430,12 @@ class FilePane(Gtk.Box):
             "Paste",
             lambda _button: self._emit_paste_operation(),
         )
+        edit_button = _create_action_button(
+            "edit",
+            "text-editor-symbolic",
+            "Edit",
+            lambda _button: self._on_menu_edit(),
+        )
         rename_button = _create_action_button(
             "rename",
             "document-edit-symbolic",
@@ -3444,6 +3450,7 @@ class FilePane(Gtk.Box):
         )
         download_button.set_visible(self._is_remote)
         upload_button.set_visible(not self._is_remote)
+        edit_button.set_visible(False)  # Initially hidden, shown when text file is selected
 
         # Add Request Access button for local pane in Flatpak (always show when in Flatpak)
         request_access_button = None
@@ -3474,6 +3481,7 @@ class FilePane(Gtk.Box):
             action_bar.pack_start(request_access_button)
         action_bar.pack_end(delete_button)
         action_bar.pack_end(rename_button)
+        action_bar.pack_end(edit_button)
         action_bar.pack_end(cut_button)
         action_bar.pack_end(copy_button)
         action_bar.pack_end(paste_button)
@@ -4160,12 +4168,11 @@ class FilePane(Gtk.Box):
         elif not self._is_remote and has_selection:
             _add_menu_item("Upload…", "document-send-symbolic", "upload")
         
-        # Add Edit for text files (both local and remote)
+        # Add Edit for any single file (both local and remote)
         if has_selection:
             selected_entries = self.get_selected_entries()
             if len(selected_entries) == 1 and not selected_entries[0].is_dir:
-                if self._is_text_file(selected_entries[0]):
-                    _add_menu_item("Edit", "document-edit-symbolic", "edit")
+                _add_menu_item("Edit", "text-editor-symbolic", "edit")
         
         # Add clipboard operations if items are selected
         if has_selection:
@@ -4321,6 +4328,10 @@ class FilePane(Gtk.Box):
         _set_enabled("copy", has_selection)
         _set_enabled("cut", has_selection)
         _set_enabled("paste", can_paste)
+        # Edit is enabled for single file selection (any file type)
+        can_edit = single_selection and not selected_entries[0].is_dir if single_selection else False
+        
+        _set_enabled("edit", can_edit)
         _set_enabled("rename", single_selection)
         _set_enabled("delete", has_selection)
         _set_enabled("properties", single_selection)
@@ -4333,6 +4344,12 @@ class FilePane(Gtk.Box):
         _set_button("cut", has_selection)
         _set_button("paste", can_paste)
         _set_button("rename", single_selection)
+        _set_button("edit", can_edit)
+        
+        # Show/hide edit button based on selection (always show for single file)
+        edit_button = self._action_buttons.get("edit")
+        if edit_button is not None:
+            edit_button.set_visible(can_edit)
         _set_button("delete", has_selection)
 
     def _emit_entry_operation(self, action: str) -> None:
@@ -4709,10 +4726,6 @@ class FilePane(Gtk.Box):
         
         if entry.is_dir:
             self.show_toast("Cannot edit directories")
-            return
-        
-        if not self._is_text_file(entry):
-            self.show_toast("File type not supported for editing")
             return
         
         # Get file manager window
