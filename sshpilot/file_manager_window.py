@@ -51,6 +51,7 @@ except (ImportError, ValueError, AttributeError):
     GtkSource = None
 
 from .platform_utils import is_flatpak, is_macos
+from .text_editor import RemoteFileEditorWindow
 
 import logging
 
@@ -2214,486 +2215,6 @@ def walk_remote(sftp: paramiko.SFTPClient, root: str) -> Iterable[Tuple[str, Lis
 # UI widgets
 
 
-class RemoteFileEditorWindow(Adw.Window):
-    """FileZilla-style text editor window using GTK SourceView.
-    
-    Supports both remote (SFTP) and local file editing:
-    - Remote: Downloads to temp location, edits, uploads back when saved
-    - Local: Edits file directly, saves locally
-    """
-    
-    def __init__(
-        self,
-        parent: Adw.Window,
-        file_path: str,
-        file_name: str,
-        is_local: bool = False,
-        sftp_manager: Optional["AsyncSFTPManager"] = None,
-        file_manager_window: Optional["FileManagerWindow"] = None,
-    ) -> None:
-        super().__init__()
-        self.set_transient_for(parent)
-        self.set_modal(False)  # Allow multiple editors
-        self.set_default_size(900, 600)
-        self.set_title(f"Edit {file_name}")
-        
-        self._is_local = is_local
-        self._file_path = file_path  # Can be remote path or local path
-        self._file_name = file_name
-        self._sftp_manager = sftp_manager
-        self._file_manager_window = file_manager_window
-        self._temp_file: Optional[pathlib.Path] = None
-        self._file_monitor: Optional[Gio.FileMonitor] = None
-        self._file_modified_time: float = 0.0
-        self._has_unsaved_changes = False
-        self._upload_dialog: Optional[Adw.AlertDialog] = None
-        self._is_closing = False
-        self._is_loading = True  # Flag to track initial file loading
-        
-        if self._is_local:
-            # For local files, use the file path directly
-            self._temp_file = pathlib.Path(file_path)
-        else:
-            # For remote files, create temp file using Python's tempfile module
-            # Use NamedTemporaryFile with delete=False for manual cleanup
-            # This is the recommended pattern per Python docs for persistent temp files
-            temp_file_obj = tempfile.NamedTemporaryFile(
-                mode='w+b',
-                prefix=f"sshpilot_edit_{os.getpid()}_",
-                suffix=f"_{file_name}",
-                delete=False  # Don't auto-delete, we'll clean up manually in _do_close()
-            )
-            temp_file_obj.close()  # Close the file handle, we'll open it later when needed
-            self._temp_file = pathlib.Path(temp_file_obj.name)
-        
-        # Create UI
-        self._setup_ui()
-        
-        # Load file (download if remote, direct load if local)
-        if self._is_local:
-            self._load_file_content()
-        else:
-            self._download_and_load()
-    
-    def _setup_ui(self) -> None:
-        """Set up the editor UI."""
-        toolbar_view = Adw.ToolbarView()
-        self.set_content(toolbar_view)
-        
-        # Header bar
-        header_bar = Adw.HeaderBar()
-        self._title_label = Gtk.Label(label=f"Edit {self._file_name}")
-        header_bar.set_title_widget(self._title_label)
-        
-        # Save button - label depends on local vs remote
-        save_label = "Save" if self._is_local else "Save"
-        self._save_button = Gtk.Button(label=save_label)
-        self._save_button.add_css_class("suggested-action")
-        self._save_button.set_sensitive(False)
-        self._save_button.connect("clicked", self._on_save_clicked)
-        header_bar.pack_end(self._save_button)
-        
-        # Cancel/Close button
-        cancel_button = Gtk.Button(label="Close")
-        cancel_button.connect("clicked", self._on_close_clicked)
-        header_bar.pack_start(cancel_button)
-        
-        toolbar_view.add_top_bar(header_bar)
-        
-        # Editor area
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_vexpand(True)
-        scrolled.set_hexpand(True)
-        
-        # Create editor widget (SourceView if available, otherwise TextView)
-        if _HAS_GTKSOURCE:
-            self._source_view = GtkSource.View()
-            self._source_view.set_show_line_numbers(True)
-            self._source_view.set_highlight_current_line(True)
-            self._source_view.set_auto_indent(True)
-            self._source_view.set_indent_width(4)
-            self._source_view.set_tab_width(4)
-            self._source_view.set_insert_spaces_instead_of_tabs(False)
-            
-            # Detect language from file extension
-            language_manager = GtkSource.LanguageManager.get_default()
-            _, ext = os.path.splitext(self._file_name)
-            language = language_manager.guess_language(self._file_name, None)
-            if language:
-                buffer = GtkSource.Buffer.new_with_language(language)
-                self._source_view.set_buffer(buffer)
-            else:
-                buffer = GtkSource.Buffer()
-                self._source_view.set_buffer(buffer)
-        else:
-            # Fallback to regular TextView
-            self._source_view = Gtk.TextView()
-            self._source_view.set_monospace(True)
-            buffer = Gtk.TextBuffer()
-            self._source_view.set_buffer(buffer)
-        
-        # Connect to buffer changes
-        buffer.connect("modified-changed", self._on_buffer_modified_changed)
-        
-        scrolled.set_child(self._source_view)
-        
-        # Wrap editor in toast overlay for status messages (same style as file manager)
-        toast_overlay = Adw.ToastOverlay()
-        toast_overlay.set_child(scrolled)
-        self._toast_overlay = toast_overlay
-        self._current_toast = None  # Keep reference for dismissal
-        
-        toolbar_view.set_content(toast_overlay)
-        
-        # Apply same toast CSS styling as file manager
-        self._apply_toast_css()
-        
-        # Connect close request
-        self.connect("close-request", self._on_close_request)
-        
-        # Show initial loading toast
-        self._show_toast("Loading…" if self._is_local else "Downloading…", timeout=2)
-    
-    def _apply_toast_css(self) -> None:
-        """Apply the same toast CSS styling as file manager."""
-        try:
-            css_provider = Gtk.CssProvider()
-            toast_css = """
-            toast {
-                /* Frosted glass effect */
-                background-color: alpha(black, 0.6);
-
-                /* Pill shape */
-                border-radius: 99px; /* A large value creates the pill shape */
-
-                /* Clean typography */
-                color: white;
-                font-weight: 500; /* Medium weight for a modern feel */
-                font-size: 1.05em;
-
-                /* Subtle details */
-                padding: 8px 20px;
-                margin: 10px;
-                border: 1px solid alpha(white, 0.1);
-                box-shadow: 0 5px 15px alpha(black, 0.2);
-            }
-            
-            toast label {
-                /* Style toast labels */
-                color: white;
-                font-weight: 500;
-            }
-            
-            toast button {
-                /* Style toast buttons if any */
-                color: white;
-                background-color: alpha(white, 0.2);
-                border: 1px solid alpha(white, 0.3);
-                border-radius: 6px;
-                padding: 4px 8px;
-            }
-            
-            toast button.circular.flat {
-                /* Style close button */
-                color: white;
-                background-color: alpha(black, 0.6);
-                border: 1px solid alpha(white, 0.1);
-            }
-            """
-            css_provider.load_from_data(toast_css.encode())
-            display = Gdk.Display.get_default()
-            if display:
-                Gtk.StyleContext.add_provider_for_display(
-                    display, css_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
-                )
-        except Exception as e:
-            logger.debug(f"Failed to apply toast CSS: {e}")
-    
-    def _show_toast(self, text: str, timeout: int = 3) -> None:
-        """Show a toast message safely (same style as FilePane)."""
-        try:
-            # Dismiss any existing toast first
-            if self._current_toast:
-                self._current_toast.dismiss()
-                self._current_toast = None
-            
-            toast = Adw.Toast.new(text)
-            if timeout >= 0:
-                toast.set_timeout(timeout)
-            self._toast_overlay.add_toast(toast)
-            self._current_toast = toast  # Keep reference for dismissal
-        except (AttributeError, RuntimeError, GLib.GError):
-            # Overlay might be destroyed or invalid, ignore
-            pass
-    
-    def _download_and_load(self) -> None:
-        """Download the remote file and load it into the editor."""
-        def download_complete(future: Future) -> None:
-            try:
-                future.result()  # Wait for download to complete
-                GLib.idle_add(self._load_file_content)
-            except Exception as e:
-                logger.error(f"Failed to download file for editing: {e}", exc_info=True)
-                GLib.idle_add(self._show_error, f"Failed to download file: {e}")
-        
-        # Download file (use _file_path which contains the remote path for remote files)
-        future = self._sftp_manager.download(self._file_path, self._temp_file)
-        future.add_done_callback(download_complete)
-    
-    def _load_file_content(self) -> None:
-        """Load the file content into the editor (downloaded for remote, direct for local)."""
-        try:
-            if not self._temp_file.exists():
-                error_msg = "File not found" if self._is_local else "Downloaded file not found"
-                self._show_error(error_msg)
-                return
-            
-            # Read file content
-            with open(self._temp_file, 'rb') as f:
-                content = f.read()
-            
-            # Try to decode as UTF-8, fall back to latin-1 if needed
-            try:
-                text = content.decode('utf-8')
-            except UnicodeDecodeError:
-                try:
-                    text = content.decode('latin-1')
-                except UnicodeDecodeError:
-                    text = content.decode('utf-8', errors='replace')
-            
-            # Set content in buffer
-            buffer = self._source_view.get_buffer()
-            buffer.set_text(text)
-            buffer.set_modified(False)
-            
-            # Get initial modification time
-            self._file_modified_time = self._temp_file.stat().st_mtime
-            
-            # Set up file monitoring
-            self._setup_file_monitoring()
-            
-            # Mark loading as complete - now modification events will be handled
-            self._is_loading = False
-            
-        except Exception as e:
-            logger.error(f"Failed to load file content: {e}", exc_info=True)
-            self._show_error(f"Failed to load file: {e}")
-            # Ensure loading flag is reset even on error
-            self._is_loading = False
-    
-    def _setup_file_monitoring(self) -> None:
-        """Set up file monitoring to detect external saves."""
-        try:
-            gfile = Gio.File.new_for_path(str(self._temp_file))
-            self._file_monitor = gfile.monitor_file(Gio.FileMonitorFlags.WATCH_MOVES, None)
-            self._file_monitor.connect("changed", self._on_file_changed)
-        except Exception as e:
-            logger.warning(f"Failed to set up file monitoring: {e}")
-    
-    def _on_file_changed(
-        self,
-        monitor: Gio.FileMonitor,
-        file: Gio.File,
-        other_file: Optional[Gio.File],
-        event_type: Gio.FileMonitorEvent,
-    ) -> None:
-        """Handle file system changes to the temp file."""
-        if self._is_closing:
-            return
-        
-        # Only care about changes (not moves/deletes)
-        if event_type in (Gio.FileMonitorEvent.CHANGED, Gio.FileMonitorEvent.CHANGES_DONE_HINT):
-            try:
-                if self._temp_file.exists():
-                    new_mtime = self._temp_file.stat().st_mtime
-                    if new_mtime > self._file_modified_time:
-                        self._file_modified_time = new_mtime
-                        GLib.idle_add(self._on_file_saved_externally)
-            except Exception:
-                pass
-    
-    def _update_title(self, modified: bool = None) -> None:
-        """Update the headerbar title to show modified state."""
-        if modified is None:
-            buffer = self._source_view.get_buffer()
-            modified = buffer.get_modified() if buffer else False
-        
-        if modified:
-            self._title_label.set_label(f"* (modified) Edit {self._file_name}")
-        else:
-            self._title_label.set_label(f"Edit {self._file_name}")
-    
-    def _on_file_saved_externally(self) -> None:
-        """Handle when the file is saved externally (from the editor)."""
-        self._has_unsaved_changes = True
-        self._save_button.set_sensitive(True)
-        self._update_title(True)
-    
-    def _on_buffer_modified_changed(self, buffer: Gtk.TextBuffer) -> None:
-        """Handle buffer modification state changes."""
-        # Ignore modification events during initial file loading
-        if self._is_loading:
-            return
-        
-        modified = buffer.get_modified()
-        if modified:
-            if not self._has_unsaved_changes:
-                self._has_unsaved_changes = True
-                self._save_button.set_sensitive(True)
-            self._update_title(True)
-        else:
-            # Buffer is no longer modified
-            self._update_title(False)
-    
-    def _on_save_clicked(self, _button: Gtk.Button) -> None:
-        """Handle save button click - save buffer content locally, upload if remote."""
-        if not self._temp_file:
-            self._show_error("File not found")
-            return
-        
-        # Always save buffer content to file
-        buffer = self._source_view.get_buffer()
-        start, end = buffer.get_bounds()
-        text = buffer.get_text(start, end, False)
-        try:
-            with open(self._temp_file, 'w', encoding='utf-8') as f:
-                f.write(text)
-            buffer.set_modified(False)
-            self._file_modified_time = self._temp_file.stat().st_mtime
-            self._has_unsaved_changes = False
-            self._update_title(False)
-            
-            if self._is_local:
-                # For local files, just save and refresh the pane
-                self._show_toast("Saved", timeout=2)
-                self._save_button.set_sensitive(False)
-                # Refresh the file manager to show updated file
-                if self._file_manager_window:
-                    pane = self._file_manager_window._left_pane
-                    if pane:
-                        GLib.idle_add(lambda: pane.emit("path-changed", pane._current_path))
-                return
-        except Exception as e:
-            self._show_error(f"Failed to save file: {e}")
-            return
-        
-        # For remote files, upload after saving
-        if not self._is_local:
-            self._upload_file()
-    
-    def _upload_file(self) -> None:
-        """Upload the modified file back to the remote server."""
-        self._show_toast("Uploading…", timeout=-1)  # Show until upload completes
-        self._save_button.set_sensitive(False)
-        
-        def upload_complete(future: Future) -> None:
-            try:
-                future.result()
-                GLib.idle_add(self._on_upload_success)
-            except Exception as e:
-                logger.error(f"Failed to upload file: {e}", exc_info=True)
-                GLib.idle_add(self._on_upload_error, str(e))
-        
-        future = self._sftp_manager.upload(self._temp_file, self._file_path)
-        future.add_done_callback(upload_complete)
-    
-    def _on_upload_success(self) -> None:
-        """Handle successful upload."""
-        self._has_unsaved_changes = False
-        self._save_button.set_sensitive(False)
-        self._update_title(False)
-        self._show_toast("Uploaded successfully", timeout=2)
-        
-        # Reset buffer modified flag since changes have been saved
-        buffer = self._source_view.get_buffer()
-        buffer.set_modified(False)
-        
-        # Refresh the file manager to show updated file
-        if self._file_manager_window:
-            pane = self._file_manager_window._right_pane
-            if pane:
-                pane.emit("path-changed", pane._current_path)
-    
-    def _on_upload_error(self, error: str) -> None:
-        """Handle upload error."""
-        self._show_toast(f"Upload failed: {error}", timeout=4)
-        self._save_button.set_sensitive(True)
-        self._show_error(f"Failed to upload file: {error}")
-    
-    def _on_close_clicked(self, _button: Gtk.Button) -> None:
-        """Handle close button click."""
-        self._check_and_close()
-    
-    def _on_close_request(self, _window: Adw.Window) -> bool:
-        """Handle window close request."""
-        self._check_and_close()
-        return True  # Prevent default close
-    
-    def _check_and_close(self) -> None:
-        """Check for unsaved changes and close if okay."""
-        # Only check if the buffer has been modified (user made actual changes)
-        buffer = self._source_view.get_buffer()
-        has_changes = buffer.get_modified()
-        
-        if has_changes:
-            # Show confirmation dialog - text differs for local vs remote
-            if self._is_local:
-                dialog_text = f"You have unsaved changes to {self._file_name}. Save changes before closing?"
-                save_label = "Save"
-            else:
-                dialog_text = f"You have unsaved changes to {self._file_name}. Upload changes before closing?"
-                save_label = "Save & Upload"
-            
-            dialog = Adw.AlertDialog.new(
-                "Unsaved Changes",
-                dialog_text
-            )
-            dialog.add_response("cancel", "Cancel")
-            dialog.add_response("discard", "Discard Changes")
-            dialog.add_response("save", save_label)
-            dialog.set_default_response("save")
-            dialog.set_close_response("cancel")
-            
-            def on_response(_dialog: Adw.AlertDialog, response: str) -> None:
-                if response == "save":
-                    self._on_save_clicked(None)
-                    # Wait a bit then close
-                    GLib.timeout_add(500, self._do_close)
-                elif response == "discard":
-                    self._do_close()
-            
-            dialog.connect("response", on_response)
-            dialog.present(self)
-        else:
-            self._do_close()
-    
-    def _do_close(self) -> None:
-        """Actually close the window and clean up."""
-        self._is_closing = True
-        
-        # Stop monitoring
-        if self._file_monitor:
-            self._file_monitor.cancel()
-            self._file_monitor = None
-        
-        # Clean up temp file (only for remote files - local files shouldn't be deleted)
-        if not self._is_local and self._temp_file and self._temp_file.exists():
-            try:
-                self._temp_file.unlink()
-            except Exception:
-                pass
-        
-        self.destroy()
-    
-    def _show_error(self, message: str) -> None:
-        """Show an error dialog."""
-        dialog = Adw.AlertDialog.new("Error", message)
-        dialog.add_response("ok", "OK")
-        dialog.set_default_response("ok")
-        dialog.set_close_response("ok")
-        dialog.present(self)
-
-
 class PathEntry(Gtk.Entry):
     """Simple entry used for the editable pathbar."""
 
@@ -3430,6 +2951,12 @@ class FilePane(Gtk.Box):
             "Paste",
             lambda _button: self._emit_paste_operation(),
         )
+        edit_button = _create_action_button(
+            "edit",
+            "text-editor-symbolic",
+            "Edit",
+            lambda _button: self._on_menu_edit(),
+        )
         rename_button = _create_action_button(
             "rename",
             "document-edit-symbolic",
@@ -3444,6 +2971,7 @@ class FilePane(Gtk.Box):
         )
         download_button.set_visible(self._is_remote)
         upload_button.set_visible(not self._is_remote)
+        edit_button.set_visible(False)  # Initially hidden, shown when text file is selected
 
         # Add Request Access button for local pane in Flatpak (always show when in Flatpak)
         request_access_button = None
@@ -3474,6 +3002,7 @@ class FilePane(Gtk.Box):
             action_bar.pack_start(request_access_button)
         action_bar.pack_end(delete_button)
         action_bar.pack_end(rename_button)
+        action_bar.pack_end(edit_button)
         action_bar.pack_end(cut_button)
         action_bar.pack_end(copy_button)
         action_bar.pack_end(paste_button)
@@ -4160,12 +3689,11 @@ class FilePane(Gtk.Box):
         elif not self._is_remote and has_selection:
             _add_menu_item("Upload…", "document-send-symbolic", "upload")
         
-        # Add Edit for text files (both local and remote)
+        # Add Edit for any single file (both local and remote)
         if has_selection:
             selected_entries = self.get_selected_entries()
             if len(selected_entries) == 1 and not selected_entries[0].is_dir:
-                if self._is_text_file(selected_entries[0]):
-                    _add_menu_item("Edit", "document-edit-symbolic", "edit")
+                _add_menu_item("Edit", "text-editor-symbolic", "edit")
         
         # Add clipboard operations if items are selected
         if has_selection:
@@ -4321,6 +3849,10 @@ class FilePane(Gtk.Box):
         _set_enabled("copy", has_selection)
         _set_enabled("cut", has_selection)
         _set_enabled("paste", can_paste)
+        # Edit is enabled for single file selection (any file type)
+        can_edit = single_selection and not selected_entries[0].is_dir if single_selection else False
+        
+        _set_enabled("edit", can_edit)
         _set_enabled("rename", single_selection)
         _set_enabled("delete", has_selection)
         _set_enabled("properties", single_selection)
@@ -4333,6 +3865,12 @@ class FilePane(Gtk.Box):
         _set_button("cut", has_selection)
         _set_button("paste", can_paste)
         _set_button("rename", single_selection)
+        _set_button("edit", can_edit)
+        
+        # Show/hide edit button based on selection (always show for single file)
+        edit_button = self._action_buttons.get("edit")
+        if edit_button is not None:
+            edit_button.set_visible(can_edit)
         _set_button("delete", has_selection)
 
     def _emit_entry_operation(self, action: str) -> None:
@@ -4709,10 +4247,6 @@ class FilePane(Gtk.Box):
         
         if entry.is_dir:
             self.show_toast("Cannot edit directories")
-            return
-        
-        if not self._is_text_file(entry):
-            self.show_toast("File type not supported for editing")
             return
         
         # Get file manager window
