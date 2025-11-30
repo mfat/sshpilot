@@ -2250,6 +2250,12 @@ class RemoteFileEditorWindow(Adw.Window):
         self._is_closing = False
         self._is_loading = True  # Flag to track initial file loading
         
+        # Search/Replace state
+        self._search_entry: Optional[Gtk.Entry] = None
+        self._replace_entry: Optional[Gtk.Entry] = None
+        self._search_settings: Optional[GtkSource.SearchSettings] = None
+        self._search_context: Optional[GtkSource.SearchContext] = None
+        
         if self._is_local:
             # For local files, use the file path directly
             self._temp_file = pathlib.Path(file_path)
@@ -2293,12 +2299,71 @@ class RemoteFileEditorWindow(Adw.Window):
         self._save_button.connect("clicked", self._on_save_clicked)
         header_bar.pack_end(self._save_button)
         
+        # Undo/Redo buttons
+        self._undo_button = Gtk.Button.new_from_icon_name("edit-undo-symbolic")
+        self._undo_button.set_tooltip_text("Undo")
+        self._undo_button.set_sensitive(False)
+        self._undo_button.connect("clicked", self._on_undo_clicked)
+        header_bar.pack_start(self._undo_button)
+        
+        self._redo_button = Gtk.Button.new_from_icon_name("edit-redo-symbolic")
+        self._redo_button.set_tooltip_text("Redo")
+        self._redo_button.set_sensitive(False)
+        self._redo_button.connect("clicked", self._on_redo_clicked)
+        header_bar.pack_start(self._redo_button)
+        
         # Cancel/Close button
         cancel_button = Gtk.Button(label="Close")
         cancel_button.connect("clicked", self._on_close_clicked)
         header_bar.pack_start(cancel_button)
         
         toolbar_view.add_top_bar(header_bar)
+        
+        # Toolbar for search/replace
+        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        toolbar.set_margin_start(6)
+        toolbar.set_margin_end(6)
+        toolbar.set_margin_top(6)
+        toolbar.set_margin_bottom(6)
+        
+        # Search section
+        search_label = Gtk.Label(label="Search:")
+        self._search_entry = Gtk.Entry()
+        self._search_entry.set_placeholder_text("Search...")
+        self._search_entry.set_width_chars(20)
+        
+        search_prev_btn = Gtk.Button(label="Prev")
+        search_prev_btn.connect("clicked", self._on_search_prev_clicked)
+        
+        search_next_btn = Gtk.Button(label="Next")
+        search_next_btn.connect("clicked", self._on_search_next_clicked)
+        
+        # Replace section
+        replace_label = Gtk.Label(label="Replace:")
+        self._replace_entry = Gtk.Entry()
+        self._replace_entry.set_placeholder_text("Replace with...")
+        self._replace_entry.set_width_chars(20)
+        
+        replace_btn = Gtk.Button(label="Replace")
+        replace_btn.connect("clicked", self._on_replace_clicked)
+        
+        replace_all_btn = Gtk.Button(label="Replace All")
+        replace_all_btn.connect("clicked", self._on_replace_all_clicked)
+        
+        # Pack toolbar
+        toolbar.append(search_label)
+        toolbar.append(self._search_entry)
+        toolbar.append(search_prev_btn)
+        toolbar.append(search_next_btn)
+        toolbar.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+        toolbar.append(replace_label)
+        toolbar.append(self._replace_entry)
+        toolbar.append(replace_btn)
+        toolbar.append(replace_all_btn)
+        
+        # Connect search entry signals
+        self._search_entry.connect("changed", self._on_search_changed)
+        self._search_entry.connect("activate", self._on_search_activate)
         
         # Editor area
         scrolled = Gtk.ScrolledWindow()
@@ -2314,36 +2379,59 @@ class RemoteFileEditorWindow(Adw.Window):
             self._source_view.set_indent_width(4)
             self._source_view.set_tab_width(4)
             self._source_view.set_insert_spaces_instead_of_tabs(False)
+            self._source_view.set_monospace(True)  # Ensure monospace font
             
             # Detect language from file extension
             language_manager = GtkSource.LanguageManager.get_default()
             _, ext = os.path.splitext(self._file_name)
             language = language_manager.guess_language(self._file_name, None)
             if language:
-                buffer = GtkSource.Buffer.new_with_language(language)
-                self._source_view.set_buffer(buffer)
+                self._buffer = GtkSource.Buffer.new_with_language(language)
+                self._source_view.set_buffer(self._buffer)
             else:
-                buffer = GtkSource.Buffer()
-                self._source_view.set_buffer(buffer)
+                self._buffer = GtkSource.Buffer()
+                self._source_view.set_buffer(self._buffer)
+            
+            # Set up search context for SourceView
+            self._search_settings = GtkSource.SearchSettings()
+            self._search_context = GtkSource.SearchContext.new(self._buffer, self._search_settings)
+            self._search_context.set_highlight(True)
         else:
             # Fallback to regular TextView
             self._source_view = Gtk.TextView()
             self._source_view.set_monospace(True)
-            buffer = Gtk.TextBuffer()
-            self._source_view.set_buffer(buffer)
+            self._buffer = Gtk.TextBuffer()
+            self._source_view.set_buffer(self._buffer)
+            self._search_settings = None
+            self._search_context = None
         
         # Connect to buffer changes
-        buffer.connect("modified-changed", self._on_buffer_modified_changed)
+        self._buffer.connect("modified-changed", self._on_buffer_modified_changed)
+        
+        # Connect undo/redo state changes if using GtkSource
+        if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+            self._buffer.connect("notify::can-undo", self._on_undo_state_changed)
+            self._buffer.connect("notify::can-redo", self._on_redo_state_changed)
+        
+        # Create a vertical box to hold toolbar and scrolled window
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        content_box.append(toolbar)
+        content_box.append(scrolled)
         
         scrolled.set_child(self._source_view)
         
         # Wrap editor in toast overlay for status messages (same style as file manager)
         toast_overlay = Adw.ToastOverlay()
-        toast_overlay.set_child(scrolled)
+        toast_overlay.set_child(content_box)
         self._toast_overlay = toast_overlay
         self._current_toast = None  # Keep reference for dismissal
         
         toolbar_view.set_content(toast_overlay)
+        
+        # Add keyboard controller for shortcuts
+        key_controller = Gtk.EventControllerKey()
+        key_controller.connect("key-pressed", self._on_key_pressed)
+        self.add_controller(key_controller)
         
         # Apply same toast CSS styling as file manager
         self._apply_toast_css()
@@ -2462,9 +2550,22 @@ class RemoteFileEditorWindow(Adw.Window):
                     text = content.decode('utf-8', errors='replace')
             
             # Set content in buffer
-            buffer = self._source_view.get_buffer()
-            buffer.set_text(text)
-            buffer.set_modified(False)
+            self._buffer.set_text(text)
+            self._buffer.set_modified(False)
+            
+            # Reset undo/redo state after loading
+            if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+                try:
+                    if hasattr(self._buffer, 'begin_not_undoable_action'):
+                        self._buffer.begin_not_undoable_action()
+                        self._buffer.end_not_undoable_action()
+                except (AttributeError, TypeError):
+                    pass
+                # Update undo/redo button states
+                if hasattr(self, '_undo_button'):
+                    self._undo_button.set_sensitive(False)
+                if hasattr(self, '_redo_button'):
+                    self._redo_button.set_sensitive(False)
             
             # Get initial modification time
             self._file_modified_time = self._temp_file.stat().st_mtime
@@ -2515,8 +2616,7 @@ class RemoteFileEditorWindow(Adw.Window):
     def _update_title(self, modified: bool = None) -> None:
         """Update the headerbar title to show modified state."""
         if modified is None:
-            buffer = self._source_view.get_buffer()
-            modified = buffer.get_modified() if buffer else False
+            modified = self._buffer.get_modified() if self._buffer else False
         
         if modified:
             self._title_label.set_label(f"* (modified) Edit {self._file_name}")
@@ -2545,6 +2645,24 @@ class RemoteFileEditorWindow(Adw.Window):
             # Buffer is no longer modified
             self._update_title(False)
     
+    def _on_undo_state_changed(self, buffer: GtkSource.Buffer, pspec: GObject.ParamSpec) -> None:
+        """Handle undo state changes."""
+        if hasattr(self, '_undo_button'):
+            try:
+                if isinstance(buffer, GtkSource.Buffer) and hasattr(buffer, 'can_undo'):
+                    self._undo_button.set_sensitive(buffer.can_undo())
+            except (AttributeError, TypeError):
+                pass
+    
+    def _on_redo_state_changed(self, buffer: GtkSource.Buffer, pspec: GObject.ParamSpec) -> None:
+        """Handle redo state changes."""
+        if hasattr(self, '_redo_button'):
+            try:
+                if isinstance(buffer, GtkSource.Buffer) and hasattr(buffer, 'can_redo'):
+                    self._redo_button.set_sensitive(buffer.can_redo())
+            except (AttributeError, TypeError):
+                pass
+    
     def _on_save_clicked(self, _button: Gtk.Button) -> None:
         """Handle save button click - save buffer content locally, upload if remote."""
         if not self._temp_file:
@@ -2552,13 +2670,26 @@ class RemoteFileEditorWindow(Adw.Window):
             return
         
         # Always save buffer content to file
-        buffer = self._source_view.get_buffer()
-        start, end = buffer.get_bounds()
-        text = buffer.get_text(start, end, False)
+        start, end = self._buffer.get_bounds()
+        text = self._buffer.get_text(start, end, False)
         try:
             with open(self._temp_file, 'w', encoding='utf-8') as f:
                 f.write(text)
-            buffer.set_modified(False)
+            self._buffer.set_modified(False)
+            
+            # Reset undo stack after save
+            if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+                try:
+                    if hasattr(self._buffer, 'begin_not_undoable_action'):
+                        self._buffer.begin_not_undoable_action()
+                        self._buffer.end_not_undoable_action()
+                except (AttributeError, TypeError):
+                    pass
+                # Update undo/redo button states
+                if hasattr(self, '_undo_button'):
+                    self._undo_button.set_sensitive(False)
+                if hasattr(self, '_redo_button'):
+                    self._redo_button.set_sensitive(False)
             self._file_modified_time = self._temp_file.stat().st_mtime
             self._has_unsaved_changes = False
             self._update_title(False)
@@ -2605,8 +2736,17 @@ class RemoteFileEditorWindow(Adw.Window):
         self._show_toast("Uploaded successfully", timeout=2)
         
         # Reset buffer modified flag since changes have been saved
-        buffer = self._source_view.get_buffer()
-        buffer.set_modified(False)
+        self._buffer.set_modified(False)
+        
+        # Reset undo stack after save
+        if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+            self._buffer.begin_not_undoable_action()
+            self._buffer.end_not_undoable_action()
+            # Update undo/redo button states
+            if hasattr(self, '_undo_button'):
+                self._undo_button.set_sensitive(False)
+            if hasattr(self, '_redo_button'):
+                self._redo_button.set_sensitive(False)
         
         # Refresh the file manager to show updated file
         if self._file_manager_window:
@@ -2632,8 +2772,7 @@ class RemoteFileEditorWindow(Adw.Window):
     def _check_and_close(self) -> None:
         """Check for unsaved changes and close if okay."""
         # Only check if the buffer has been modified (user made actual changes)
-        buffer = self._source_view.get_buffer()
-        has_changes = buffer.get_modified()
+        has_changes = self._buffer.get_modified()
         
         if has_changes:
             # Show confirmation dialog - text differs for local vs remote
@@ -2692,6 +2831,207 @@ class RemoteFileEditorWindow(Adw.Window):
         dialog.set_default_response("ok")
         dialog.set_close_response("ok")
         dialog.present(self)
+    
+    # ---------- Search/Replace methods ----------
+    
+    def _update_search_settings(self) -> None:
+        """Update search settings from search entry."""
+        if not _HAS_GTKSOURCE or not self._search_settings or not self._search_entry:
+            return
+        
+        text = self._search_entry.get_text()
+        if text:
+            self._search_settings.set_search_text(text)
+        else:
+            self._search_settings.set_search_text(None)
+        
+        # Configure search behavior
+        self._search_settings.set_case_sensitive(False)
+        self._search_settings.set_wrap_around(True)
+    
+    def _search_next(self) -> None:
+        """Search for next occurrence."""
+        if not _HAS_GTKSOURCE or not self._search_context:
+            return
+        
+        # Ensure search settings are up to date
+        self._update_search_settings()
+        
+        # If there's a selection, start from just after the end of the selection
+        # Otherwise, start from the insert mark
+        try:
+            has_selection, start, end = self._buffer.get_selection_bounds()
+            if has_selection and start is not None and end is not None:
+                # Start searching from just after the end of the current selection
+                iter_ = end.copy()
+                # Advance by one character to skip the current match
+                if not iter_.is_end():
+                    iter_.forward_char()
+            else:
+                # No selection, start from insert mark
+                insert_mark = self._buffer.get_insert()
+                iter_ = self._buffer.get_iter_at_mark(insert_mark)
+        except (ValueError, TypeError):
+            # Fallback to insert mark
+            insert_mark = self._buffer.get_insert()
+            iter_ = self._buffer.get_iter_at_mark(insert_mark)
+        
+        ok, match_start, match_end, wrapped = self._search_context.forward(iter_)
+        if ok:
+            self._buffer.select_range(match_start, match_end)
+            self._source_view.scroll_to_iter(match_start, 0.1, True, 0.0, 0.0)
+    
+    def _search_prev(self) -> None:
+        """Search for previous occurrence."""
+        if not _HAS_GTKSOURCE or not self._search_context:
+            return
+        
+        insert_mark = self._buffer.get_insert()
+        iter_ = self._buffer.get_iter_at_mark(insert_mark)
+        
+        ok, match_start, match_end, wrapped = self._search_context.backward(iter_)
+        if ok:
+            self._buffer.select_range(match_start, match_end)
+            self._source_view.scroll_to_iter(match_start, 0.1, True, 0.0, 0.0)
+    
+    def _on_search_changed(self, editable: Gtk.Editable) -> None:
+        """Handle search entry text change."""
+        self._update_search_settings()
+    
+    def _on_search_activate(self, entry: Gtk.Entry) -> None:
+        """Handle Enter key in search entry."""
+        self._update_search_settings()
+        self._search_next()
+    
+    def _on_search_next_clicked(self, button: Gtk.Button) -> None:
+        """Handle search next button click."""
+        self._update_search_settings()
+        self._search_next()
+    
+    def _on_search_prev_clicked(self, button: Gtk.Button) -> None:
+        """Handle search previous button click."""
+        self._update_search_settings()
+        self._search_prev()
+    
+    def _on_replace_clicked(self, button: Gtk.Button) -> None:
+        """Replace current match and move to next."""
+        if not _HAS_GTKSOURCE or not self._search_context or not self._replace_entry:
+            return
+        
+        self._update_search_settings()
+        replace_text = self._replace_entry.get_text()
+        
+        # Check if there's a selection that might be a match
+        try:
+            has_selection, sel_start, sel_end = self._buffer.get_selection_bounds()
+        except (ValueError, TypeError):
+            has_selection = False
+            sel_start = None
+            sel_end = None
+        
+        # Get starting position for search
+        if has_selection and sel_start is not None:
+            # Start from the beginning of the selection
+            search_start = sel_start.copy()
+        else:
+            # Start from cursor position
+            insert_mark = self._buffer.get_insert()
+            search_start = self._buffer.get_iter_at_mark(insert_mark)
+        
+        # Find the match using the search context
+        # According to docs, replace() requires iterators from a valid search match
+        ok, match_start, match_end, wrapped = self._search_context.forward(search_start)
+        
+        if not ok:
+            # No match found
+            return
+        
+        # Verify the match is at the expected position
+        # If we had a selection, the match should start at or before the selection end
+        if has_selection and sel_end is not None:
+            # Check if match overlaps with selection (match should start before or at selection end)
+            if match_start.compare(sel_end) > 0:
+                # Match is after selection, which means selection wasn't a match
+                # Use the found match
+                pass
+            elif match_end.compare(sel_start) < 0:
+                # Match is before selection, shouldn't happen with forward search
+                # Use the found match
+                pass
+        
+        # Replace the match using the iterators from the search context
+        # replace() requires: match_start, match_end, replace_text, replace_length
+        # According to docs, after replace(), the iterators are revalidated to point to the replaced text
+        ok = self._search_context.replace(match_start, match_end, replace_text, len(replace_text))
+        if not ok:
+            # Replace failed - the iterators might not correspond to a valid match
+            return
+        
+        # After replace(), match_start and match_end iterators are revalidated to point to the replaced text
+        # Select the replaced text and scroll to it
+        self._buffer.select_range(match_start, match_end)
+        self._source_view.scroll_to_iter(match_start, 0.1, True, 0.0, 0.0)
+        
+        # Move to next occurrence automatically
+        # The iterators now point to the replaced text, so we can search from the end
+        self._search_next()
+    
+    def _on_replace_all_clicked(self, button: Gtk.Button) -> None:
+        """Replace all matches."""
+        if not _HAS_GTKSOURCE or not self._search_context or not self._replace_entry:
+            return
+        
+        self._update_search_settings()
+        replace_text = self._replace_entry.get_text()
+        if not replace_text:
+            return
+        
+        # replace_all() needs the replace text and its length (in characters)
+        replace_length = len(replace_text)
+        self._search_context.replace_all(replace_text, replace_length)
+    
+    # ---------- Undo/Redo methods ----------
+    
+    def _on_undo_clicked(self, button: Gtk.Button) -> None:
+        """Handle undo button click."""
+        if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+            if self._buffer.can_undo():
+                self._buffer.undo()
+    
+    def _on_redo_clicked(self, button: Gtk.Button) -> None:
+        """Handle redo button click."""
+        if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+            if self._buffer.can_redo():
+                self._buffer.redo()
+    
+    # ---------- Keyboard shortcuts ----------
+    
+    def _on_key_pressed(self, controller: Gtk.EventControllerKey, keyval: int, keycode: int, state: Gdk.ModifierType) -> bool:
+        """Handle keyboard shortcuts."""
+        ctrl = state & Gdk.ModifierType.CONTROL_MASK
+        shift = state & Gdk.ModifierType.SHIFT_MASK
+        
+        # Ctrl+F -> focus search
+        if ctrl and keyval == Gdk.KEY_f:
+            if self._search_entry:
+                self._search_entry.grab_focus()
+            return True
+        
+        # Ctrl+Z -> undo
+        if ctrl and keyval == Gdk.KEY_z and not shift:
+            if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+                if self._buffer.can_undo():
+                    self._buffer.undo()
+                    return True
+        
+        # Ctrl+Shift+Z OR Ctrl+Y -> redo
+        if (ctrl and shift and keyval == Gdk.KEY_z) or (ctrl and keyval == Gdk.KEY_y):
+            if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+                if self._buffer.can_redo():
+                    self._buffer.redo()
+                    return True
+        
+        return False
 
 
 class PathEntry(Gtk.Entry):
