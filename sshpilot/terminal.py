@@ -1948,12 +1948,30 @@ class TerminalWidget(Gtk.Box):
             try:
                 rgba = bg_color
                 # For Gtk4, setting the widget style via CSS provider
-                provider = Gtk.CssProvider()
-                css = f".terminal-bg {{ background-color: rgba({int(rgba.red*255)}, {int(rgba.green*255)}, {int(rgba.blue*255)}, {rgba.alpha}); }}"
-                provider.load_from_data(css.encode('utf-8'))
+                # Track provider on display to avoid accumulation and conflicts
                 display = Gdk.Display.get_default()
                 if display:
-                    Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+                    # Remove previous terminal background provider if it exists
+                    if hasattr(display, '_terminal_bg_provider'):
+                        try:
+                            Gtk.StyleContext.remove_provider_for_display(
+                                display, display._terminal_bg_provider
+                            )
+                        except Exception:
+                            pass
+                    
+                    # Create new provider with very specific selector to avoid affecting other widgets
+                    # Only target TerminalWidget instances with terminal-bg class
+                    provider = Gtk.CssProvider()
+                    css = f"terminalwidget.terminal-bg, terminalwidget.terminal-bg > scrolledwindow.terminal-bg, terminalwidget.terminal-bg > scrolledwindow.terminal-bg > vte-terminal.terminal-bg {{ background-color: rgba({int(rgba.red*255)}, {int(rgba.green*255)}, {int(rgba.blue*255)}, {rgba.alpha}); }}"
+                    provider.load_from_data(css.encode('utf-8'))
+                    Gtk.StyleContext.add_provider_for_display(
+                        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                    )
+                    # Store provider reference for cleanup
+                    display._terminal_bg_provider = provider
+                
+                # Add CSS class to terminal widgets only
                 if hasattr(self, 'add_css_class'):
                     self.add_css_class('terminal-bg')
                 if hasattr(self.scrolled_window, 'add_css_class'):
