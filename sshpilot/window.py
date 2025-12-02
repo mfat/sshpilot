@@ -3254,9 +3254,136 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def _open_ssh_config_editor(self):
         try:
-            from .ssh_config_editor import SSHConfigEditorWindow
-            editor = SSHConfigEditorWindow(self, self.connection_manager, on_saved=self._on_ssh_config_editor_saved)
-            editor.present()
+            # Try to use text_editor.py if gtksourceview5 is available
+            from .text_editor import _HAS_GTKSOURCE, RemoteFileEditorWindow
+            
+            if _HAS_GTKSOURCE:
+                # Use the modern text editor with syntax highlighting
+                config_path = getattr(self.connection_manager, 'ssh_config_path', None)
+                if not config_path:
+                    from .platform_utils import get_ssh_dir
+                    config_path = os.path.join(get_ssh_dir(), 'config')
+                
+                config_path = os.path.abspath(os.path.expanduser(config_path))
+                config_name = os.path.basename(config_path)
+                
+                # Set up file monitoring to detect when the file is saved
+                file_modified_time = 0.0
+                if os.path.exists(config_path):
+                    try:
+                        file_modified_time = os.path.getmtime(config_path)
+                    except Exception:
+                        pass
+                
+                def _reload_ssh_config():
+                    """Reload SSH config and refresh connection list, preserving group membership"""
+                    try:
+                        # Capture current connections and their group memberships before reload
+                        old_connections = {conn.nickname: conn for conn in self.connection_manager.get_connections()}
+                        old_group_memberships = {}
+                        for nickname in old_connections.keys():
+                            group_id = self.group_manager.get_connection_group(nickname)
+                            if group_id:
+                                old_group_memberships[nickname] = group_id
+                        
+                        # Reload SSH config (this creates new Connection objects)
+                        self.connection_manager.load_ssh_config()
+                        new_connections = {conn.nickname: conn for conn in self.connection_manager.get_connections()}
+                        
+                        # Detect nickname changes by matching connections on hostname/username/port
+                        # This handles the case where Host value changes but connection is otherwise the same
+                        for old_nickname, old_conn in old_connections.items():
+                            if old_nickname in old_group_memberships:
+                                # This connection was in a group, try to find its new nickname
+                                group_id = old_group_memberships[old_nickname]
+                                
+                                # Try to find matching connection by hostname/username/port
+                                matching_new_nickname = None
+                                for new_nickname, new_conn in new_connections.items():
+                                    if (new_conn.hostname == old_conn.hostname and
+                                        new_conn.username == old_conn.username and
+                                        new_conn.port == old_conn.port):
+                                        matching_new_nickname = new_nickname
+                                        break
+                                
+                                # If we found a match and nickname changed, update group membership
+                                if matching_new_nickname and matching_new_nickname != old_nickname:
+                                    try:
+                                        self.group_manager.rename_connection(old_nickname, matching_new_nickname)
+                                        logger.info(f"Preserved group membership: '{old_nickname}' -> '{matching_new_nickname}' in group {group_id}")
+                                    except Exception as e:
+                                        logger.error(f"Failed to preserve group membership for renamed connection: {e}")
+                                # If old nickname still exists, group membership is already preserved
+                        
+                        self.rebuild_connection_list()
+                        logger.info("SSH config reloaded after file save")
+                    except Exception as e:
+                        logger.error(f"Failed to refresh connections after SSH config save: {e}")
+                
+                # Monitor file for changes
+                def _on_file_changed(monitor, file, other_file, event_type):
+                    """Handle file system changes to detect saves"""
+                    if event_type in (Gio.FileMonitorEvent.CHANGED, Gio.FileMonitorEvent.CHANGES_DONE_HINT):
+                        try:
+                            if os.path.exists(config_path):
+                                new_mtime = os.path.getmtime(config_path)
+                                nonlocal file_modified_time
+                                if new_mtime > file_modified_time:
+                                    file_modified_time = new_mtime
+                                    # Reload after a short delay to ensure file is fully written
+                                    GLib.timeout_add(100, _reload_ssh_config)
+                        except Exception as e:
+                            logger.debug(f"Error checking file modification time: {e}")
+                
+                # Create file monitor
+                try:
+                    gfile = Gio.File.new_for_path(config_path)
+                    file_monitor = gfile.monitor_file(Gio.FileMonitorFlags.WATCH_MOVES, None)
+                    file_monitor.connect("changed", _on_file_changed)
+                    # Store monitor reference to keep it alive
+                    if not hasattr(self, '_ssh_config_monitors'):
+                        self._ssh_config_monitors = []
+                    self._ssh_config_monitors.append(file_monitor)
+                except Exception as e:
+                    logger.debug(f"Failed to set up file monitoring for SSH config: {e}")
+                    file_monitor = None
+                
+                editor = RemoteFileEditorWindow(
+                    parent=self,
+                    file_path=config_path,
+                    file_name=config_name,
+                    is_local=True,
+                    sftp_manager=None,
+                    file_manager_window=None
+                )
+                
+                # Also reload when the editor closes (fallback)
+                def _on_editor_close_request(window):
+                    # Clean up file monitor
+                    if hasattr(self, '_ssh_config_monitors') and file_monitor:
+                        try:
+                            if file_monitor in self._ssh_config_monitors:
+                                self._ssh_config_monitors.remove(file_monitor)
+                            file_monitor.cancel()
+                        except Exception:
+                            pass
+                    # Final reload check when closing
+                    try:
+                        if os.path.exists(config_path):
+                            new_mtime = os.path.getmtime(config_path)
+                            if new_mtime > file_modified_time:
+                                _reload_ssh_config()
+                    except Exception:
+                        pass
+                    return False  # Allow window to close
+                
+                editor.connect("close-request", _on_editor_close_request)
+                editor.present()
+            else:
+                # Fallback to the simple editor if gtksourceview5 is not available
+                from .ssh_config_editor import SSHConfigEditorWindow
+                editor = SSHConfigEditorWindow(self, self.connection_manager, on_saved=self._on_ssh_config_editor_saved)
+                editor.present()
         except Exception as e:
             logger.error(f"Failed to open SSH config editor: {e}")
 

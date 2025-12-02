@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Optional
 
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk
 
+from .platform_utils import is_macos
+
 # Try to import GtkSourceView for syntax highlighting
 try:
     import gi
@@ -68,6 +70,8 @@ class RemoteFileEditorWindow(Adw.Window):
         self._upload_dialog: Optional[Adw.AlertDialog] = None
         self._is_closing = False
         self._is_loading = True  # Flag to track initial file loading
+        self._zoom_level = 1.0  # Current zoom level (1.0 = 100%)
+        self._zoom_css_provider: Optional[Gtk.CssProvider] = None
         
         # Search/Replace state
         self._search_entry: Optional[Gtk.Entry] = None
@@ -136,6 +140,27 @@ class RemoteFileEditorWindow(Adw.Window):
         self._search_button.set_tooltip_text("Search")
         self._search_button.connect("clicked", self._on_search_button_clicked)
         header_bar.pack_start(self._search_button)
+        
+        # Zoom controls
+        zoom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        zoom_box.add_css_class("linked")
+        
+        self._zoom_out_button = Gtk.Button.new_from_icon_name("zoom-out-symbolic")
+        self._zoom_out_button.set_tooltip_text("Zoom Out")
+        self._zoom_out_button.connect("clicked", lambda *_: self.zoom_out())
+        zoom_box.append(self._zoom_out_button)
+        
+        self._zoom_reset_button = Gtk.Button.new_from_icon_name("zoom-fit-best-symbolic")
+        self._zoom_reset_button.set_tooltip_text("Reset Zoom")
+        self._zoom_reset_button.connect("clicked", lambda *_: self.reset_zoom())
+        zoom_box.append(self._zoom_reset_button)
+        
+        self._zoom_in_button = Gtk.Button.new_from_icon_name("zoom-in-symbolic")
+        self._zoom_in_button.set_tooltip_text("Zoom In")
+        self._zoom_in_button.connect("clicked", lambda *_: self.zoom_in())
+        zoom_box.append(self._zoom_in_button)
+        
+        header_bar.pack_start(zoom_box)
         
         # Cancel/Close button
         cancel_button = Gtk.Button(label="Close")
@@ -269,6 +294,9 @@ class RemoteFileEditorWindow(Adw.Window):
         
         # Connect close request
         self.connect("close-request", self._on_close_request)
+        
+        # Apply initial zoom
+        self._apply_zoom()
         
         # Show initial loading toast
         self._show_toast("Loading…" if self._is_local else "Downloading…", timeout=2)
@@ -931,7 +959,32 @@ class RemoteFileEditorWindow(Adw.Window):
     def _on_key_pressed(self, controller: Gtk.EventControllerKey, keyval: int, keycode: int, state: Gdk.ModifierType) -> bool:
         """Handle keyboard shortcuts."""
         ctrl = state & Gdk.ModifierType.CONTROL_MASK
+        meta = state & Gdk.ModifierType.META_MASK
         shift = state & Gdk.ModifierType.SHIFT_MASK
+        
+        # Primary modifier: Meta on macOS, Ctrl on Linux/Windows
+        primary = meta if is_macos() else ctrl
+        
+        # Primary+S -> save
+        if primary and keyval == Gdk.KEY_s and not shift:
+            if hasattr(self, '_save_button') and self._save_button.get_sensitive():
+                self._on_save_clicked(self._save_button)
+                return True
+        
+        # Primary+Plus/Equal -> zoom in
+        if primary and (keyval == Gdk.KEY_plus or keyval == Gdk.KEY_equal):
+            self.zoom_in()
+            return True
+        
+        # Primary+Minus -> zoom out
+        if primary and keyval == Gdk.KEY_minus:
+            self.zoom_out()
+            return True
+        
+        # Primary+0 -> reset zoom
+        if primary and keyval == Gdk.KEY_0:
+            self.reset_zoom()
+            return True
         
         # Ctrl+F -> show search bar and focus search
         if ctrl and keyval == Gdk.KEY_f:
@@ -957,4 +1010,52 @@ class RemoteFileEditorWindow(Adw.Window):
                     return True
         
         return False
+    
+    # ---------- Zoom controls ----------
+    
+    def _apply_zoom(self) -> None:
+        """Apply current zoom level using CSS"""
+        try:
+            # Remove previous CSS provider if it exists
+            if self._zoom_css_provider:
+                style_context = self._source_view.get_style_context()
+                style_context.remove_provider(self._zoom_css_provider)
+            
+            # Create CSS for zoom
+            # Use a more specific selector that works for both GtkSource.View and Gtk.TextView
+            zoom_percent = int(self._zoom_level * 100)
+            css = f"""
+            textview, text {{
+                font-size: {zoom_percent}%;
+            }}
+            """
+            
+            # Apply CSS
+            self._zoom_css_provider = Gtk.CssProvider()
+            self._zoom_css_provider.load_from_data(css.encode('utf-8'))
+            style_context = self._source_view.get_style_context()
+            style_context.add_provider(
+                self._zoom_css_provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            )
+        except Exception as e:
+            logger.error(f"Failed to apply zoom: {e}")
+    
+    def zoom_in(self) -> None:
+        """Zoom in the editor font"""
+        self._zoom_level = min(self._zoom_level + 0.1, 3.0)  # Max zoom 300%
+        self._apply_zoom()
+        logger.debug(f"Editor zoomed in to {self._zoom_level:.1f}x")
+    
+    def zoom_out(self) -> None:
+        """Zoom out the editor font"""
+        self._zoom_level = max(self._zoom_level - 0.1, 0.5)  # Min zoom 50%
+        self._apply_zoom()
+        logger.debug(f"Editor zoomed out to {self._zoom_level:.1f}x")
+    
+    def reset_zoom(self) -> None:
+        """Reset editor zoom to default (1.0x)"""
+        self._zoom_level = 1.0
+        self._apply_zoom()
+        logger.debug("Editor zoom reset to 1.0x")
 
