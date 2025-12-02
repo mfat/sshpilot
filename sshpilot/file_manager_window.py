@@ -5210,18 +5210,17 @@ class FileManagerWindow(Adw.Window):
         
         /* Pane toolbar styling to replace nested ToolbarView */
         /* Scope to file manager window only to avoid affecting sidebar toolbar */
-        /* Use window colors for better cross-platform compatibility */
         .filemanagerwindow .toolbar,
         .filemanagerwindow toolbar {
-            background-color: @window_bg_color;
-            color: @window_fg_color;
+            background-color: @headerbar_bg_color;
+            color: @headerbar_fg_color;
             border-bottom: 1px solid @borders;
         }
         
         .filemanagerwindow .toolbar windowhandle,
         .filemanagerwindow toolbar windowhandle {
-            background-color: @window_bg_color;
-            color: @window_fg_color;
+            background-color: @headerbar_bg_color;
+            color: @headerbar_fg_color;
         }
         
         /* Pane divider styling */
@@ -5246,8 +5245,8 @@ class FileManagerWindow(Adw.Window):
         
         /* Action bar styling */
         .inline-toolbar {
-            background-color: @window_bg_color;
-            color: @window_fg_color;
+            background-color: @headerbar_bg_color;
+            color: @headerbar_fg_color;
             border-top: 1px solid @borders;
         }
         """
