@@ -42,6 +42,14 @@
 
 
 
+
+    <release version="4.6.3" date="2025-12-02">
+
+      <description>
+        <p>- Fixed black toolbar in file manager</p>
+        <p>- Fixed nano editor issue when run under KDE Plasma desktop</p>
+      </description>
+    </release>
     <release version="4.6.2" date="2025-12-01">
 
       <description>
