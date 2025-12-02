@@ -1512,7 +1512,9 @@ class TerminalWidget(Gtk.Box):
                         "IdentityAgent disabled for this host; forcing SSH askpass usage"
                     )
                 self._enable_askpass_log_forwarding(include_existing=True)
-            env['TERM'] = env.get('TERM', 'xterm-256color')
+            # Set TERM to a proper value only if missing or set to "dumb"
+            if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
+                env['TERM'] = 'xterm-256color'
             env['SHELL'] = env.get('SHELL', '/bin/bash')
             env['SSHPILOT_FLATPAK'] = '1'
             # Add /app/bin to PATH for Flatpak compatibility
@@ -2309,7 +2311,9 @@ class TerminalWidget(Gtk.Box):
             
             # Environment for agent
             env = os.environ.copy()
-            env['TERM'] = env.get('TERM', 'xterm-256color')
+            # Set TERM to a proper value only if missing or set to "dumb"
+            if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
+                env['TERM'] = 'xterm-256color'
             
             # Convert to list for VTE
             env_list = [f"{k}={v}" for k, v in env.items()]
@@ -2387,7 +2391,8 @@ class TerminalWidget(Gtk.Box):
 
         # Ensure we have a proper environment
         env['SHELL'] = shell
-        if 'TERM' not in env:
+        # Set TERM to a proper value only if missing or set to "dumb"
+        if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
             env['TERM'] = 'xterm-256color'
 
         # Convert environment dict to list for VTE compatibility
