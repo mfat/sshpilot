@@ -3357,6 +3357,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     file_manager_window=None
                 )
                 
+                # Set custom title for SSH config editor
+                editor.set_title(_("Edit SSH Config"))
+                # Also update the header bar title widget if it exists
+                if hasattr(editor, '_title_label'):
+                    editor._title_label.set_label(_("Edit SSH Config"))
+                
                 # Also reload when the editor closes (fallback)
                 def _on_editor_close_request(window):
                     # Clean up file monitor

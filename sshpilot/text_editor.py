@@ -162,11 +162,6 @@ class RemoteFileEditorWindow(Adw.Window):
         
         header_bar.pack_start(zoom_box)
         
-        # Cancel/Close button
-        cancel_button = Gtk.Button(label="Close")
-        cancel_button.connect("clicked", self._on_close_clicked)
-        header_bar.pack_start(cancel_button)
-        
         toolbar_view.add_top_bar(header_bar)
         
         # Toolbar for search/replace
