@@ -137,7 +137,8 @@ class PTYAgent:
         try:
             # Prepare environment
             env = os.environ.copy()
-            env['TERM'] = env.get('TERM', 'xterm-256color')
+            # Always set TERM to a proper value (override "dumb" or missing TERM)
+            env['TERM'] = 'xterm-256color'
             env['SHELL'] = shell
             
             # Set working directory
