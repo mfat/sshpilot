@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:4.6.3}
+Version:        %{?version}%{!?version:4.6.4}
 Release:        1%{?dist}
 Summary:        SSH connection manager with integrated terminal
 
@@ -73,6 +73,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Tue Dec 02 2025 mFat <newmfat@gmail.com> - 4.6.4
+- - Bug fixes
+
 * Tue Dec 02 2025 mFat <newmfat@gmail.com> - 4.6.3
 - - Fixed black toolbar in file manager
 - - Fixed nano editor issue when run under KDE Plasma desktop
