@@ -1003,8 +1003,8 @@ class RemoteFileEditorWindow(Adw.Window):
             self.reset_zoom()
             return True
         
-        # Ctrl+F -> show search bar and focus search
-        if ctrl and keyval == Gdk.KEY_f:
+        # Primary+F -> show search bar and focus search
+        if primary and keyval == Gdk.KEY_f:
             # Show search bar if hidden
             if not self._search_toolbar.get_visible():
                 self._search_toolbar.set_visible(True)
