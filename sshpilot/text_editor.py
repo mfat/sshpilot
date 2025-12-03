@@ -863,6 +863,29 @@ class RemoteFileEditorWindow(Adw.Window):
     def _on_search_changed(self, editable: Gtk.Editable) -> None:
         """Handle search entry text change."""
         self._update_search_settings()
+        
+        # According to GtkSource docs (https://gnome.pages.gitlab.gnome.org/gtksourceview/gtksourceview5/ctor.SearchContext.new.html),
+        # the SearchContext is created with buffer and settings. When settings are updated,
+        # the context should automatically reflect changes. Highlighting should work when:
+        # 1. SearchContext.new(buffer, settings) is called
+        # 2. set_highlight(True) is called  
+        # 3. search_text is set in settings
+        #
+        # On macOS, there may be a platform-specific issue where highlighting doesn't update
+        # until a search operation is performed. To work around this, we ensure the settings
+        # are properly synchronized with the context by verifying the connection.
+        if self._gtksource_enabled and self._search_context and self._search_settings:
+            # Verify settings are connected - get_settings() should return our settings object
+            # This access may also trigger the context to refresh its internal state
+            try:
+                context_settings = self._search_context.get_settings()
+                # If settings are connected, the context should see updates automatically
+                # On macOS, explicitly accessing the settings may trigger a refresh
+                if context_settings != self._search_settings:
+                    # Settings not connected - reconnect them (shouldn't happen, but safety check)
+                    self._search_context.set_settings(self._search_settings)
+            except Exception as e:
+                logger.debug(f"Error verifying search context settings: {e}")
     
     def _on_search_activate(self, entry: Gtk.Entry) -> None:
         """Handle Enter key in search entry."""
