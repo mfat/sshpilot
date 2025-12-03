@@ -148,18 +148,17 @@ Download the dmg file from the releases section https://github.com/mfat/sshpilot
 
 ## Minimum Requirements
 
-| Component    | Minimum Version |
-|---------------|----------------|
-| GTK 4         | 4.6            |
-| libadwaita    | 1.4            |
-| VTE (GTK4)    | 0.70           |
-| PyGObject     | 3.42           |
-| pycairo       | 1.20.0         |
-| Paramiko      | 3.4            |
-| cryptography  | 42.0           |
-| keyring       | 24.3           |
-| psutil        | 5.9.0          |
-| GtkSourceView | 5.0            |
+| Component | Minimum Version |
+|-----------|----------------|
+| GTK 4 | 4.6 |
+| libadwaita | 1.4 |
+| VTE (GTK4) | 0.70 |
+| PyGObject | 3.42 |
+| pycairo | 1.20.0 |
+| Paramiko | 3.4 |
+| cryptography | 42.0 |
+| keyring | 24.3 |
+| psutil | 5.9.0 |
 
 ---
 
