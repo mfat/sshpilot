@@ -72,7 +72,10 @@ class RemoteFileEditorWindow(Adw.Window):
         self._is_loading = True  # Flag to track initial file loading
         self._zoom_level = 1.0  # Current zoom level (1.0 = 100%)
         self._zoom_css_provider: Optional[Gtk.CssProvider] = None
-        
+
+        # Track whether GtkSource is actually usable on this platform
+        self._gtksource_enabled = _HAS_GTKSOURCE
+
         # Search/Replace state
         self._search_entry: Optional[Gtk.Entry] = None
         self._replace_entry: Optional[Gtk.Entry] = None
@@ -215,49 +218,16 @@ class RemoteFileEditorWindow(Adw.Window):
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_vexpand(True)
         scrolled.set_hexpand(True)
-        
+
         # Create editor widget (SourceView if available, otherwise TextView)
-        if _HAS_GTKSOURCE:
-            self._source_view = GtkSource.View()
-            self._source_view.set_show_line_numbers(True)
-            self._source_view.set_highlight_current_line(False)  # Disable to only highlight search string, not entire line
-            self._source_view.set_auto_indent(True)
-            self._source_view.set_indent_width(4)
-            self._source_view.set_tab_width(4)
-            self._source_view.set_insert_spaces_instead_of_tabs(False)
-            self._source_view.set_monospace(True)  # Ensure monospace font
-            self._source_view.set_wrap_mode(Gtk.WrapMode.WORD)  # Enable word wrap
-            
-            # Detect language from file extension
-            language_manager = GtkSource.LanguageManager.get_default()
-            _, ext = os.path.splitext(self._file_name)
-            language = language_manager.guess_language(self._file_name, None)
-            if language:
-                self._buffer = GtkSource.Buffer.new_with_language(language)
-                self._source_view.set_buffer(self._buffer)
-            else:
-                self._buffer = GtkSource.Buffer()
-                self._source_view.set_buffer(self._buffer)
-            
-            # Set up search context for SourceView
-            self._search_settings = GtkSource.SearchSettings()
-            self._search_context = GtkSource.SearchContext.new(self._buffer, self._search_settings)
-            self._search_context.set_highlight(True)
-        else:
-            # Fallback to regular TextView
-            self._source_view = Gtk.TextView()
-            self._source_view.set_monospace(True)
-            self._source_view.set_wrap_mode(Gtk.WrapMode.WORD)  # Enable word wrap
-            self._buffer = Gtk.TextBuffer()
-            self._source_view.set_buffer(self._buffer)
-            self._search_settings = None
-            self._search_context = None
+        if not self._init_source_view():
+            self._init_text_view()
         
         # Connect to buffer changes
         self._buffer.connect("modified-changed", self._on_buffer_modified_changed)
         
         # Connect undo/redo state changes if using GtkSource
-        if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+        if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
             self._buffer.connect("notify::can-undo", self._on_undo_state_changed)
             self._buffer.connect("notify::can-redo", self._on_redo_state_changed)
         
@@ -292,9 +262,61 @@ class RemoteFileEditorWindow(Adw.Window):
         
         # Apply initial zoom
         self._apply_zoom()
-        
+
         # Show initial loading toast
         self._show_toast("Loading…" if self._is_local else "Downloading…", timeout=2)
+
+    def _init_source_view(self) -> bool:
+        """Initialize GtkSourceView if available.
+
+        Returns True if GtkSourceView was created successfully, False if we
+        should fall back to Gtk.TextView.
+        """
+        if not self._gtksource_enabled or GtkSource is None:
+            self._gtksource_enabled = False
+            return False
+
+        try:
+            self._source_view = GtkSource.View()
+            self._source_view.set_show_line_numbers(True)
+            self._source_view.set_highlight_current_line(False)
+            self._source_view.set_auto_indent(True)
+            self._source_view.set_indent_width(4)
+            self._source_view.set_tab_width(4)
+            self._source_view.set_insert_spaces_instead_of_tabs(False)
+            self._source_view.set_monospace(True)
+            self._source_view.set_wrap_mode(Gtk.WrapMode.WORD)
+
+            language_manager = GtkSource.LanguageManager.get_default()
+            language = language_manager.guess_language(self._file_name, None)
+            if language:
+                self._buffer = GtkSource.Buffer.new_with_language(language)
+            else:
+                self._buffer = GtkSource.Buffer()
+            self._source_view.set_buffer(self._buffer)
+
+            self._search_settings = GtkSource.SearchSettings()
+            self._search_context = GtkSource.SearchContext.new(self._buffer, self._search_settings)
+            self._search_context.set_highlight(True)
+            self._gtksource_enabled = True
+            return True
+        except Exception as e:
+            logger.warning("GtkSource unavailable; falling back to TextView: %s", e)
+            self._gtksource_enabled = False
+            self._search_settings = None
+            self._search_context = None
+            return False
+
+    def _init_text_view(self) -> None:
+        """Initialize a basic Gtk.TextView editor as a fallback."""
+        self._source_view = Gtk.TextView()
+        self._source_view.set_monospace(True)
+        self._source_view.set_wrap_mode(Gtk.WrapMode.WORD)
+        self._buffer = Gtk.TextBuffer()
+        self._source_view.set_buffer(self._buffer)
+        self._search_settings = None
+        self._search_context = None
+        self._gtksource_enabled = False
     
     def _apply_toast_css(self) -> None:
         """Apply the same toast CSS styling as file manager."""
@@ -408,7 +430,7 @@ class RemoteFileEditorWindow(Adw.Window):
             self._buffer.set_modified(False)
             
             # Reset undo/redo state after loading
-            if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+            if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
                 try:
                     if hasattr(self._buffer, 'begin_not_undoable_action'):
                         self._buffer.begin_not_undoable_action()
@@ -532,7 +554,7 @@ class RemoteFileEditorWindow(Adw.Window):
             self._buffer.set_modified(False)
             
             # Reset undo stack after save
-            if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+            if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
                 try:
                     if hasattr(self._buffer, 'begin_not_undoable_action'):
                         self._buffer.begin_not_undoable_action()
@@ -593,7 +615,7 @@ class RemoteFileEditorWindow(Adw.Window):
         self._buffer.set_modified(False)
         
         # Reset undo stack after save
-        if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+        if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
             self._buffer.begin_not_undoable_action()
             self._buffer.end_not_undoable_action()
             # Update undo/redo button states
@@ -692,8 +714,8 @@ class RemoteFileEditorWindow(Adw.Window):
         """Update search settings from search entry."""
         logger.debug("_update_search_settings: called")
         
-        if not _HAS_GTKSOURCE:
-            logger.debug("_update_search_settings: _HAS_GTKSOURCE is False")
+        if not self._gtksource_enabled:
+            logger.debug("_update_search_settings: GtkSource is not enabled")
             return
         
         if not self._search_settings:
@@ -723,8 +745,8 @@ class RemoteFileEditorWindow(Adw.Window):
         """Search for next occurrence."""
         logger.debug("_search_next: called")
         
-        if not _HAS_GTKSOURCE:
-            logger.debug("_search_next: _HAS_GTKSOURCE is False")
+        if not self._gtksource_enabled:
+            logger.debug("_search_next: GtkSource is not enabled")
             return
         
         if not self._search_context:
@@ -819,7 +841,7 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _search_prev(self) -> None:
         """Search for previous occurrence."""
-        if not _HAS_GTKSOURCE or not self._search_context:
+        if not self._gtksource_enabled or not self._search_context:
             return
         
         insert_mark = self._buffer.get_insert()
@@ -860,7 +882,7 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _on_replace_clicked(self, button: Gtk.Button) -> None:
         """Replace current match and move to next."""
-        if not _HAS_GTKSOURCE or not self._search_context or not self._replace_entry:
+        if not self._gtksource_enabled or not self._search_context or not self._replace_entry:
             return
         
         self._update_search_settings()
@@ -923,7 +945,7 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _on_replace_all_clicked(self, button: Gtk.Button) -> None:
         """Replace all matches."""
-        if not _HAS_GTKSOURCE or not self._search_context or not self._replace_entry:
+        if not self._gtksource_enabled or not self._search_context or not self._replace_entry:
             return
         
         self._update_search_settings()
@@ -939,13 +961,13 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _on_undo_clicked(self, button: Gtk.Button) -> None:
         """Handle undo button click."""
-        if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+        if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
             if self._buffer.can_undo():
                 self._buffer.undo()
     
     def _on_redo_clicked(self, button: Gtk.Button) -> None:
         """Handle redo button click."""
-        if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+        if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
             if self._buffer.can_redo():
                 self._buffer.redo()
     
@@ -992,14 +1014,14 @@ class RemoteFileEditorWindow(Adw.Window):
         
         # Ctrl+Z -> undo
         if ctrl and keyval == Gdk.KEY_z and not shift:
-            if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+            if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
                 if self._buffer.can_undo():
                     self._buffer.undo()
                     return True
         
         # Ctrl+Shift+Z OR Ctrl+Y -> redo
         if (ctrl and shift and keyval == Gdk.KEY_z) or (ctrl and keyval == Gdk.KEY_y):
-            if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+            if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
                 if self._buffer.can_redo():
                     self._buffer.redo()
                     return True
