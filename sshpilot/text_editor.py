@@ -138,11 +138,14 @@ class RemoteFileEditorWindow(Adw.Window):
         self._redo_button.connect("clicked", self._on_redo_clicked)
         header_bar.pack_start(self._redo_button)
         
-        # Search button to toggle search bar
-        self._search_button = Gtk.Button.new_from_icon_name("system-search-symbolic")
-        self._search_button.set_tooltip_text("Search")
-        self._search_button.connect("clicked", self._on_search_button_clicked)
-        header_bar.pack_start(self._search_button)
+        # Search button to toggle search bar (only if GtkSource is available)
+        if self._gtksource_enabled:
+            self._search_button = Gtk.Button.new_from_icon_name("system-search-symbolic")
+            self._search_button.set_tooltip_text("Search")
+            self._search_button.connect("clicked", self._on_search_button_clicked)
+            header_bar.pack_start(self._search_button)
+        else:
+            self._search_button = None
         
         # Zoom controls
         zoom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -167,52 +170,62 @@ class RemoteFileEditorWindow(Adw.Window):
         
         toolbar_view.add_top_bar(header_bar)
         
-        # Toolbar for search/replace
-        self._search_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        toolbar = self._search_toolbar
-        toolbar.set_margin_start(6)
-        toolbar.set_margin_end(6)
-        toolbar.set_margin_top(6)
-        toolbar.set_margin_bottom(6)
-        
-        # Search section
-        search_label = Gtk.Label(label="Search:")
-        self._search_entry = Gtk.Entry()
-        self._search_entry.set_placeholder_text("Search...")
-        self._search_entry.set_width_chars(20)
-        
-        search_prev_btn = Gtk.Button(label="Prev")
-        search_prev_btn.connect("clicked", self._on_search_prev_clicked)
-        
-        search_next_btn = Gtk.Button(label="Next")
-        search_next_btn.connect("clicked", self._on_search_next_clicked)
-        
-        # Replace section
-        replace_label = Gtk.Label(label="Replace:")
-        self._replace_entry = Gtk.Entry()
-        self._replace_entry.set_placeholder_text("Replace with...")
-        self._replace_entry.set_width_chars(20)
-        
-        replace_btn = Gtk.Button(label="Replace")
-        replace_btn.connect("clicked", self._on_replace_clicked)
-        
-        replace_all_btn = Gtk.Button(label="Replace All")
-        replace_all_btn.connect("clicked", self._on_replace_all_clicked)
-        
-        # Pack toolbar
-        toolbar.append(search_label)
-        toolbar.append(self._search_entry)
-        toolbar.append(search_prev_btn)
-        toolbar.append(search_next_btn)
-        toolbar.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
-        toolbar.append(replace_label)
-        toolbar.append(self._replace_entry)
-        toolbar.append(replace_btn)
-        toolbar.append(replace_all_btn)
-        
-        # Connect search entry signals
-        self._search_entry.connect("changed", self._on_search_changed)
-        self._search_entry.connect("activate", self._on_search_activate)
+        # Toolbar for search/replace (only if GtkSource is available)
+        if self._gtksource_enabled:
+            self._search_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            toolbar = self._search_toolbar
+            toolbar.set_margin_start(6)
+            toolbar.set_margin_end(6)
+            toolbar.set_margin_top(6)
+            toolbar.set_margin_bottom(6)
+            
+            # Search section
+            search_label = Gtk.Label(label="Search:")
+            self._search_entry = Gtk.Entry()
+            self._search_entry.set_placeholder_text("Search...")
+            self._search_entry.set_width_chars(20)
+            
+            search_prev_btn = Gtk.Button(label="Prev")
+            search_prev_btn.connect("clicked", self._on_search_prev_clicked)
+            
+            search_next_btn = Gtk.Button(label="Next")
+            search_next_btn.connect("clicked", self._on_search_next_clicked)
+            
+            # Replace section
+            replace_label = Gtk.Label(label="Replace:")
+            self._replace_entry = Gtk.Entry()
+            self._replace_entry.set_placeholder_text("Replace with...")
+            self._replace_entry.set_width_chars(20)
+            
+            replace_btn = Gtk.Button(label="Replace")
+            replace_btn.connect("clicked", self._on_replace_clicked)
+            
+            replace_all_btn = Gtk.Button(label="Replace All")
+            replace_all_btn.connect("clicked", self._on_replace_all_clicked)
+            
+            # Pack toolbar
+            toolbar.append(search_label)
+            toolbar.append(self._search_entry)
+            toolbar.append(search_prev_btn)
+            toolbar.append(search_next_btn)
+            toolbar.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+            toolbar.append(replace_label)
+            toolbar.append(self._replace_entry)
+            toolbar.append(replace_btn)
+            toolbar.append(replace_all_btn)
+            
+            # Connect search entry signals
+            self._search_entry.connect("changed", self._on_search_changed)
+            self._search_entry.connect("activate", self._on_search_activate)
+            
+            # Hide search toolbar by default
+            self._search_toolbar.set_visible(False)
+        else:
+            # Create empty toolbar to avoid errors, but keep it hidden
+            self._search_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            self._search_toolbar.set_visible(False)
+            self._search_entry = None
+            self._replace_entry = None
         
         # Editor area
         scrolled = Gtk.ScrolledWindow()
@@ -233,11 +246,8 @@ class RemoteFileEditorWindow(Adw.Window):
         
         # Create a vertical box to hold toolbar and scrolled window
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        content_box.append(toolbar)
+        content_box.append(self._search_toolbar)
         content_box.append(scrolled)
-        
-        # Hide search toolbar by default
-        self._search_toolbar.set_visible(False)
         
         scrolled.set_child(self._source_view)
         
@@ -854,6 +864,8 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _on_search_button_clicked(self, button: Gtk.Button) -> None:
         """Handle search button click - toggle search bar visibility."""
+        if not self._gtksource_enabled or not self._search_toolbar:
+            return
         visible = self._search_toolbar.get_visible()
         self._search_toolbar.set_visible(not visible)
         if not visible and self._search_entry:
@@ -1050,14 +1062,15 @@ class RemoteFileEditorWindow(Adw.Window):
             self.reset_zoom()
             return True
         
-        # Primary+F -> show search bar and focus search
+        # Primary+F -> show search bar and focus search (only if GtkSource is available)
         if primary and keyval == Gdk.KEY_f:
-            # Show search bar if hidden
-            if not self._search_toolbar.get_visible():
-                self._search_toolbar.set_visible(True)
-            if self._search_entry:
-                self._search_entry.grab_focus()
-            return True
+            if self._gtksource_enabled and self._search_toolbar:
+                # Show search bar if hidden
+                if not self._search_toolbar.get_visible():
+                    self._search_toolbar.set_visible(True)
+                if self._search_entry:
+                    self._search_entry.grab_focus()
+                return True
         
         # Ctrl+Z -> undo
         if ctrl and keyval == Gdk.KEY_z and not shift:
