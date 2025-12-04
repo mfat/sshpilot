@@ -30,7 +30,20 @@ jobs:
           echo "=== DEBUG: Linking libadwaita ==="
           brew link --overwrite libadwaita
           echo "=== DEBUG: Verifying installations ==="
-          brew list --formula | grep -E "(python@3.13|gtk4|libadwaita|vte3|gobject-introspection|pygobject3|py3cairo)"
+          brew list --formula | grep -E "(python@3.13|gtk4|libadwaita|vte3|gtksourceview5|gobject-introspection|pygobject3|py3cairo)"
+          echo "=== DEBUG: Verifying gtksourceview5 installation ==="
+          if brew list gtksourceview5 &> /dev/null; then
+            echo "=== DEBUG: gtksourceview5 is installed ==="
+            echo "=== DEBUG: gtksourceview5 library location ==="
+            ls -la "$(brew --prefix)/lib/libgtksourceview-5"* || echo "=== DEBUG: Library files not found ==="
+            echo "=== DEBUG: gtksourceview5 share data location ==="
+            ls -la "$(brew --prefix)/share/gtksourceview-5" 2>/dev/null || echo "=== DEBUG: Share data not in standard location, checking Cellar ==="
+            if [ -d "$(brew --prefix)/Cellar/gtksourceview5" ]; then
+              find "$(brew --prefix)/Cellar/gtksourceview5" -name "gtksourceview-5" -type d | head -1 | xargs ls -la 2>/dev/null || echo "=== DEBUG: Share data not found in Cellar ==="
+            fi
+          else
+            echo "=== DEBUG: WARNING - gtksourceview5 not found in brew list ==="
+          fi
           echo "=== DEBUG: Homebrew installation completed ==="
 
       - name: Prepare Homebrew virtual environment
@@ -61,11 +74,13 @@ jobs:
           export GI_TYPELIB_PATH="$BREW_PREFIX/lib/girepository-1.0"
           export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_LIBRARY_PATH"
           export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export XDG_DATA_DIRS="$BREW_PREFIX/share:$XDG_DATA_DIRS"
           echo "=== DEBUG: Environment variables set ==="
           echo "PATH: $PATH"
           echo "GI_TYPELIB_PATH: $GI_TYPELIB_PATH"
           echo "DYLD_LIBRARY_PATH: $DYLD_LIBRARY_PATH"
           echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+          echo "XDG_DATA_DIRS: $XDG_DATA_DIRS"
           echo "=== DEBUG: Checking pyinstaller.sh script ==="
           ls -la pyinstaller.sh
           chmod +x pyinstaller.sh
@@ -104,8 +119,22 @@ jobs:
             if [ -d "dist/SSHPilot.app" ]; then
               echo "=== DEBUG: SSHPilot.app exists ==="
               echo "=== DEBUG: SSHPilot.app size: $(du -sh dist/SSHPilot.app) ==="
-              echo "=== DEBUG: SSHPilot.app structure ==="
-              find dist/SSHPilot.app -name "*.so" -o -name "*.dylib" -o -name "SSHPilot" | head -20
+            echo "=== DEBUG: SSHPilot.app structure ==="
+            find dist/SSHPilot.app -name "*.so" -o -name "*.dylib" -o -name "SSHPilot" | head -20
+            echo "=== DEBUG: Checking for gtksourceview5 files ==="
+            if find dist/SSHPilot.app -name "*gtksourceview*" | grep -q .; then
+              echo "=== DEBUG: Found gtksourceview5 files ==="
+              find dist/SSHPilot.app -name "*gtksourceview*" | head -10
+            else
+              echo "=== DEBUG: WARNING - No gtksourceview5 files found in bundle ==="
+            fi
+            echo "=== DEBUG: Checking for gtksourceview5 share data ==="
+            if [ -d "dist/SSHPilot.app/Contents/Resources/share/gtksourceview-5" ]; then
+              echo "=== DEBUG: Found gtksourceview5 share data ==="
+              ls -la dist/SSHPilot.app/Contents/Resources/share/gtksourceview-5/ | head -10
+            else
+              echo "=== DEBUG: WARNING - gtksourceview5 share data directory not found ==="
+            fi
             else
               echo "=== DEBUG: ERROR - SSHPilot.app not found ==="
             fi

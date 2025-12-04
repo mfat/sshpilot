@@ -106,6 +106,31 @@ if os.path.exists(libadwaita_locale_cellar):
             print(f"Added libadwaita locale files: {locale_path}")
             break
 
+# Find gtksourceview5 share data in standard location or Cellar
+gtksourceview5_share_standard = os.path.join(hb_share, "gtksourceview-5")
+gtksourceview5_share_cellar = None
+
+if os.path.exists(gtksourceview5_share_standard):
+    datas.append((gtksourceview5_share_standard, "Resources/share/gtksourceview-5"))
+    print(f"Found gtksourceview5 share data at: {gtksourceview5_share_standard}")
+else:
+    # Look for gtksourceview5 in Cellar (package name might be gtksourceview5 or gtksourceview-5)
+    for cellar_name in ["gtksourceview5", "gtksourceview-5"]:
+        cellar_gtksourceview5 = f"{homebrew}/Cellar/{cellar_name}"
+        if os.path.exists(cellar_gtksourceview5):
+            for version_dir in os.listdir(cellar_gtksourceview5):
+                version_path = os.path.join(cellar_gtksourceview5, version_dir, "share", "gtksourceview-5")
+                if os.path.exists(version_path):
+                    gtksourceview5_share_cellar = version_path
+                    datas.append((gtksourceview5_share_cellar, "Resources/share/gtksourceview-5"))
+                    print(f"Found gtksourceview5 share data in Cellar at: {gtksourceview5_share_cellar}")
+                    break
+            if gtksourceview5_share_cellar:
+                break
+    
+    if not gtksourceview5_share_cellar:
+        print(f"WARNING: Could not find gtksourceview5 share data at {gtksourceview5_share_standard} or in Cellar")
+
 # Add GDK-Pixbuf loaders and cache
 gdkpixbuf_loaders = f"{homebrew}/lib/gdk-pixbuf-2.0/2.10.0"
 if os.path.exists(gdkpixbuf_loaders):
