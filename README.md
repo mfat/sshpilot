@@ -144,6 +144,13 @@ yay -S sshpilot-git
 ### <img src="https://upload.wikimedia.org/wikipedia/commons/7/74/Apple_logo_dark_grey.svg" height="24"/> macOS (aarch64)
 Download the dmg file from the releases section https://github.com/mfat/sshpilot/releases/
 
+### For development on macOS:
+```bash
+brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwaita-icon-theme pkg-config glib graphene icu4c sshpass gtksourceview5
+```
+
+
+
 ---
 
 ## Minimum Requirements
