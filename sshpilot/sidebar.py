@@ -293,7 +293,8 @@ class GroupRow(Gtk.ListBoxRow):
         content.set_margin_top(6)
         content.set_margin_bottom(6)
 
-        icon = Gtk.Image.new_from_icon_name("folder-symbolic")
+        from sshpilot import icon_utils
+        icon = icon_utils.new_image_from_icon_name("folder-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
         content.append(icon)
 
@@ -322,7 +323,7 @@ class GroupRow(Gtk.ListBoxRow):
         content.append(self.color_badge)
 
         self.expand_button = Gtk.Button()
-        self.expand_button.set_icon_name("pan-end-symbolic")
+        icon_utils.set_button_icon(self.expand_button, "pan-end-symbolic")
         self.expand_button.add_css_class("flat")
         self.expand_button.add_css_class("group-expand-button")
         self.expand_button.set_can_focus(False)
@@ -336,7 +337,7 @@ class GroupRow(Gtk.ListBoxRow):
         self.drop_target_indicator.set_margin_bottom(4)
         self.drop_target_indicator.add_css_class("drop-target-indicator")
         
-        drop_icon = Gtk.Image.new_from_icon_name("list-add-symbolic")
+        drop_icon = icon_utils.new_image_from_icon_name("list-add-symbolic")
         drop_icon.set_icon_size(Gtk.IconSize.NORMAL)
         self.drop_target_indicator.append(drop_icon)
         
@@ -366,10 +367,11 @@ class GroupRow(Gtk.ListBoxRow):
     # -- internal helpers -------------------------------------------------
 
     def _update_display(self):
+        from sshpilot import icon_utils
         if self.group_info.get("expanded", True):
-            self.expand_button.set_icon_name("pan-down-symbolic")
+            icon_utils.set_button_icon(self.expand_button, "pan-down-symbolic")
         else:
-            self.expand_button.set_icon_name("pan-end-symbolic")
+            icon_utils.set_button_icon(self.expand_button, "pan-end-symbolic")
 
         actual_connections = [
             c
@@ -572,7 +574,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         content.set_margin_top(6)
         content.set_margin_bottom(6)
 
-        icon = Gtk.Image.new_from_icon_name("computer-symbolic")
+        from sshpilot import icon_utils
+        icon = icon_utils.new_image_from_icon_name("computer-symbolic")
         icon.set_icon_size(Gtk.IconSize.NORMAL)
         content.append(icon)
 
@@ -598,7 +601,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         content.append(self.indicator_box)
 
         # File manager button (before status icon) - only visible on hover
-        self.file_manager_button = Gtk.Button.new_from_icon_name("folder-symbolic")
+        from sshpilot import icon_utils
+        self.file_manager_button = icon_utils.new_button_from_icon_name("folder-symbolic")
         self.file_manager_button.add_css_class("flat")
         self.file_manager_button.add_css_class("file-manager-button")
         self.file_manager_button.set_tooltip_text(_("Manage Files"))
@@ -611,7 +615,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         # Set up hover events to show/hide button
         self._setup_file_manager_button_hover()
 
-        self.status_icon = Gtk.Image.new_from_icon_name("network-offline-symbolic")
+        from sshpilot import icon_utils
+        self.status_icon = icon_utils.new_image_from_icon_name("network-offline-symbolic")
         self.status_icon.set_pixel_size(16)
         content.append(self.status_icon)
         
@@ -1070,14 +1075,15 @@ class ConnectionRow(Gtk.ListBoxRow):
 
             self.connection.is_connected = has_active_terminal
 
+            from sshpilot import icon_utils
             if has_active_terminal:
-                self.status_icon.set_from_icon_name("network-idle-symbolic")
+                icon_utils.set_icon_from_name(self.status_icon, "network-idle-symbolic")
                 host_value = _get_connection_host(self.connection) or _get_connection_alias(self.connection)
                 self.status_icon.set_tooltip_text(
                     f"Connected to {host_value}"
                 )
             else:
-                self.status_icon.set_from_icon_name("network-offline-symbolic")
+                icon_utils.set_icon_from_name(self.status_icon, "network-offline-symbolic")
                 self.status_icon.set_tooltip_text("Disconnected")
 
             self.status_icon.queue_draw()
@@ -1339,7 +1345,8 @@ def _create_ungrouped_area(window):
 
     ungrouped_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
 
-    icon = Gtk.Image.new_from_icon_name("folder-open-symbolic")
+    from sshpilot import icon_utils
+    icon = icon_utils.new_image_from_icon_name("folder-open-symbolic")
     icon.set_pixel_size(24)
     icon.add_css_class("dim-label")
 

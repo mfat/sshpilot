@@ -1425,7 +1425,8 @@ class SftpConnectionDialog(Adw.Window):
         # Header
         header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
 
-        icon = Gtk.Image.new_from_icon_name("folder-remote-symbolic")
+        from sshpilot import icon_utils
+        icon = icon_utils.new_image_from_icon_name("folder-remote-symbolic")
         icon.set_pixel_size(48)
         header_box.append(icon)
 
@@ -1506,7 +1507,8 @@ class SftpConnectionDialog(Adw.Window):
         box.set_margin_top(8)
         box.set_margin_bottom(8)
 
-        icon = Gtk.Image.new_from_icon_name(icon_name)
+        from sshpilot import icon_utils
+        icon = icon_utils.new_image_from_icon_name(icon_name)
         icon.set_pixel_size(24)
         box.append(icon)
 

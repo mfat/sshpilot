@@ -2231,10 +2231,11 @@ class PaneControls(Gtk.Box):
     def __init__(self) -> None:
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.set_valign(Gtk.Align.CENTER)
-        self.back_button = Gtk.Button.new_from_icon_name("go-previous-symbolic")
-        self.up_button = Gtk.Button.new_from_icon_name("go-up-symbolic")
-        self.refresh_button = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
-        self.new_folder_button = Gtk.Button.new_from_icon_name("folder-new-symbolic")
+        from sshpilot import icon_utils
+        self.back_button = icon_utils.new_button_from_icon_name("go-previous-symbolic")
+        self.up_button = icon_utils.new_button_from_icon_name("go-up-symbolic")
+        self.refresh_button = icon_utils.new_button_from_icon_name("view-refresh-symbolic")
+        self.new_folder_button = icon_utils.new_button_from_icon_name("folder-new-symbolic")
         for widget in (
             self.back_button,
             self.up_button,
@@ -2290,7 +2291,8 @@ class PaneToolbar(Gtk.Box):
         self._show_hidden_button = Gtk.ToggleButton()
         self._show_hidden_button.set_valign(Gtk.Align.CENTER)
         self._show_hidden_button.add_css_class("flat")
-        self._show_hidden_image = Gtk.Image.new_from_icon_name("view-conceal-symbolic")
+        from sshpilot import icon_utils
+        self._show_hidden_image = icon_utils.new_image_from_icon_name("view-conceal-symbolic")
         self._show_hidden_button.set_child(self._show_hidden_image)
         self._show_hidden_handler_id = self._show_hidden_button.connect(
             "toggled", self._on_show_hidden_toggled
@@ -2323,14 +2325,21 @@ class PaneToolbar(Gtk.Box):
         split_button.set_menu_model(menu_model)
         split_button.set_tooltip_text("Toggle view mode")
         split_button.set_dropdown_tooltip("Sort files and folders")
+        from sshpilot import icon_utils
+        # Adw.SplitButton doesn't have set_icon(), use set_icon_name() with bundled icon
+        # We'll need to use set_icon_name() but ensure our resource path is checked first
+        # For now, use set_icon_name() - the icon theme should find our bundled icon
         split_button.set_icon_name("view-list-symbolic")
         split_button.connect("clicked", self._on_view_toggle_clicked)
         return split_button
 
     # Example handler
     def _on_view_toggle_clicked(self, *_):
+        from sshpilot import icon_utils
         self._current_view = "grid" if self._current_view == "list" else "list"
-        self.sort_split_button.set_icon_name("view-grid-symbolic" if self._current_view == "grid" else "view-list-symbolic")
+        icon_name = "view-grid-symbolic" if self._current_view == "grid" else "view-list-symbolic"
+        # Adw.SplitButton uses set_icon_name()
+        self.sort_split_button.set_icon_name(icon_name)
         self.emit("view-changed", self._current_view)
 
     def _on_show_hidden_toggled(self, button: Gtk.ToggleButton) -> None:
@@ -2355,9 +2364,10 @@ class PaneToolbar(Gtk.Box):
         self._update_show_hidden_icon(show_hidden)
 
     def _update_show_hidden_icon(self, show_hidden: bool) -> None:
+        from sshpilot import icon_utils
         icon_name = "view-reveal-symbolic" if show_hidden else "view-conceal-symbolic"
         tooltip = "Hide Hidden Files" if show_hidden else "Show Hidden Files"
-        self._show_hidden_image.set_from_icon_name(icon_name)
+        icon_utils.set_icon_from_name(self._show_hidden_image, icon_name)
         self._show_hidden_button.set_tooltip_text(tooltip)
 
     def get_header_bar(self):
@@ -2481,10 +2491,11 @@ class PropertiesDialog(Adw.Window):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, halign=Gtk.Align.CENTER)
         
         # Icon
+        from sshpilot import icon_utils
         if self._entry.is_dir:
-            icon = Gtk.Image.new_from_icon_name("folder-symbolic")
+            icon = icon_utils.new_image_from_icon_name("folder-symbolic")
         else:
-            icon = Gtk.Image.new_from_icon_name("text-x-generic-symbolic")
+            icon = icon_utils.new_image_from_icon_name("text-x-generic-symbolic")
         # Set a larger custom size instead of using predefined sizes
         icon.set_pixel_size(64)
         icon.add_css_class("icon-dropshadow")
@@ -2555,7 +2566,8 @@ class PropertiesDialog(Adw.Window):
         
         # Add folder open button for local files
         if not self._is_remote_file():
-            btn = Gtk.Button.new_from_icon_name("folder-open-symbolic")
+            from sshpilot import icon_utils
+            btn = icon_utils.new_button_from_icon_name("folder-open-symbolic")
             btn.add_css_class("flat")
             btn.connect("clicked", self._on_open_parent)
             row.add_suffix(btn)
@@ -2899,17 +2911,24 @@ class FilePane(Gtk.Box):
             label: str,
             callback: Callable[[Gtk.Button], None],
         ) -> Gtk.Button:
+            from sshpilot import icon_utils
             button = Gtk.Button()
             
             # Only upload and download buttons get text labels
             if name in ["upload", "download"]:
-                content = Adw.ButtonContent()
-                content.set_icon_name(icon_name)
-                content.set_label(label)
-                button.set_child(content)
+                # ButtonContent only supports set_icon_name, but we want bundled icons
+                # So we'll use an Image widget with a label
+                image = icon_utils.new_image_from_icon_name(icon_name)
+                # Create a box to hold both icon and label
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+                box.append(image)
+                label_widget = Gtk.Label(label=label)
+                box.append(label_widget)
+                button.set_child(box)
             else:
-                # Icon-only buttons for other actions
-                button.set_icon_name(icon_name)
+                # Icon-only buttons for other actions - use Image widget as child
+                image = icon_utils.new_image_from_icon_name(icon_name)
+                button.set_child(image)
                 button.set_tooltip_text(label)
             
             # Improve button alignment and styling
@@ -2983,8 +3002,10 @@ class FilePane(Gtk.Box):
                 lambda _button: self._on_request_access_clicked(),
             )
             # Use ButtonContent for this special button to make it more prominent
+            from sshpilot import icon_utils
             content = Adw.ButtonContent()
-            content.set_icon_name("folder-open-symbolic")
+            icon = icon_utils.new_gicon_from_icon_name("folder-open-symbolic")
+            content.set_icon(icon)
             content.set_label("Request Access")
             request_access_button.set_child(content)
             # Ensure the button uses the suggested-action styling with visible background
@@ -3144,8 +3165,9 @@ class FilePane(Gtk.Box):
         self.emit("path-changed", entry.get_text() or "/")
 
     def _on_list_setup(self, factory: Gtk.SignalListItemFactory, item):
+        from .icon_utils import new_image_from_icon_name
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        icon = Gtk.Image.new_from_icon_name("folder")
+        icon = new_image_from_icon_name("folder-symbolic")
         icon.set_valign(Gtk.Align.CENTER)
         name_label = Gtk.Label(xalign=0)
         name_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
@@ -3201,7 +3223,8 @@ class FilePane(Gtk.Box):
             name_label.set_tooltip_text(value)
             metadata_label.set_text("—")
             metadata_label.set_tooltip_text(None)
-            icon.set_from_icon_name("folder" if value.endswith('/') else "text-x-generic")
+            from .icon_utils import set_icon_from_name
+            set_icon_from_name(icon, "folder-symbolic" if value.endswith('/') else "text-x-generic-symbolic")
             return
 
         display_name = entry.name + ("/" if entry.is_dir else "")
@@ -3221,10 +3244,11 @@ class FilePane(Gtk.Box):
             metadata_label.set_text(size_text)
             metadata_label.set_tooltip_text(size_text)
 
+        from .icon_utils import set_icon_from_name
         if entry.is_dir:
-            icon.set_from_icon_name("folder")
+            set_icon_from_name(icon, "folder-symbolic")
         else:
-            icon.set_from_icon_name("text-x-generic")
+            set_icon_from_name(icon, "text-x-generic-symbolic")
 
         box._pane_entry = entry
         box._pane_index = position
@@ -3256,8 +3280,8 @@ class FilePane(Gtk.Box):
         content.set_halign(Gtk.Align.CENTER)
         content.set_valign(Gtk.Align.CENTER)
 
-        image = Gtk.Image.new_from_icon_name("folder")
-        image.set_pixel_size(64)
+        from .icon_utils import new_image_from_icon_name
+        image = new_image_from_icon_name("folder-symbolic", size=64)
         image.set_halign(Gtk.Align.CENTER)
         content.append(image)
 
@@ -3325,10 +3349,11 @@ class FilePane(Gtk.Box):
         button.set_tooltip_text(display_text)
 
         # Update the image icon based on type
+        from .icon_utils import set_icon_from_name
         if value.endswith('/'):
-            image.set_from_icon_name("folder")
+            set_icon_from_name(image, "folder-symbolic")
         else:
-            image.set_from_icon_name("text-x-generic")
+            set_icon_from_name(image, "text-x-generic-symbolic")
 
         entry: Optional[FileEntry] = None
         position = item.get_position()
@@ -3468,11 +3493,12 @@ class FilePane(Gtk.Box):
         """Update the split button icon based on current view mode."""
         # Check which view is currently active
         if hasattr(self.toolbar, '_current_view') and self.toolbar._current_view == "list":
-            icon = "view-list-symbolic"
+            icon_name = "view-list-symbolic"
         else:
-            icon = "view-grid-symbolic"
+            icon_name = "view-grid-symbolic"
         
-        self.toolbar.sort_split_button.set_icon_name(icon)
+        # Adw.SplitButton uses set_icon_name()
+        self.toolbar.sort_split_button.set_icon_name(icon_name)
 
     def _update_sort_direction_states(self) -> None:
         """Update the radio button states for sort direction."""
@@ -3657,7 +3683,9 @@ class FilePane(Gtk.Box):
         # Build menu items using Adw.ActionRow (same style as connection list)
         def _add_menu_item(title: str, icon_name: str, action_name: str) -> None:
             row = Adw.ActionRow(title=title)
-            icon = Gtk.Image.new_from_icon_name(icon_name)
+            # Use our helper function to prefer bundled icons
+            from sshpilot import icon_utils
+            icon = icon_utils.new_image_from_icon_name(icon_name)
             row.add_prefix(icon)
             row.set_activatable(True)
             def _on_activated(*_):
@@ -5144,7 +5172,8 @@ class FileManagerWindow(Adw.Window):
         
         # Add toggle button to hide/show local pane
         self._local_pane_toggle = Gtk.ToggleButton()
-        self._local_pane_toggle.set_icon_name("view-dual-symbolic")
+        from sshpilot import icon_utils
+        icon_utils.set_button_icon(self._local_pane_toggle, "view-dual-symbolic")
         self._local_pane_toggle.set_tooltip_text("Hide Local Pane")
         self._local_pane_toggle.set_active(False)  # Start unselected
         self._local_pane_toggle.add_css_class("flat")  # Flat style

@@ -117,7 +117,8 @@ class KnownHostsEditorWindow(Adw.Window):
             row.set_margin_start(6)
             row.set_margin_end(6)
             
-            remove_btn = Gtk.Button.new_from_icon_name('user-trash-symbolic')
+            from sshpilot import icon_utils
+            remove_btn = icon_utils.new_button_from_icon_name('user-trash-symbolic')
             remove_btn.set_valign(Gtk.Align.START)
             remove_btn.set_tooltip_text(_("Remove this entry"))
             remove_btn.connect('clicked', self._on_remove_clicked, list_row)
@@ -163,8 +164,9 @@ class KnownHostsEditorWindow(Adw.Window):
     def _on_remove_clicked(self, _btn, row):
         try:
             # Add visual feedback before removal
+            from sshpilot import icon_utils
             _btn.set_sensitive(False)  # Disable button to prevent double-clicks
-            _btn.set_icon_name('process-working-symbolic')  # Show working icon
+            icon_utils.set_button_icon(_btn, 'process-working-symbolic')  # Show working icon
             
             # Create a smooth fade-out animation
             def animate_removal():
@@ -200,8 +202,9 @@ class KnownHostsEditorWindow(Adw.Window):
         except Exception as e:
             logger.error(f"Failed to remove known_host entry: {e}")
             # Restore button state on error
+            from sshpilot import icon_utils
             _btn.set_sensitive(True)
-            _btn.set_icon_name('user-trash-symbolic')
+            icon_utils.set_button_icon(_btn, 'user-trash-symbolic')
 
     def _on_search_changed(self, search_entry):
         """Handle search text changes."""

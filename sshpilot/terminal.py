@@ -303,8 +303,9 @@ class TerminalWidget(Gtk.Box):
         search_title.add_css_class('title-4')
         search_header.append(search_title)
 
+        from sshpilot import icon_utils
         self.search_close_button = Gtk.Button()
-        self.search_close_button.set_icon_name('window-close-symbolic')
+        icon_utils.set_button_icon(self.search_close_button, 'window-close-symbolic')
         self.search_close_button.add_css_class('flat')
         self.search_close_button.set_valign(Gtk.Align.CENTER)
         self.search_close_button.connect('clicked', lambda *_: self._hide_search_overlay())
@@ -332,14 +333,14 @@ class TerminalWidget(Gtk.Box):
         search_controls.append(self.search_entry)
 
         self.search_prev_button = Gtk.Button()
-        self.search_prev_button.set_icon_name('go-up-symbolic')
+        icon_utils.set_button_icon(self.search_prev_button, 'go-up-symbolic')
         self.search_prev_button.set_tooltip_text(_("Find previous match"))
         self.search_prev_button.connect('clicked', self._on_search_previous)
         self.search_prev_button.set_sensitive(False)
         search_controls.append(self.search_prev_button)
 
         self.search_next_button = Gtk.Button()
-        self.search_next_button.set_icon_name('go-down-symbolic')
+        icon_utils.set_button_icon(self.search_next_button, 'go-down-symbolic')
         self.search_next_button.set_tooltip_text(_("Find next match"))
         self.search_next_button.connect('clicked', self._on_search_next)
         self.search_next_button.set_sensitive(False)
@@ -447,7 +448,8 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             pass
         # Banner content: icon + label + spacer + reconnect + dismiss, matching toolbar layout
-        icon = Gtk.Image.new_from_icon_name('dialog-error-symbolic')
+        from sshpilot import icon_utils
+        icon = icon_utils.new_image_from_icon_name('dialog-error-symbolic')
         icon.set_valign(Gtk.Align.CENTER)
         self.disconnected_banner.append(icon)
         self.disconnected_banner_label = Gtk.Label()

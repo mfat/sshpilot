@@ -695,7 +695,8 @@ class WindowActions:
                 row = Gtk.ListBoxRow()
                 box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
 
-                icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+                from sshpilot import icon_utils
+                icon = icon_utils.new_image_from_icon_name('folder-symbolic')
                 icon.set_pixel_size(16)
                 box.append(icon)
 

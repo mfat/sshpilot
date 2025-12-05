@@ -288,8 +288,9 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             enable_switch.connect('notify::active', self._on_switch_toggled, name)
             row.add_suffix(enable_switch)
 
+            from sshpilot import icon_utils
             assign_button = Gtk.Button()
-            assign_button.set_icon_name('input-keyboard-symbolic')
+            icon_utils.set_button_icon(assign_button, 'input-keyboard-symbolic')
             assign_button.set_tooltip_text(_('Assign new shortcut'))
             assign_button.add_css_class('flat')
             assign_button.set_valign(Gtk.Align.CENTER)
@@ -300,7 +301,7 @@ class ShortcutsPreferencesPage(PreferencesPageBase):
             reset_button: Optional[Gtk.Widget] = None
             if current_shortcuts != default_shortcuts:
                 reset_button = Gtk.Button()
-                reset_button.set_icon_name('edit-undo-symbolic')
+                icon_utils.set_button_icon(reset_button, 'edit-undo-symbolic')
                 reset_button.set_tooltip_text(_('Reset to default'))
                 reset_button.add_css_class('flat')
                 reset_button.set_valign(Gtk.Align.CENTER)

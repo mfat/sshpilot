@@ -126,13 +126,14 @@ class RemoteFileEditorWindow(Adw.Window):
         header_bar.pack_end(self._save_button)
         
         # Undo/Redo buttons
-        self._undo_button = Gtk.Button.new_from_icon_name("edit-undo-symbolic")
+        from sshpilot import icon_utils
+        self._undo_button = icon_utils.new_button_from_icon_name("edit-undo-symbolic")
         self._undo_button.set_tooltip_text("Undo")
         self._undo_button.set_sensitive(False)
         self._undo_button.connect("clicked", self._on_undo_clicked)
         header_bar.pack_start(self._undo_button)
         
-        self._redo_button = Gtk.Button.new_from_icon_name("edit-redo-symbolic")
+        self._redo_button = icon_utils.new_button_from_icon_name("edit-redo-symbolic")
         self._redo_button.set_tooltip_text("Redo")
         self._redo_button.set_sensitive(False)
         self._redo_button.connect("clicked", self._on_redo_clicked)
@@ -140,7 +141,7 @@ class RemoteFileEditorWindow(Adw.Window):
         
         # Search button to toggle search bar (only if GtkSource is available)
         if self._gtksource_enabled:
-            self._search_button = Gtk.Button.new_from_icon_name("system-search-symbolic")
+            self._search_button = icon_utils.new_button_from_icon_name("system-search-symbolic")
             self._search_button.set_tooltip_text("Search")
             self._search_button.connect("clicked", self._on_search_button_clicked)
             header_bar.pack_start(self._search_button)
@@ -151,17 +152,17 @@ class RemoteFileEditorWindow(Adw.Window):
         zoom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         zoom_box.add_css_class("linked")
         
-        self._zoom_out_button = Gtk.Button.new_from_icon_name("zoom-out-symbolic")
+        self._zoom_out_button = icon_utils.new_button_from_icon_name("zoom-out-symbolic")
         self._zoom_out_button.set_tooltip_text("Zoom Out")
         self._zoom_out_button.connect("clicked", lambda *_: self.zoom_out())
         zoom_box.append(self._zoom_out_button)
         
-        self._zoom_reset_button = Gtk.Button.new_from_icon_name("zoom-fit-best-symbolic")
+        self._zoom_reset_button = icon_utils.new_button_from_icon_name("zoom-fit-best-symbolic")
         self._zoom_reset_button.set_tooltip_text("Reset Zoom")
         self._zoom_reset_button.connect("clicked", lambda *_: self.reset_zoom())
         zoom_box.append(self._zoom_reset_button)
         
-        self._zoom_in_button = Gtk.Button.new_from_icon_name("zoom-in-symbolic")
+        self._zoom_in_button = icon_utils.new_button_from_icon_name("zoom-in-symbolic")
         self._zoom_in_button.set_tooltip_text("Zoom In")
         self._zoom_in_button.connect("clicked", lambda *_: self.zoom_in())
         zoom_box.append(self._zoom_in_button)

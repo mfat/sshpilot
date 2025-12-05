@@ -15,7 +15,7 @@ gi.require_version('Adw', '1')
 gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
 
-from gi.repository import Adw, Gtk, Gio, GLib
+from gi.repository import Adw, Gtk, Gio, GLib, Gdk
 
 # Register resources before importing any UI modules
 def load_resources():
@@ -32,6 +32,31 @@ def load_resources():
                 resource = Gio.Resource.load(path)
                 Gio.resources_register(resource)
                 print(f"Loaded resources from: {path}")
+                
+                # Add resource path to icon theme EARLY, before any UI is created
+                # This ensures bundled icons take priority over system theme icons
+                try:
+                    display = Gdk.Display.get_default()
+                    if display:
+                        theme = Gtk.IconTheme.get_for_display(display)
+                        # Get existing resource paths and prepend ours to ensure it's checked first
+                        existing_paths = list(theme.get_resource_path())
+                        our_path = "/io/github/mfat/sshpilot/"
+                        if our_path not in existing_paths:
+                            # Prepend our path so it's checked before GTK's default paths
+                            # This ensures bundled icons are found before system theme icons
+                            new_paths = [our_path] + existing_paths
+                            theme.set_resource_path(new_paths)
+                            print(f"Set resource paths with bundled icons first: {new_paths[:2]}...")
+                        else:
+                            # Already added, but ensure it's first
+                            if existing_paths[0] != our_path:
+                                new_paths = [our_path] + [p for p in existing_paths if p != our_path]
+                                theme.set_resource_path(new_paths)
+                                print("Reordered resource paths to prioritize bundled icons")
+                except Exception as e:
+                    print(f"Warning: Could not configure icon theme for bundled icons: {e}")
+                
                 return True
             except GLib.Error as e:
                 print(f"Failed to load resources from {path}: {e}")
@@ -40,6 +65,10 @@ def load_resources():
 
 if not load_resources():
     sys.exit(1)
+
+# Patch Gtk.Image to automatically prefer bundled icons
+from .icon_utils import patch_gtk_image
+patch_gtk_image()
 
 from .window import MainWindow
 from .platform_utils import is_macos, get_data_dir

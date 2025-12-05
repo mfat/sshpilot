@@ -90,7 +90,8 @@ class WelcomePage(Gtk.Overlay):
         header_box.set_can_focus(False)
         
         # App icon
-        icon = Gtk.Image.new_from_icon_name('io.github.mfat.sshpilot')
+        from sshpilot import icon_utils
+        icon = icon_utils.new_image_from_icon_name('io.github.mfat.sshpilot')
         icon.set_pixel_size(64)
         icon.set_can_focus(False)
         header_box.append(icon)
@@ -144,13 +145,14 @@ class WelcomePage(Gtk.Overlay):
         self.add_overlay(self.layout_toggle)
         
         # Set initial layout and update toggle icon
+        from sshpilot import icon_utils
         if use_cards:
             self.layout_stack.set_visible_child_name('cards')
-            self.layout_toggle.set_icon_name('view-list-symbolic')
+            icon_utils.set_button_icon(self.layout_toggle, 'view-list-symbolic')
             self.layout_toggle.set_tooltip_text(_('Switch to list view'))
         else:
             self.layout_stack.set_visible_child_name('rows')
-            self.layout_toggle.set_icon_name('view-grid-symbolic')
+            icon_utils.set_button_icon(self.layout_toggle, 'view-grid-symbolic')
             self.layout_toggle.set_tooltip_text(_('Switch to grid view'))
     
     def _build_cards_layout(self, current_shortcuts):
@@ -181,7 +183,8 @@ class WelcomePage(Gtk.Overlay):
         card_box.set_halign(Gtk.Align.CENTER)
         card_box.set_valign(Gtk.Align.CENTER)
         
-        prefix_img = Gtk.Image.new_from_icon_name('network-server-symbolic')
+        from sshpilot import icon_utils
+        prefix_img = icon_utils.new_image_from_icon_name('network-server-symbolic')
         prefix_img.set_can_focus(False)
         prefix_img.set_pixel_size(32)
         card_box.append(prefix_img)
@@ -217,7 +220,7 @@ class WelcomePage(Gtk.Overlay):
         card_box.set_halign(Gtk.Align.CENTER)
         card_box.set_valign(Gtk.Align.CENTER)
         
-        prefix_img = Gtk.Image.new_from_icon_name('list-add-symbolic')
+        prefix_img = icon_utils.new_image_from_icon_name('list-add-symbolic')
         prefix_img.set_can_focus(False)
         prefix_img.set_pixel_size(32)
         card_box.append(prefix_img)
@@ -260,7 +263,7 @@ class WelcomePage(Gtk.Overlay):
         card_box.set_halign(Gtk.Align.CENTER)
         card_box.set_valign(Gtk.Align.CENTER)
         
-        prefix_img = Gtk.Image.new_from_icon_name('document-edit-symbolic')
+        prefix_img = icon_utils.new_image_from_icon_name('document-edit-symbolic')
         prefix_img.set_can_focus(False)
         prefix_img.set_pixel_size(32)
         card_box.append(prefix_img)
@@ -296,7 +299,7 @@ class WelcomePage(Gtk.Overlay):
         card_box.set_halign(Gtk.Align.CENTER)
         card_box.set_valign(Gtk.Align.CENTER)
         
-        prefix_img = Gtk.Image.new_from_icon_name('utilities-terminal-symbolic')
+        prefix_img = icon_utils.new_image_from_icon_name('utilities-terminal-symbolic')
         prefix_img.set_can_focus(False)
         prefix_img.set_pixel_size(32)
         card_box.append(prefix_img)
@@ -332,7 +335,7 @@ class WelcomePage(Gtk.Overlay):
         card_box.set_halign(Gtk.Align.CENTER)
         card_box.set_valign(Gtk.Align.CENTER)
         
-        prefix_img = Gtk.Image.new_from_icon_name('preferences-desktop-keyboard-symbolic')
+        prefix_img = icon_utils.new_image_from_icon_name('preferences-desktop-keyboard-symbolic')
         prefix_img.set_can_focus(False)
         prefix_img.set_pixel_size(32)
         card_box.append(prefix_img)
@@ -368,7 +371,7 @@ class WelcomePage(Gtk.Overlay):
         card_box.set_halign(Gtk.Align.CENTER)
         card_box.set_valign(Gtk.Align.CENTER)
         
-        prefix_img = Gtk.Image.new_from_icon_name('help-browser-symbolic')
+        prefix_img = icon_utils.new_image_from_icon_name('help-browser-symbolic')
         prefix_img.set_can_focus(False)
         prefix_img.set_pixel_size(32)
         card_box.append(prefix_img)
@@ -404,7 +407,7 @@ class WelcomePage(Gtk.Overlay):
         card_box.set_halign(Gtk.Align.CENTER)
         card_box.set_valign(Gtk.Align.CENTER)
         
-        prefix_img = Gtk.Image.new_from_icon_name('help-about-symbolic')
+        prefix_img = icon_utils.new_image_from_icon_name('help-about-symbolic')
         prefix_img.set_can_focus(False)
         prefix_img.set_pixel_size(32)
         card_box.append(prefix_img)
@@ -455,7 +458,8 @@ class WelcomePage(Gtk.Overlay):
         quick_connect_row.set_subtitle(_('Connect instantly using an SSH command'))
         quick_connect_row.set_activatable(True)
         quick_connect_row.set_can_focus(False)
-        prefix_img = Gtk.Image.new_from_icon_name('network-server-symbolic')
+        from sshpilot import icon_utils
+        prefix_img = icon_utils.new_image_from_icon_name('network-server-symbolic')
         prefix_img.set_can_focus(False)
         quick_connect_row.add_prefix(prefix_img)
         if quick_connect_accel:
@@ -473,7 +477,7 @@ class WelcomePage(Gtk.Overlay):
         new_connection_row.set_subtitle(_('Create and save a new SSH connection profile'))
         new_connection_row.set_activatable(True)
         new_connection_row.set_can_focus(False)
-        prefix_img = Gtk.Image.new_from_icon_name('list-add-symbolic')
+        prefix_img = icon_utils.new_image_from_icon_name('list-add-symbolic')
         prefix_img.set_can_focus(False)
         new_connection_row.add_prefix(prefix_img)
         if new_connection_accel:
@@ -495,7 +499,7 @@ class WelcomePage(Gtk.Overlay):
         edit_config_row.set_subtitle(_('Directly edit your SSH configuration file') + f' ({config_location})')
         edit_config_row.set_activatable(True)
         edit_config_row.set_can_focus(False)
-        prefix_img = Gtk.Image.new_from_icon_name('document-edit-symbolic')
+        prefix_img = icon_utils.new_image_from_icon_name('document-edit-symbolic')
         prefix_img.set_can_focus(False)
         edit_config_row.add_prefix(prefix_img)
         if edit_config_accel:
@@ -513,7 +517,7 @@ class WelcomePage(Gtk.Overlay):
         local_terminal_row.set_subtitle(_('Work on your local machine without connecting to a server'))
         local_terminal_row.set_activatable(True)
         local_terminal_row.set_can_focus(False)
-        prefix_img = Gtk.Image.new_from_icon_name('utilities-terminal-symbolic')
+        prefix_img = icon_utils.new_image_from_icon_name('utilities-terminal-symbolic')
         prefix_img.set_can_focus(False)
         local_terminal_row.add_prefix(prefix_img)
         if local_terminal_accel:
@@ -541,7 +545,7 @@ class WelcomePage(Gtk.Overlay):
         shortcuts_row.set_subtitle(_('View keyboard shortcuts'))
         shortcuts_row.set_activatable(True)
         shortcuts_row.set_can_focus(False)
-        prefix_img = Gtk.Image.new_from_icon_name('preferences-desktop-keyboard-symbolic')
+        prefix_img = icon_utils.new_image_from_icon_name('preferences-desktop-keyboard-symbolic')
         prefix_img.set_can_focus(False)
         shortcuts_row.add_prefix(prefix_img)
         if shortcuts_accel:
@@ -559,7 +563,7 @@ class WelcomePage(Gtk.Overlay):
         help_row.set_subtitle(_('Visit the wiki for guides and troubleshooting'))
         help_row.set_activatable(True)
         help_row.set_can_focus(False)
-        prefix_img = Gtk.Image.new_from_icon_name('help-browser-symbolic')
+        prefix_img = icon_utils.new_image_from_icon_name('help-browser-symbolic')
         prefix_img.set_can_focus(False)
         help_row.add_prefix(prefix_img)
         if help_accel:
@@ -577,17 +581,18 @@ class WelcomePage(Gtk.Overlay):
     
     def _on_layout_toggle_changed(self, toggle):
         """Handle layout toggle change"""
+        from sshpilot import icon_utils
         if toggle.get_active():
             # Cards view
             self.layout_stack.set_visible_child_name('cards')
-            toggle.set_icon_name('view-list-symbolic')
+            icon_utils.set_button_icon(toggle, 'view-list-symbolic')
             toggle.set_tooltip_text(_('Switch to list view'))
             # Save preference
             self.config.set_setting('ui.welcome_page_layout', 'cards')
         else:
             # List view
             self.layout_stack.set_visible_child_name('rows')
-            toggle.set_icon_name('view-grid-symbolic')
+            icon_utils.set_button_icon(toggle, 'view-grid-symbolic')
             toggle.set_tooltip_text(_('Switch to grid view'))
             # Save preference
             self.config.set_setting('ui.welcome_page_layout', 'rows')

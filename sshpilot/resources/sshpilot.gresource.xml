@@ -4,4 +4,59 @@
     <file>sshpilot.svg</file>
     <file>tag-symbolic.svg</file>
   </gresource>
+  
+  <gresource prefix="/io/github/mfat/sshpilot/icons/scalable/actions">
+    <file alias="computer-symbolic.svg">icons/scalable/actions/computer-symbolic.svg</file>
+    <file alias="dialog-error-symbolic.svg">icons/scalable/actions/dialog-error-symbolic.svg</file>
+    <file alias="dialog-password-symbolic.svg">icons/scalable/actions/dialog-password-symbolic.svg</file>
+    <file alias="dialog-warning-symbolic.svg">icons/scalable/actions/dialog-warning-symbolic.svg</file>
+    <file alias="document-edit-symbolic.svg">icons/scalable/actions/document-edit-symbolic.svg</file>
+    <file alias="document-properties-symbolic.svg">icons/scalable/actions/document-properties-symbolic.svg</file>
+    <file alias="document-save-symbolic.svg">icons/scalable/actions/document-save-symbolic.svg</file>
+    <file alias="document-send-symbolic.svg">icons/scalable/actions/document-send-symbolic.svg</file>
+    <file alias="edit-copy-symbolic.svg">icons/scalable/actions/edit-copy-symbolic.svg</file>
+    <file alias="edit-cut-symbolic.svg">icons/scalable/actions/edit-cut-symbolic.svg</file>
+    <file alias="edit-paste-symbolic.svg">icons/scalable/actions/edit-paste-symbolic.svg</file>
+    <file alias="edit-redo-symbolic.svg">icons/scalable/actions/edit-redo-symbolic.svg</file>
+    <file alias="edit-undo-symbolic.svg">icons/scalable/actions/edit-undo-symbolic.svg</file>
+    <file alias="folder-new-symbolic.svg">icons/scalable/actions/folder-new-symbolic.svg</file>
+    <file alias="folder-open-symbolic.svg">icons/scalable/actions/folder-open-symbolic.svg</file>
+    <file alias="folder-remote-symbolic.svg">icons/scalable/actions/folder-remote-symbolic.svg</file>
+    <file alias="folder-symbolic.svg">icons/scalable/actions/folder-symbolic.svg</file>
+    <file alias="go-previous-symbolic.svg">icons/scalable/actions/go-previous-symbolic.svg</file>
+    <file alias="go-down-symbolic.svg">icons/scalable/actions/go-down-symbolic.svg</file>
+    <file alias="go-home-symbolic.svg">icons/scalable/actions/go-home-symbolic.svg</file>
+    <file alias="go-up-symbolic.svg">icons/scalable/actions/go-up-symbolic.svg</file>
+    <file alias="help-about-symbolic.svg">icons/scalable/actions/help-about-symbolic.svg</file>
+    <file alias="help-browser-symbolic.svg">icons/scalable/actions/help-browser-symbolic.svg</file>
+    <file alias="input-keyboard-symbolic.svg">icons/scalable/actions/input-keyboard-symbolic.svg</file>
+    <file alias="list-add-symbolic.svg">icons/scalable/actions/list-add-symbolic.svg</file>
+    <file alias="network-idle-symbolic.svg">icons/scalable/actions/network-idle-symbolic.svg</file>
+    <file alias="network-offline-symbolic.svg">icons/scalable/actions/network-offline-symbolic.svg</file>
+    <file alias="network-server-symbolic.svg">icons/scalable/actions/network-server-symbolic.svg</file>
+    <file alias="network-transmit-receive-symbolic.svg">icons/scalable/actions/network-transmit-receive-symbolic.svg</file>
+    <file alias="open-menu-symbolic.svg">icons/scalable/actions/open-menu-symbolic.svg</file>
+    <file alias="pan-down-symbolic.svg">icons/scalable/actions/pan-down-symbolic.svg</file>
+    <file alias="pan-end-symbolic.svg">icons/scalable/actions/pan-end-symbolic.svg</file>
+    <file alias="preferences-desktop-keyboard-symbolic.svg">icons/scalable/actions/preferences-desktop-keyboard-symbolic.svg</file>
+    <file alias="preferences-system-symbolic.svg">icons/scalable/actions/preferences-system-symbolic.svg</file>
+    <file alias="sidebar-show-symbolic.svg">icons/scalable/actions/sidebar-show-symbolic.svg</file>
+    <file alias="system-search-symbolic.svg">icons/scalable/actions/system-search-symbolic.svg</file>
+    <file alias="tab-new-symbolic.svg">icons/scalable/actions/tab-new-symbolic.svg</file>
+    <file alias="text-editor-symbolic.svg">icons/scalable/actions/text-editor-symbolic.svg</file>
+    <file alias="text-x-generic-symbolic.svg">icons/scalable/actions/text-x-generic-symbolic.svg</file>
+    <file alias="user-trash-symbolic.svg">icons/scalable/actions/user-trash-symbolic.svg</file>
+    <file alias="utilities-terminal-symbolic.svg">icons/scalable/actions/utilities-terminal-symbolic.svg</file>
+    <file alias="view-conceal-symbolic.svg">icons/scalable/actions/view-conceal-symbolic.svg</file>
+    <file alias="view-dual-symbolic.svg">icons/scalable/actions/view-dual-symbolic.svg</file>
+    <file alias="view-grid-symbolic.svg">icons/scalable/actions/view-grid-symbolic.svg</file>
+    <file alias="view-list-symbolic.svg">icons/scalable/actions/view-list-symbolic.svg</file>
+    <file alias="view-refresh-symbolic.svg">icons/scalable/actions/view-refresh-symbolic.svg</file>
+    <file alias="view-reveal-symbolic.svg">icons/scalable/actions/view-reveal-symbolic.svg</file>
+    <file alias="view-sort-ascending-symbolic.svg">icons/scalable/actions/view-sort-ascending-symbolic.svg</file>
+    <file alias="window-close-symbolic.svg">icons/scalable/actions/window-close-symbolic.svg</file>
+    <file alias="zoom-fit-best-symbolic.svg">icons/scalable/actions/zoom-fit-best-symbolic.svg</file>
+    <file alias="zoom-in-symbolic.svg">icons/scalable/actions/zoom-in-symbolic.svg</file>
+    <file alias="zoom-out-symbolic.svg">icons/scalable/actions/zoom-out-symbolic.svg</file>
+  </gresource>
 </gresources>
