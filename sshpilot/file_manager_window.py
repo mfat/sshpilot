@@ -3002,10 +3002,8 @@ class FilePane(Gtk.Box):
                 lambda _button: self._on_request_access_clicked(),
             )
             # Use ButtonContent for this special button to make it more prominent
-            from sshpilot import icon_utils
             content = Adw.ButtonContent()
-            icon = icon_utils.new_gicon_from_icon_name("folder-open-symbolic")
-            content.set_icon(icon)
+            content.set_icon_name("folder-open-symbolic")
             content.set_label("Request Access")
             request_access_button.set_child(content)
             # Ensure the button uses the suggested-action styling with visible background
