@@ -35,22 +35,24 @@ def load_resources():
                 
                 # Add resource path to icon theme EARLY, before any UI is created
                 # Following GNOME docs: https://developer.gnome.org/documentation/tutorials/themed-icons.html
-                # We prepend our base path so bundled icons are checked BEFORE system themes
-                # This ensures bundled icons take priority while still allowing symbolic icon recoloring
+                # and GTK4 API: https://docs.gtk.org/gtk4/class.IconTheme.html
+                # We use set_resource_path() to prepend our base path so bundled icons are checked first
+                # Note: Even with resource paths set, the icon theme system may still prioritize
+                # system themes, so we also manually check resources in icon_utils.py
                 try:
                     display = Gdk.Display.get_default()
                     if display:
                         theme = Gtk.IconTheme.get_for_display(display)
-                        # Get existing paths and prepend ours to ensure it's checked first
+                        # Get existing paths using get_resource_path() API
                         existing_paths = list(theme.get_resource_path())
                         base_path = "/io/github/mfat/sshpilot/icons"
                         if base_path not in existing_paths:
-                            # Prepend our path so it's checked before system themes
+                            # Prepend our path using set_resource_path() API (replaces all paths)
                             new_paths = [base_path] + existing_paths
                             theme.set_resource_path(new_paths)
                             print(f"Set icon theme resource paths (bundled first): {new_paths[:2]}...")
                         elif existing_paths[0] != base_path:
-                            # Already added, but ensure it's first
+                            # Already added, but ensure it's first using set_resource_path()
                             new_paths = [base_path] + [p for p in existing_paths if p != base_path]
                             theme.set_resource_path(new_paths)
                             print(f"Reordered resource paths to prioritize bundled icons")

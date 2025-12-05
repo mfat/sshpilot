@@ -3,10 +3,14 @@ Icon utility functions for loading bundled icons with fallback to system icons.
 This ensures bundled icons are used when available, providing a consistent look
 across different distributions and desktop environments.
 
-Following GNOME documentation (https://developer.gnome.org/documentation/tutorials/themed-icons.html),
-we add the resource path to the icon theme system, which allows GTK to automatically
-find and properly recolor symbolic icons. The icon theme system will check our resource
-path first, ensuring bundled icons take priority over system theme icons.
+Following GNOME documentation (https://developer.gnome.org/documentation/tutorials/themed-icons.html)
+and GTK4 IconTheme API (https://docs.gtk.org/gtk4/class.IconTheme.html), we:
+1. Add resource path to icon theme using set_resource_path() API
+2. Manually check resources first to ensure bundled icons take priority
+3. Fall back to icon theme system (which may still find system themes)
+
+This hybrid approach ensures bundled icons are used while maintaining compatibility
+with GTK's icon theme system for symbolic icon recoloring.
 """
 
 import logging
