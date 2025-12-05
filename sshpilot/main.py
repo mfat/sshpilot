@@ -34,26 +34,28 @@ def load_resources():
                 print(f"Loaded resources from: {path}")
                 
                 # Add resource path to icon theme EARLY, before any UI is created
-                # This ensures bundled icons take priority over system theme icons
+                # Following GNOME docs: https://developer.gnome.org/documentation/tutorials/themed-icons.html
+                # We prepend our base path so bundled icons are checked BEFORE system themes
+                # This ensures bundled icons take priority while still allowing symbolic icon recoloring
                 try:
                     display = Gdk.Display.get_default()
                     if display:
                         theme = Gtk.IconTheme.get_for_display(display)
-                        # Get existing resource paths and prepend ours to ensure it's checked first
+                        # Get existing paths and prepend ours to ensure it's checked first
                         existing_paths = list(theme.get_resource_path())
-                        our_path = "/io/github/mfat/sshpilot/"
-                        if our_path not in existing_paths:
-                            # Prepend our path so it's checked before GTK's default paths
-                            # This ensures bundled icons are found before system theme icons
-                            new_paths = [our_path] + existing_paths
+                        base_path = "/io/github/mfat/sshpilot/icons"
+                        if base_path not in existing_paths:
+                            # Prepend our path so it's checked before system themes
+                            new_paths = [base_path] + existing_paths
                             theme.set_resource_path(new_paths)
-                            print(f"Set resource paths with bundled icons first: {new_paths[:2]}...")
-                        else:
+                            print(f"Set icon theme resource paths (bundled first): {new_paths[:2]}...")
+                        elif existing_paths[0] != base_path:
                             # Already added, but ensure it's first
-                            if existing_paths[0] != our_path:
-                                new_paths = [our_path] + [p for p in existing_paths if p != our_path]
-                                theme.set_resource_path(new_paths)
-                                print("Reordered resource paths to prioritize bundled icons")
+                            new_paths = [base_path] + [p for p in existing_paths if p != base_path]
+                            theme.set_resource_path(new_paths)
+                            print(f"Reordered resource paths to prioritize bundled icons")
+                        else:
+                            print(f"Bundled icon path already first: {base_path}")
                 except Exception as e:
                     print(f"Warning: Could not configure icon theme for bundled icons: {e}")
                 
