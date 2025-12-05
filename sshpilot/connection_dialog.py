@@ -292,8 +292,9 @@ class SSHConfigAdvancedTab(Gtk.Box):
         self.append(header)
         
         # Add button (positioned at the top)
+        from sshpilot import icon_utils
         self.add_button = Gtk.Button(label=_("Add SSH Option"))
-        self.add_button.set_icon_name("list-add-symbolic")
+        icon_utils.set_button_icon(self.add_button, "list-add-symbolic")
         self.add_button.set_tooltip_text(_("Add a new SSH configuration option"))
         self.add_button.connect("clicked", self.on_add_option)
         self.add_button.set_halign(Gtk.Align.START)
@@ -432,8 +433,9 @@ class SSHConfigAdvancedTab(Gtk.Box):
         value_entry.connect("activate", self.on_value_entry_activate, row_grid)
         
         # Remove button
+        from sshpilot import icon_utils
         remove_button = Gtk.Button()
-        remove_button.set_icon_name("user-trash-symbolic")
+        icon_utils.set_button_icon(remove_button, "user-trash-symbolic")
         remove_button.add_css_class("flat")
         remove_button.add_css_class("error")
         
@@ -2533,15 +2535,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         button_box.set_margin_bottom(6)
         
         # Add rule button
+        from sshpilot import icon_utils
         self.add_rule_button = Gtk.Button(label=_("Add Rule"))
-        self.add_rule_button.set_icon_name("list-add-symbolic")
+        icon_utils.set_button_icon(self.add_rule_button, "list-add-symbolic")
         self.add_rule_button.set_tooltip_text(_("Add a new port forwarding rule"))
         self.add_rule_button.connect("clicked", self.on_add_forwarding_rule_clicked)
         button_box.append(self.add_rule_button)
         
         # Port info button
         self.port_info_button = Gtk.Button(label=_("View Port Info"))
-        self.port_info_button.set_icon_name("network-transmit-receive-symbolic")
+        icon_utils.set_button_icon(self.port_info_button, "network-transmit-receive-symbolic")
         self.port_info_button.set_tooltip_text(_("View information about currently used ports and potential conflicts"))
         self.port_info_button.connect("clicked", self.on_view_port_info_clicked)
         self.port_info_button.add_css_class("flat")
@@ -2640,9 +2643,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             row.set_selectable(False)
             
             # Set appropriate icon and title based on rule type
+            from sshpilot import icon_utils
             if rule_type == 'local':
                 row.set_title(_("Local Port Forwarding"))
-                row.add_prefix(Gtk.Image.new_from_icon_name("network-transmit-receive-symbolic"))
+                row.add_prefix(icon_utils.new_image_from_icon_name("network-transmit-receive-symbolic"))
                 description = _("Local port {local_port} → {remote_host}:{remote_port}").format(
                     local_port=rule.get('listen_port', ''),
                     remote_host=rule.get('remote_host', ''),
@@ -2650,7 +2654,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 )
             elif rule_type == 'remote':
                 row.set_title(_("Remote Port Forwarding"))
-                row.add_prefix(Gtk.Image.new_from_icon_name("network-receive-symbolic"))
+                row.add_prefix(icon_utils.new_image_from_icon_name("network-receive-symbolic"))
                 description = _("Remote {remote_host}:{remote_port} → {dest_host}:{dest_port}").format(
                     remote_host=rule.get('listen_addr', 'localhost'),
                     remote_port=rule.get('listen_port', ''),
@@ -2659,7 +2663,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 )
             elif rule_type == 'dynamic':
                 row.set_title(_("Dynamic Port Forwarding (SOCKS)"))
-                row.add_prefix(Gtk.Image.new_from_icon_name("network-workgroup-symbolic"))
+                row.add_prefix(icon_utils.new_image_from_icon_name("network-workgroup-symbolic"))
                 description = _("SOCKS proxy on port {port}").format(
                     port=rule.get('listen_port', '')
                 )
@@ -3158,8 +3162,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         header_label.set_hexpand(True)
         header_box.append(header_label)
         
+        from sshpilot import icon_utils
         refresh_button = Gtk.Button()
-        refresh_button.set_icon_name("view-refresh-symbolic")
+        icon_utils.set_button_icon(refresh_button, "view-refresh-symbolic")
         refresh_button.set_tooltip_text(_("Refresh port information"))
         header_box.append(refresh_button)
         
@@ -3221,11 +3226,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     row.set_subtitle(subtitle)
                     
                     # Add icon based on port type
+                    from sshpilot import icon_utils
                     if port_info.port < 1024:
-                        icon = Gtk.Image.new_from_icon_name("security-high-symbolic")
+                        icon = icon_utils.new_image_from_icon_name("security-high-symbolic")
                         icon.set_tooltip_text(_("System port (requires root)"))
                     else:
-                        icon = Gtk.Image.new_from_icon_name("network-transmit-receive-symbolic")
+                        icon = icon_utils.new_image_from_icon_name("network-transmit-receive-symbolic")
                     
                     row.add_prefix(icon)
                     port_list.append(row)

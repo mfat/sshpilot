@@ -575,6 +575,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
     def __init__(self, *args, isolated: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
+        
+        # Icon theme path is already registered in main.py load_resources()
+        # No need to register again here
+        
         self.active_terminals = {}
         self.connections = []
         self._is_quitting = False  # Flag to prevent multiple quit attempts
@@ -1254,7 +1258,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Sidebar always starts visible
         sidebar_visible = True
         
-        self.sidebar_toggle_button.set_icon_name('sidebar-show-symbolic')
+        from sshpilot import icon_utils
+        icon_utils.set_button_icon(self.sidebar_toggle_button, 'sidebar-show-symbolic')
         self.sidebar_toggle_button.set_tooltip_text(
             f'Hide Sidebar (F9, {get_primary_modifier_label()}+B)'
         )
@@ -1265,7 +1270,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Add view toggle button to switch between welcome and tabs
         self.view_toggle_button = Gtk.Button()
-        self.view_toggle_button.set_icon_name('go-home-symbolic')
+        from sshpilot import icon_utils
+        icon_utils.set_button_icon(self.view_toggle_button, 'go-home-symbolic')
         self.view_toggle_button.set_tooltip_text('Show Start Page')
         self.view_toggle_button.connect('clicked', self.on_view_toggle_clicked)
         self.view_toggle_button.set_visible(False)  # Hidden by default
@@ -1632,7 +1638,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # header.append(title_label)
         
         # Add connection button
-        add_button = Gtk.Button.new_from_icon_name('list-add-symbolic')
+        from sshpilot import icon_utils
+        add_button = icon_utils.new_button_from_icon_name('list-add-symbolic')
         add_button.set_tooltip_text(
             f'Add Connection ({get_primary_modifier_label()}+N)'
         )
@@ -1644,7 +1651,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         header.append(add_button)
 
         # Search button
-        search_button = Gtk.Button.new_from_icon_name('system-search-symbolic')
+        search_button = icon_utils.new_button_from_icon_name('system-search-symbolic')
         # Platform-aware shortcut in tooltip
         shortcut = 'Cmd+F' if is_macos() else 'Ctrl+F'
         search_button.set_tooltip_text(f'Search Connections ({shortcut})')
@@ -1659,12 +1666,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         def _update_eye_icon(btn):
             try:
                 icon = 'view-conceal-symbolic' if self._hide_hosts else 'view-reveal-symbolic'
-                btn.set_icon_name(icon)
+                icon_utils.set_button_icon(btn, icon)
                 btn.set_tooltip_text('Show hostnames' if self._hide_hosts else 'Hide hostnames')
             except Exception:
                 pass
 
-        hide_button = Gtk.Button.new_from_icon_name('view-reveal-symbolic')
+        hide_button = icon_utils.new_button_from_icon_name('view-reveal-symbolic')
         _update_eye_icon(hide_button)
         def _on_toggle_hide(btn):
             try:
@@ -1703,6 +1710,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Menu button - positioned at the far right relative to sidebar
         menu_button = Gtk.MenuButton()
         menu_button.set_can_focus(False)
+        # MenuButton uses set_icon_name() which goes through icon theme
+        # We'll use set_icon_name() - the icon theme should find our bundled icon
         menu_button.set_icon_name('open-menu-symbolic')
         menu_button.set_tooltip_text('Menu')
         menu_button.set_menu_model(self.create_menu())
@@ -1895,8 +1904,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         logger.debug(f"Creating context menu for group row: {row.group_id}")
 
                         # Edit Group row
+                        from sshpilot import icon_utils
                         edit_row = Adw.ActionRow(title=_('Edit Group'))
-                        edit_icon = Gtk.Image.new_from_icon_name('document-edit-symbolic')
+                        edit_icon = icon_utils.new_image_from_icon_name('document-edit-symbolic')
                         edit_row.add_prefix(edit_icon)
                         edit_row.set_activatable(True)
                         edit_row.connect('activated', lambda *_: (self.on_edit_group_action(None, None), pop.popdown()))
@@ -1904,7 +1914,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
                         # Delete Group row
                         delete_row = Adw.ActionRow(title=_('Delete Group'))
-                        delete_icon = Gtk.Image.new_from_icon_name('user-trash-symbolic')
+                        delete_icon = icon_utils.new_image_from_icon_name('user-trash-symbolic')
                         delete_row.add_prefix(delete_icon)
                         delete_row.set_activatable(True)
                         delete_row.connect('activated', lambda *_: (self.on_delete_group_action(None, None), pop.popdown()))
@@ -1912,10 +1922,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     else:
                         # Connection row context menu
                         logger.debug(f"Creating context menu for connection row: {getattr(row, 'connection', None)}")
+                        from sshpilot import icon_utils
 
                         # Open New Connection row
                         new_row = Adw.ActionRow(title=_('Open New Connection'))
-                        new_icon = Gtk.Image.new_from_icon_name('list-add-symbolic')
+                        new_icon = icon_utils.new_image_from_icon_name('list-add-symbolic')
                         new_row.add_prefix(new_icon)
                         new_row.set_activatable(True)
                         new_row.connect('activated', lambda *_: (self.on_open_new_connection_action(None, None), pop.popdown()))
@@ -1923,7 +1934,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
                         # Edit Connection row
                         edit_row = Adw.ActionRow(title=_('Edit Connection'))
-                        edit_icon = Gtk.Image.new_from_icon_name('document-edit-symbolic')
+                        edit_icon = icon_utils.new_image_from_icon_name('document-edit-symbolic')
                         edit_row.add_prefix(edit_icon)
                         edit_row.set_activatable(True)
                         
@@ -1932,7 +1943,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
                         # Duplicate Connection row
                         duplicate_row = Adw.ActionRow(title=_('Duplicate Connection'))
-                        duplicate_icon = Gtk.Image.new_from_icon_name('edit-copy-symbolic')
+                        duplicate_icon = icon_utils.new_image_from_icon_name('edit-copy-symbolic')
                         duplicate_row.add_prefix(duplicate_icon)
                         duplicate_row.set_activatable(True)
                         duplicate_row.connect('activated', lambda *_: (self.on_duplicate_connection_action(None, None), pop.popdown()))
@@ -1941,7 +1952,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         # Manage Files row
                         if not should_hide_file_manager_options():
                             files_row = Adw.ActionRow(title=_('Manage Files'))
-                            files_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+                            files_icon = icon_utils.new_image_from_icon_name('folder-symbolic')
                             files_row.add_prefix(files_icon)
                             files_row.set_activatable(True)
                             files_row.connect('activated', lambda *_: (self.on_manage_files_action(None, None), pop.popdown()))
@@ -1950,7 +1961,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         # Only show system terminal option when external terminals are available
                         if not should_hide_external_terminal_options():
                             terminal_row = Adw.ActionRow(title=_('Open in System Terminal'))
-                            terminal_icon = Gtk.Image.new_from_icon_name('utilities-terminal-symbolic')
+                            terminal_icon = icon_utils.new_image_from_icon_name('utilities-terminal-symbolic')
                             terminal_row.add_prefix(terminal_icon)
                             terminal_row.set_activatable(True)
                             terminal_row.connect('activated', lambda *_: (self.on_open_in_system_terminal_action(None, None), pop.popdown()))
@@ -1961,7 +1972,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         
                         # Always show "Move to Group" option
                         move_row = Adw.ActionRow(title=_('Move to Group'))
-                        move_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+                        move_icon = icon_utils.new_image_from_icon_name('folder-symbolic')
                         move_row.add_prefix(move_icon)
                         move_row.set_activatable(True)
                         move_row.connect('activated', lambda *_: (self.on_move_to_group_action(None, None), pop.popdown()))
@@ -1970,7 +1981,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         # Show "Ungroup" option if connection is currently in a group
                         if current_group_id:
                             ungroup_row = Adw.ActionRow(title=_('Ungroup'))
-                            ungroup_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+                            ungroup_icon = icon_utils.new_image_from_icon_name('folder-symbolic')
                             ungroup_row.add_prefix(ungroup_icon)
                             ungroup_row.set_activatable(True)
                             ungroup_row.connect('activated', lambda *_: (self.on_move_to_ungrouped_action(None, None), pop.popdown()))
@@ -1978,7 +1989,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
                         # Delete Connection row (moved to bottom)
                         delete_row = Adw.ActionRow(title=_('Delete'))
-                        delete_icon = Gtk.Image.new_from_icon_name('user-trash-symbolic')
+                        delete_icon = icon_utils.new_image_from_icon_name('user-trash-symbolic')
                         delete_row.add_prefix(delete_icon)
                         delete_row.set_activatable(True)
                         delete_row.connect('activated', lambda *_: (self.on_delete_connection_action(None, None), pop.popdown()))
@@ -2097,14 +2108,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         
         # Edit button
-        self.edit_button = Gtk.Button.new_from_icon_name('document-edit-symbolic')
+        from sshpilot import icon_utils
+        self.edit_button = icon_utils.new_button_from_icon_name('document-edit-symbolic')
         self.edit_button.set_tooltip_text('Edit Connection')
         self.edit_button.set_sensitive(False)
         self.edit_button.connect('clicked', self.on_edit_connection_clicked)
         self.connection_toolbar.append(self.edit_button)
 
         # Copy key to server button (ssh-copy-id)
-        self.copy_key_button = Gtk.Button.new_from_icon_name('dialog-password-symbolic')
+        self.copy_key_button = icon_utils.new_button_from_icon_name('dialog-password-symbolic')
         self.copy_key_button.set_tooltip_text(
             f'Copy public key to server for passwordless login ({get_primary_modifier_label()}+Shift+K)'
         )
@@ -2113,14 +2125,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_toolbar.append(self.copy_key_button)
 
         # SCP transfer button
-        self.scp_button = Gtk.Button.new_from_icon_name('document-send-symbolic')
+        self.scp_button = icon_utils.new_button_from_icon_name('document-send-symbolic')
         self.scp_button.set_tooltip_text('Transfer files with scp')
         self.scp_button.set_sensitive(False)
         self.scp_button.connect('clicked', self.on_scp_button_clicked)
         self.connection_toolbar.append(self.scp_button)
 
         # Manage files button (visibility controlled dynamically)
-        self.manage_files_button = Gtk.Button.new_from_icon_name('folder-symbolic')
+        self.manage_files_button = icon_utils.new_button_from_icon_name('folder-symbolic')
         primary_label = get_primary_modifier_label()
         self.manage_files_button.set_tooltip_text(
             f"Open file manager for remote server ({primary_label}+Shift+O)"
@@ -2132,14 +2144,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # System terminal button (only when external terminals are available)
         if not should_hide_external_terminal_options():
-            self.system_terminal_button = Gtk.Button.new_from_icon_name('utilities-terminal-symbolic')
+            self.system_terminal_button = icon_utils.new_button_from_icon_name('utilities-terminal-symbolic')
             self.system_terminal_button.set_tooltip_text('Open connection in system terminal')
             self.system_terminal_button.set_sensitive(False)
             self.system_terminal_button.connect('clicked', self.on_system_terminal_button_clicked)
             self.connection_toolbar.append(self.system_terminal_button)
         
         # Delete button
-        self.delete_button = Gtk.Button.new_from_icon_name('user-trash-symbolic')
+        self.delete_button = icon_utils.new_button_from_icon_name('user-trash-symbolic')
         self.delete_button.set_tooltip_text('Delete Connection')
         self.delete_button.set_sensitive(False)
         self.delete_button.connect('clicked', self.on_delete_connection_clicked)
@@ -2149,14 +2161,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.group_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         
         # Rename group button
-        self.rename_group_button = Gtk.Button.new_from_icon_name('document-edit-symbolic')
+        self.rename_group_button = icon_utils.new_button_from_icon_name('document-edit-symbolic')
         self.rename_group_button.set_tooltip_text('Rename Group')
         self.rename_group_button.set_sensitive(False)
         self.rename_group_button.connect('clicked', self.on_rename_group_clicked)
         self.group_toolbar.append(self.rename_group_button)
         
         # Delete group button
-        self.delete_group_button = Gtk.Button.new_from_icon_name('user-trash-symbolic')
+        self.delete_group_button = icon_utils.new_button_from_icon_name('user-trash-symbolic')
         self.delete_group_button.set_tooltip_text('Delete Group')
         self.delete_group_button.set_sensitive(False)
         self.delete_group_button.connect('clicked', self.on_delete_group_clicked)
@@ -2377,7 +2389,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     # ------------------------------------------------------------------
 
     def _build_sort_button(self):
-        button = Gtk.Button.new_from_icon_name("view-sort-ascending-symbolic")
+        from sshpilot import icon_utils
+        button = icon_utils.new_button_from_icon_name("view-sort-ascending-symbolic")
         button.set_can_focus(False)
         button.connect("clicked", self._on_sort_button_clicked)
         self.sort_button = button
@@ -2385,7 +2398,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         return button
 
     def _build_preferences_button(self):
-        button = Gtk.Button.new_from_icon_name("preferences-system-symbolic")
+        from sshpilot import icon_utils
+        button = icon_utils.new_button_from_icon_name("preferences-system-symbolic")
         button.set_can_focus(False)
         button.set_tooltip_text(_("Preferences"))
         button.connect("clicked", lambda *_: self.show_preferences())
@@ -2400,9 +2414,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if not self.sort_button:
             return
 
+        from sshpilot import icon_utils
         preset_id = self._connection_sort_last or DEFAULT_CONNECTION_SORT
         preset = CONNECTION_SORT_PRESETS.get(preset_id, CONNECTION_SORT_PRESETS[DEFAULT_CONNECTION_SORT])
-        self.sort_button.set_icon_name(preset.icon_name)
+        icon_utils.set_button_icon(self.sort_button, preset.icon_name)
 
         next_preset_id = self._next_sort_preset_id(preset_id)
         next_preset = CONNECTION_SORT_PRESETS.get(next_preset_id)
@@ -2565,8 +2580,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.tab_bar.set_autohide(False)
         
         # Add local terminal button before the tabs
+        from sshpilot import icon_utils
         self.local_terminal_button = Gtk.Button()
-        self.local_terminal_button.set_icon_name('tab-new-symbolic')
+        icon_utils.set_button_icon(self.local_terminal_button, 'tab-new-symbolic')
         self.local_terminal_button.add_css_class('flat')  # Make button flat
         
         # Set tooltip with keyboard shortcut
@@ -3004,7 +3020,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             # Check if there are any active tabs
             has_tabs = len(self.tab_view.get_pages()) > 0
             if has_tabs:
-                self.view_toggle_button.set_icon_name('go-home-symbolic')
+                from sshpilot import icon_utils
+                icon_utils.set_button_icon(self.view_toggle_button, 'go-home-symbolic')
                 self.view_toggle_button.set_tooltip_text('Hide Start Page')
                 self.view_toggle_button.set_visible(True)
             else:
@@ -3143,7 +3160,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Update view toggle button
         if hasattr(self, 'view_toggle_button'):
-            self.view_toggle_button.set_icon_name('go-home-symbolic')
+            from sshpilot import icon_utils
+            icon_utils.set_button_icon(self.view_toggle_button, 'go-home-symbolic')
             self.view_toggle_button.set_tooltip_text('Show Start Page')
             self.view_toggle_button.set_visible(True)  # Show button when tabs are active
 
@@ -3955,9 +3973,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             content_box.append(merge_desc)
             
             # Warning label
+            from sshpilot import icon_utils
             warning_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             warning_box.set_margin_top(12)
-            warning_icon = Gtk.Image.new_from_icon_name('dialog-warning-symbolic')
+            warning_icon = icon_utils.new_image_from_icon_name('dialog-warning-symbolic')
             warning_box.append(warning_icon)
             warning_label = Gtk.Label()
             backup_dir = os.path.join(get_config_dir(), 'backups')
@@ -4742,13 +4761,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self._toggle_sidebar_visibility(is_visible)
             
             # Update button icon and tooltip based on current sidebar state
+            from sshpilot import icon_utils
             if is_visible:
-                button.set_icon_name('sidebar-show-symbolic')
+                icon_utils.set_button_icon(button, 'sidebar-show-symbolic')
                 button.set_tooltip_text(
                     f'Hide Sidebar (F9, {get_primary_modifier_label()}+B)'
                 )
             else:
-                button.set_icon_name('sidebar-show-symbolic')
+                icon_utils.set_button_icon(button, 'sidebar-show-symbolic')
                 button.set_tooltip_text(
                     f'Show Sidebar (F9, {get_primary_modifier_label()}+B)'
                 )
@@ -5187,7 +5207,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 pass
 
-            refresh_button = Gtk.Button.new_from_icon_name('view-refresh-symbolic')
+            from sshpilot import icon_utils
+            refresh_button = icon_utils.new_button_from_icon_name('view-refresh-symbolic')
             refresh_button.set_tooltip_text(_('Refresh remote listing'))
             refresh_button.add_css_class('flat')
             remote_row.add_suffix(refresh_button)
@@ -5231,7 +5252,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 pass
 
-            picker_button = Gtk.Button.new_from_icon_name('folder-symbolic')
+            picker_button = icon_utils.new_button_from_icon_name('folder-symbolic')
             picker_button.set_tooltip_text(_('Choose destination folder'))
             picker_button.add_css_class('flat')
             local_row.add_suffix(picker_button)
@@ -7323,10 +7344,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
         page = self.tab_view.append(container)
         page.set_title(page_title)
+        from sshpilot import icon_utils
         try:
-            page.set_icon(Gio.ThemedIcon.new('folder-remote-symbolic'))
+            page.set_icon(icon_utils.new_gicon_from_icon_name('folder-remote-symbolic'))
         except Exception:
-            page.set_icon(Gio.ThemedIcon.new('folder-symbolic'))
+            page.set_icon(icon_utils.new_gicon_from_icon_name('folder-symbolic'))
 
         self.show_tab_view()
         self.tab_view.set_selected_page(page)
@@ -7408,10 +7430,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             page = self.tab_view.append(widget)
 
         page.set_title(page_title)
+        from sshpilot import icon_utils
         try:
-            page.set_icon(Gio.ThemedIcon.new('folder-remote-symbolic'))
+            page.set_icon(icon_utils.new_gicon_from_icon_name('folder-remote-symbolic'))
         except Exception:
-            page.set_icon(Gio.ThemedIcon.new('folder-symbolic'))
+            page.set_icon(icon_utils.new_gicon_from_icon_name('folder-symbolic'))
         # Note: AdwTabPage doesn't support set_tooltip_text in GTK4
         # The title already provides the necessary information
 
@@ -8068,7 +8091,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
                 
                 # Add group icon
-                icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+                from sshpilot import icon_utils
+                icon = icon_utils.new_image_from_icon_name('folder-symbolic')
                 icon.set_pixel_size(16)
                 box.append(icon)
                 

@@ -655,8 +655,9 @@ class PreferencesWindow(Gtk.Window):
         page_id = title.lower().replace(' ', '-')
         row.set_name(page_id)
         
-        # Add icon
-        icon = Gtk.Image.new_from_icon_name(icon_name)
+        # Add icon using bundled icon helper
+        from sshpilot import icon_utils
+        icon = icon_utils.new_image_from_icon_name(icon_name)
         row.add_prefix(icon)
         
         # Add to sidebar
@@ -1989,7 +1990,8 @@ class PreferencesWindow(Gtk.Window):
         parent_row.set_margin_start(0)
         parent_row.set_margin_end(8)
 
-        parent_icon = Gtk.Image.new_from_icon_name('folder-symbolic')
+        from sshpilot import icon_utils
+        parent_icon = icon_utils.new_image_from_icon_name('folder-symbolic')
         parent_row.append(parent_icon)
 
         parent_labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)

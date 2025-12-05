@@ -64,9 +64,10 @@ class TerminalManager:
             terminal.connect('connection-lost', self.on_terminal_disconnected)
             terminal.connect('title-changed', self.on_terminal_title_changed)
 
+            from sshpilot import icon_utils
             page = window.tab_view.append(terminal)
             page.set_title(connection.nickname)
-            page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
+            page.set_icon(icon_utils.new_gicon_from_icon_name('utilities-terminal-symbolic'))
             if group_name:
                 setattr(terminal, 'group_name', group_name)
             self._apply_tab_group_color(page, group_color, tooltip=group_name)
@@ -425,9 +426,10 @@ class TerminalManager:
     # Tab management and local terminals
     def _add_terminal_tab(self, terminal_widget, title):
         try:
+            from sshpilot import icon_utils
             page = self.window.tab_view.append(terminal_widget)
             page.set_title(title)
-            page.set_icon(Gio.ThemedIcon.new('utilities-terminal-symbolic'))
+            page.set_icon(icon_utils.new_gicon_from_icon_name('utilities-terminal-symbolic'))
             self.window.show_tab_view()
             self.window.tab_view.set_selected_page(page)
             logger.info(f"Added terminal tab: {title}")

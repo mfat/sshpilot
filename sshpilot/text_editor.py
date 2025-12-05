@@ -72,7 +72,10 @@ class RemoteFileEditorWindow(Adw.Window):
         self._is_loading = True  # Flag to track initial file loading
         self._zoom_level = 1.0  # Current zoom level (1.0 = 100%)
         self._zoom_css_provider: Optional[Gtk.CssProvider] = None
-        
+
+        # Track whether GtkSource is actually usable on this platform
+        self._gtksource_enabled = _HAS_GTKSOURCE
+
         # Search/Replace state
         self._search_entry: Optional[Gtk.Entry] = None
         self._replace_entry: Optional[Gtk.Entry] = None
@@ -123,39 +126,43 @@ class RemoteFileEditorWindow(Adw.Window):
         header_bar.pack_end(self._save_button)
         
         # Undo/Redo buttons
-        self._undo_button = Gtk.Button.new_from_icon_name("edit-undo-symbolic")
+        from sshpilot import icon_utils
+        self._undo_button = icon_utils.new_button_from_icon_name("edit-undo-symbolic")
         self._undo_button.set_tooltip_text("Undo")
         self._undo_button.set_sensitive(False)
         self._undo_button.connect("clicked", self._on_undo_clicked)
         header_bar.pack_start(self._undo_button)
         
-        self._redo_button = Gtk.Button.new_from_icon_name("edit-redo-symbolic")
+        self._redo_button = icon_utils.new_button_from_icon_name("edit-redo-symbolic")
         self._redo_button.set_tooltip_text("Redo")
         self._redo_button.set_sensitive(False)
         self._redo_button.connect("clicked", self._on_redo_clicked)
         header_bar.pack_start(self._redo_button)
         
-        # Search button to toggle search bar
-        self._search_button = Gtk.Button.new_from_icon_name("system-search-symbolic")
-        self._search_button.set_tooltip_text("Search")
-        self._search_button.connect("clicked", self._on_search_button_clicked)
-        header_bar.pack_start(self._search_button)
+        # Search button to toggle search bar (only if GtkSource is available)
+        if self._gtksource_enabled:
+            self._search_button = icon_utils.new_button_from_icon_name("system-search-symbolic")
+            self._search_button.set_tooltip_text("Search")
+            self._search_button.connect("clicked", self._on_search_button_clicked)
+            header_bar.pack_start(self._search_button)
+        else:
+            self._search_button = None
         
         # Zoom controls
         zoom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         zoom_box.add_css_class("linked")
         
-        self._zoom_out_button = Gtk.Button.new_from_icon_name("zoom-out-symbolic")
+        self._zoom_out_button = icon_utils.new_button_from_icon_name("zoom-out-symbolic")
         self._zoom_out_button.set_tooltip_text("Zoom Out")
         self._zoom_out_button.connect("clicked", lambda *_: self.zoom_out())
         zoom_box.append(self._zoom_out_button)
         
-        self._zoom_reset_button = Gtk.Button.new_from_icon_name("zoom-fit-best-symbolic")
+        self._zoom_reset_button = icon_utils.new_button_from_icon_name("zoom-fit-best-symbolic")
         self._zoom_reset_button.set_tooltip_text("Reset Zoom")
         self._zoom_reset_button.connect("clicked", lambda *_: self.reset_zoom())
         zoom_box.append(self._zoom_reset_button)
         
-        self._zoom_in_button = Gtk.Button.new_from_icon_name("zoom-in-symbolic")
+        self._zoom_in_button = icon_utils.new_button_from_icon_name("zoom-in-symbolic")
         self._zoom_in_button.set_tooltip_text("Zoom In")
         self._zoom_in_button.connect("clicked", lambda *_: self.zoom_in())
         zoom_box.append(self._zoom_in_button)
@@ -164,110 +171,84 @@ class RemoteFileEditorWindow(Adw.Window):
         
         toolbar_view.add_top_bar(header_bar)
         
-        # Toolbar for search/replace
-        self._search_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        toolbar = self._search_toolbar
-        toolbar.set_margin_start(6)
-        toolbar.set_margin_end(6)
-        toolbar.set_margin_top(6)
-        toolbar.set_margin_bottom(6)
-        
-        # Search section
-        search_label = Gtk.Label(label="Search:")
-        self._search_entry = Gtk.Entry()
-        self._search_entry.set_placeholder_text("Search...")
-        self._search_entry.set_width_chars(20)
-        
-        search_prev_btn = Gtk.Button(label="Prev")
-        search_prev_btn.connect("clicked", self._on_search_prev_clicked)
-        
-        search_next_btn = Gtk.Button(label="Next")
-        search_next_btn.connect("clicked", self._on_search_next_clicked)
-        
-        # Replace section
-        replace_label = Gtk.Label(label="Replace:")
-        self._replace_entry = Gtk.Entry()
-        self._replace_entry.set_placeholder_text("Replace with...")
-        self._replace_entry.set_width_chars(20)
-        
-        replace_btn = Gtk.Button(label="Replace")
-        replace_btn.connect("clicked", self._on_replace_clicked)
-        
-        replace_all_btn = Gtk.Button(label="Replace All")
-        replace_all_btn.connect("clicked", self._on_replace_all_clicked)
-        
-        # Pack toolbar
-        toolbar.append(search_label)
-        toolbar.append(self._search_entry)
-        toolbar.append(search_prev_btn)
-        toolbar.append(search_next_btn)
-        toolbar.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
-        toolbar.append(replace_label)
-        toolbar.append(self._replace_entry)
-        toolbar.append(replace_btn)
-        toolbar.append(replace_all_btn)
-        
-        # Connect search entry signals
-        self._search_entry.connect("changed", self._on_search_changed)
-        self._search_entry.connect("activate", self._on_search_activate)
+        # Toolbar for search/replace (only if GtkSource is available)
+        if self._gtksource_enabled:
+            self._search_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            toolbar = self._search_toolbar
+            toolbar.set_margin_start(6)
+            toolbar.set_margin_end(6)
+            toolbar.set_margin_top(6)
+            toolbar.set_margin_bottom(6)
+            
+            # Search section
+            search_label = Gtk.Label(label="Search:")
+            self._search_entry = Gtk.Entry()
+            self._search_entry.set_placeholder_text("Search...")
+            self._search_entry.set_width_chars(20)
+            
+            search_prev_btn = Gtk.Button(label="Prev")
+            search_prev_btn.connect("clicked", self._on_search_prev_clicked)
+            
+            search_next_btn = Gtk.Button(label="Next")
+            search_next_btn.connect("clicked", self._on_search_next_clicked)
+            
+            # Replace section
+            replace_label = Gtk.Label(label="Replace:")
+            self._replace_entry = Gtk.Entry()
+            self._replace_entry.set_placeholder_text("Replace with...")
+            self._replace_entry.set_width_chars(20)
+            
+            replace_btn = Gtk.Button(label="Replace")
+            replace_btn.connect("clicked", self._on_replace_clicked)
+            
+            replace_all_btn = Gtk.Button(label="Replace All")
+            replace_all_btn.connect("clicked", self._on_replace_all_clicked)
+            
+            # Pack toolbar
+            toolbar.append(search_label)
+            toolbar.append(self._search_entry)
+            toolbar.append(search_prev_btn)
+            toolbar.append(search_next_btn)
+            toolbar.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+            toolbar.append(replace_label)
+            toolbar.append(self._replace_entry)
+            toolbar.append(replace_btn)
+            toolbar.append(replace_all_btn)
+            
+            # Connect search entry signals
+            self._search_entry.connect("changed", self._on_search_changed)
+            self._search_entry.connect("activate", self._on_search_activate)
+            
+            # Hide search toolbar by default
+            self._search_toolbar.set_visible(False)
+        else:
+            # Create empty toolbar to avoid errors, but keep it hidden
+            self._search_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            self._search_toolbar.set_visible(False)
+            self._search_entry = None
+            self._replace_entry = None
         
         # Editor area
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_vexpand(True)
         scrolled.set_hexpand(True)
-        
+
         # Create editor widget (SourceView if available, otherwise TextView)
-        if _HAS_GTKSOURCE:
-            self._source_view = GtkSource.View()
-            self._source_view.set_show_line_numbers(True)
-            self._source_view.set_highlight_current_line(False)  # Disable to only highlight search string, not entire line
-            self._source_view.set_auto_indent(True)
-            self._source_view.set_indent_width(4)
-            self._source_view.set_tab_width(4)
-            self._source_view.set_insert_spaces_instead_of_tabs(False)
-            self._source_view.set_monospace(True)  # Ensure monospace font
-            self._source_view.set_wrap_mode(Gtk.WrapMode.WORD)  # Enable word wrap
-            
-            # Detect language from file extension
-            language_manager = GtkSource.LanguageManager.get_default()
-            _, ext = os.path.splitext(self._file_name)
-            language = language_manager.guess_language(self._file_name, None)
-            if language:
-                self._buffer = GtkSource.Buffer.new_with_language(language)
-                self._source_view.set_buffer(self._buffer)
-            else:
-                self._buffer = GtkSource.Buffer()
-                self._source_view.set_buffer(self._buffer)
-            
-            # Set up search context for SourceView
-            self._search_settings = GtkSource.SearchSettings()
-            self._search_context = GtkSource.SearchContext.new(self._buffer, self._search_settings)
-            self._search_context.set_highlight(True)
-        else:
-            # Fallback to regular TextView
-            self._source_view = Gtk.TextView()
-            self._source_view.set_monospace(True)
-            self._source_view.set_wrap_mode(Gtk.WrapMode.WORD)  # Enable word wrap
-            self._buffer = Gtk.TextBuffer()
-            self._source_view.set_buffer(self._buffer)
-            self._search_settings = None
-            self._search_context = None
+        if not self._init_source_view():
+            self._init_text_view()
         
         # Connect to buffer changes
         self._buffer.connect("modified-changed", self._on_buffer_modified_changed)
         
         # Connect undo/redo state changes if using GtkSource
-        if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+        if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
             self._buffer.connect("notify::can-undo", self._on_undo_state_changed)
             self._buffer.connect("notify::can-redo", self._on_redo_state_changed)
         
         # Create a vertical box to hold toolbar and scrolled window
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        content_box.append(toolbar)
+        content_box.append(self._search_toolbar)
         content_box.append(scrolled)
-        
-        # Hide search toolbar by default
-        self._search_toolbar.set_visible(False)
         
         scrolled.set_child(self._source_view)
         
@@ -292,9 +273,61 @@ class RemoteFileEditorWindow(Adw.Window):
         
         # Apply initial zoom
         self._apply_zoom()
-        
+
         # Show initial loading toast
         self._show_toast("Loading…" if self._is_local else "Downloading…", timeout=2)
+
+    def _init_source_view(self) -> bool:
+        """Initialize GtkSourceView if available.
+
+        Returns True if GtkSourceView was created successfully, False if we
+        should fall back to Gtk.TextView.
+        """
+        if not self._gtksource_enabled or GtkSource is None:
+            self._gtksource_enabled = False
+            return False
+
+        try:
+            self._source_view = GtkSource.View()
+            self._source_view.set_show_line_numbers(True)
+            self._source_view.set_highlight_current_line(False)
+            self._source_view.set_auto_indent(True)
+            self._source_view.set_indent_width(4)
+            self._source_view.set_tab_width(4)
+            self._source_view.set_insert_spaces_instead_of_tabs(False)
+            self._source_view.set_monospace(True)
+            self._source_view.set_wrap_mode(Gtk.WrapMode.WORD)
+
+            language_manager = GtkSource.LanguageManager.get_default()
+            language = language_manager.guess_language(self._file_name, None)
+            if language:
+                self._buffer = GtkSource.Buffer.new_with_language(language)
+            else:
+                self._buffer = GtkSource.Buffer()
+            self._source_view.set_buffer(self._buffer)
+
+            self._search_settings = GtkSource.SearchSettings()
+            self._search_context = GtkSource.SearchContext.new(self._buffer, self._search_settings)
+            self._search_context.set_highlight(True)
+            self._gtksource_enabled = True
+            return True
+        except Exception as e:
+            logger.warning("GtkSource unavailable; falling back to TextView: %s", e)
+            self._gtksource_enabled = False
+            self._search_settings = None
+            self._search_context = None
+            return False
+
+    def _init_text_view(self) -> None:
+        """Initialize a basic Gtk.TextView editor as a fallback."""
+        self._source_view = Gtk.TextView()
+        self._source_view.set_monospace(True)
+        self._source_view.set_wrap_mode(Gtk.WrapMode.WORD)
+        self._buffer = Gtk.TextBuffer()
+        self._source_view.set_buffer(self._buffer)
+        self._search_settings = None
+        self._search_context = None
+        self._gtksource_enabled = False
     
     def _apply_toast_css(self) -> None:
         """Apply the same toast CSS styling as file manager."""
@@ -408,7 +441,7 @@ class RemoteFileEditorWindow(Adw.Window):
             self._buffer.set_modified(False)
             
             # Reset undo/redo state after loading
-            if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+            if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
                 try:
                     if hasattr(self._buffer, 'begin_not_undoable_action'):
                         self._buffer.begin_not_undoable_action()
@@ -532,7 +565,7 @@ class RemoteFileEditorWindow(Adw.Window):
             self._buffer.set_modified(False)
             
             # Reset undo stack after save
-            if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+            if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
                 try:
                     if hasattr(self._buffer, 'begin_not_undoable_action'):
                         self._buffer.begin_not_undoable_action()
@@ -593,7 +626,7 @@ class RemoteFileEditorWindow(Adw.Window):
         self._buffer.set_modified(False)
         
         # Reset undo stack after save
-        if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+        if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
             self._buffer.begin_not_undoable_action()
             self._buffer.end_not_undoable_action()
             # Update undo/redo button states
@@ -692,8 +725,8 @@ class RemoteFileEditorWindow(Adw.Window):
         """Update search settings from search entry."""
         logger.debug("_update_search_settings: called")
         
-        if not _HAS_GTKSOURCE:
-            logger.debug("_update_search_settings: _HAS_GTKSOURCE is False")
+        if not self._gtksource_enabled:
+            logger.debug("_update_search_settings: GtkSource is not enabled")
             return
         
         if not self._search_settings:
@@ -723,8 +756,8 @@ class RemoteFileEditorWindow(Adw.Window):
         """Search for next occurrence."""
         logger.debug("_search_next: called")
         
-        if not _HAS_GTKSOURCE:
-            logger.debug("_search_next: _HAS_GTKSOURCE is False")
+        if not self._gtksource_enabled:
+            logger.debug("_search_next: GtkSource is not enabled")
             return
         
         if not self._search_context:
@@ -819,7 +852,7 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _search_prev(self) -> None:
         """Search for previous occurrence."""
-        if not _HAS_GTKSOURCE or not self._search_context:
+        if not self._gtksource_enabled or not self._search_context:
             return
         
         insert_mark = self._buffer.get_insert()
@@ -832,6 +865,8 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _on_search_button_clicked(self, button: Gtk.Button) -> None:
         """Handle search button click - toggle search bar visibility."""
+        if not self._gtksource_enabled or not self._search_toolbar:
+            return
         visible = self._search_toolbar.get_visible()
         self._search_toolbar.set_visible(not visible)
         if not visible and self._search_entry:
@@ -841,6 +876,53 @@ class RemoteFileEditorWindow(Adw.Window):
     def _on_search_changed(self, editable: Gtk.Editable) -> None:
         """Handle search entry text change."""
         self._update_search_settings()
+        
+        # According to GtkSource docs (https://gedit-text-editor.org/developer-docs/libgedit-gtksourceview-300/GtkSourceSearchContext.html),
+        # "The buffer is scanned asynchronously, so it doesn't block the user interface.
+        # For each search, the buffer is scanned at most once. After that, navigating through
+        # the occurrences doesn't require to re-scan the buffer entirely."
+        #
+        # When search text changes, it's a new search pattern, so async scanning needs to start.
+        # The async scanning is triggered when a search operation (forward/backward) is performed.
+        # On macOS, highlighting may not appear until the async scanning starts. To ensure
+        # highlighting works immediately when the user types, we trigger a search operation
+        # which starts the async scanning process.
+        #
+        # Based on gedit source code patterns, we need to:
+        # 1. Trigger the search to start async scanning
+        # 2. Allow highlighting to appear before restoring cursor
+        # 3. Use idle_add to restore cursor after UI update, preserving user's typing position
+        if self._gtksource_enabled and self._search_context and self._search_entry:
+            search_text = self._search_entry.get_text()
+            if search_text:
+                try:
+                    # Save current cursor position before search
+                    insert_mark = self._buffer.get_insert()
+                    cursor_iter = self._buffer.get_iter_at_mark(insert_mark)
+                    cursor_offset = cursor_iter.get_offset()
+                    
+                    # Trigger async scanning by performing a search from the start
+                    # This starts the async scanning process which enables highlighting
+                    # When search text changes, this ensures the new pattern is scanned
+                    start_iter = self._buffer.get_start_iter()
+                    ok, match_start, match_end, wrapped = self._search_context.forward(start_iter)
+                    
+                    # Restore cursor to original position after UI has updated
+                    # Using idle_add ensures highlighting appears before cursor is restored
+                    # This is especially important on macOS where highlighting may be delayed
+                    def restore_cursor():
+                        try:
+                            cursor_iter = self._buffer.get_iter_at_offset(cursor_offset)
+                            self._buffer.place_cursor(cursor_iter)
+                        except Exception:
+                            pass  # Cursor position may be invalid if buffer changed
+                        return False  # Don't repeat
+                    
+                    GLib.idle_add(restore_cursor)
+                    
+                    # Scanning has now started (or restarted for new pattern), highlighting is active
+                except Exception as e:
+                    logger.debug(f"Error triggering search scan: {e}")
     
     def _on_search_activate(self, entry: Gtk.Entry) -> None:
         """Handle Enter key in search entry."""
@@ -860,7 +942,7 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _on_replace_clicked(self, button: Gtk.Button) -> None:
         """Replace current match and move to next."""
-        if not _HAS_GTKSOURCE or not self._search_context or not self._replace_entry:
+        if not self._gtksource_enabled or not self._search_context or not self._replace_entry:
             return
         
         self._update_search_settings()
@@ -923,7 +1005,7 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _on_replace_all_clicked(self, button: Gtk.Button) -> None:
         """Replace all matches."""
-        if not _HAS_GTKSOURCE or not self._search_context or not self._replace_entry:
+        if not self._gtksource_enabled or not self._search_context or not self._replace_entry:
             return
         
         self._update_search_settings()
@@ -939,13 +1021,13 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _on_undo_clicked(self, button: Gtk.Button) -> None:
         """Handle undo button click."""
-        if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+        if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
             if self._buffer.can_undo():
                 self._buffer.undo()
     
     def _on_redo_clicked(self, button: Gtk.Button) -> None:
         """Handle redo button click."""
-        if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+        if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
             if self._buffer.can_redo():
                 self._buffer.redo()
     
@@ -981,25 +1063,26 @@ class RemoteFileEditorWindow(Adw.Window):
             self.reset_zoom()
             return True
         
-        # Ctrl+F -> show search bar and focus search
-        if ctrl and keyval == Gdk.KEY_f:
-            # Show search bar if hidden
-            if not self._search_toolbar.get_visible():
-                self._search_toolbar.set_visible(True)
-            if self._search_entry:
-                self._search_entry.grab_focus()
-            return True
+        # Primary+F -> show search bar and focus search (only if GtkSource is available)
+        if primary and keyval == Gdk.KEY_f:
+            if self._gtksource_enabled and self._search_toolbar:
+                # Show search bar if hidden
+                if not self._search_toolbar.get_visible():
+                    self._search_toolbar.set_visible(True)
+                if self._search_entry:
+                    self._search_entry.grab_focus()
+                return True
         
         # Ctrl+Z -> undo
         if ctrl and keyval == Gdk.KEY_z and not shift:
-            if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+            if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
                 if self._buffer.can_undo():
                     self._buffer.undo()
                     return True
         
         # Ctrl+Shift+Z OR Ctrl+Y -> redo
         if (ctrl and shift and keyval == Gdk.KEY_z) or (ctrl and keyval == Gdk.KEY_y):
-            if _HAS_GTKSOURCE and isinstance(self._buffer, GtkSource.Buffer):
+            if self._gtksource_enabled and isinstance(self._buffer, GtkSource.Buffer):
                 if self._buffer.can_redo():
                     self._buffer.redo()
                     return True

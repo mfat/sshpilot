@@ -44,6 +44,14 @@
 
 
 
+
+    <release version="4.6.5" date="2025-12-05">
+
+      <description>
+        <p>- Unified look across GNOME and KDE Plasma</p>
+        <p>- Minor UI fixes</p>
+      </description>
+    </release>
     <release version="4.6.4" date="2025-12-02">
 
       <description>
