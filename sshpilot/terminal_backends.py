@@ -113,6 +113,9 @@ class BaseTerminalBackend(Protocol):
     def feed_child(self, data: bytes) -> None:
         """Feed raw bytes to the child process input if supported."""
 
+    def get_content(self, max_chars: Optional[int] = None) -> Optional[str]:
+        """Return the terminal contents if the backend can provide it."""
+
 
 
 from typing import TYPE_CHECKING
@@ -486,6 +489,23 @@ class VTETerminalBackend:
             self.vte.feed_child(data)
         except Exception:
             logger.debug("Failed to feed child on VTE backend", exc_info=True)
+
+    def get_content(self, max_chars: Optional[int] = None) -> Optional[str]:
+        try:
+            content_result = self.vte.get_text_range(
+                0,
+                0,
+                -1,
+                -1,
+                lambda *args: True,
+            )
+            content = content_result[0] if content_result else None
+            if content and max_chars and len(content) > max_chars:
+                return content[-max_chars:]
+            return content
+        except Exception:
+            logger.debug("Failed to read VTE content", exc_info=True)
+            return None
 
     def search_set_regex(self, regex: Optional[Any]) -> None:
         if regex is None:
@@ -1648,6 +1668,10 @@ class PyXtermTerminalBackend:
     def feed_child(self, data: bytes) -> None:
         # pyxterm.js handles user input via websocket.
         return
+
+    def get_content(self, max_chars: Optional[int] = None) -> Optional[str]:
+        # pyxterm.js does not currently expose scrollback; return None for compatibility
+        return None
 
     def search_set_regex(self, regex: Optional[Any]) -> None:
         """Set the search pattern for xterm.js search addon.
