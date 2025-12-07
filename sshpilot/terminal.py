@@ -245,8 +245,8 @@ class TerminalWidget(Gtk.Box):
         self._fullscreen_tab_bar_visible = None
         self._fullscreen_css_provider = None
         self._was_maximized = False
-        self._fullscreen_banner = None
-        self._fullscreen_banner_timeout_id = None
+        self._fullscreen_banner_container = None
+        self._fullscreen_banner_dismiss_button = None
         
         # Register with process manager
         process_manager.register_terminal(self)
@@ -4365,6 +4365,23 @@ class TerminalWidget(Gtk.Box):
             except Exception as e:
                 logger.debug(f"Failed to set window fullscreen: {e}", exc_info=True)
             
+            # Create fullscreen banner container if it doesn't exist (but don't show it yet)
+            if self._fullscreen_banner_container is None:
+                self._create_fullscreen_banner()
+            
+            # Add banner to window level (above terminal) if not already added
+            if self._fullscreen_banner_container and self._fullscreen_banner_container.get_parent() is None:
+                # Find the content wrapper that contains banners and content_stack
+                try:
+                    if hasattr(root, 'content_stack'):
+                        parent = root.content_stack.get_parent()
+                        if parent:
+                            # Prepend banner at the beginning to appear above everything
+                            parent.prepend(self._fullscreen_banner_container)
+                            logger.debug("Fullscreen banner added to window content area")
+                except Exception as e:
+                    logger.debug(f"Failed to add fullscreen banner to window: {e}", exc_info=True)
+            
             # Show fullscreen banner with help text
             self._show_fullscreen_banner()
             
@@ -4473,26 +4490,42 @@ class TerminalWidget(Gtk.Box):
             # Hide fullscreen banner
             self._hide_fullscreen_banner()
             
+            # Remove banner from window when exiting fullscreen
+            if self._fullscreen_banner_container:
+                try:
+                    parent = self._fullscreen_banner_container.get_parent()
+                    if parent:
+                        parent.remove(self._fullscreen_banner_container)
+                        logger.debug("Fullscreen banner removed from window")
+                except Exception as e:
+                    logger.debug(f"Failed to remove fullscreen banner from window: {e}", exc_info=True)
+            
             self._is_fullscreen = False
             logger.debug("Exited terminal fullscreen mode")
         except Exception as e:
             logger.error(f"Failed to exit fullscreen: {e}", exc_info=True)
             self._is_fullscreen = False
     
-    def _show_fullscreen_banner(self):
-        """Show fullscreen banner with help text and exit button."""
+    def _create_fullscreen_banner(self):
+        """Create fullscreen banner container (but don't show it yet)."""
         try:
-            # Create banner if it doesn't exist
-            if self._fullscreen_banner is None:
-                self._fullscreen_banner = Adw.Banner()
-                self._fullscreen_banner.set_title(_("Press F11 to exit fullscreen mode"))
-                self._fullscreen_banner.set_button_label(_("Exit Fullscreen"))
+            # Create banner container if it doesn't exist (matching update banner style)
+            if self._fullscreen_banner_container is None:
+                # Use overlay to position dismiss button on top of banner (same as update banner)
+                banner_overlay = Gtk.Overlay()
+                # Make overlay expand to full width
+                banner_overlay.set_hexpand(True)
+                
+                fullscreen_banner = Adw.Banner()
+                fullscreen_banner.set_title(_("Press F11 to exit fullscreen mode"))
+                fullscreen_banner.set_button_label(_("Exit Fullscreen"))
                 
                 # Set button style to "suggested" and connect click handler
                 try:
                     # Use set_button_style if available (Adw 1.7+)
-                    if hasattr(self._fullscreen_banner, 'set_button_style'):
-                        self._fullscreen_banner.set_button_style('suggested')
+                    if hasattr(fullscreen_banner, 'set_button_style'):
+                        # Use enum value for suggested style
+                        fullscreen_banner.set_button_style(Adw.BannerButtonStyle.SUGGESTED)
                     else:
                         # Fallback: Apply suggested style via CSS
                         from gi.repository import Gdk
@@ -4515,52 +4548,83 @@ class TerminalWidget(Gtk.Box):
                             Gtk.StyleContext.add_provider_for_display(
                                 display, css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
                             )
-                            self._fullscreen_banner.add_css_class('fullscreen-banner')
+                            fullscreen_banner.add_css_class('fullscreen-banner')
                     
                     # Connect button click handler
                     def on_banner_button_clicked(banner):
                         self.toggle_fullscreen()
                     
-                    self._fullscreen_banner.connect('button-clicked', on_banner_button_clicked)
+                    fullscreen_banner.connect('button-clicked', on_banner_button_clicked)
                 except Exception as e:
                     logger.debug(f"Failed to style fullscreen banner button: {e}", exc_info=True)
                 
-                # Add banner to overlay
-                self.overlay.add_overlay(self._fullscreen_banner)
-                self._fullscreen_banner.set_halign(Gtk.Align.CENTER)
-                self._fullscreen_banner.set_valign(Gtk.Align.START)
-                self._fullscreen_banner.set_margin_top(20)
+                # Make banner expand to fill available width (Adw.Banner supports hexpand per docs)
+                fullscreen_banner.set_hexpand(True)
+                banner_overlay.set_child(fullscreen_banner)
+                
+                # Create dismiss button with text, positioned at the left (same as update banner)
+                dismiss_button = Gtk.Button()
+                dismiss_button.set_label(_('Dismiss'))
+                dismiss_button.set_halign(Gtk.Align.START)
+                dismiss_button.set_valign(Gtk.Align.CENTER)
+                dismiss_button.set_margin_start(12)
+                dismiss_button.connect('clicked', self._on_fullscreen_banner_dismiss)
+                banner_overlay.add_overlay(dismiss_button)
+                
+                self._fullscreen_banner_container = banner_overlay
+                self._fullscreen_banner_dismiss_button = dismiss_button
+                
+                # Make banner container expand to fill full width
+                self._fullscreen_banner_container.set_hexpand(True)
+                self._fullscreen_banner_container.set_vexpand(False)
+                
+                # Banner will be added to window level when entering fullscreen
+                # Store reference but don't add to any container yet
+                self._fullscreen_banner_container.set_visible(False)  # Hidden by default
+                
+                # Configure banner positioning for full width
+                self._fullscreen_banner_container.set_halign(Gtk.Align.FILL)
+                self._fullscreen_banner_container.set_valign(Gtk.Align.START)
+                # Remove margins to make it truly full width
+                self._fullscreen_banner_container.set_margin_start(0)
+                self._fullscreen_banner_container.set_margin_end(0)
+                self._fullscreen_banner_container.set_margin_top(0)
+                
+                logger.debug("Fullscreen banner container created")
+        except Exception as e:
+            logger.error(f"Failed to create fullscreen banner: {e}", exc_info=True)
+    
+    def _show_fullscreen_banner(self):
+        """Show fullscreen banner with help text and exit button."""
+        try:
+            # Ensure banner container exists
+            if self._fullscreen_banner_container is None:
+                self._create_fullscreen_banner()
             
             # Show the banner
-            self._fullscreen_banner.set_revealed(True)
-            self._fullscreen_banner.set_visible(True)
+            if self._fullscreen_banner_container:
+                banner = self._fullscreen_banner_container.get_child()
+                if banner and isinstance(banner, Adw.Banner):
+                    banner.set_revealed(True)
+                self._fullscreen_banner_container.set_visible(True)
             
-            # Auto-hide after 5 seconds
-            if self._fullscreen_banner_timeout_id:
-                GLib.source_remove(self._fullscreen_banner_timeout_id)
-            
-            def auto_hide_banner():
-                if self._is_fullscreen and self._fullscreen_banner:
-                    self._fullscreen_banner.set_revealed(False)
-                self._fullscreen_banner_timeout_id = None
-                return False
-            
-            self._fullscreen_banner_timeout_id = GLib.timeout_add_seconds(5, auto_hide_banner)
             logger.debug("Fullscreen banner shown")
         except Exception as e:
             logger.debug(f"Failed to show fullscreen banner: {e}", exc_info=True)
     
+    def _on_fullscreen_banner_dismiss(self, button):
+        """Handle dismiss button click on fullscreen banner."""
+        logger.debug("Fullscreen banner dismissed by user")
+        self._hide_fullscreen_banner()
+    
     def _hide_fullscreen_banner(self):
         """Hide fullscreen banner."""
         try:
-            if self._fullscreen_banner:
-                self._fullscreen_banner.set_revealed(False)
-                self._fullscreen_banner.set_visible(False)
-            
-            # Cancel auto-hide timeout
-            if self._fullscreen_banner_timeout_id:
-                GLib.source_remove(self._fullscreen_banner_timeout_id)
-                self._fullscreen_banner_timeout_id = None
+            if self._fullscreen_banner_container:
+                banner = self._fullscreen_banner_container.get_child()
+                if banner and isinstance(banner, Adw.Banner):
+                    banner.set_revealed(False)
+                self._fullscreen_banner_container.set_visible(False)
             
             logger.debug("Fullscreen banner hidden")
         except Exception as e:
