@@ -637,6 +637,43 @@ class TerminalWidget(Gtk.Box):
         # Disconnect old backend signals
         self._disconnect_backend_signals()
 
+        # Clean up context menu popover and gesture before destroying backend
+        # This prevents GTK warnings about children left when finalizing widgets
+        if hasattr(self, '_menu_popover') and self._menu_popover is not None:
+            try:
+                # Popdown the menu if it's open
+                if hasattr(self._menu_popover, 'popdown'):
+                    self._menu_popover.popdown()
+                # Detach from parent widget
+                if hasattr(self._menu_popover, 'set_parent'):
+                    self._menu_popover.set_parent(None)
+                # Unparent the popover
+                if hasattr(self._menu_popover, 'unparent'):
+                    self._menu_popover.unparent()
+                logger.debug("Detached context menu popover before backend switch")
+            except Exception as e:
+                logger.debug(f"Error detaching popover: {e}", exc_info=True)
+        
+        # Remove gesture controller from old backend widget
+        # Try all possible widget locations where gesture might be attached
+        if hasattr(self, '_menu_gesture') and self._menu_gesture is not None:
+            widgets_to_check = []
+            if hasattr(self, 'backend') and self.backend and hasattr(self.backend, 'widget'):
+                widgets_to_check.append(self.backend.widget)
+            if hasattr(self, 'terminal_widget') and self.terminal_widget:
+                widgets_to_check.append(self.terminal_widget)
+            if hasattr(self, 'vte') and self.vte:
+                widgets_to_check.append(self.vte)
+            
+            for widget in widgets_to_check:
+                try:
+                    if hasattr(widget, 'remove_controller'):
+                        widget.remove_controller(self._menu_gesture)
+                        logger.debug(f"Removed context menu gesture from {type(widget).__name__}")
+                        break  # Only need to remove once
+                except Exception as e:
+                    logger.debug(f"Error removing gesture from {type(widget).__name__}: {e}", exc_info=True)
+
         # Destroy old backend
         old_backend = getattr(self, 'backend', None)
         if old_backend is not None:
@@ -2769,6 +2806,8 @@ class TerminalWidget(Gtk.Box):
                 except Exception as e:
                     logger.error(f"Context menu popup failed: {e}")
             gesture.connect('pressed', _on_pressed)
+            # Store gesture reference for cleanup
+            self._menu_gesture = gesture
             # Add gesture to the backend widget (VTE or WebView)
             if self.backend and self.backend.widget:
                 self.backend.widget.add_controller(gesture)

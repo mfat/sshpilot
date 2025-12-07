@@ -131,6 +131,7 @@ class VTETerminalBackend:
         self.vte = Vte.Terminal()
         self.widget = self.vte
         self._termprops_handler: Optional[int] = None
+        self._populate_popup_handler: Optional[int] = None
 
     def initialize(self) -> None:
         self.vte.set_hexpand(True)
@@ -208,14 +209,20 @@ class VTETerminalBackend:
                     # We use our own custom context menu instead
                     menu.set_visible(False)
                     return True
-                self.vte.connect("populate-popup", _on_populate_popup)
+                self._populate_popup_handler = self.vte.connect("populate-popup", _on_populate_popup)
                 logger.debug("Disabled VTE built-in context menu")
         except Exception as e:
             logger.debug(f"Failed to disable VTE context menu: {e}", exc_info=True)
 
     def destroy(self) -> None:
         try:
-            self.vte.disconnect(self._termprops_handler)  # type: ignore[arg-type]
+            if self._termprops_handler is not None:
+                self.vte.disconnect(self._termprops_handler)  # type: ignore[arg-type]
+        except Exception:
+            pass
+        try:
+            if self._populate_popup_handler is not None:
+                self.vte.disconnect(self._populate_popup_handler)  # type: ignore[arg-type]
         except Exception:
             pass
 
