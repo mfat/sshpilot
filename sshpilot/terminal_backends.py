@@ -1274,6 +1274,31 @@ class PyXtermTerminalBackend:
                 
                 # Use the script as the command (no additional args needed)
                 pyxterm_cmd.extend(['--command', script_path])
+            elif command[0] == 'bash' and len(command) >= 3 and command[1] == '-lc':
+                # For bash -lc commands, the third argument is the command string
+                # We need to create a script to properly execute it
+                import tempfile
+                
+                # The command string is already shell-quoted, so we can use it directly
+                command_string = command[2] if len(command) > 2 else ''
+                
+                # Create a temporary script that executes the command
+                script_content = '#!/bin/bash\n'
+                script_content += f'{command_string}\n'
+                
+                # Write to temporary file
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
+                    f.write(script_content)
+                    script_path = f.name
+                
+                # Make it executable
+                os.chmod(script_path, 0o755)
+                
+                # Store the script path for cleanup
+                self._temp_script_path = script_path
+                
+                # Use the script as the command (no additional args needed)
+                pyxterm_cmd.extend(['--command', script_path])
             else:
                 # For other commands, separate the executable from arguments
                 # pyxtermjs expects --command to be just the executable and --cmd-args for arguments
