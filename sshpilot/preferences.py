@@ -517,6 +517,7 @@ class PreferencesWindow(Gtk.Window):
         self._encoding_options = []
         self._encoding_codes = []
         self._suppress_encoding_config_handler = False
+        self._user_initiated_encoding_change = False
         self._updating_connection_switches = False
         self.native_connect_row = None
         self.legacy_connect_row = None
@@ -2205,7 +2206,10 @@ class PreferencesWindow(Gtk.Window):
         elif key == 'terminal.encoding':
             if self._suppress_encoding_config_handler:
                 return
-            GLib.idle_add(self._sync_encoding_row_selection, value or '', True)
+            # Don't show toast if the change was initiated by user selection
+            notify_user = not self._user_initiated_encoding_change
+            self._user_initiated_encoding_change = False  # Reset flag
+            GLib.idle_add(self._sync_encoding_row_selection, value or '', notify_user)
 
     def _sync_use_group_color_in_tab(self, value):
         if not hasattr(self, 'tab_group_color_row') or self.tab_group_color_row is None:
@@ -2686,8 +2690,44 @@ class PreferencesWindow(Gtk.Window):
 
         current_encoding = self.config.get_setting('terminal.encoding', 'UTF-8')
         self._sync_encoding_row_selection(current_encoding, notify_user=True)
+        
+        # Update visibility based on current backend
+        self._update_encoding_row_visibility()
 
     def _collect_supported_encodings(self):
+        """Collect supported encodings based on current backend"""
+        current_backend = self.config.get_setting('terminal.backend', 'vte').lower()
+        
+        # For PyXterm.js backend, provide xterm.js compatible encodings
+        # According to https://xtermjs.org/docs/guides/encoding/
+        # xterm.js uses UTF-8/UTF-16 natively, legacy encodings via luit/iconv
+        if current_backend == 'pyxterm':
+            # xterm.js native encodings
+            options = [
+                ('UTF-8', 'Unicode (UTF-8)'),
+                ('UTF-16', 'Unicode (UTF-16)'),
+            ]
+            
+            # Add common legacy encodings that can be handled via luit/iconv
+            # These will be transcoded at the PTY bridge level
+            legacy_encodings = [
+                ('ISO-8859-1', 'Latin-1 (ISO-8859-1)'),
+                ('ISO-8859-15', 'Latin-9 (ISO-8859-15)'),
+                ('Windows-1252', 'Western European (Windows-1252)'),
+                ('GB2312', 'Simplified Chinese (GB2312)'),
+                ('GBK', 'Chinese (GBK)'),
+                ('GB18030', 'Chinese (GB18030)'),
+                ('Big5', 'Traditional Chinese (Big5)'),
+                ('Shift_JIS', 'Japanese (Shift_JIS)'),
+                ('EUC-JP', 'Japanese (EUC-JP)'),
+                ('EUC-KR', 'Korean (EUC-KR)'),
+                ('KOI8-R', 'Cyrillic (KOI8-R)'),
+                ('KOI8-U', 'Ukrainian (KOI8-U)'),
+            ]
+            options.extend(legacy_encodings)
+            return options
+        
+        # For VTE backend, use VTE's native encoding support
         options = []
         try:
             terminal = Vte.Terminal()
@@ -2800,6 +2840,41 @@ class PreferencesWindow(Gtk.Window):
         finally:
             self._suppress_encoding_config_handler = False
 
+    def _update_encoding_row_visibility(self):
+        """Update encoding row visibility based on current backend"""
+        if not hasattr(self, 'encoding_row') or self.encoding_row is None:
+            return
+        
+        current_backend = self.config.get_setting('terminal.backend', 'vte').lower()
+        
+        # Hide encoding dropdown for VTE backend (VTE handles encoding internally)
+        # Show encoding dropdown for PyXterm.js backend (encoding handled at PTY bridge level)
+        if current_backend == 'vte':
+            self.encoding_row.set_visible(False)
+            logger.debug("Hiding encoding dropdown for VTE backend")
+        elif current_backend == 'pyxterm':
+            self.encoding_row.set_visible(True)
+            # Refresh encoding options for PyXterm.js
+            self._encoding_options = self._collect_supported_encodings()
+            self._encoding_codes = [code for code, _ in self._encoding_options]
+            
+            # Update the model
+            encoding_list = Gtk.StringList()
+            for code, description in self._encoding_options:
+                display_label = description or code
+                if description and description != code:
+                    display_label = f"{code} — {description}"
+                encoding_list.append(display_label)
+            self.encoding_row.set_model(encoding_list)
+            
+            # Sync selection
+            current_encoding = self.config.get_setting('terminal.encoding', 'UTF-8')
+            self._sync_encoding_row_selection(current_encoding, notify_user=False)
+            logger.debug("Showing encoding dropdown for PyXterm.js backend")
+        else:
+            # Default: show for unknown backends
+            self.encoding_row.set_visible(True)
+
     def on_encoding_selection_changed(self, combo_row, _param):
         if self._encoding_selection_sync:
             return
@@ -2809,6 +2884,8 @@ class PreferencesWindow(Gtk.Window):
             return
 
         target_code = self._encoding_codes[index]
+        # Mark this as a user-initiated change to suppress toast
+        self._user_initiated_encoding_change = True
         self._update_encoding_config_if_needed(target_code)
 
     def _detect_pyxterm_backend(self):
@@ -2894,6 +2971,10 @@ class PreferencesWindow(Gtk.Window):
         backend_id = option.get('id', 'vte')
         self.config.set_setting('terminal.backend', backend_id)
         self._update_backend_row_subtitle(index)
+        
+        # Update encoding row visibility when backend changes
+        self._update_encoding_row_visibility()
+        
         if self.parent_window and hasattr(self.parent_window, 'terminal_manager'):
             try:
                 self.parent_window.terminal_manager.refresh_backends()

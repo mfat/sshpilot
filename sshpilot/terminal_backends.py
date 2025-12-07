@@ -1118,6 +1118,39 @@ class PyXtermTerminalBackend:
         except Exception as e:
             logger.debug(f"Failed to focus pyxterm widget: {e}", exc_info=True)
 
+    def _wrap_command_with_encoding(self, argv: Sequence[str], encoding: str) -> Sequence[str]:
+        """
+        Wrap command with encoding transcoder if needed.
+        
+        According to https://xtermjs.org/docs/guides/encoding/:
+        - UTF-8 and UTF-16 are natively supported by xterm.js
+        - Legacy encodings should be handled at PTY bridge level using luit or iconv
+        
+        Returns the command array, possibly wrapped with luit for legacy encodings.
+        """
+        # UTF-8 and UTF-16 are natively supported, no wrapper needed
+        if encoding.upper() in ('UTF-8', 'UTF-16', 'UTF-16LE', 'UTF-16BE'):
+            return argv
+        
+        # For legacy encodings, wrap with luit if available
+        # Check if luit is available
+        import shutil
+        luit_path = shutil.which('luit')
+        if luit_path:
+            # Wrap command with luit for encoding transcoding
+            # luit syntax: luit -encoding ENCODING -- command [args...]
+            wrapped = [luit_path, '-encoding', encoding, '--'] + list(argv)
+            logger.debug(f"Wrapping command with luit for encoding {encoding}: {wrapped}")
+            return wrapped
+        else:
+            # luit not available, log warning but proceed
+            # The encoding won't be transcoded, which may cause issues
+            logger.warning(
+                f"Encoding {encoding} requested but luit not found. "
+                f"xterm.js will use UTF-8. Install luit for legacy encoding support."
+            )
+            return argv
+
     def spawn_async(
         self,
         argv: Sequence[str],
@@ -1147,7 +1180,17 @@ class PyXtermTerminalBackend:
 
         # Start pyxtermjs server
         port = find_free_port()
-        command = list(argv)
+        command = list(argv) if argv else None
+        
+        # Get encoding setting from config and wrap command if needed
+        encoding = 'UTF-8'  # Default
+        if self.owner and hasattr(self.owner, 'config') and self.owner.config:
+            encoding = self.owner.config.get_setting('terminal.encoding', 'UTF-8')
+        
+        # Wrap command with encoding transcoder if needed (for legacy encodings)
+        # UTF-8 and UTF-16 are natively supported by xterm.js
+        if command:
+            command = self._wrap_command_with_encoding(command, encoding)
         
         # Build pyxtermjs command
         pyxterm_cmd = [

@@ -2432,6 +2432,19 @@ class TerminalWidget(Gtk.Box):
         return False
 
     def _apply_terminal_encoding(self, encoding_value, update_config_on_fallback=True):
+        # For PyXterm.js backend, encoding is handled at PTY bridge level (via luit)
+        # No need to validate against VTE's supported encodings
+        if self.backend and hasattr(self.backend, '__class__'):
+            backend_name = self.backend.__class__.__name__
+            if backend_name == 'PyXtermTerminalBackend':
+                # PyXterm.js handles encoding via luit at PTY bridge level
+                # Accept any encoding - it will be wrapped with luit if needed
+                requested = encoding_value.strip() if isinstance(encoding_value, str) else ''
+                if requested:
+                    logger.debug("Encoding '%s' will be handled at PTY bridge level for PyXterm.js backend", requested)
+                return False
+        
+        # For VTE backend, validate encoding against VTE's supported list
         supported = self._get_supported_encodings()
         fallback = supported[0] if supported else 'UTF-8'
 
