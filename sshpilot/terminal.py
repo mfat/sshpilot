@@ -2746,6 +2746,8 @@ class TerminalWidget(Gtk.Box):
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         logger.debug(f"Not a right-click button: {btn}")
                         return
+                    # Stop event propagation to prevent other context menus
+                    gest.set_state(Gtk.EventSequenceState.CLAIMED)
                     # Focus terminal first for reliable copy/paste
                     try:
                         if self.backend:
@@ -2767,10 +2769,16 @@ class TerminalWidget(Gtk.Box):
                 except Exception as e:
                     logger.error(f"Context menu popup failed: {e}")
             gesture.connect('pressed', _on_pressed)
-            if self.vte is not None:
+            # Add gesture to the backend widget (VTE or WebView)
+            if self.backend and self.backend.widget:
+                self.backend.widget.add_controller(gesture)
+                logger.debug(f"Added context menu gesture to backend widget: {type(self.backend).__name__}")
+            elif self.vte is not None:
                 self.vte.add_controller(gesture)
+                logger.debug("Added context menu gesture to VTE widget")
             elif self.terminal_widget is not None:
                 self.terminal_widget.add_controller(gesture)
+                logger.debug("Added context menu gesture to terminal widget")
             logger.debug("Terminal context menu setup completed successfully")
         except Exception as e:
             logger.error(f"Context menu setup failed: {e}")

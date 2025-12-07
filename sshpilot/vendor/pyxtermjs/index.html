@@ -14,6 +14,13 @@
       #terminal {
         width: 100%;
         height: 100%;
+        overflow: hidden;
+      }
+      .xterm-viewport {
+        height: 100% !important;
+      }
+      .xterm-screen {
+        height: 100% !important;
       }
     </style>
     
@@ -80,8 +87,9 @@
       term.loadAddon(new WebLinksAddon.WebLinksAddon());
       term.loadAddon(new SearchAddon.SearchAddon());
 
-      // Expose terminal globally for debugging and automated testing hooks
+      // Expose terminal and fit addon globally for debugging and automated testing hooks
       window.term = term;
+      window.fit = fit;  // Expose fit addon so we can call fit.fit() after font size changes
 
       term.open(document.getElementById("terminal"));
       fit.fit();

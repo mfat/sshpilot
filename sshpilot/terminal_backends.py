@@ -199,6 +199,19 @@ class VTETerminalBackend:
             self.vte.show()
         except Exception:
             logger.debug("Failed to show VTE widget", exc_info=True)
+        
+        # Disable VTE's built-in context menu to prevent duplication with our custom menu
+        try:
+            if hasattr(self.vte, "connect"):
+                def _on_populate_popup(vte, menu):
+                    # Prevent VTE's default context menu from appearing
+                    # We use our own custom context menu instead
+                    menu.set_visible(False)
+                    return True
+                self.vte.connect("populate-popup", _on_populate_popup)
+                logger.debug("Disabled VTE built-in context menu")
+        except Exception as e:
+            logger.debug(f"Failed to disable VTE context menu: {e}", exc_info=True)
 
     def destroy(self) -> None:
         try:
@@ -589,6 +602,23 @@ class PyXtermTerminalBackend:
                 self.WebKit2 = WebKit2
                 self._webview = WebKit2.WebView()
                 logger.debug("Using WebKit2 4.0 (GTK3 compatible)")
+            
+            # Disable WebView's native context menu at GTK level
+            try:
+                # Add a gesture controller to intercept right-click events
+                # This prevents the WebView's native context menu from appearing
+                # We claim the event but don't show a menu - the terminal widget's gesture will handle it
+                context_gesture = Gtk.GestureClick()
+                context_gesture.set_button(Gdk.BUTTON_SECONDARY)
+                def _on_webview_right_click(gesture, n_press, x, y):
+                    # Claim the event to prevent WebView's native context menu
+                    # The terminal widget's gesture will handle showing our custom menu
+                    gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+                context_gesture.connect("pressed", _on_webview_right_click)
+                self._webview.add_controller(context_gesture)
+                logger.debug("Added gesture controller to disable WebView native context menu")
+            except Exception as e:
+                logger.debug(f"Failed to disable WebView native context menu: {e}", exc_info=True)
 
         except Exception as exc:  # pragma: no cover - optional dependency
             self.import_error = exc
@@ -618,12 +648,55 @@ class PyXtermTerminalBackend:
                 logger.debug("WebView load redirected")
             elif load_event == 3:  # WEBKIT_LOAD_COMMITTED
                 logger.debug("WebView load committed")
+                # Disable context menu early (on load-committed) to catch it before page fully loads
+                disable_context_menu_js = """
+                (function() {
+                    // Disable browser's default context menu
+                    document.addEventListener('contextmenu', function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return false;
+                    }, true);
+                    // Also disable on the terminal element if it exists
+                    if (typeof window.term !== 'undefined' && window.term.element) {
+                        window.term.element.addEventListener('contextmenu', function(e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            return false;
+                        }, true);
+                    }
+                })();
+                """
+                self._run_javascript(disable_context_menu_js)
+                logger.debug("Disabled WebView context menu (early, on load-committed)")
             elif load_event == 4:  # WEBKIT_LOAD_FINISHED
                 logger.debug("WebView load finished, applying focus and settings")
                 # Apply focus and settings after WebView is fully loaded
                 def apply_settings():
                     try:
                         logger.debug("WebView load-finished: applying focus and settings")
+                        # Disable context menu again on load-finished (in case it wasn't caught earlier)
+                        disable_context_menu_js = """
+                        (function() {
+                            // Disable browser's default context menu
+                            document.addEventListener('contextmenu', function(e) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                return false;
+                            }, true);
+                            // Also disable on the terminal element if it exists
+                            if (typeof window.term !== 'undefined' && window.term.element) {
+                                window.term.element.addEventListener('contextmenu', function(e) {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    return false;
+                                }, true);
+                            }
+                        })();
+                        """
+                        self._run_javascript(disable_context_menu_js)
+                        logger.debug("Disabled WebView context menu (on load-finished)")
+                        
                         # Just focus the WebView - HTML template handles terminal focus
                         self.widget.grab_focus()
                         
@@ -990,6 +1063,20 @@ class PyXtermTerminalBackend:
                     // Set font options (can set individually or together)
                     window.term.options.fontFamily = '{font_family_escaped}';
                     window.term.options.fontSize = {scaled_font_size};
+                    
+                    // Use setTimeout to ensure font size change is applied before fitting
+                    setTimeout(function() {{
+                        // Call fit.fit() to properly resize terminal and maintain background area
+                        // This ensures the colored background area doesn't resize incorrectly
+                        if (typeof window.fit !== 'undefined' && window.fit.fit) {{
+                            window.fit.fit();
+                            // Trigger a resize event to ensure container recalculates
+                            if (typeof window.dispatchEvent !== 'undefined') {{
+                                window.dispatchEvent(new Event('resize'));
+                            }}
+                        }}
+                    }}, 10);
+                    
                     // Force a refresh to apply the changes
                     // refresh(start: number, end: number): void
                     if (window.term.rows > 0) {{
@@ -1410,6 +1497,19 @@ class PyXtermTerminalBackend:
                         // Set new font size via xterm.js options API
                         window.term.options.fontSize = {new_font_size};
                         
+                        // Use setTimeout to ensure font size change is applied before fitting
+                        setTimeout(function() {{
+                            // Call fit.fit() to properly resize terminal and maintain background area
+                            // This ensures the colored background area doesn't resize incorrectly
+                            if (typeof window.fit !== 'undefined' && window.fit.fit) {{
+                                window.fit.fit();
+                                // Trigger a resize event to ensure container recalculates
+                                if (typeof window.dispatchEvent !== 'undefined') {{
+                                    window.dispatchEvent(new Event('resize'));
+                                }}
+                            }}
+                        }}, 10);
+                        
                         // Force a refresh to apply the changes
                         // refresh(start: number, end: number): void
                         if (window.term.rows > 0) {{
@@ -1434,6 +1534,19 @@ class PyXtermTerminalBackend:
                         
                         // Set new font size via xterm.js options API
                         window.term.options.fontSize = newSize;
+                        
+                        // Use setTimeout to ensure font size change is applied before fitting
+                        setTimeout(function() {{
+                            // Call fit.fit() to properly resize terminal and maintain background area
+                            // This ensures the colored background area doesn't resize incorrectly
+                            if (typeof window.fit !== 'undefined' && window.fit.fit) {{
+                                window.fit.fit();
+                                // Trigger a resize event to ensure container recalculates
+                                if (typeof window.dispatchEvent !== 'undefined') {{
+                                    window.dispatchEvent(new Event('resize'));
+                                }}
+                            }}
+                        }}, 10);
                         
                         // Force a refresh to apply the changes
                         if (window.term.rows > 0) {{
