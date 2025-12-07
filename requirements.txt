@@ -7,6 +7,14 @@ pycairo>=1.20.0
 # Kept for completeness; pip name may vary or be unavailable. Commented out by default.
 # libvte-gtk4-python>=0.70 ; platform_system=="Linux"
 
+# WebKit 6.0 (required for PyXterm.js backend; system dependency, not a Python package)
+# Required system packages:
+#   Debian/Ubuntu: gir1.2-webkit-6.0
+#   Fedora/RHEL/CentOS: webkitgtk6
+#   Arch Linux: webkitgtk
+#   macOS (Homebrew): webkitgtk
+# WebKit is accessed via PyGObject (gi.repository.WebKit) and must be installed as a system package.
+
 # SSH and crypto
 paramiko>=3.4
 cryptography>=42.0

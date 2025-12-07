@@ -146,7 +146,7 @@ Download the dmg file from the releases section https://github.com/mfat/sshpilot
 
 ### For development on macOS:
 ```bash
-brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwaita-icon-theme pkg-config glib graphene icu4c sshpass gtksourceview5
+brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwaita-icon-theme pkg-config glib graphene icu4c sshpass gtksourceview5 webkitgtk
 ```
 
 
@@ -198,8 +198,10 @@ sudo apt install \
   libgtk-4-1 gir1.2-gtk-4.0 \
   libadwaita-1-0 gir1.2-adw-1 \
   libvte-2.91-gtk4-0 gir1.2-vte-3.91 \
+  libgtksourceview-5-0 gir1.2-gtksource-5 \
   libsecret-1-0 gir1.2-secret-1 \
-  python3-paramiko python3-cryptography sshpass ssh-askpass
+  python3-paramiko python3-cryptography sshpass ssh-askpass \
+  gir1.2-webkit-6.0
 
 ```
 
@@ -211,8 +213,10 @@ sudo dnf install \
   python3 python3-gobject \
   gtk4 libadwaita \
   vte291-gtk4 \
+  gtksourceview5 \
   libsecret \
-  python3-paramiko python3-cryptography sshpass openssh-askpass
+  python3-paramiko python3-cryptography sshpass openssh-askpass \
+  webkitgtk6
 ```
 
 libsecret handles secure credential storage on Linux via the Secret Service API.

@@ -23,6 +23,11 @@ dependencies = [
     "keyring>=24.3",
     "psutil>=5.9.0",
 ]
+# Note: This package also requires system dependencies that must be installed separately:
+# - GTK4, libadwaita, VTE (for terminal backend)
+# - WebKit 6.0 (for PyXterm.js backend, optional but recommended)
+# - GtkSourceView 5.0, libsecret
+# See README.md or AGENTS.md for complete system dependency list.
 
 [tool.setuptools.packages.find]
 where = ["", "src"]
