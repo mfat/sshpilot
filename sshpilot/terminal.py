@@ -238,6 +238,14 @@ class TerminalWidget(Gtk.Box):
         self.terminal_widget = None
         self._is_local_shell = False
         
+        # Fullscreen state
+        self._is_fullscreen = False
+        self._fullscreen_sidebar_visible = None
+        self._fullscreen_header_visible = None
+        self._fullscreen_tab_bar_visible = None
+        self._fullscreen_css_provider = None
+        self._was_maximized = False
+        
         # Register with process manager
         process_manager.register_terminal(self)
         
@@ -539,6 +547,10 @@ class TerminalWidget(Gtk.Box):
         
         # Show overlay initially
         self._set_connecting_overlay_visible(True)
+        
+        # Setup fullscreen keyboard shortcut (F11)
+        self._setup_fullscreen_shortcut()
+        
         logger.debug("Terminal widget initialized")
 
     def _create_backend(self, preferred: Optional[str] = None) -> BaseTerminalBackend:
@@ -4173,6 +4185,245 @@ class TerminalWidget(Gtk.Box):
         if not self._is_local_terminal():
             return "SSH_TERMINAL"
         return self._job_status
+
+    def _setup_fullscreen_shortcut(self):
+        """Setup F11 keyboard shortcut for fullscreen toggle."""
+        try:
+            from gi.repository import Gdk
+            
+            # Create keyboard controller for F11
+            key_controller = Gtk.EventControllerKey()
+            key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            
+            def on_key_pressed(controller, keyval, keycode, state):
+                # F11 key
+                if keyval == Gdk.KEY_F11:
+                    self.toggle_fullscreen()
+                    return True
+                return False
+            
+            key_controller.connect('key-pressed', on_key_pressed)
+            self.add_controller(key_controller)
+            logger.debug("Fullscreen shortcut (F11) registered")
+        except Exception as e:
+            logger.debug(f"Failed to setup fullscreen shortcut: {e}", exc_info=True)
+    
+    def toggle_fullscreen(self):
+        """Toggle fullscreen mode for the terminal widget."""
+        if self._is_fullscreen:
+            self._exit_fullscreen()
+        else:
+            self._enter_fullscreen()
+    
+    def _enter_fullscreen(self):
+        """Enter fullscreen mode - hide sidebar, header bar, and tab bar."""
+        if self._is_fullscreen:
+            return
+        
+        try:
+            root = self.get_root()
+            if not root:
+                logger.debug("Cannot enter fullscreen: window not found")
+                return
+            
+            # Store current state
+            self._fullscreen_sidebar_visible = None
+            self._fullscreen_header_visible = None
+            self._fullscreen_tab_bar_visible = None
+            
+            # Store window state before going fullscreen
+            try:
+                # Check if window is maximized
+                if hasattr(root, 'is_maximized'):
+                    self._was_maximized = root.is_maximized()
+                elif hasattr(root, 'get_maximized'):
+                    self._was_maximized = root.get_maximized()
+            except Exception:
+                self._was_maximized = False
+            
+            # Hide sidebar if it exists
+            if hasattr(root, 'split_view'):
+                try:
+                    if hasattr(root.split_view, 'get_show_sidebar'):
+                        self._fullscreen_sidebar_visible = root.split_view.get_show_sidebar()
+                        root.split_view.set_show_sidebar(False)
+                    elif hasattr(root.split_view, 'get_sidebar_visible'):
+                        self._fullscreen_sidebar_visible = root.split_view.get_sidebar_visible()
+                        root.split_view.set_sidebar_visible(False)
+                except Exception as e:
+                    logger.debug(f"Failed to hide sidebar: {e}")
+            
+            # Hide header bar - it's added to ToolbarView via add_top_bar()
+            # Try multiple methods to ensure it's hidden
+            if hasattr(root, 'header_bar'):
+                try:
+                    self._fullscreen_header_visible = root.header_bar.get_visible()
+                    # Method 1: Direct visibility
+                    root.header_bar.set_visible(False)
+                    # Method 2: Also try hide() method
+                    if hasattr(root.header_bar, 'hide'):
+                        root.header_bar.hide()
+                    logger.debug("Header bar hidden for fullscreen")
+                except Exception as e:
+                    logger.debug(f"Failed to hide header bar: {e}", exc_info=True)
+            else:
+                logger.debug("header_bar attribute not found on root window")
+            
+            # Hide tab bar if it exists
+            if hasattr(root, 'tab_bar'):
+                try:
+                    self._fullscreen_tab_bar_visible = root.tab_bar.get_visible()
+                    root.tab_bar.set_visible(False)
+                    # Also try hide() method
+                    if hasattr(root.tab_bar, 'hide'):
+                        root.tab_bar.hide()
+                    logger.debug("Tab bar hidden for fullscreen")
+                except Exception as e:
+                    logger.debug(f"Failed to hide tab bar: {e}", exc_info=True)
+            else:
+                logger.debug("tab_bar attribute not found on root window")
+            
+            # Add CSS class to window for targeted hiding of header bar and tab bar
+            try:
+                root.add_css_class('terminal-fullscreen-mode')
+                logger.debug("Added terminal-fullscreen-mode CSS class to window")
+            except Exception as e:
+                logger.debug(f"Failed to add CSS class: {e}")
+            
+            # Use CSS as a fallback to hide header bar and tab bar
+            try:
+                from gi.repository import Gdk
+                display = Gdk.Display.get_default()
+                if display:
+                    css_provider = Gtk.CssProvider()
+                    css = """
+                    .terminal-fullscreen-mode headerbar {
+                        opacity: 0 !important;
+                        min-height: 0 !important;
+                        max-height: 0 !important;
+                        margin: 0 !important;
+                        padding: 0 !important;
+                    }
+                    .terminal-fullscreen-mode tabbar {
+                        opacity: 0 !important;
+                        min-height: 0 !important;
+                        max-height: 0 !important;
+                        margin: 0 !important;
+                        padding: 0 !important;
+                    }
+                    """
+                    css_provider.load_from_data(css.encode('utf-8'))
+                    Gtk.StyleContext.add_provider_for_display(
+                        display, css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                    )
+                    self._fullscreen_css_provider = css_provider
+                    logger.debug("Applied CSS to hide header bar and tab bar")
+            except Exception as e:
+                logger.debug(f"Failed to apply CSS for fullscreen: {e}")
+            
+            # Make the window fullscreen (takes up entire screen)
+            try:
+                if hasattr(root, 'fullscreen'):
+                    root.fullscreen()
+                elif hasattr(root, 'set_fullscreen'):
+                    root.set_fullscreen(True)
+                logger.debug("Window set to fullscreen")
+            except Exception as e:
+                logger.debug(f"Failed to set window fullscreen: {e}", exc_info=True)
+            
+            self._is_fullscreen = True
+            logger.debug("Entered terminal fullscreen mode")
+        except Exception as e:
+            logger.error(f"Failed to enter fullscreen: {e}", exc_info=True)
+    
+    def _exit_fullscreen(self):
+        """Exit fullscreen mode - restore sidebar, header bar, and tab bar."""
+        if not self._is_fullscreen:
+            return
+        
+        try:
+            root = self.get_root()
+            if not root:
+                logger.debug("Cannot exit fullscreen: window not found")
+                self._is_fullscreen = False
+                return
+            
+            # Restore sidebar
+            if hasattr(root, 'split_view') and self._fullscreen_sidebar_visible is not None:
+                try:
+                    if hasattr(root.split_view, 'set_show_sidebar'):
+                        root.split_view.set_show_sidebar(self._fullscreen_sidebar_visible)
+                    elif hasattr(root.split_view, 'set_sidebar_visible'):
+                        root.split_view.set_sidebar_visible(self._fullscreen_sidebar_visible)
+                except Exception as e:
+                    logger.debug(f"Failed to restore sidebar: {e}")
+            
+            # Remove CSS class from window
+            try:
+                root.remove_css_class('terminal-fullscreen-mode')
+                logger.debug("Removed terminal-fullscreen-mode CSS class from window")
+            except Exception as e:
+                logger.debug(f"Failed to remove CSS class: {e}")
+            
+            # Remove CSS provider if it was added
+            if self._fullscreen_css_provider:
+                try:
+                    from gi.repository import Gdk
+                    display = Gdk.Display.get_default()
+                    if display:
+                        Gtk.StyleContext.remove_provider_for_display(
+                            display, self._fullscreen_css_provider
+                        )
+                    self._fullscreen_css_provider = None
+                    logger.debug("Removed fullscreen CSS provider")
+                except Exception as e:
+                    logger.debug(f"Failed to remove CSS provider: {e}")
+            
+            # Restore header bar
+            if hasattr(root, 'header_bar') and self._fullscreen_header_visible is not None:
+                try:
+                    root.header_bar.set_visible(self._fullscreen_header_visible)
+                    # Also try show() method
+                    if hasattr(root.header_bar, 'show'):
+                        root.header_bar.show()
+                except Exception as e:
+                    logger.debug(f"Failed to restore header bar: {e}")
+            
+            # Restore tab bar
+            if hasattr(root, 'tab_bar') and self._fullscreen_tab_bar_visible is not None:
+                try:
+                    root.tab_bar.set_visible(self._fullscreen_tab_bar_visible)
+                    # Also try show() method
+                    if hasattr(root.tab_bar, 'show'):
+                        root.tab_bar.show()
+                except Exception as e:
+                    logger.debug(f"Failed to restore tab bar: {e}")
+            
+            # Unfullscreen the window
+            try:
+                if hasattr(root, 'unfullscreen'):
+                    root.unfullscreen()
+                elif hasattr(root, 'set_fullscreen'):
+                    root.set_fullscreen(False)
+                logger.debug("Window unfullscreen")
+            except Exception as e:
+                logger.debug(f"Failed to unfullscreen window: {e}", exc_info=True)
+            
+            # Restore maximized state if it was maximized before
+            if self._was_maximized:
+                try:
+                    if hasattr(root, 'maximize'):
+                        root.maximize()
+                    elif hasattr(root, 'set_maximized'):
+                        root.set_maximized(True)
+                except Exception as e:
+                    logger.debug(f"Failed to restore maximized state: {e}")
+            
+            self._is_fullscreen = False
+            logger.debug("Exited terminal fullscreen mode")
+        except Exception as e:
+            logger.error(f"Failed to exit fullscreen: {e}", exc_info=True)
+            self._is_fullscreen = False
 
     def has_active_job(self):
         """
