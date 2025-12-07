@@ -558,6 +558,8 @@ class PyXtermTerminalBackend:
         self._base_font_size: Optional[int] = None  # Store base font size for zoom calculations
         self._search_addon_loaded = False  # Track if search addon is loaded
         self._current_search_term: Optional[str] = None  # Current search term
+        self._current_search_is_regex: bool = False  # Whether current search is regex
+        self._current_search_case_sensitive: bool = False  # Whether current search is case sensitive
 
         # Initialize with a fallback widget
         self.widget: Gtk.Widget = Gtk.Box()
@@ -1648,44 +1650,85 @@ class PyXtermTerminalBackend:
         return
 
     def search_set_regex(self, regex: Optional[Any]) -> None:
-        """Set the search pattern for xterm.js search addon."""
+        """Set the search pattern for xterm.js search addon.
+        
+        According to xterm.js search addon API:
+        - findNext(term: string, searchOptions?: ISearchOptions): boolean
+        - ISearchOptions includes: regex, caseSensitive, wholeWord, incremental, decorations
+        """
         if not self.available or not self._webview:
             return
         
-        # Extract search term from regex or use it directly if it's a string
+        # Extract search term and options from regex or use it directly if it's a string
         search_term = None
+        is_regex = False
+        case_sensitive = True  # Default to case-sensitive
+        
         if regex is None:
             search_term = None
         elif isinstance(regex, str):
-            # For PyXterm, we pass the pattern as a string
-            # Remove (?i) prefix if present (case-insensitive flag)
+            # For PyXterm, we receive the pattern as a string
+            # Check if it has (?i) prefix (case-insensitive flag from VTE)
             search_term = regex
             if search_term.startswith("(?i)"):
                 search_term = search_term[4:]
+                case_sensitive = False
+            
+            # Detect if this is a regex pattern
+            # terminal.py does: pattern = text if regex else re.escape(text)
+            # So if regex=True, pattern has unescaped special chars
+            # If regex=False, pattern has all special chars escaped
+            # Heuristic: if pattern has unescaped regex special chars, it's likely a regex
+            import re as re_module
+            # Check for unescaped regex special characters
+            # Pattern: not preceded by backslash, followed by regex special char
+            unescaped_regex_chars = re_module.search(r'(?<!\\)[*+?|()[\]{}^$]', search_term)
+            # Also check for common regex patterns like ^ at start or $ at end
+            has_regex_anchors = search_term.startswith('^') or search_term.endswith('$')
+            
+            if unescaped_regex_chars or has_regex_anchors:
+                # Likely a regex - verify it compiles
+                try:
+                    re_module.compile(search_term)
+                    is_regex = True
+                except re_module.error:
+                    # Invalid regex, treat as literal
+                    is_regex = False
+            else:
+                # No unescaped special chars, likely a literal (escaped) pattern
+                is_regex = False
         else:
-            # For VTE regex, try to extract the pattern
+            # For VTE regex object, we can't extract the pattern easily
             # This shouldn't happen for PyXterm, but handle it gracefully
             return
         
         self._current_search_term = search_term
+        self._current_search_is_regex = is_regex
+        self._current_search_case_sensitive = case_sensitive
         
         # Ensure search addon is accessible
         self._ensure_search_addon_accessible()
         
-        # Set the search term
+        # Set the search term according to xterm.js search addon API
         if search_term is not None:
-            # Escape the search term for JavaScript
+            # Escape the search term for JavaScript string
             escaped_term = search_term.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
+            # Build search options according to ISearchOptions interface
+            search_options = {
+                'caseSensitive': case_sensitive,
+                'regex': is_regex
+            }
+            options_json = f"caseSensitive: {str(case_sensitive).lower()}, regex: {str(is_regex).lower()}"
             search_js = f"""
             (function() {{
                 if (typeof window.term !== 'undefined' && window.term.searchAddon) {{
-                    window.term.searchAddon.findNext('{escaped_term}', {{caseSensitive: false}});
+                    window.term.searchAddon.findNext('{escaped_term}', {{{options_json}}});
                 }}
             }})();
             """
             self._run_javascript(search_js)
         else:
-            # Clear search
+            # Clear search using clearDecorations() according to API
             clear_js = """
             (function() {
                 if (typeof window.term !== 'undefined' && window.term.searchAddon) {
@@ -1704,40 +1747,50 @@ class PyXtermTerminalBackend:
         self._search_addon_loaded = True
 
     def search_find_next(self) -> bool:
-        """Find next occurrence of the search term."""
+        """Find next occurrence of the search term.
+        
+        According to xterm.js search addon API:
+        - findNext(term: string, searchOptions?: ISearchOptions): boolean
+        """
         if not self.available or not self._current_search_term:
             return False
         
         self._ensure_search_addon_accessible()
         
         escaped_term = self._current_search_term.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
+        options_json = f"caseSensitive: {str(self._current_search_case_sensitive).lower()}, regex: {str(self._current_search_is_regex).lower()}"
         search_js = f"""
         (function() {{
             if (typeof window.term !== 'undefined' && window.term.searchAddon) {{
-                window.term.searchAddon.findNext('{escaped_term}', {{caseSensitive: false}});
+                window.term.searchAddon.findNext('{escaped_term}', {{{options_json}}});
             }}
         }})();
         """
         self._run_javascript(search_js)
-        return True  # Assume success (can't get return value from async JS)
+        return True  # API returns boolean, but we can't get return value from async JS
 
     def search_find_previous(self) -> bool:
-        """Find previous occurrence of the search term."""
+        """Find previous occurrence of the search term.
+        
+        According to xterm.js search addon API:
+        - findPrevious(term: string, searchOptions?: ISearchOptions): boolean
+        """
         if not self.available or not self._current_search_term:
             return False
         
         self._ensure_search_addon_accessible()
         
         escaped_term = self._current_search_term.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
+        options_json = f"caseSensitive: {str(self._current_search_case_sensitive).lower()}, regex: {str(self._current_search_is_regex).lower()}"
         search_js = f"""
         (function() {{
             if (typeof window.term !== 'undefined' && window.term.searchAddon) {{
-                window.term.searchAddon.findPrevious('{escaped_term}', {{caseSensitive: false}});
+                window.term.searchAddon.findPrevious('{escaped_term}', {{{options_json}}});
             }}
         }})();
         """
         self._run_javascript(search_js)
-        return True  # Assume success (can't get return value from async JS)
+        return True  # API returns boolean, but we can't get return value from async JS
 
     def get_child_pid(self) -> Optional[int]:
         return self._child_pid
