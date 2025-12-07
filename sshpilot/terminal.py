@@ -427,6 +427,9 @@ class TerminalWidget(Gtk.Box):
         self.terminal_stack.append(self.search_revealer)
         self.terminal_stack.append(self.overlay)
 
+        # Set up drag and drop for SCP upload
+        self._setup_drag_and_drop()
+
         # Disconnected banner with reconnect button at the bottom (separate panel below terminal)
         # Install CSS for a solid red background banner once
         try:
@@ -4629,6 +4632,144 @@ class TerminalWidget(Gtk.Box):
             logger.debug("Fullscreen banner hidden")
         except Exception as e:
             logger.debug(f"Failed to hide fullscreen banner: {e}", exc_info=True)
+    
+    def _setup_drag_and_drop(self):
+        """Set up drag and drop for SCP upload from filesystem."""
+        try:
+            # Create drop target for file drops from filesystem
+            # According to GTK4 docs, filesystem drops come as Gdk.FileList
+            # Use GObject.TYPE_NONE and set_gtypes to support multiple types
+            drop_target = Gtk.DropTarget.new(type=GObject.TYPE_NONE, actions=Gdk.DragAction.COPY)
+            drop_target.set_gtypes([Gdk.FileList, Gio.File])
+            drop_target.connect("drop", self._on_file_drop)
+            drop_target.connect("enter", self._on_drop_enter)
+            drop_target.connect("leave", self._on_drop_leave)
+            
+            # Add drop target to the overlay (works for VTE backend)
+            self.overlay.add_controller(drop_target)
+            
+            # Also add to backend widget for PyXterm (WebView)
+            if self.backend and hasattr(self.backend, 'widget'):
+                backend_widget = self.backend.widget
+                if backend_widget and backend_widget != self.overlay:
+                    # Create a separate drop target for the backend widget
+                    backend_drop_target = Gtk.DropTarget.new(type=GObject.TYPE_NONE, actions=Gdk.DragAction.COPY)
+                    backend_drop_target.set_gtypes([Gdk.FileList, Gio.File])
+                    backend_drop_target.connect("drop", self._on_file_drop)
+                    backend_drop_target.connect("enter", self._on_drop_enter)
+                    backend_drop_target.connect("leave", self._on_drop_leave)
+                    backend_widget.add_controller(backend_drop_target)
+                    logger.debug("Drag and drop support added to backend widget (PyXterm)")
+            
+            logger.debug("Drag and drop support added to terminal")
+        except Exception as e:
+            logger.error(f"Failed to set up drag and drop: {e}", exc_info=True)
+    
+    def _on_drop_enter(self, drop_target, x, y):
+        """Handle drag enter event - show visual feedback."""
+        try:
+            # Check if we have a valid connection
+            if not self.connection or not self.is_connected:
+                return Gdk.DragAction.NONE
+            
+            # Only accept drops if we have a remote connection (not local shell)
+            if self._is_local_terminal():
+                return Gdk.DragAction.NONE
+            
+            return Gdk.DragAction.COPY
+        except Exception as e:
+            logger.debug(f"Error in drop enter: {e}", exc_info=True)
+            return Gdk.DragAction.NONE
+    
+    def _on_drop_leave(self, drop_target):
+        """Handle drag leave event."""
+        pass
+    
+    def _on_file_drop(self, drop_target, value, x, y):
+        """Handle file drop event - initiate SCP upload."""
+        try:
+            # Check if we have a valid connection
+            if not self.connection or not self.is_connected:
+                logger.debug("Drop rejected: no active connection")
+                return False
+            
+            # Only accept drops for remote connections (not local shell)
+            if self._is_local_terminal():
+                logger.debug("Drop rejected: local terminal")
+                return False
+            
+            # Extract file paths from the drop value
+            file_paths = []
+            
+            # Handle GObject.Value wrapper (GTK4 may wrap the value)
+            if isinstance(value, GObject.Value):
+                # Try different methods to extract the actual value
+                extracted = None
+                for getter in ("get_object", "get_boxed", "get"):
+                    try:
+                        extracted = getattr(value, getter)()
+                        if extracted is not None:
+                            break
+                    except Exception:
+                        continue
+                if extracted is not None:
+                    value = extracted
+            
+            # Handle Gdk.FileList (standard format for filesystem drops in GTK4)
+            if isinstance(value, Gdk.FileList):
+                files = value.get_files()
+                for file in files:
+                    if isinstance(file, Gio.File):
+                        path = file.get_path()
+                        if path:
+                            file_paths.append(path)
+            # Handle single Gio.File (fallback)
+            elif isinstance(value, Gio.File):
+                path = value.get_path()
+                if path:
+                    file_paths.append(path)
+            # Handle list of Gio.File objects (fallback)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, Gio.File):
+                        path = item.get_path()
+                        if path:
+                            file_paths.append(path)
+            # Try to get path directly (might be a GFile-like object)
+            elif hasattr(value, 'get_path'):
+                try:
+                    path = value.get_path()
+                    if path:
+                        file_paths.append(path)
+                except Exception:
+                    pass
+            
+            if not file_paths:
+                logger.debug("Drop rejected: no valid file paths extracted from value type: %s", type(value))
+                return False
+            
+            # Get MainWindow instance to call SCP upload
+            root = self.get_root()
+            if not root or not hasattr(root, '_start_scp_transfer'):
+                logger.debug("Drop rejected: MainWindow not found")
+                return False
+            
+            # Use current directory (.) as destination - scp will interpret this correctly
+            destination = "."
+            
+            # Initiate SCP upload
+            logger.info(f"Initiating SCP upload for {len(file_paths)} file(s) to {destination}")
+            root._start_scp_transfer(
+                self.connection,
+                file_paths,
+                destination,
+                direction='upload'
+            )
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error handling file drop: {e}", exc_info=True)
+            return False
 
     def has_active_job(self):
         """
