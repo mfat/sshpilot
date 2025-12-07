@@ -17,3 +17,4 @@ release.sh
 io.github.mfat.sshpilot.yaml
 python3-deps.yml
 sshpilot-launcher.sh
+*.pyc
