@@ -146,8 +146,10 @@ Download the dmg file from the releases section https://github.com/mfat/sshpilot
 
 ### For development on macOS:
 ```bash
-brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwaita-icon-theme pkg-config glib graphene icu4c sshpass gtksourceview5 webkitgtk
+brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwaita-icon-theme pkg-config glib graphene icu4c sshpass gtksourceview5
 ```
+
+**Note:** `webkitgtk` is Linux-only and not available on macOS via Homebrew. The PyXterm.js backend will not be available on macOS; the application will use the VTE backend instead.
 
 
 

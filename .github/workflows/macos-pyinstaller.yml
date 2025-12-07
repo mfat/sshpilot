@@ -26,7 +26,9 @@ jobs:
           echo "=== DEBUG: Starting Homebrew dependency installation ==="
           brew update
           echo "=== DEBUG: Installing packages ==="
-          brew install python@3.13 gtk4 libadwaita vte3 gtksourceview5 adwaita-icon-theme gobject-introspection pygobject3 py3cairo create-dmg sshpass webkitgtk
+          brew install python@3.13 gtk4 libadwaita vte3 gtksourceview5 adwaita-icon-theme gobject-introspection pygobject3 py3cairo create-dmg sshpass
+          # Note: webkitgtk is Linux-only (not available on macOS via Homebrew)
+          # PyXterm.js backend will not be available on macOS builds
           echo "=== DEBUG: Linking libadwaita ==="
           brew link --overwrite libadwaita
           echo "=== DEBUG: Verifying installations ==="

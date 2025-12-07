@@ -91,7 +91,8 @@ sudo dnf install python3-gobject gtk4 libadwaita vte291-gtk4 gtksourceview5 libs
 
 ### Terminal Management
 - Use VTE for terminal display (default backend)
-- Supports PyXterm.js backend (requires WebKit 6.0 system package)
+- Supports PyXterm.js backend (requires WebKit 6.0 system package, Linux only)
+  - Note: webkitgtk is Linux-only; PyXterm.js backend not available on macOS
 - Supports both built-in terminal and external terminal options
 
 ## Debugging

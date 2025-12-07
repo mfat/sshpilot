@@ -12,7 +12,7 @@ pycairo>=1.20.0
 #   Debian/Ubuntu: gir1.2-webkit-6.0
 #   Fedora/RHEL/CentOS: webkitgtk6
 #   Arch Linux: webkitgtk
-#   macOS (Homebrew): webkitgtk
+#   macOS: NOT AVAILABLE (webkitgtk is Linux-only; PyXterm.js backend will not work on macOS)
 # WebKit is accessed via PyGObject (gi.repository.WebKit) and must be installed as a system package.
 
 # SSH and crypto
