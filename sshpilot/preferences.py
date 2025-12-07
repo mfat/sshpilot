@@ -4,6 +4,8 @@ import os
 import logging
 import subprocess
 import shutil
+import importlib
+import importlib.util
 from typing import Any, Dict, List, Optional
 
 from .platform_utils import get_config_dir, is_flatpak, is_macos
@@ -780,6 +782,40 @@ class PreferencesWindow(Gtk.Window):
             preview_group.add(preview_container)
             appearance_group.add(preview_group)
             terminal_page.add(appearance_group)
+
+            # Terminal backend selection group
+            backend_group = Adw.PreferencesGroup(title="Backend")
+            
+            # Build backend choices
+            self._backend_choice_data = self._build_backend_choices()
+            
+            # Create combo row for backend selection
+            self.backend_row = Adw.ComboRow()
+            self.backend_row.set_title("Terminal Backend")
+            self.backend_row.set_subtitle("Choose the terminal rendering backend")
+            
+            # Create model from choices
+            backend_model = Gtk.StringList()
+            for choice in self._backend_choice_data:
+                backend_model.append(choice['label'])
+            self.backend_row.set_model(backend_model)
+            
+            # Set current backend
+            current_backend = self.config.get_setting('terminal.backend', 'vte')
+            current_index = 0
+            for i, choice in enumerate(self._backend_choice_data):
+                if choice['id'] == current_backend:
+                    current_index = i
+                    break
+            self.backend_row.set_selected(current_index)
+            self._backend_last_valid_index = current_index
+            self._update_backend_row_subtitle(current_index)
+            
+            # Connect change handler
+            self.backend_row.connect('notify::selected', self._on_backend_row_changed)
+            
+            backend_group.add(self.backend_row)
+            terminal_page.add(backend_group)
 
             keyboard_group = Adw.PreferencesGroup(title="Keyboard")
 
@@ -1778,7 +1814,11 @@ class PreferencesWindow(Gtk.Window):
                 count = 0
                 for terms in parent_window.connection_to_terminals.values():
                     for terminal in terms:
-                        if hasattr(terminal, 'vte'):
+                        # Use backend abstraction instead of direct vte access
+                        if hasattr(terminal, 'backend') and terminal.backend:
+                            terminal.backend.set_font(font_desc)
+                            count += 1
+                        elif hasattr(terminal, 'vte') and terminal.vte:
                             terminal.vte.set_font(font_desc)
                             count += 1
                 logger.info(f"Applied font {font_string} to {count} terminals")
@@ -2770,6 +2810,95 @@ class PreferencesWindow(Gtk.Window):
 
         target_code = self._encoding_codes[index]
         self._update_encoding_config_if_needed(target_code)
+
+    def _detect_pyxterm_backend(self):
+        external_error: Optional[str] = None
+
+        try:
+            spec = importlib.util.find_spec('pyxtermjs')
+            if spec is None:
+                external_error = 'pyxtermjs module not found'
+            else:
+                __import__('pyxtermjs')
+                return True, None
+        except Exception as exc:
+            external_error = str(exc)
+
+        vendored_error: Optional[str] = None
+
+        try:
+            vendored_spec = importlib.util.find_spec('sshpilot.vendor.pyxtermjs')
+            if vendored_spec is not None:
+                return True, None
+            vendored_error = 'vendored pyxtermjs module not found'
+        except Exception as vendored_exc:
+            vendored_error = str(vendored_exc)
+
+        message_parts = [part for part in (external_error, vendored_error) if part]
+        if not message_parts:
+            message_parts.append('pyxtermjs backend unavailable')
+
+        return False, '; '.join(message_parts)
+
+    def _build_backend_choices(self):
+        choices = [
+            {
+                'id': 'vte',
+                'label': 'VTE (default)',
+                'description': 'Native VTE-based terminal',
+                'available': True,
+                'error': None,
+            }
+        ]
+        pyxterm_available, pyxterm_error = self._detect_pyxterm_backend()
+        if pyxterm_available:
+            choices.append(
+                {
+                    'id': 'pyxterm',
+                    'label': 'PyXterm.js',
+                    'description': 'Web-based terminal (pyxtermjs)',
+                    'available': True,
+                    'error': None,
+                }
+            )
+        else:
+            choices.append(
+                {
+                    'id': 'pyxterm',
+                    'label': 'PyXterm.js (requires pyxtermjs)',
+                    'description': 'pyxtermjs package not available',
+                    'available': False,
+                    'error': pyxterm_error,
+                }
+            )
+        return choices
+
+    def _update_backend_row_subtitle(self, index: int):
+        if not hasattr(self, 'backend_row'):
+            return
+        if 0 <= index < len(self._backend_choice_data):
+            desc = self._backend_choice_data[index].get('description')
+            if desc:
+                self.backend_row.set_subtitle(desc)
+
+    def _on_backend_row_changed(self, combo_row, _param):
+        index = combo_row.get_selected()
+        if index < 0 or index >= len(self._backend_choice_data):
+            return
+        option = self._backend_choice_data[index]
+        if not option.get('available'):
+            combo_row.set_selected(self._backend_last_valid_index)
+            logger.warning("PyXterm backend unavailable: %s", option.get('error'))
+            return
+        self._backend_last_valid_index = index
+        backend_id = option.get('id', 'vte')
+        self.config.set_setting('terminal.backend', backend_id)
+        self._update_backend_row_subtitle(index)
+        if self.parent_window and hasattr(self.parent_window, 'terminal_manager'):
+            try:
+                self.parent_window.terminal_manager.refresh_backends()
+            except Exception as exc:
+                logger.error("Failed to refresh terminal backends: %s", exc)
 
     def on_color_scheme_changed(self, combo_row, param):
         """Handle terminal color scheme change"""

@@ -21,12 +21,62 @@ class TerminalManager:
     def __init__(self, window):
         self.window = window
 
+    def _ensure_backend_alignment(self, terminal) -> None:
+        """Ensure the given terminal uses the configured backend."""
+        if not terminal or not hasattr(self.window, 'config'):
+            return
+        desired = self.window.config.get_setting('terminal.backend', 'vte')
+        getter = getattr(terminal, 'get_backend_name', None)
+        current = getter() if callable(getter) else 'vte'
+        if isinstance(desired, str) and isinstance(current, str):
+            if current.lower() == (desired or 'vte').lower():
+                return
+        aligner = getattr(terminal, 'ensure_backend', None)
+        if callable(aligner):
+            try:
+                aligner(desired)
+            except Exception:
+                logger.error("Failed to align terminal backend", exc_info=True)
+
+    def refresh_backends(self) -> None:
+        """Ensure all existing terminals use the configured backend."""
+        seen = set()
+        collections = []
+        connection_terms = getattr(self.window, 'connection_to_terminals', None)
+        if isinstance(connection_terms, dict):
+            collections.extend(connection_terms.values())
+        active = getattr(self.window, 'active_terminals', None)
+        if isinstance(active, dict):
+            collections.append(active.values())
+        for group in collections:
+            for term in list(group):
+                if term in seen:
+                    continue
+                self._ensure_backend_alignment(term)
+                seen.add(term)
+        tab_view = getattr(self.window, 'tab_view', None)
+        if tab_view is not None and hasattr(tab_view, 'get_n_pages'):
+            try:
+                for index in range(tab_view.get_n_pages()):
+                    page = tab_view.get_nth_page(index)
+                    if page is None:
+                        continue
+                    term = page.get_child()
+                    if term is None or term in seen:
+                        continue
+                    self._ensure_backend_alignment(term)
+                    seen.add(term)
+            except Exception:
+                logger.debug("Failed to iterate tab view while refreshing backends", exc_info=True)
+
     # Connecting/disconnecting hosts
     def connect_to_host(self, connection, force_new: bool = False):
         window = self.window
+        group_color = self._resolve_group_color(connection)
         if not force_new:
             if connection in window.active_terminals:
                 terminal = window.active_terminals[connection]
+                self._ensure_backend_alignment(terminal)
                 page = window.tab_view.get_page(terminal)
                 if page is not None:
                     window.tab_view.set_selected_page(page)
@@ -40,6 +90,7 @@ class TerminalManager:
             for t in reversed(existing_terms):
                 page = window.tab_view.get_page(t)
                 if page is not None:
+                    self._ensure_backend_alignment(t)
                     window.active_terminals[connection] = t
                     window.tab_view.set_selected_page(page)
                     return
@@ -133,7 +184,10 @@ class TerminalManager:
                         logger.error(f"Failed to prepare SSH command: {prep_err}")
 
                 terminal.apply_theme()
-                terminal.vte.queue_draw()
+                if terminal.backend:
+                    terminal.backend.queue_draw()
+                elif hasattr(terminal, 'vte') and terminal.vte:
+                    terminal.vte.queue_draw()
                 if not terminal._connect_ssh():
                     logger.error('Failed to establish SSH connection')
                     _cleanup_failed_terminal()
@@ -459,13 +513,19 @@ class TerminalManager:
             window.active_terminals[local_connection] = terminal_widget
 
             GLib.idle_add(terminal_widget.show)
-            GLib.idle_add(terminal_widget.vte.show)
+            # Show the terminal widget (backend-agnostic)
+            if hasattr(terminal_widget, 'terminal_widget') and terminal_widget.terminal_widget:
+                GLib.idle_add(terminal_widget.terminal_widget.show)
+            elif hasattr(terminal_widget, 'vte') and terminal_widget.vte:
+                GLib.idle_add(terminal_widget.vte.show)
 
             def _focus_local_terminal():
                 try:
                     if hasattr(terminal_widget, 'get_mapped') and not terminal_widget.get_mapped():
                         return
-                    if hasattr(terminal_widget, 'vte') and hasattr(terminal_widget.vte, 'grab_focus'):
+                    if hasattr(terminal_widget, 'backend') and terminal_widget.backend:
+                        terminal_widget.backend.grab_focus()
+                    elif hasattr(terminal_widget, 'vte') and hasattr(terminal_widget.vte, 'grab_focus'):
                         terminal_widget.vte.grab_focus()
                     elif hasattr(terminal_widget, 'grab_focus'):
                         terminal_widget.grab_focus()
@@ -503,7 +563,7 @@ class TerminalManager:
             if page is None:
                 continue
             terminal_widget = page.get_child()
-            if terminal_widget is None or not hasattr(terminal_widget, 'vte'):
+            if terminal_widget is None or not (hasattr(terminal_widget, 'backend') or hasattr(terminal_widget, 'vte')):
                 continue
             if hasattr(terminal_widget, 'connection'):
                 if (hasattr(terminal_widget.connection, 'nickname') and
@@ -512,7 +572,10 @@ class TerminalManager:
                 if not hasattr(terminal_widget.connection, 'hostname'):
                     continue
                 try:
-                    terminal_widget.vte.feed_child(cmd)
+                    if hasattr(terminal_widget, 'backend') and terminal_widget.backend:
+                        terminal_widget.backend.feed_child(cmd)
+                    elif hasattr(terminal_widget, 'vte') and terminal_widget.vte:
+                        terminal_widget.vte.feed_child(cmd)
                     sent_count += 1
                     logger.debug(
                         f"Sent command to SSH terminal: {terminal_widget.connection.nickname}")
@@ -627,7 +690,7 @@ class TerminalManager:
                 continue
                 
             terminal_widget = page.get_child()
-            if terminal_widget is None or not hasattr(terminal_widget, 'vte'):
+            if terminal_widget is None or not (hasattr(terminal_widget, 'backend') or hasattr(terminal_widget, 'vte')):
                 continue
             
             # Get connection info

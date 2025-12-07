@@ -5741,7 +5741,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 }
                 prefix = colors.get(color, '')
                 try:
-                    term_widget.vte.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
+                    if hasattr(term_widget, 'backend') and term_widget.backend:
+                        term_widget.backend.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
+                    elif hasattr(term_widget, 'vte') and term_widget.vte:
+                        term_widget.vte.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
                 except Exception:
                     pass
 
@@ -5883,26 +5886,45 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.debug(f"Main window: Environment variables count: {len(envv)}")
 
             try:
-                logger.debug("Main window: Spawning ssh-copy-id process in VTE terminal")
+                logger.debug("Main window: Spawning ssh-copy-id process in terminal")
                 logger.debug(f"Main window: Working directory: {os.path.expanduser('~') or '/'}")
                 logger.debug(f"Main window: Command: ['bash', '-lc', '{cmdline}']")
 
-                term_widget.vte.spawn_async(
-                    Vte.PtyFlags.DEFAULT,
-                    os.path.expanduser('~') or '/',
-                    ['bash', '-lc', cmdline],
-                    envv,  # <— use merged env
-                    GLib.SpawnFlags.DEFAULT,
-                    None,
-                    None,
-                    -1,
-                    None,
-                    None
-                )
+                # Convert envv to dict for backend
+                env_dict = {}
+                if envv:
+                    for env_item in envv:
+                        if '=' in env_item:
+                            key, value = env_item.split('=', 1)
+                            env_dict[key] = value
+
+                if hasattr(term_widget, 'backend') and term_widget.backend:
+                    term_widget.backend.spawn_async(
+                        argv=['bash', '-lc', cmdline],
+                        env=env_dict if env_dict else None,
+                        cwd=os.path.expanduser('~') or '/',
+                        flags=0,
+                        child_setup=None,
+                        callback=None,
+                        user_data=None
+                    )
+                elif hasattr(term_widget, 'vte') and term_widget.vte:
+                    term_widget.vte.spawn_async(
+                        Vte.PtyFlags.DEFAULT,
+                        os.path.expanduser('~') or '/',
+                        ['bash', '-lc', cmdline],
+                        envv,  # <— use merged env
+                        GLib.SpawnFlags.DEFAULT,
+                        None,
+                        None,
+                        -1,
+                        None,
+                        None
+                    )
                 logger.debug("Main window: ssh-copy-id process spawned successfully")
 
                 # Show result modal when the command finishes
-                def _on_copyid_exited(vte, status):
+                def _on_copyid_exited(widget, status):
                     logger.debug(f"Main window: ssh-copy-id process exited with raw status: {status}")
                     # Normalize exit code
                     exit_code = None
@@ -5931,14 +5953,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     error_details = None
                     if not ok:
                         try:
-                            content_result = term_widget.vte.get_text_range(
-                                0,
-                                0,
-                                -1,
-                                -1,
-                                lambda *args: True,
-                            )
-                            content = content_result[0] if content_result else None
+                            # Try to get text from backend (VTE-specific for now)
+                            if hasattr(term_widget, 'vte') and term_widget.vte:
+                                content_result = term_widget.vte.get_text_range(
+                                    0,
+                                    0,
+                                    -1,
+                                    -1,
+                                    lambda *args: True,
+                                )
+                                content = content_result[0] if content_result else None
+                            else:
+                                content = None
                             if content:
                                 # Look for common error patterns in the output
                                 content_lower = content.lower()
@@ -5991,7 +6017,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     GLib.idle_add(_present_result_dialog)
 
                 try:
-                    term_widget.vte.connect('child-exited', _on_copyid_exited)
+                    # Connect child-exited signal using backend
+                    if hasattr(term_widget, 'backend') and term_widget.backend:
+                        term_widget.backend.connect_child_exited(_on_copyid_exited)
+                    elif hasattr(term_widget, 'vte') and term_widget.vte:
+                        term_widget.vte.connect('child-exited', _on_copyid_exited)
                 except Exception:
                     pass
             except Exception as e:
