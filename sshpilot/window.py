@@ -1241,7 +1241,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         self.update_banner_container = banner_overlay
         self.update_banner_dismiss_button = dismiss_button
-        main_box.append(banner_overlay)
+        # Note: Update banner will be added to content area in setup_content_area()
+        # to ensure it appears below the header bar
         
         # Create header bar
         self.header_bar = Gtk.HeaderBar()
@@ -2702,8 +2703,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             content_box = Adw.ToolbarView()
             content_box.add_top_bar(self.header_bar)
             content_box.set_content(self.content_stack)
-            # Add banner to the main content area instead of toolbar view
+            # Add banners to the main content area instead of toolbar view
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            main_box.append(self.update_banner_container)
             main_box.append(self.broadcast_banner)
             main_box.append(content_box)
             self._set_content_widget(main_box)
@@ -2712,15 +2714,17 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             content_box = Adw.ToolbarView()
             content_box.add_top_bar(self.header_bar)
             content_box.set_content(self.content_stack)
-            # Add banner to the main content area instead of toolbar view
+            # Add banners to the main content area instead of toolbar view
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            main_box.append(self.update_banner_container)
             main_box.append(self.broadcast_banner)
             main_box.append(content_box)
             self._set_content_widget(main_box)
             logger.debug("Set content widget for NavigationSplitView")
         else:
-            # For non-split views, create a vertical box to contain banner and content
+            # For non-split views, create a vertical box to contain banners and content
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            main_box.append(self.update_banner_container)
             main_box.append(self.broadcast_banner)
             main_box.append(self.content_stack)
             self._set_content_widget(main_box)
