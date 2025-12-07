@@ -5983,8 +5983,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     error_details = None
                     if not ok:
                         try:
-                            # Try to get text from backend (VTE-specific for now)
-                            if hasattr(term_widget, 'vte') and term_widget.vte:
+                            content = None
+                            backend = getattr(term_widget, 'backend', None)
+                            if backend and hasattr(backend, 'get_content'):
+                                content = backend.get_content()
+                            if content is None and hasattr(term_widget, 'vte') and term_widget.vte:
                                 content_result = term_widget.vte.get_text_range(
                                     0,
                                     0,
@@ -5993,8 +5996,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                                     lambda *args: True,
                                 )
                                 content = content_result[0] if content_result else None
-                            else:
-                                content = None
                             if content:
                                 # Look for common error patterns in the output
                                 content_lower = content.lower()
@@ -6430,6 +6431,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             envv = [f"{k}={v}" for k, v in env.items()]
             logger.debug(f"SCP: Final environment variables: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
             logger.debug(f"SCP: Command line: {cmdline}")
+            env_dict = dict(env)
 
             def _feed_colored_line(text: str, color: str):
                 colors = {
@@ -6440,27 +6442,41 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 }
                 prefix = colors.get(color, '')
                 try:
-                    term_widget.vte.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
+                    if hasattr(term_widget, 'backend') and term_widget.backend:
+                        term_widget.backend.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
+                    elif hasattr(term_widget, 'vte') and term_widget.vte:
+                        term_widget.vte.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
                 except Exception:
                     pass
 
             _feed_colored_line(start_message, 'yellow')
 
             try:
-                term_widget.vte.spawn_async(
-                    Vte.PtyFlags.DEFAULT,
-                    os.path.expanduser('~') or '/',
-                    ['bash', '-lc', cmdline],
-                    envv,
-                    GLib.SpawnFlags.DEFAULT,
-                    None,
-                    None,
-                    -1,
-                    None,
-                    None
-                )
+                if hasattr(term_widget, 'backend') and term_widget.backend:
+                    term_widget.backend.spawn_async(
+                        argv=['bash', '-lc', cmdline],
+                        env=env_dict if env_dict else None,
+                        cwd=os.path.expanduser('~') or '/',
+                        flags=0,
+                        child_setup=None,
+                        callback=None,
+                        user_data=None,
+                    )
+                elif hasattr(term_widget, 'vte') and term_widget.vte:
+                    term_widget.vte.spawn_async(
+                        Vte.PtyFlags.DEFAULT,
+                        os.path.expanduser('~') or '/',
+                        ['bash', '-lc', cmdline],
+                        envv,
+                        GLib.SpawnFlags.DEFAULT,
+                        None,
+                        None,
+                        -1,
+                        None,
+                        None
+                    )
 
-                def _on_scp_exited(vte, status):
+                def _on_scp_exited(widget, status):
                     exit_code = None
                     try:
                         if os.WIFEXITED(status):
@@ -6505,7 +6521,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     GLib.idle_add(_present_result_dialog)
 
                 try:
-                    term_widget.vte.connect('child-exited', _on_scp_exited)
+                    if hasattr(term_widget, 'backend') and term_widget.backend:
+                        term_widget.backend.connect_child_exited(_on_scp_exited)
+                    elif hasattr(term_widget, 'vte') and term_widget.vte:
+                        term_widget.vte.connect('child-exited', _on_scp_exited)
                 except Exception:
                     pass
             except Exception as e:

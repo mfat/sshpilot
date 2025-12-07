@@ -2552,9 +2552,21 @@ class TerminalWidget(Gtk.Box):
             # Create agent client
             client = AgentClient()
             
-            # Get terminal size
-            cols = self.vte.get_column_count()
-            rows = self.vte.get_row_count()
+            # Get terminal size (fallback to sensible defaults if backend lacks VTE)
+            cols = 80
+            rows = 24
+            try:
+                if getattr(self, 'vte', None) is not None:
+                    cols = self.vte.get_column_count()
+                    rows = self.vte.get_row_count()
+                elif getattr(self, 'backend', None) is not None:
+                    # Some backends may expose a widget with geometry hints
+                    widget = getattr(self.backend, 'widget', None)
+                    if widget and hasattr(widget, 'get_width_chars') and hasattr(widget, 'get_height_rows'):
+                        cols = widget.get_width_chars() or cols
+                        rows = widget.get_height_rows() or rows
+            except Exception as e:
+                logger.debug(f"Failed to determine terminal size from backend: {e}")
             
             # Working directory
             cwd = os.path.expanduser('~')
