@@ -1098,12 +1098,28 @@ class PyXtermTerminalBackend:
             logger.debug(f"Failed to set font for PyXterm backend: {e}", exc_info=True)
 
     def grab_focus(self) -> None:
+        """Give keyboard focus to the terminal widget and the xterm.js terminal inside it."""
         if not self.available:
             return
         try:
+            # First focus the WebView
             self.widget.grab_focus()
-        except Exception:
-            logger.debug("Failed to focus pyxterm widget", exc_info=True)
+            
+            # Then use JavaScript to focus the xterm.js terminal inside the WebView
+            # This ensures the terminal receives keyboard input
+            focus_script = """
+            (function() {
+                if (window.term && window.term.focus) {
+                    window.term.focus();
+                    return true;
+                }
+                return false;
+            })();
+            """
+            self._run_javascript(focus_script)
+            logger.debug("Focused PyXterm.js terminal (WebView + xterm.js)")
+        except Exception as e:
+            logger.debug(f"Failed to focus pyxterm widget: {e}", exc_info=True)
     
     def grab_focus_with_js(self) -> None:
         """Special focus method for pyxtermjs - simplified approach"""

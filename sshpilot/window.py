@@ -4566,22 +4566,32 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if terminal is None:
             return
 
-        vte_widget = getattr(terminal, 'vte', None)
-        if vte_widget is None:
-            return
-
         def _focus_attempt(_source=None) -> bool:
             try:
-                vte_widget.grab_focus()
+                # Use backend's grab_focus method if available (works for both VTE and PyXterm.js)
+                if hasattr(terminal, 'backend') and terminal.backend:
+                    terminal.backend.grab_focus()
+                # Fallback to vte for backwards compatibility
+                elif hasattr(terminal, 'vte') and terminal.vte:
+                    terminal.vte.grab_focus()
+                elif hasattr(terminal, 'grab_focus'):
+                    terminal.grab_focus()
             except Exception as focus_error:
                 logger.debug(f"Deferred terminal focus failed: {focus_error}")
             return GLib.SOURCE_REMOVE
 
+        # Try immediate focus
         try:
-            vte_widget.grab_focus()
+            if hasattr(terminal, 'backend') and terminal.backend:
+                terminal.backend.grab_focus()
+            elif hasattr(terminal, 'vte') and terminal.vte:
+                terminal.vte.grab_focus()
+            elif hasattr(terminal, 'grab_focus'):
+                terminal.grab_focus()
         except Exception:
             pass
 
+        # Schedule retries for delayed focus (useful when widget is still being created)
         GLib.idle_add(_focus_attempt, priority=GLib.PRIORITY_DEFAULT_IDLE)
         GLib.timeout_add(150, _focus_attempt)
         GLib.timeout_add(350, _focus_attempt)
@@ -4637,6 +4647,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             child = page.get_child() if hasattr(page, 'get_child') else None
             if child is None:
                 return
+            
+            # Focus the terminal when tab is selected
+            if isinstance(child, TerminalWidget):
+                # Use a small delay to ensure the widget is fully visible
+                def _focus_on_tab_switch():
+                    try:
+                        self._focus_terminal_widget(child)
+                    except Exception as e:
+                        logger.debug(f"Failed to focus terminal on tab switch: {e}")
+                GLib.timeout_add(50, _focus_on_tab_switch)
             connection = self.terminal_to_connection.get(child)
             if connection:
                 # Check if this is a local terminal
