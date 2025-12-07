@@ -2702,22 +2702,28 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if HAS_OVERLAY_SPLIT:
             content_box = Adw.ToolbarView()
             content_box.add_top_bar(self.header_bar)
-            content_box.set_content(self.content_stack)
+            # Create content wrapper with banner below header bar
+            content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            content_wrapper.append(self.update_banner_container)
+            content_wrapper.append(self.broadcast_banner)
+            content_wrapper.append(self.content_stack)
+            content_box.set_content(content_wrapper)
             # Add banners to the main content area instead of toolbar view
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            main_box.append(self.update_banner_container)
-            main_box.append(self.broadcast_banner)
             main_box.append(content_box)
             self._set_content_widget(main_box)
             logger.debug("Set content widget for OverlaySplitView")
         elif HAS_NAV_SPLIT:
             content_box = Adw.ToolbarView()
             content_box.add_top_bar(self.header_bar)
-            content_box.set_content(self.content_stack)
+            # Create content wrapper with banner below header bar
+            content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            content_wrapper.append(self.update_banner_container)
+            content_wrapper.append(self.broadcast_banner)
+            content_wrapper.append(self.content_stack)
+            content_box.set_content(content_wrapper)
             # Add banners to the main content area instead of toolbar view
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            main_box.append(self.update_banner_container)
-            main_box.append(self.broadcast_banner)
             main_box.append(content_box)
             self._set_content_widget(main_box)
             logger.debug("Set content widget for NavigationSplitView")
