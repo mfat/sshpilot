@@ -596,22 +596,27 @@ class PreferencesWindow(Gtk.Window):
         self.header_bar.set_title_widget(self.header_title_label)
 
         self.header_controls = None
-        try:
-            self.header_controls = Gtk.WindowControls.new(Gtk.PackType.END)
-        except AttributeError:
-            logger.debug("Gtk.WindowControls unavailable; skipping window buttons")
+        if not is_macos():
+            try:
+                self.header_controls = Gtk.WindowControls.new(Gtk.PackType.END)
+            except AttributeError:
+                logger.debug("Gtk.WindowControls unavailable; skipping window buttons")
         if self.header_controls:
             self.header_bar.pack_end(self.header_controls)
             self.header_bar.set_show_title_buttons(False)
         else:
             self.header_bar.set_show_title_buttons(True)
 
-        window_handle = Gtk.WindowHandle()
-        window_handle.set_child(self.header_bar)
-
         self.content_toolbar_view = Adw.ToolbarView()
-        self.content_toolbar_view.add_top_bar(window_handle)
-        self.content_toolbar_view.set_content(content_scroller)
+        if is_macos():
+            # Use the headerbar as the window titlebar on macOS to avoid a double title bar
+            self.set_titlebar(self.header_bar)
+            self.content_toolbar_view.set_content(content_scroller)
+        else:
+            window_handle = Gtk.WindowHandle()
+            window_handle.set_child(self.header_bar)
+            self.content_toolbar_view.add_top_bar(window_handle)
+            self.content_toolbar_view.set_content(content_scroller)
 
         content_page = Adw.NavigationPage.new(self.content_toolbar_view, "Preferences")
         self.navigation_split_view.set_content(content_page)
