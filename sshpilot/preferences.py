@@ -7,6 +7,7 @@ import shutil
 import importlib
 import importlib.util
 from typing import Any, Dict, List, Optional
+from gettext import gettext as _
 
 from .platform_utils import get_config_dir, is_flatpak, is_macos
 from .file_manager_integration import (
@@ -2967,19 +2968,105 @@ class PreferencesWindow(Gtk.Window):
             combo_row.set_selected(self._backend_last_valid_index)
             logger.warning("PyXterm backend unavailable: %s", option.get('error'))
             return
-        self._backend_last_valid_index = index
+        
         backend_id = option.get('id', 'vte')
+        current_backend = self.config.get_setting('terminal.backend', 'vte')
+        
+        # If backend hasn't actually changed, do nothing
+        if backend_id.lower() == current_backend.lower():
+            return
+        
+        # Check if there are any open terminal tabs
+        open_terminals = self._get_open_terminals()
+        
+        if open_terminals:
+            # Show info dialog explaining the change only applies to new terminals
+            self._show_backend_change_info(backend_id, open_terminals, index)
+        else:
+            # No open terminals, proceed with backend switch
+            self._apply_backend_change(index, backend_id)
+    
+    def _get_open_terminals(self):
+        """Get all currently open terminal tabs (connected or not)"""
+        terminals = []
+        if not self.parent_window:
+            return terminals
+        
+        # Check active_terminals
+        active_terminals = getattr(self.parent_window, 'active_terminals', {})
+        for connection, terminal in active_terminals.items():
+            if terminal:
+                terminals.append((connection, terminal))
+        
+        # Also check connection_to_terminals for any other terminals
+        connection_to_terminals = getattr(self.parent_window, 'connection_to_terminals', {})
+        for connection, terminal_list in connection_to_terminals.items():
+            for terminal in terminal_list:
+                if terminal:
+                    # Avoid duplicates
+                    if (connection, terminal) not in terminals:
+                        terminals.append((connection, terminal))
+        
+        # Check tab_view for any terminal pages
+        tab_view = getattr(self.parent_window, 'tab_view', None)
+        if tab_view is not None and hasattr(tab_view, 'get_n_pages'):
+            try:
+                for page_idx in range(tab_view.get_n_pages()):
+                    page = tab_view.get_nth_page(page_idx)
+                    if page is None:
+                        continue
+                    terminal = page.get_child()
+                    if terminal and terminal not in [t for _, t in terminals]:
+                        # Try to find the connection for this terminal
+                        terminal_to_connection = getattr(self.parent_window, 'terminal_to_connection', {})
+                        connection = terminal_to_connection.get(terminal)
+                        if connection:
+                            terminals.append((connection, terminal))
+                        else:
+                            # Terminal without connection (e.g., local terminal)
+                            terminals.append((None, terminal))
+            except Exception:
+                pass
+        
+        return terminals
+    
+    def _show_backend_change_info(self, backend_id, open_terminals, index):
+        """Show an info dialog explaining that backend change only applies to new terminals"""
+        backend_name = 'PyXterm.js' if backend_id.lower() == 'pyxterm' else 'VTE'
+        num_terminals = len(open_terminals)
+        
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text=_("Terminal Backend Change"),
+            secondary_text=_(
+                f"The terminal backend has been changed to {backend_name}.\n\n"
+                f"This change will only apply to new terminal tabs.\n"
+                f"Existing {num_terminals} terminal tab{'s' if num_terminals > 1 else ''} will continue using their current backend.\n\n"
+                "To use the new backend for existing terminals, close and reopen those tabs."
+            )
+        )
+        def _on_info_response(d, response_id):
+            d.destroy()
+            self._apply_backend_change(index, backend_id)
+        dialog.connect("response", _on_info_response)
+        dialog.present()
+    
+    def _apply_backend_change(self, index, backend_id):
+        """Apply the backend change (only affects new terminals, not existing ones)"""
+        self._backend_last_valid_index = index
         self.config.set_setting('terminal.backend', backend_id)
         self._update_backend_row_subtitle(index)
         
         # Update encoding row visibility when backend changes
         self._update_encoding_row_visibility()
         
-        if self.parent_window and hasattr(self.parent_window, 'terminal_manager'):
-            try:
-                self.parent_window.terminal_manager.refresh_backends()
-            except Exception as exc:
-                logger.error("Failed to refresh terminal backends: %s", exc)
+        # Note: We do NOT call refresh_backends() here
+        # This ensures existing terminals keep their current backend
+        # Only new terminals will use the new backend setting
+        logger.info(f"Terminal backend changed to {backend_id} (will apply to new terminals only)")
 
     def on_color_scheme_changed(self, combo_row, param):
         """Handle terminal color scheme change"""
