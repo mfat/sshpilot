@@ -245,6 +245,8 @@ class TerminalWidget(Gtk.Box):
         self._fullscreen_tab_bar_visible = None
         self._fullscreen_css_provider = None
         self._was_maximized = False
+        self._fullscreen_banner = None
+        self._fullscreen_banner_timeout_id = None
         
         # Register with process manager
         process_manager.register_terminal(self)
@@ -4230,6 +4232,8 @@ class TerminalWidget(Gtk.Box):
             self._fullscreen_sidebar_visible = None
             self._fullscreen_header_visible = None
             self._fullscreen_tab_bar_visible = None
+            self._fullscreen_update_banner_visible = None
+            self._fullscreen_broadcast_banner_visible = None
             
             # Store window state before going fullscreen
             try:
@@ -4283,6 +4287,24 @@ class TerminalWidget(Gtk.Box):
             else:
                 logger.debug("tab_bar attribute not found on root window")
             
+            # Hide update banner if it exists
+            if hasattr(root, 'update_banner_container'):
+                try:
+                    self._fullscreen_update_banner_visible = root.update_banner_container.get_visible()
+                    root.update_banner_container.set_visible(False)
+                    logger.debug("Update banner hidden for fullscreen")
+                except Exception as e:
+                    logger.debug(f"Failed to hide update banner: {e}", exc_info=True)
+            
+            # Hide broadcast banner if it exists
+            if hasattr(root, 'broadcast_banner'):
+                try:
+                    self._fullscreen_broadcast_banner_visible = root.broadcast_banner.get_visible()
+                    root.broadcast_banner.set_visible(False)
+                    logger.debug("Broadcast banner hidden for fullscreen")
+                except Exception as e:
+                    logger.debug(f"Failed to hide broadcast banner: {e}", exc_info=True)
+            
             # Add CSS class to window for targeted hiding of header bar and tab bar
             try:
                 root.add_css_class('terminal-fullscreen-mode')
@@ -4330,6 +4352,9 @@ class TerminalWidget(Gtk.Box):
                 logger.debug("Window set to fullscreen")
             except Exception as e:
                 logger.debug(f"Failed to set window fullscreen: {e}", exc_info=True)
+            
+            # Show fullscreen banner with help text
+            self._show_fullscreen_banner()
             
             self._is_fullscreen = True
             logger.debug("Entered terminal fullscreen mode")
@@ -4399,6 +4424,20 @@ class TerminalWidget(Gtk.Box):
                 except Exception as e:
                     logger.debug(f"Failed to restore tab bar: {e}")
             
+            # Restore update banner
+            if hasattr(root, 'update_banner_container') and self._fullscreen_update_banner_visible is not None:
+                try:
+                    root.update_banner_container.set_visible(self._fullscreen_update_banner_visible)
+                except Exception as e:
+                    logger.debug(f"Failed to restore update banner: {e}")
+            
+            # Restore broadcast banner
+            if hasattr(root, 'broadcast_banner') and self._fullscreen_broadcast_banner_visible is not None:
+                try:
+                    root.broadcast_banner.set_visible(self._fullscreen_broadcast_banner_visible)
+                except Exception as e:
+                    logger.debug(f"Failed to restore broadcast banner: {e}")
+            
             # Unfullscreen the window
             try:
                 if hasattr(root, 'unfullscreen'):
@@ -4419,11 +4458,101 @@ class TerminalWidget(Gtk.Box):
                 except Exception as e:
                     logger.debug(f"Failed to restore maximized state: {e}")
             
+            # Hide fullscreen banner
+            self._hide_fullscreen_banner()
+            
             self._is_fullscreen = False
             logger.debug("Exited terminal fullscreen mode")
         except Exception as e:
             logger.error(f"Failed to exit fullscreen: {e}", exc_info=True)
             self._is_fullscreen = False
+    
+    def _show_fullscreen_banner(self):
+        """Show fullscreen banner with help text and exit button."""
+        try:
+            # Create banner if it doesn't exist
+            if self._fullscreen_banner is None:
+                self._fullscreen_banner = Adw.Banner()
+                self._fullscreen_banner.set_title(_("Press F11 to exit fullscreen mode"))
+                self._fullscreen_banner.set_button_label(_("Exit Fullscreen"))
+                
+                # Set button style to "suggested" and connect click handler
+                try:
+                    # Use set_button_style if available (Adw 1.7+)
+                    if hasattr(self._fullscreen_banner, 'set_button_style'):
+                        self._fullscreen_banner.set_button_style('suggested')
+                    else:
+                        # Fallback: Apply suggested style via CSS
+                        from gi.repository import Gdk
+                        display = Gdk.Display.get_default()
+                        if display:
+                            css_provider = Gtk.CssProvider()
+                            css = """
+                            banner.fullscreen-banner button {
+                                background-color: @suggested_bg_color;
+                                color: @suggested_fg_color;
+                            }
+                            banner.fullscreen-banner button:hover {
+                                background-color: @suggested_hover_bg_color;
+                            }
+                            banner.fullscreen-banner button:active {
+                                background-color: @suggested_active_bg_color;
+                            }
+                            """
+                            css_provider.load_from_data(css.encode('utf-8'))
+                            Gtk.StyleContext.add_provider_for_display(
+                                display, css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                            )
+                            self._fullscreen_banner.add_css_class('fullscreen-banner')
+                    
+                    # Connect button click handler
+                    def on_banner_button_clicked(banner):
+                        self.toggle_fullscreen()
+                    
+                    self._fullscreen_banner.connect('button-clicked', on_banner_button_clicked)
+                except Exception as e:
+                    logger.debug(f"Failed to style fullscreen banner button: {e}", exc_info=True)
+                
+                # Add banner to overlay
+                self.overlay.add_overlay(self._fullscreen_banner)
+                self._fullscreen_banner.set_halign(Gtk.Align.CENTER)
+                self._fullscreen_banner.set_valign(Gtk.Align.START)
+                self._fullscreen_banner.set_margin_top(20)
+            
+            # Show the banner
+            self._fullscreen_banner.set_revealed(True)
+            self._fullscreen_banner.set_visible(True)
+            
+            # Auto-hide after 5 seconds
+            if self._fullscreen_banner_timeout_id:
+                GLib.source_remove(self._fullscreen_banner_timeout_id)
+            
+            def auto_hide_banner():
+                if self._is_fullscreen and self._fullscreen_banner:
+                    self._fullscreen_banner.set_revealed(False)
+                self._fullscreen_banner_timeout_id = None
+                return False
+            
+            self._fullscreen_banner_timeout_id = GLib.timeout_add_seconds(5, auto_hide_banner)
+            logger.debug("Fullscreen banner shown")
+        except Exception as e:
+            logger.debug(f"Failed to show fullscreen banner: {e}", exc_info=True)
+    
+    def _hide_fullscreen_banner(self):
+        """Hide fullscreen banner."""
+        try:
+            if self._fullscreen_banner:
+                self._fullscreen_banner.set_revealed(False)
+                self._fullscreen_banner.set_visible(False)
+            
+            # Cancel auto-hide timeout
+            if self._fullscreen_banner_timeout_id:
+                GLib.source_remove(self._fullscreen_banner_timeout_id)
+                self._fullscreen_banner_timeout_id = None
+            
+            logger.debug("Fullscreen banner hidden")
+        except Exception as e:
+            logger.debug(f"Failed to hide fullscreen banner: {e}", exc_info=True)
 
     def has_active_job(self):
         """
