@@ -1275,15 +1275,19 @@ class PyXtermTerminalBackend:
                 # Use the script as the command (no additional args needed)
                 pyxterm_cmd.extend(['--command', script_path])
             elif command[0] == 'bash' and len(command) >= 3 and command[1] == '-lc':
-                # For bash -lc commands, the third argument is the command string
-                # We need to create a script to properly execute it
+                # For bash -lc commands, the command string (3rd+ args) needs special handling
+                # because pyxtermjs uses shlex.split() which may incorrectly parse
+                # an already-shell-quoted command string. Create a script instead.
                 import tempfile
                 
-                # The command string is already shell-quoted, so we can use it directly
-                command_string = command[2] if len(command) > 2 else ''
+                # Join all arguments after '-lc' to get the full command string
+                # The command string is already shell-quoted from GLib.shell_quote,
+                # so we can use it directly in the script
+                command_string = ' '.join(command[2:]) if len(command) > 2 else ''
                 
                 # Create a temporary script that executes the command
                 script_content = '#!/bin/bash\n'
+                script_content += 'set -e\n'  # Exit on error
                 script_content += f'{command_string}\n'
                 
                 # Write to temporary file
