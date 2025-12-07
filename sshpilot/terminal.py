@@ -3860,7 +3860,8 @@ class TerminalWidget(Gtk.Box):
         self._set_search_navigation_sensitive(False)
         self._set_search_error_state(False)
         try:
-            self.vte.search_set_regex(None, 0)
+            if self.backend:
+                self.backend.search_set_regex(None)
         except Exception:
             pass
 
@@ -3883,9 +3884,19 @@ class TerminalWidget(Gtk.Box):
                 # Use inline case-insensitive flag to avoid Vte.RegexFlags dependency
                 if not case_sensitive and not pattern.startswith("(?i)"):
                     pattern = "(?i)" + pattern
-                search_regex = Vte.Regex.new_for_search(pattern, -1, 0)
-                self.vte.search_set_regex(search_regex, 0)
-                self.vte.search_set_wrap_around(True)
+                
+                # Use backend abstraction for search
+                if self.backend:
+                    # For VTE backend, create Vte.Regex
+                    if hasattr(self.backend, 'vte') and self.backend.vte:
+                        search_regex = Vte.Regex.new_for_search(pattern, -1, 0)
+                        self.backend.search_set_regex(search_regex)
+                        if hasattr(self.backend.vte, 'search_set_wrap_around'):
+                            self.backend.vte.search_set_wrap_around(True)
+                    else:
+                        # For PyXterm backend, pass the pattern as string
+                        self.backend.search_set_regex(pattern)
+                
                 self._last_search_text = text
                 self._last_search_case_sensitive = case_sensitive
                 self._last_search_regex = regex
@@ -3908,7 +3919,10 @@ class TerminalWidget(Gtk.Box):
     def _run_search(self, forward: bool = True, *, update_entry: bool = False) -> bool:
         """Execute search navigation in the requested direction."""
         try:
-            found = self.vte.search_find_next() if forward else self.vte.search_find_previous()
+            if self.backend:
+                found = self.backend.search_find_next() if forward else self.backend.search_find_previous()
+            else:
+                found = False
         except Exception as exc:
             logger.error(f"Search navigation failed: {exc}")
             found = False

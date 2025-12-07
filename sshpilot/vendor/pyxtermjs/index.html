@@ -85,7 +85,9 @@
       const fit = new FitAddon.FitAddon();
       term.loadAddon(fit);
       term.loadAddon(new WebLinksAddon.WebLinksAddon());
-      term.loadAddon(new SearchAddon.SearchAddon());
+      const searchAddon = new SearchAddon.SearchAddon();
+      term.loadAddon(searchAddon);
+      term.searchAddon = searchAddon;  // Store reference for external access
 
       // Expose terminal and fit addon globally for debugging and automated testing hooks
       window.term = term;

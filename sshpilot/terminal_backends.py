@@ -556,6 +556,8 @@ class PyXtermTerminalBackend:
         self._temp_script_path: Optional[str] = None
         self._font_scale: float = 1.0
         self._base_font_size: Optional[int] = None  # Store base font size for zoom calculations
+        self._search_addon_loaded = False  # Track if search addon is loaded
+        self._current_search_term: Optional[str] = None  # Current search term
 
         # Initialize with a fallback widget
         self.widget: Gtk.Widget = Gtk.Box()
@@ -1646,14 +1648,96 @@ class PyXtermTerminalBackend:
         return
 
     def search_set_regex(self, regex: Optional[Any]) -> None:
-        # Search is handled by the web component.
-        return
+        """Set the search pattern for xterm.js search addon."""
+        if not self.available or not self._webview:
+            return
+        
+        # Extract search term from regex or use it directly if it's a string
+        search_term = None
+        if regex is None:
+            search_term = None
+        elif isinstance(regex, str):
+            # For PyXterm, we pass the pattern as a string
+            # Remove (?i) prefix if present (case-insensitive flag)
+            search_term = regex
+            if search_term.startswith("(?i)"):
+                search_term = search_term[4:]
+        else:
+            # For VTE regex, try to extract the pattern
+            # This shouldn't happen for PyXterm, but handle it gracefully
+            return
+        
+        self._current_search_term = search_term
+        
+        # Ensure search addon is accessible
+        self._ensure_search_addon_accessible()
+        
+        # Set the search term
+        if search_term is not None:
+            # Escape the search term for JavaScript
+            escaped_term = search_term.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
+            search_js = f"""
+            (function() {{
+                if (typeof window.term !== 'undefined' && window.term.searchAddon) {{
+                    window.term.searchAddon.findNext('{escaped_term}', {{caseSensitive: false}});
+                }}
+            }})();
+            """
+            self._run_javascript(search_js)
+        else:
+            # Clear search
+            clear_js = """
+            (function() {
+                if (typeof window.term !== 'undefined' && window.term.searchAddon) {
+                    window.term.searchAddon.clearDecorations();
+                }
+            })();
+            """
+            self._run_javascript(clear_js)
+
+    def _ensure_search_addon_accessible(self) -> None:
+        """Ensure the search addon is accessible via window.term.searchAddon."""
+        if self._search_addon_loaded or not self.available:
+            return
+        # The search addon is now stored in the template, so it should be accessible
+        # Mark as loaded (we'll check availability in the search methods)
+        self._search_addon_loaded = True
 
     def search_find_next(self) -> bool:
-        return False
+        """Find next occurrence of the search term."""
+        if not self.available or not self._current_search_term:
+            return False
+        
+        self._ensure_search_addon_accessible()
+        
+        escaped_term = self._current_search_term.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
+        search_js = f"""
+        (function() {{
+            if (typeof window.term !== 'undefined' && window.term.searchAddon) {{
+                window.term.searchAddon.findNext('{escaped_term}', {{caseSensitive: false}});
+            }}
+        }})();
+        """
+        self._run_javascript(search_js)
+        return True  # Assume success (can't get return value from async JS)
 
     def search_find_previous(self) -> bool:
-        return False
+        """Find previous occurrence of the search term."""
+        if not self.available or not self._current_search_term:
+            return False
+        
+        self._ensure_search_addon_accessible()
+        
+        escaped_term = self._current_search_term.replace('\\', '\\\\').replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
+        search_js = f"""
+        (function() {{
+            if (typeof window.term !== 'undefined' && window.term.searchAddon) {{
+                window.term.searchAddon.findPrevious('{escaped_term}', {{caseSensitive: false}});
+            }}
+        }})();
+        """
+        self._run_javascript(search_js)
+        return True  # Assume success (can't get return value from async JS)
 
     def get_child_pid(self) -> Optional[int]:
         return self._child_pid
