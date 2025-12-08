@@ -319,6 +319,9 @@ def list_remote_files(
     extra_ssh_opts: Optional[List[str]] = None,
     use_publickey: bool = False,
     inherit_env: Optional[Dict[str, str]] = None,
+    saved_passphrase: Optional[str] = None,
+    keyfile: Optional[str] = None,
+    key_mode: Optional[int] = None,
 ) -> Tuple[List[Tuple[str, bool]], Optional[str]]:
     """List remote files via SSH for the provided path.
 
@@ -344,8 +347,59 @@ def list_remote_files(
 
     env = (inherit_env or os.environ).copy()
     
-    # Only remove askpass environment if it wasn't inherited (e.g., when identity agent is disabled)
-    if not (inherit_env and inherit_env.get('SSH_ASKPASS_REQUIRE')):
+    # Set up askpass environment if we have a saved passphrase
+    passphrase_auth = bool(saved_passphrase) and not password
+    has_inherited_askpass = bool(inherit_env and inherit_env.get('SSH_ASKPASS_REQUIRE'))
+    
+    if passphrase_auth:
+        try:
+            from .askpass_utils import (
+                get_ssh_env_with_forced_askpass,
+                get_scp_ssh_options,
+            )
+        except Exception:
+            get_ssh_env_with_forced_askpass = None  # type: ignore
+            get_scp_ssh_options = None  # type: ignore
+
+        if get_ssh_env_with_forced_askpass is not None:
+            try:
+                askpass_env = get_ssh_env_with_forced_askpass()
+                if isinstance(askpass_env, dict):
+                    env.update(askpass_env)
+            except Exception:
+                logger.debug('SCP: Unable to initialize askpass environment', exc_info=True)
+
+        if keyfile and '-i' not in (extra_ssh_opts or []):
+            if extra_ssh_opts is None:
+                extra_ssh_opts = []
+            extra_ssh_opts.extend(['-i', keyfile])
+
+        if key_mode == 1 and extra_ssh_opts and 'IdentitiesOnly=yes' not in ' '.join(extra_ssh_opts):
+            if extra_ssh_opts is None:
+                extra_ssh_opts = []
+            extra_ssh_opts.extend(['-o', 'IdentitiesOnly=yes'])
+
+        if get_scp_ssh_options is not None:
+            try:
+                passphrase_opts = list(get_scp_ssh_options())
+            except Exception:
+                passphrase_opts = []
+            if extra_ssh_opts is None:
+                extra_ssh_opts = []
+            for idx in range(0, len(passphrase_opts) - 1, 2):
+                flag = passphrase_opts[idx]
+                value = passphrase_opts[idx + 1]
+                if not flag or not value:
+                    continue
+                already = False
+                for opt_idx in range(0, len(extra_ssh_opts) - 1, 2):
+                    if extra_ssh_opts[opt_idx] == flag and extra_ssh_opts[opt_idx + 1] == value:
+                        already = True
+                        break
+                if not already:
+                    extra_ssh_opts.extend([flag, value])
+    elif not has_inherited_askpass:
+        # Only remove askpass environment if it wasn't inherited (e.g., when identity agent is disabled)
         env.pop('SSH_ASKPASS', None)
         env.pop('SSH_ASKPASS_REQUIRE', None)
 
@@ -5798,6 +5852,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         extra_ssh_opts=ssh_extra_opts,
                         use_publickey=use_publickey_with_password,
                         inherit_env=env_for_list,
+                        saved_passphrase=session_passphrase,
+                        keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
+                        key_mode=profile.key_mode,
                     )
 
                     def _update():
