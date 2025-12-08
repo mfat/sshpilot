@@ -550,6 +550,127 @@ def download_file(
         return False
 
 
+def _show_password_passphrase_dialog(
+    parent_window,
+    prompt_type: str = "password",
+    display_name: str = "",
+    key_path: Optional[str] = None,
+) -> Optional[str]:
+    """Show a graphical password or passphrase dialog.
+    
+    Parameters
+    ----------
+    parent_window : Gtk.Window
+        Parent window for the dialog
+    prompt_type : str
+        Either "password" or "passphrase"
+    display_name : str
+        Display name for the connection (e.g., "user@host")
+    key_path : Optional[str]
+        Path to the key file (for passphrase prompts)
+    
+    Returns
+    -------
+    Optional[str]
+        The entered password/passphrase, or None if cancelled
+    """
+    password_result = [None]  # Use list to allow modification in nested function
+    main_loop = GLib.MainLoop()
+    
+    # Determine dialog heading and body text
+    if prompt_type == "passphrase":
+        heading = _("Passphrase Required")
+        if key_path:
+            key_name = os.path.basename(key_path)
+            body = _("Please enter the passphrase for key {key_name}:").format(key_name=key_name)
+        else:
+            body = _("Please enter your passphrase:")
+        placeholder = _("Passphrase")
+    else:
+        heading = _("Password Required")
+        if display_name:
+            body = _("Please enter your password for {display_name}:").format(display_name=display_name)
+        else:
+            body = _("Please enter your password:")
+        placeholder = _("Password")
+    
+    # Create password/passphrase dialog
+    dialog = Adw.MessageDialog(
+        transient_for=parent_window,
+        modal=True,
+        heading=heading,
+        body=body,
+    )
+    
+    # Add password entry
+    password_entry = Gtk.PasswordEntry()
+    password_entry.set_property("placeholder-text", placeholder)
+    password_entry.set_margin_top(12)
+    password_entry.set_margin_bottom(12)
+    password_entry.set_margin_start(12)
+    password_entry.set_margin_end(12)
+    
+    # Add entry to dialog's extra child area
+    dialog.set_extra_child(password_entry)
+    
+    # Add responses
+    dialog.add_response("cancel", _("Cancel"))
+    dialog.add_response("ok", _("OK"))
+    dialog.set_default_response("ok")
+    dialog.set_close_response("cancel")
+    
+    # Handle Enter key - try multiple approaches for maximum compatibility
+    def on_entry_activate(_entry):
+        """Handle Enter key press in password entry"""
+        dialog.emit("response", "ok")
+    
+    # Try to set activates-default property (works for Gtk.Entry)
+    try:
+        password_entry.set_property("activates-default", True)
+    except (TypeError, AttributeError):
+        pass
+    
+    # Also connect to activate signal as fallback
+    try:
+        password_entry.connect("activate", on_entry_activate)
+    except (TypeError, AttributeError):
+        # Fallback to key controller if activate signal is not available
+        key_controller = Gtk.EventControllerKey()
+        def on_key_pressed(_controller, keyval, _keycode, _state):
+            if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+                dialog.emit("response", "ok")
+                return True
+            return False
+        key_controller.connect("key-pressed", on_key_pressed)
+        password_entry.add_controller(key_controller)
+    
+    # Focus password entry when dialog is shown
+    def on_dialog_shown(_dialog):
+        password_entry.grab_focus()
+    dialog.connect("notify::visible", lambda d, _: on_dialog_shown(d) if d.get_visible() else None)
+    
+    def on_response(_dialog, response: str) -> None:
+        if response == "ok":
+            entered_password = password_entry.get_text()
+            if entered_password:
+                password_result[0] = entered_password
+            else:
+                password_result[0] = None  # Empty password treated as cancel
+        else:
+            password_result[0] = None  # User cancelled
+        dialog.destroy()
+        main_loop.quit()
+    
+    dialog.connect("response", on_response)
+    dialog.present()
+    
+    # Run main loop to wait for dialog response
+    # This blocks until the dialog is closed
+    main_loop.run()
+    
+    return password_result[0]
+
+
 def maybe_set_native_controls(header_bar: Gtk.HeaderBar, value: bool = False) -> None:
     """
     Safely set native controls on header bar, with fallback for older GTK versions.
@@ -5126,10 +5247,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             port = profile.port
 
             known_hosts_path = None
-            saved_password = None
+            saved_password = profile.saved_password
+            saved_passphrase = profile.saved_passphrase
+            # Session-level password/passphrase that can be updated via prompts
+            session_password = saved_password
+            session_passphrase = saved_passphrase
+            
             if hasattr(self, 'connection_manager') and self.connection_manager:
                 known_hosts_path = getattr(self.connection_manager, 'known_hosts_path', None)
-                saved_password = profile.saved_password
                 try:
                     if (
                         profile.key_mode in (1, 2)
@@ -5146,6 +5271,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             )
                 except Exception:
                     pass
+            
+            # Get display name for password prompts
+            display_name = profile.alias or f"{username}@{host_value}"
 
             try:
                 default_download_dir = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
@@ -5163,9 +5291,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 use_publickey_with_password = False
 
             # Set up askpass environment if identity agent is disabled
+            # Only use askpass for passphrase-protected keys, not for password authentication
             logger.debug(f"SCP Download: Checking identity_agent_disabled={profile.identity_agent_disabled}")
             logger.debug(f"SCP Download: Initial ssh_extra_opts={ssh_extra_opts}")
-            if profile.identity_agent_disabled:
+            if profile.identity_agent_disabled and not profile.prefer_password:
+                # Only set up askpass if we're not using password authentication
+                # (askpass is for passphrases, not passwords)
                 from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
                 base_env = get_ssh_env_with_forced_askpass()
                 
@@ -5192,6 +5323,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 logger.debug(f"SCP: Final ssh_extra_opts: {ssh_extra_opts}")
             else:
                 base_env = os.environ.copy()
+                # If using password authentication, ensure askpass vars are not set
+                if profile.prefer_password:
+                    base_env.pop('SSH_ASKPASS', None)
+                    base_env.pop('SSH_ASKPASS_REQUIRE', None)
+                    logger.debug("SCP Download: Using password auth - removed askpass environment")
 
             dialog = Adw.Window()
             dialog.set_transient_for(self)
@@ -5204,6 +5340,100 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 dialog.set_title(_('Download files from server'))
             except Exception:
                 pass
+            
+            # Prompt for password/passphrase if needed (similar to SCP upload flow)
+            # Check if password is needed but not available
+            if profile.prefer_password and not session_password:
+                password = _show_password_passphrase_dialog(
+                    dialog,
+                    prompt_type="password",
+                    display_name=display_name,
+                )
+                if not password:
+                    # User cancelled - close dialog and return
+                    dialog.close()
+                    return
+                session_password = password
+                # Store password for this session (but don't persist it)
+                logger.debug("SCP Download: Using prompted password for session")
+            
+            # Check if passphrase is needed but not available (for passphrase-protected keys)
+            # First, check if the key actually requires a passphrase
+            key_requires_passphrase = False
+            if profile.keyfile_ok and profile.keyfile_expanded:
+                # Use ssh-keygen to check if the key is protected
+                # Try to extract public key without passphrase
+                # If it fails with passphrase-related error, key is protected
+                try:
+                    result = subprocess.run(
+                        ['ssh-keygen', '-y', '-f', profile.keyfile_expanded, '-P', ''],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    stderr_lower = (result.stderr or '').lower()
+                    passphrase_hints = (
+                        'incorrect passphrase',
+                        'passphrase is required',
+                        'passphrase required',
+                        'no passphrase supplied',
+                        'bad passphrase',
+                    )
+                    if result.returncode != 0 and any(hint in stderr_lower for hint in passphrase_hints):
+                        key_requires_passphrase = True
+                        logger.debug(f"SCP Download: Key {profile.keyfile_expanded} requires passphrase")
+                except Exception as exc:
+                    logger.debug(f"SCP Download: Could not check if key requires passphrase: {exc}")
+                    # If we can't check, don't assume it needs a passphrase
+            
+            # Prompt if:
+            # 1. Key actually requires a passphrase
+            # 2. Key file is valid (keyfile_ok)
+            # 3. No passphrase in session (not session_passphrase)
+            # 4. Either:
+            #    a. Identity agent is NOT disabled (normal case), OR
+            #    b. Identity agent IS disabled BUT no passphrase is stored (askpass can't get it)
+            should_prompt_for_passphrase = False
+            if key_requires_passphrase and profile.keyfile_ok and not session_passphrase:
+                if not profile.identity_agent_disabled:
+                    # Normal case: identity agent enabled, prompt if no passphrase
+                    should_prompt_for_passphrase = True
+                else:
+                    # Identity agent disabled: check if passphrase is available in storage
+                    # If not available, we need to prompt for it
+                    from .askpass_utils import lookup_passphrase
+                    stored_passphrase = ""
+                    if profile.keyfile_expanded:
+                        try:
+                            stored_passphrase = lookup_passphrase(profile.keyfile_expanded)
+                        except Exception:
+                            pass
+                    if not stored_passphrase:
+                        # No passphrase in storage - need to prompt
+                        should_prompt_for_passphrase = True
+                        logger.debug("SCP Download: Identity agent disabled but no stored passphrase - will prompt")
+            
+            if should_prompt_for_passphrase:
+                passphrase = _show_password_passphrase_dialog(
+                    dialog,
+                    prompt_type="passphrase",
+                    display_name=display_name,
+                    key_path=profile.keyfile_expanded,
+                )
+                if not passphrase:
+                    # User cancelled - close dialog and return
+                    dialog.close()
+                    return
+                session_passphrase = passphrase
+                # Try to store the passphrase for this session
+                if hasattr(self, 'connection_manager') and self.connection_manager:
+                    try:
+                        self.connection_manager.store_key_passphrase(
+                            profile.keyfile_expanded, passphrase
+                        )
+                        logger.debug("SCP Download: Stored passphrase for session")
+                    except Exception:
+                        pass
 
             header = Adw.HeaderBar()
             title_label = Gtk.Label(label=_('Download files'))
@@ -5446,6 +5676,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 is_directory = bool(getattr(selected_row, 'remote_is_dir', False))
 
                 def _worker():
+                    # If using password authentication, strip askpass environment
+                    # (askpass is only for passphrases, not passwords)
+                    env_for_download = base_env.copy()
+                    if session_password:
+                        env_for_download.pop('SSH_ASKPASS', None)
+                        env_for_download.pop('SSH_ASKPASS_REQUIRE', None)
+                        logger.debug("SCP Download: Using password - removed askpass from environment")
+                    
                     success = download_file(
                         host_value,
                         username,
@@ -5453,12 +5691,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         str(destination_dir),
                         recursive=is_directory,
                         port=port,
-                        password=saved_password,
+                        password=session_password,
                         known_hosts_path=known_hosts_path,
                         extra_ssh_opts=ssh_extra_opts,
                         use_publickey=use_publickey_with_password,
-                        inherit_env=base_env,
-                        saved_passphrase=profile.saved_passphrase,
+                        inherit_env=env_for_download,
+                        saved_passphrase=session_passphrase,
                         keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
                         key_mode=profile.key_mode,
                     )
@@ -5542,16 +5780,24 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 download_button.set_sensitive(False)
 
                 def _worker():
+                    # If using password authentication, strip askpass environment
+                    # (askpass is only for passphrases, not passwords)
+                    env_for_list = base_env.copy()
+                    if session_password:
+                        env_for_list.pop('SSH_ASKPASS', None)
+                        env_for_list.pop('SSH_ASKPASS_REQUIRE', None)
+                        logger.debug("SCP Download: Using password - removed askpass from environment")
+                    
                     files, error_message = list_remote_files(
                         host_value,
                         username,
                         directory,
                         port=port,
-                        password=saved_password,
+                        password=session_password,
                         known_hosts_path=known_hosts_path,
                         extra_ssh_opts=ssh_extra_opts,
                         use_publickey=use_publickey_with_password,
-                        inherit_env=base_env,
+                        inherit_env=env_for_list,
                     )
 
                     def _update():
