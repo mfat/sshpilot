@@ -58,7 +58,6 @@ def _build_args(monkeypatch, tmp_path, key_mode):
         key_select_mode=key_mode,
         auth_method=2,
         port=22,
-        add_keys_to_agent=True,
     )
 
     dummy_window = _DummyWindow()
@@ -104,7 +103,6 @@ def test_build_scp_argv_skips_key_prep_when_identity_agent_disabled(monkeypatch,
         auth_method=2,
         port=22,
         identity_agent_disabled=True,
-        add_keys_to_agent=True,
     )
 
     dummy_window = _DummyWindow()

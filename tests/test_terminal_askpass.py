@@ -7,36 +7,14 @@ class DummyVte:
         self.last_env_list = None
         self.spawn_calls = []
 
-    def spawn_async(self, *args, **kwargs):
-        env_list = None
-        if 'env' in kwargs and isinstance(kwargs.get('env'), dict):
-            env_items = kwargs.get('env') or {}
-            env_list = [f"{k}={v}" for k, v in env_items.items()]
-        elif 'envv' in kwargs:
-            env_list = kwargs.get('envv')
-        elif len(args) >= 4:
-            env_list = args[3]
-        if env_list is not None:
-            self.last_env_list = list(env_list)
+    def spawn_async(self, *args):
+        # env_list is the 4th positional argument
+        if len(args) >= 4:
+            self.last_env_list = list(args[3]) if args[3] is not None else None
         self.spawn_calls.append(args)
         return None
 
     def grab_focus(self):
-        return None
-
-
-class DummyBackend:
-    def __init__(self, vte):
-        self.vte = vte
-        self.widget = vte
-
-    def spawn_async(self, *args, **kwargs):
-        return self.vte.spawn_async(*args, **kwargs)
-
-    def grab_focus(self):
-        return None
-
-    def feed(self, *_args, **_kwargs):
         return None
 
 
@@ -162,7 +140,6 @@ def test_forced_askpass_without_passphrase(monkeypatch, caplog):
     terminal._set_connecting_overlay_visible = lambda *a, **k: None
     terminal._set_disconnected_banner_visible = lambda *a, **k: None
     terminal.emit = lambda *a, **k: None
-    terminal.backend = DummyBackend(terminal.vte)
     terminal.session_id = "session-123"
     terminal.is_connected = False
     terminal._is_quitting = False
@@ -290,7 +267,6 @@ def test_forced_askpass_with_resolved_identity_passphrase(monkeypatch, caplog):
     terminal._set_connecting_overlay_visible = lambda *a, **k: None
     terminal._set_disconnected_banner_visible = lambda *a, **k: None
     terminal.emit = lambda *a, **k: None
-    terminal.backend = DummyBackend(terminal.vte)
     terminal.session_id = "session-456"
     terminal.is_connected = False
     terminal._is_quitting = False
@@ -331,7 +307,6 @@ def test_prepare_key_skipped_when_identity_agent_disabled(tmp_path):
         key_select_mode=1,
         keyfile=str(key_path),
         identity_agent_disabled=True,
-        add_keys_to_agent=True,
     )
 
     terminal.connection = connection
@@ -442,7 +417,6 @@ def test_identity_agent_disabled_with_key_auth_uses_forced_askpass(monkeypatch, 
     terminal._set_connecting_overlay_visible = lambda *a, **k: None
     terminal._set_disconnected_banner_visible = lambda *a, **k: None
     terminal.emit = lambda *a, **k: None
-    terminal.backend = DummyBackend(terminal.vte)
     terminal.session_id = "session-forced"
     terminal.is_connected = False
     terminal._is_quitting = False

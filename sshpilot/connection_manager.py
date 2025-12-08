@@ -177,9 +177,6 @@ class Connection:
         # Track IdentityAgent directives so terminals can adjust askpass behaviour
         self.identity_agent_directive: str = ''
         self.identity_agent_disabled: bool = False
-
-        # Track AddKeysToAgent directives to control when keys are added to ssh-agent
-        self.add_keys_to_agent: bool = False
         
         # Key selection mode: 0 try all, 1 specific key (IdentitiesOnly), 2 specific key (no IdentitiesOnly)
         try:
@@ -281,9 +278,8 @@ class Connection:
     ) -> List[str]:
         """Return resolved identity file paths that exist on disk for this host."""
 
-        # Reset IdentityAgent/AddKeysToAgent state before evaluating configuration
+        # Reset IdentityAgent state before evaluating configuration
         self._update_identity_agent_state(None)
-        self._update_add_keys_to_agent_state(None)
 
         candidates: List[str] = []
         seen: Set[str] = set()
@@ -310,9 +306,6 @@ class Connection:
             if effective_cfg is not None:
                 self._update_identity_agent_state(
                     effective_cfg.get('identityagent')  # type: ignore[arg-type]
-                )
-                self._update_add_keys_to_agent_state(
-                    effective_cfg.get('addkeystoagent')  # type: ignore[arg-type]
                 )
             _add_candidate(keyfile_value)
             return candidates
@@ -348,7 +341,6 @@ class Connection:
 
         cfg = effective_cfg or {}
         self._update_identity_agent_state(cfg.get('identityagent'))
-        self._update_add_keys_to_agent_state(cfg.get('addkeystoagent'))
         cfg_ids = cfg.get('identityfile') if isinstance(cfg, dict) else None
         if isinstance(cfg_ids, list):
             for value in cfg_ids:
@@ -389,31 +381,6 @@ class Connection:
                 "IdentityAgent directive disables ssh-agent; forcing askpass for this connection"
             )
 
-    def _update_add_keys_to_agent_state(
-        self, directive: Optional[Union[str, List[str]]]
-    ) -> None:
-        """Update cached AddKeysToAgent directive state for the connection."""
-
-        enabled = False
-
-        if isinstance(directive, list):
-            values = [
-                str(entry).strip()
-                for entry in directive
-                if isinstance(entry, str) and str(entry).strip()
-            ]
-        elif isinstance(directive, str):
-            stripped = directive.strip()
-            values = [stripped] if stripped else []
-        else:
-            values = []
-
-        if values:
-            final_value = values[-1].lower()
-            enabled = final_value in {'yes', 'confirm', 'ask'}
-
-        self.add_keys_to_agent = enabled
-
     @property
     def source_file(self) -> str:
         """Return path to the config file where this host is defined."""
@@ -423,7 +390,6 @@ class Connection:
         """Prepare SSH command for later use (no preflight echo)."""
         try:
             self._update_identity_agent_state(None)
-            self._update_add_keys_to_agent_state(None)
             # Reset resolved identity cache on every connect preparation
             self.resolved_identity_files = []
 
@@ -542,7 +508,6 @@ class Connection:
 
 
             self._update_identity_agent_state(effective_cfg.get('identityagent'))
-            self._update_add_keys_to_agent_state(effective_cfg.get('addkeystoagent'))
 
             # Determine final parameters, falling back to resolved config when needed
             existing_hostname = self.hostname or ''
@@ -670,7 +635,6 @@ class Connection:
         """Prepare a minimal SSH command deferring to the user's SSH configuration."""
         try:
             self._update_identity_agent_state(None)
-            self._update_add_keys_to_agent_state(None)
             # Reset resolved identity cache when preparing native command
             self.resolved_identity_files = []
 
@@ -708,7 +672,6 @@ class Connection:
                 effective_cfg = {}
 
             self._update_identity_agent_state(effective_cfg.get('identityagent'))
-            self._update_add_keys_to_agent_state(effective_cfg.get('addkeystoagent'))
 
             try:
                 from .config import Config  # avoid circular import at top level

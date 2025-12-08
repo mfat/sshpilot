@@ -165,7 +165,6 @@ class SCPConnectionProfile:
     keyfile_ok: bool
     keyfile_expanded: str
     identity_agent_disabled: bool = False
-    add_keys_to_agent: bool = False
 
 
 def _quote_remote_path_for_shell(path: str) -> str:
@@ -350,7 +349,7 @@ def list_remote_files(
     
     # Set up askpass environment if we have a keyfile (askpass will handle passphrase retrieval/prompting)
     # Check if askpass is already set up (inherited from caller)
-    has_inherited_askpass = False
+    has_inherited_askpass = bool(inherit_env and inherit_env.get('SSH_ASKPASS_REQUIRE'))
     
     # Set up askpass if we have a keyfile and not using password auth
     # The askpass script will retrieve from storage or show GUI dialog if needed
@@ -501,15 +500,7 @@ def download_file(
     ssh_extra_opts: List[str] = list(extra_ssh_opts or [])
     
     # Check if the inherited environment has askpass configured (e.g., when identity agent is disabled)
-    has_inherited_askpass = False
-
-    # Always ensure explicit key options are present when a keyfile is provided
-    if keyfile:
-        if '-i' not in ssh_extra_opts:
-            ssh_extra_opts.extend(['-i', keyfile])
-
-        if key_mode == 1 and 'IdentitiesOnly=yes' not in ' '.join(ssh_extra_opts):
-            ssh_extra_opts.extend(['-o', 'IdentitiesOnly=yes'])
+    has_inherited_askpass = bool(inherit_env and inherit_env.get('SSH_ASKPASS_REQUIRE'))
 
     # Set up askpass if we have a keyfile and not using password auth
     # The askpass script will retrieve from storage or show GUI dialog if needed
@@ -531,6 +522,12 @@ def download_file(
             except Exception:
                 logger.debug('SCP: Unable to initialize askpass environment', exc_info=True)
 
+        if keyfile and '-i' not in ssh_extra_opts:
+            ssh_extra_opts.extend(['-i', keyfile])
+
+        if key_mode == 1 and 'IdentitiesOnly=yes' not in ' '.join(ssh_extra_opts):
+            ssh_extra_opts.extend(['-o', 'IdentitiesOnly=yes'])
+
         if get_scp_ssh_options is not None:
             try:
                 passphrase_opts = list(get_scp_ssh_options())
@@ -548,12 +545,8 @@ def download_file(
                         break
                 if not already:
                     ssh_extra_opts.extend([flag, value])
-        else:
-            if 'PreferredAuthentications=publickey' not in ' '.join(ssh_extra_opts):
-                ssh_extra_opts.extend(['-o', 'PreferredAuthentications=publickey'])
-    elif not has_inherited_askpass or not keyfile:
+    elif not has_inherited_askpass:
         # Only remove askpass environment if it wasn't inherited (e.g., when identity agent is disabled)
-        # Always clear when no keyfile is in use to match default SSH prompting behaviour
         env.pop('SSH_ASKPASS', None)
         env.pop('SSH_ASKPASS_REQUIRE', None)
 
@@ -5259,10 +5252,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         identity_agent_disabled = bool(
             getattr(connection, 'identity_agent_disabled', False)
         )
-
-        add_keys_to_agent = bool(
-            getattr(connection, 'add_keys_to_agent', False)
-        )
         
         # Also check if 'identityagent none' is in the SSH options
         if not identity_agent_disabled and ssh_options:
@@ -5288,7 +5277,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             keyfile_ok=keyfile_ok,
             keyfile_expanded=expanded_keyfile if keyfile_ok else '',
             identity_agent_disabled=identity_agent_disabled,
-            add_keys_to_agent=add_keys_to_agent,
         )
 
     def _prompt_scp_download(self, connection):
@@ -6820,10 +6808,6 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     if profile.identity_agent_disabled:
                         logger.debug(
                             "SCP: IdentityAgent disabled; skipping key preload"
-                        )
-                    elif not profile.add_keys_to_agent:
-                        logger.debug(
-                            "SCP: AddKeysToAgent not enabled; skipping key preload"
                         )
                     else:
                         self.connection_manager.prepare_key_for_connection(
