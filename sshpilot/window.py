@@ -6581,7 +6581,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         ssh_extra_opts = list(profile.ssh_options)
 
         # Set up askpass environment for passphrase-protected keys
-        if saved_passphrase or profile.identity_agent_disabled:
+        # Only use get_scp_ssh_options() when we have a passphrase-protected key,
+        # NOT when password authentication is preferred (it would disable password auth)
+        if saved_passphrase or (profile.identity_agent_disabled and not profile.prefer_password):
             from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
 
             askpass_env = get_ssh_env_with_forced_askpass()
@@ -6594,11 +6596,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             else:
                 logger.debug(f"SCP: Stored askpass environment (identity agent disabled): {list(askpass_env.keys())}")
 
-            passphrase_opts = get_scp_ssh_options()
-            for idx in range(0, len(passphrase_opts), 2):
-                flag = passphrase_opts[idx]
-                value = passphrase_opts[idx + 1] if idx + 1 < len(passphrase_opts) else None
-                self._append_scp_option_pair(ssh_extra_opts, flag, value)
+            # Only add publickey-only options if we're not using password authentication
+            # get_scp_ssh_options() forces publickey-only and disables password auth
+            if not profile.prefer_password:
+                passphrase_opts = get_scp_ssh_options()
+                for idx in range(0, len(passphrase_opts), 2):
+                    flag = passphrase_opts[idx]
+                    value = passphrase_opts[idx + 1] if idx + 1 < len(passphrase_opts) else None
+                    self._append_scp_option_pair(ssh_extra_opts, flag, value)
 
         if known_hosts_path:
             ssh_extra_opts += ['-o', f'UserKnownHostsFile={known_hosts_path}']
