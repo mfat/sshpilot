@@ -1374,9 +1374,13 @@ class AsyncSFTPManager(GObject.GObject):
             logger.debug("File manager: No connection object provided")
 
         identity_agent_disabled = False
+        add_keys_to_agent = False
         if connection is not None:
             identity_agent_disabled = bool(
                 getattr(connection, "identity_agent_disabled", False)
+            )
+            add_keys_to_agent = bool(
+                getattr(connection, "add_keys_to_agent", False)
             )
 
         if (
@@ -1393,6 +1397,10 @@ class AsyncSFTPManager(GObject.GObject):
                 if identity_agent_disabled:
                     logger.debug(
                         "File manager: IdentityAgent disabled; skipping key preparation"
+                    )
+                elif not add_keys_to_agent:
+                    logger.debug(
+                        "File manager: AddKeysToAgent not enabled; skipping key preparation"
                     )
                 elif (
                     self._connection_manager is not None
