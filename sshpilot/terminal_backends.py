@@ -1233,6 +1233,7 @@ class PyXtermTerminalBackend:
             command = self._wrap_command_with_encoding(command, encoding)
         
         # Build pyxtermjs command
+        # Use -m to run the module, which will work if PYTHONPATH is set correctly
         pyxterm_cmd = [
             sys.executable,
             '-m',
@@ -1330,15 +1331,65 @@ class PyXtermTerminalBackend:
             stderr_file.close()
             
             # Ensure the subprocess can find the sshpilot module
+            # This works across all installation methods: deb, rpm, flatpak, macOS (Homebrew/DMG)
             subprocess_env = dict(env) if env else dict(os.environ)
             current_pythonpath = subprocess_env.get('PYTHONPATH', '')
-            # Get the project root (sshpilot directory)
-            project_root = os.path.dirname(os.path.dirname(__file__))
-            if project_root not in current_pythonpath:
-                if current_pythonpath:
-                    subprocess_env['PYTHONPATH'] = f"{project_root}:{current_pythonpath}"
-                else:
-                    subprocess_env['PYTHONPATH'] = project_root
+            
+            # Use platform-appropriate path separator (':' for Unix, ';' for Windows)
+            # Note: This app targets Linux/macOS, but being defensive is good practice
+            path_sep = os.pathsep
+            
+            # Get the actual location of the sshpilot module by importing it
+            # This works both in development and installed packages (deb, rpm, flatpak, macOS)
+            package_root = None
+            try:
+                import sshpilot
+                sshpilot_path = os.path.dirname(os.path.abspath(sshpilot.__file__))
+                # Get the parent directory (where sshpilot package is located)
+                # This ensures vendor subdirectory is accessible
+                # Works for:
+                # - deb/rpm: /usr/lib/python3.x/dist-packages/sshpilot -> /usr/lib/python3.x/dist-packages
+                # - flatpak: /app/lib/python3.x/site-packages/sshpilot -> /app/lib/python3.x/site-packages
+                # - macOS Homebrew: /opt/homebrew/lib/python3.x/site-packages/sshpilot -> /opt/homebrew/lib/python3.x/site-packages
+                # - macOS DMG: <bundle>/Contents/Resources/lib/python3.x/site-packages/sshpilot -> <bundle>/Contents/Resources/lib/python3.x/site-packages
+                package_root = os.path.dirname(sshpilot_path)
+                logger.debug(f"Detected sshpilot package at: {sshpilot_path}, package_root: {package_root}")
+            except Exception as e:
+                logger.debug(f"Failed to import sshpilot for path detection: {e}")
+                # Fallback: use __file__ location
+                package_root = os.path.dirname(os.path.dirname(__file__))
+                logger.debug(f"Using fallback package_root: {package_root}")
+            
+            # Also try to get the location of the vendored module directly as a cross-check
+            # This helps ensure we have the correct path even if the import method had issues
+            try:
+                if self._vendored_pyxterm:
+                    vendored_module_path = os.path.dirname(os.path.abspath(self._vendored_pyxterm.__file__))
+                    # Get the parent of vendor/pyxtermjs to get to vendor/
+                    vendor_path = os.path.dirname(vendored_module_path)
+                    # Get the parent of vendor/ to get to sshpilot/
+                    sshpilot_from_vendor = os.path.dirname(vendor_path)
+                    vendor_pyxterm_path = os.path.join(sshpilot_from_vendor, 'vendor', 'pyxtermjs')
+                    if os.path.exists(vendor_pyxterm_path):
+                        # Verify this path makes sense (has __init__.py)
+                        init_py = os.path.join(vendor_pyxterm_path, '__init__.py')
+                        if os.path.exists(init_py):
+                            package_root = sshpilot_from_vendor
+                            logger.debug(f"Verified package_root via vendored module: {package_root}")
+            except Exception as e:
+                logger.debug(f"Could not verify package_root via vendored module: {e}")
+            
+            # Add package root to PYTHONPATH if not already there
+            pythonpath_parts = current_pythonpath.split(path_sep) if current_pythonpath else []
+            if package_root and package_root not in pythonpath_parts:
+                pythonpath_parts.insert(0, package_root)
+            
+            if pythonpath_parts:
+                subprocess_env['PYTHONPATH'] = path_sep.join(pythonpath_parts)
+            
+            logger.debug(f"PyXterm server PYTHONPATH: {subprocess_env.get('PYTHONPATH', 'NOT_SET')}")
+            logger.debug(f"PyXterm server package_root: {package_root}")
+            logger.debug(f"PyXterm server command: {' '.join(pyxterm_cmd)}")
             
             popen_kwargs: dict[str, Any] = {
                 "stdout": subprocess.DEVNULL,
