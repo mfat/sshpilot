@@ -397,7 +397,7 @@ def ensure_passphrase_askpass() -> str:
     logger.debug(f"Generating askpass script at {path}")
 
     script_body = r'''#!/usr/bin/env python3
-import sys, re, os, platform, tempfile
+import sys, re, os, platform, tempfile, json
 LOG_DIR = (
     os.environ.get("SSHPILOT_ASKPASS_LOG_DIR")
     or os.environ.get("XDG_RUNTIME_DIR")
@@ -422,7 +422,9 @@ try:
     gi.require_version('Gtk', '4.0')
     gi.require_version('Adw', '1')
     gi.require_version('Gio', '2.0')
-    from gi.repository import Gtk, Adw, GLib, Gio
+    gi.require_version('Gdk', '4.0')
+    gi.require_version('GLib', '2.0')
+    from gi.repository import Gtk, Adw, GLib, Gio, Gdk
     GTK_AVAILABLE = True
 except Exception:
     GTK_AVAILABLE = False
@@ -670,12 +672,55 @@ if __name__ == "__main__":
                     pass
                 
                 passphrase_result = [None]
-                main_loop = None
                 
-                def show_dialog():
+                # Initialize Adwaita
+                Adw.init()
+                
+                # Apply theme from config file
+                try:
+                    # Get config directory (same logic as platform_utils.get_config_dir)
+                    try:
+                        config_dir = os.path.join(GLib.get_user_config_dir(), "sshpilot")
+                    except Exception:
+                        config_dir = os.path.join(os.path.expanduser("~"), ".config", "sshpilot")
+                    config_file = os.path.join(config_dir, "config.json")
+                    
+                    saved_theme = 'default'
+                    if os.path.exists(config_file):
+                        try:
+                            with open(config_file, 'r') as f:
+                                config_data = json.load(f)
+                                saved_theme = str(config_data.get('app-theme', 'default'))
+                        except Exception:
+                            pass
+                    
+                    style_manager = Adw.StyleManager.get_default()
+                    if saved_theme == 'light':
+                        style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
+                    elif saved_theme == 'dark':
+                        style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+                    else:
+                        style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+                except Exception:
+                    # If config can't be loaded, use system default
+                    style_manager = Adw.StyleManager.get_default()
+                    style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+                
+                # Initialize GTK application with Adwaita
+                app = Adw.Application.new("io.github.mfat.sshpilot.askpass", Gio.ApplicationFlags.FLAGS_NONE)
+                
+                def on_activate(app):
                     key_name = os.path.basename(key_path) if key_path else "key"
                     
+                    # Create a proper Adwaita window for styling (needed as parent for dialog)
+                    # We don't show it - just use it as a reference for proper dialog styling
+                    window = Adw.ApplicationWindow()
+                    window.set_application(app)
+                    window.set_title("SSH Pilot")
+                    # Don't call present() - window stays hidden but can be used as parent
+                    
                     dialog = Adw.MessageDialog(
+                        transient_for=window,
                         modal=True,
                         heading="Passphrase Required",
                         body=f"Please enter the passphrase for key {key_name}:",
@@ -694,31 +739,49 @@ if __name__ == "__main__":
                     dialog.set_default_response("ok")
                     dialog.set_close_response("cancel")
                     
+                    # Handle Enter key - connect activate signal
+                    def on_entry_activate(_entry):
+                        dialog.emit("response", "ok")
+                    
+                    # Set activates-default property
+                    try:
+                        password_entry.set_property("activates-default", True)
+                    except (TypeError, AttributeError):
+                        pass
+                    
+                    # Connect activate signal
+                    try:
+                        password_entry.connect("activate", on_entry_activate)
+                    except (TypeError, AttributeError):
+                        # Fallback to key controller if activate signal is not available
+                        try:
+                            key_controller = Gtk.EventControllerKey()
+                            def on_key_pressed(_controller, keyval, _keycode, _state):
+                                if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+                                    dialog.emit("response", "ok")
+                                    return True
+                                return False
+                            key_controller.connect("key-pressed", on_key_pressed)
+                            password_entry.add_controller(key_controller)
+                        except Exception:
+                            pass
+                    
                     def on_response(dialog, response_id):
                         if response_id == "ok":
                             passphrase_result[0] = password_entry.get_text()
-                        if main_loop:
-                            main_loop.quit()
+                        window.close()
+                        app.quit()
                     
                     dialog.connect("response", on_response)
+                    
+                    # Show dialog
                     dialog.present()
                     password_entry.grab_focus()
                 
-                # Initialize GTK application
-                app = Gtk.Application.new("io.github.mfat.sshpilot.askpass", Gio.ApplicationFlags.FLAGS_NONE)
-                
-                def on_activate(app):
-                    show_dialog()
-                
                 app.connect("activate", on_activate)
                 
-                # Register and activate the application
-                app.register()
-                app.activate()
-                
-                # Run main loop to show dialog
-                main_loop = GLib.MainLoop()
-                main_loop.run()
+                # Run the application (this handles registration and activation)
+                app.run(None)
                 
                 if passphrase_result[0]:
                     try:
