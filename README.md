@@ -16,6 +16,7 @@
 - [Runtime Dependencies](#runtime-dependencies)
 - [Documentation](#documentation)
 - [Telegram Channel](#telegram-channel)
+- [Third-Party Libraries](#third-party-libraries)
 - [Special Thanks](#special-thanks)
 - [Support Development](#support-development)
 
@@ -241,6 +242,12 @@ https://github.com/mfat/sshpilot/wiki
 
 ## Telegram Channel
 https://t.me/sshpilot
+
+## Third-Party Libraries
+
+SSH Pilot uses the following third-party libraries:
+
+- **[pyxtermjs](https://github.com/cs01/pyxtermjs)** - A fully functional terminal in your browser, used as an alternative terminal backend (MIT License)
 
 ## Special Thanks
 
