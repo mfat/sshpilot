@@ -6583,7 +6583,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Set up askpass environment for passphrase-protected keys
         # Only use get_scp_ssh_options() when we have a passphrase-protected key,
         # NOT when password authentication is preferred (it would disable password auth)
-        if saved_passphrase or (profile.identity_agent_disabled and not profile.prefer_password):
+        # Only set up askpass if we have a saved passphrase - this allows the askpass
+        # script to retrieve it from storage. If no saved passphrase, don't set SSH_ASKPASS
+        # so SSH will prompt interactively in the terminal.
+        if saved_passphrase:
             from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
 
             askpass_env = get_ssh_env_with_forced_askpass()
@@ -6591,10 +6594,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self._scp_askpass_env = {}
             self._scp_askpass_env.update(askpass_env)
             
-            if saved_passphrase:
-                logger.debug(f"SCP: Stored askpass environment for saved key passphrase: {list(askpass_env.keys())}")
-            else:
-                logger.debug(f"SCP: Stored askpass environment (identity agent disabled): {list(askpass_env.keys())}")
+            logger.debug(f"SCP: Stored askpass environment for saved key passphrase: {list(askpass_env.keys())}")
 
             # Only add publickey-only options if we're not using password authentication
             # get_scp_ssh_options() forces publickey-only and disables password auth
@@ -6604,6 +6604,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     flag = passphrase_opts[idx]
                     value = passphrase_opts[idx + 1] if idx + 1 < len(passphrase_opts) else None
                     self._append_scp_option_pair(ssh_extra_opts, flag, value)
+        else:
+            # No saved passphrase - don't set SSH_ASKPASS so SSH will prompt in terminal
+            logger.debug("SCP: No saved passphrase - SSH will prompt in terminal if needed")
+            # Ensure SSH_ASKPASS is not set (strip it if it was inherited)
+            if not hasattr(self, '_scp_askpass_env'):
+                self._scp_askpass_env = {}
 
         if known_hosts_path:
             ssh_extra_opts += ['-o', f'UserKnownHostsFile={known_hosts_path}']
@@ -6614,6 +6620,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         argv += ssh_extra_opts
 
         self._scp_strip_askpass = False
+        # If no saved passphrase, strip SSH_ASKPASS so SSH will prompt in terminal
+        if not saved_passphrase:
+            self._scp_strip_askpass = True
+            logger.debug("SCP: No saved passphrase - will strip SSH_ASKPASS for terminal prompt")
+        
         if profile.prefer_password or profile.combined_auth:
             if saved_password:
                 import shutil

@@ -419,6 +419,7 @@ try:
 except Exception:
     keyring = None
 
+
 # Log availability of keyring and libsecret
 try:
     with open(LOG_PATH, "a") as f:
