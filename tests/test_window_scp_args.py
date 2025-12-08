@@ -118,6 +118,49 @@ def test_build_scp_argv_skips_key_prep_when_identity_agent_disabled(monkeypatch,
     assert dummy_window.connection_manager.prepare_calls == []
 
 
+def test_build_scp_argv_only_prepares_keys_when_enabled(monkeypatch, tmp_path):
+    monkeypatch.setattr(window, 'Config', _DummyConfig)
+
+    key_path = tmp_path / 'id_test_key'
+    key_path.write_text('dummy')
+
+    connection = SimpleNamespace(
+        hostname='example.com',
+        username='alice',
+        keyfile=str(key_path),
+        key_select_mode=1,
+        auth_method=2,
+        port=22,
+        identity_agent_disabled=False,
+        add_keys_to_agent_enabled=False,
+    )
+
+    dummy_window = _DummyWindow()
+
+    window.MainWindow._build_scp_argv(
+        dummy_window,
+        connection,
+        ['local.txt'],
+        '/remote/path',
+        direction='upload',
+    )
+
+    assert dummy_window.connection_manager.prepare_calls == []
+
+    connection.add_keys_to_agent_enabled = True
+    dummy_window.connection_manager.prepare_calls.clear()
+
+    window.MainWindow._build_scp_argv(
+        dummy_window,
+        connection,
+        ['local.txt'],
+        '/remote/path',
+        direction='upload',
+    )
+
+    assert dummy_window.connection_manager.prepare_calls == [str(key_path)]
+
+
 def test_build_scp_argv_prefers_alias_and_proxy(monkeypatch, tmp_path):
     monkeypatch.setattr(window, 'Config', _DummyConfig)
 

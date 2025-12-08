@@ -307,6 +307,7 @@ def test_prepare_key_skipped_when_identity_agent_disabled(tmp_path):
         key_select_mode=1,
         keyfile=str(key_path),
         identity_agent_disabled=True,
+        add_keys_to_agent_enabled=True,
     )
 
     terminal.connection = connection
@@ -316,6 +317,11 @@ def test_prepare_key_skipped_when_identity_agent_disabled(tmp_path):
     assert prepare_calls == []
 
     connection.identity_agent_disabled = False
+    connection.add_keys_to_agent_enabled = False
+    terminal._prepare_key_for_native_mode()
+    assert prepare_calls == []
+
+    connection.add_keys_to_agent_enabled = True
     terminal._prepare_key_for_native_mode()
     assert prepare_calls == [str(key_path)]
 
