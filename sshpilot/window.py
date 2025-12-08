@@ -612,6 +612,9 @@ def _show_password_passphrase_dialog(
     prompt_type: str = "password",
     display_name: str = "",
     key_path: Optional[str] = None,
+    host: Optional[str] = None,
+    username: Optional[str] = None,
+    connection_manager: Optional[Any] = None,
 ) -> Optional[str]:
     """Show a graphical password or passphrase dialog.
     
@@ -625,6 +628,12 @@ def _show_password_passphrase_dialog(
         Display name for the connection (e.g., "user@host")
     key_path : Optional[str]
         Path to the key file (for passphrase prompts)
+    host : Optional[str]
+        Host name for storing password (for password prompts)
+    username : Optional[str]
+        Username for storing password (for password prompts)
+    connection_manager : Optional[Any]
+        Connection manager instance for storing passwords
     
     Returns
     -------
@@ -632,6 +641,7 @@ def _show_password_passphrase_dialog(
         The entered password/passphrase, or None if cancelled
     """
     password_result = [None]  # Use list to allow modification in nested function
+    store_checked = [False]  # Use list to allow modification in nested function
     main_loop = GLib.MainLoop()
     
     # Determine dialog heading and body text
@@ -643,6 +653,7 @@ def _show_password_passphrase_dialog(
         else:
             body = _("Please enter your passphrase:")
         placeholder = _("Passphrase")
+        store_label = _("Store passphrase")
     else:
         heading = _("Password Required")
         if display_name:
@@ -650,6 +661,7 @@ def _show_password_passphrase_dialog(
         else:
             body = _("Please enter your password:")
         placeholder = _("Password")
+        store_label = _("Store password")
     
     # Create password/passphrase dialog
     dialog = Adw.MessageDialog(
@@ -659,16 +671,25 @@ def _show_password_passphrase_dialog(
         body=body,
     )
     
+    # Create a container box for entry and checkbox
+    content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+    content_box.set_margin_top(12)
+    content_box.set_margin_bottom(12)
+    content_box.set_margin_start(12)
+    content_box.set_margin_end(12)
+    
     # Add password entry
     password_entry = Gtk.PasswordEntry()
     password_entry.set_property("placeholder-text", placeholder)
-    password_entry.set_margin_top(12)
-    password_entry.set_margin_bottom(12)
-    password_entry.set_margin_start(12)
-    password_entry.set_margin_end(12)
+    content_box.append(password_entry)
     
-    # Add entry to dialog's extra child area
-    dialog.set_extra_child(password_entry)
+    # Add checkbox to store password/passphrase
+    store_checkbox = Gtk.CheckButton(label=store_label)
+    store_checkbox.set_active(False)
+    content_box.append(store_checkbox)
+    
+    # Add container to dialog's extra child area
+    dialog.set_extra_child(content_box)
     
     # Add responses
     dialog.add_response("cancel", _("Cancel"))
@@ -711,6 +732,23 @@ def _show_password_passphrase_dialog(
             entered_password = password_entry.get_text()
             if entered_password:
                 password_result[0] = entered_password
+                store_checked[0] = store_checkbox.get_active()
+                
+                # Store password/passphrase if checkbox is checked
+                if store_checked[0]:
+                    if prompt_type == "passphrase" and key_path:
+                        # Store passphrase
+                        try:
+                            from .askpass_utils import store_passphrase
+                            store_passphrase(key_path, entered_password)
+                        except Exception as e:
+                            logger.debug(f"Failed to store passphrase: {e}")
+                    elif prompt_type == "password" and host and username and connection_manager:
+                        # Store password
+                        try:
+                            connection_manager.store_password(host, username, entered_password)
+                        except Exception as e:
+                            logger.debug(f"Failed to store password: {e}")
             else:
                 password_result[0] = None  # Empty password treated as cancel
         else:
@@ -5410,13 +5448,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     dialog,
                     prompt_type="password",
                     display_name=display_name,
+                    host=host_value,
+                    username=username,
+                    connection_manager=self.connection_manager if hasattr(self, 'connection_manager') else None,
                 )
                 if not password:
                     # User cancelled - close dialog and return
                     dialog.close()
                     return
                 session_password = password
-                # Store password for this session (but don't persist it)
+                # Password storage is handled in the dialog if checkbox was checked
                 logger.debug("SCP Download: Using prompted password for session")
             
             # Don't pre-prompt for passphrase - let SSH_ASKPASS handle it

@@ -112,16 +112,25 @@ def _show_password_dialog_for_mount(
         body=f"Please enter your password for {display_name}:",
     )
     
+    # Create a container box for entry and checkbox
+    content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+    content_box.set_margin_top(12)
+    content_box.set_margin_bottom(12)
+    content_box.set_margin_start(12)
+    content_box.set_margin_end(12)
+    
     # Add password entry
     password_entry = Gtk.PasswordEntry()
     password_entry.set_property("placeholder-text", "Password")
-    password_entry.set_margin_top(12)
-    password_entry.set_margin_bottom(12)
-    password_entry.set_margin_start(12)
-    password_entry.set_margin_end(12)
+    content_box.append(password_entry)
     
-    # Add entry to dialog's extra child area
-    dialog.set_extra_child(password_entry)
+    # Add checkbox to store password
+    store_checkbox = Gtk.CheckButton(label="Store password")
+    store_checkbox.set_active(False)
+    content_box.append(store_checkbox)
+    
+    # Add container to dialog's extra child area
+    dialog.set_extra_child(content_box)
     
     # Add responses
     dialog.add_response("cancel", "Cancel")
@@ -164,6 +173,13 @@ def _show_password_dialog_for_mount(
             entered_password = password_entry.get_text()
             if entered_password:
                 password_result[0] = entered_password
+                
+                # Store password if checkbox is checked
+                if store_checkbox.get_active() and connection_manager:
+                    try:
+                        connection_manager.store_password(host, user, entered_password)
+                    except Exception as e:
+                        logger.debug(f"Failed to store password: {e}")
             else:
                 password_result[0] = None  # Empty password treated as cancel
         else:

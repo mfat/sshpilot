@@ -726,13 +726,23 @@ if __name__ == "__main__":
                         body=f"Please enter the passphrase for key {key_name}:",
                     )
                     
+                    # Create a container box for entry and checkbox
+                    content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+                    content_box.set_margin_top(12)
+                    content_box.set_margin_bottom(12)
+                    content_box.set_margin_start(12)
+                    content_box.set_margin_end(12)
+                    
                     password_entry = Gtk.PasswordEntry()
                     password_entry.set_property("placeholder-text", "Passphrase")
-                    password_entry.set_margin_top(12)
-                    password_entry.set_margin_bottom(12)
-                    password_entry.set_margin_start(12)
-                    password_entry.set_margin_end(12)
-                    dialog.set_extra_child(password_entry)
+                    content_box.append(password_entry)
+                    
+                    # Add checkbox to store passphrase
+                    store_checkbox = Gtk.CheckButton(label="Store passphrase")
+                    store_checkbox.set_active(False)
+                    content_box.append(store_checkbox)
+                    
+                    dialog.set_extra_child(content_box)
                     
                     dialog.add_response("cancel", "Cancel")
                     dialog.add_response("ok", "OK")
@@ -769,6 +779,50 @@ if __name__ == "__main__":
                     def on_response(dialog, response_id):
                         if response_id == "ok":
                             passphrase_result[0] = password_entry.get_text()
+                            
+                            # Store passphrase if checkbox is checked
+                            if store_checkbox.get_active() and key_path:
+                                try:
+                                    # Normalize key path for storage
+                                    expanded = os.path.expanduser(key_path)
+                                    try:
+                                        canonical = os.path.realpath(expanded)
+                                    except Exception:
+                                        canonical = os.path.abspath(expanded)
+                                    
+                                    # Try keyring first (macOS)
+                                    if keyring and platform.system() == 'Darwin':
+                                        try:
+                                            keyring.set_password('sshPilot', canonical, passphrase_result[0])
+                                        except Exception:
+                                            pass
+                                    # Fall back to libsecret (Linux)
+                                    elif Secret is not None:
+                                        try:
+                                            schema = Secret.Schema.new("io.github.mfat.sshpilot", Secret.SchemaFlags.NONE, {
+                                                "application": Secret.SchemaAttributeType.STRING,
+                                                "type": Secret.SchemaAttributeType.STRING,
+                                                "key_path": Secret.SchemaAttributeType.STRING,
+                                                "host": Secret.SchemaAttributeType.STRING,
+                                                "username": Secret.SchemaAttributeType.STRING,
+                                            })
+                                            attributes = {
+                                                "application": "sshPilot",
+                                                "type": "key_passphrase",
+                                                "key_path": canonical,
+                                            }
+                                            Secret.password_store_sync(
+                                                schema,
+                                                attributes,
+                                                Secret.COLLECTION_DEFAULT,
+                                                f"SSH Key Passphrase: {os.path.basename(canonical)}",
+                                                passphrase_result[0],
+                                                None,
+                                            )
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
                         window.close()
                         app.quit()
                     
