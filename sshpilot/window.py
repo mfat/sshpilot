@@ -347,11 +347,13 @@ def list_remote_files(
 
     env = (inherit_env or os.environ).copy()
     
-    # Set up askpass environment if we have a saved passphrase
-    passphrase_auth = bool(saved_passphrase) and not password
+    # Set up askpass environment if we have a keyfile (askpass will handle passphrase retrieval/prompting)
+    # Check if askpass is already set up (inherited from caller)
     has_inherited_askpass = bool(inherit_env and inherit_env.get('SSH_ASKPASS_REQUIRE'))
     
-    if passphrase_auth:
+    # Set up askpass if we have a keyfile and not using password auth
+    # The askpass script will retrieve from storage or show GUI dialog if needed
+    if keyfile and not password and not has_inherited_askpass:
         try:
             from .askpass_utils import (
                 get_ssh_env_with_forced_askpass,
@@ -496,12 +498,13 @@ def download_file(
     env = (inherit_env or os.environ).copy()
 
     ssh_extra_opts: List[str] = list(extra_ssh_opts or [])
-    passphrase_auth = bool(saved_passphrase) and not password
-
+    
     # Check if the inherited environment has askpass configured (e.g., when identity agent is disabled)
     has_inherited_askpass = bool(inherit_env and inherit_env.get('SSH_ASKPASS_REQUIRE'))
 
-    if passphrase_auth:
+    # Set up askpass if we have a keyfile and not using password auth
+    # The askpass script will retrieve from storage or show GUI dialog if needed
+    if keyfile and not password and not has_inherited_askpass:
         try:
             from .askpass_utils import (
                 get_ssh_env_with_forced_askpass,
@@ -5302,10 +5305,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
 
             known_hosts_path = None
             saved_password = profile.saved_password
-            saved_passphrase = profile.saved_passphrase
-            # Session-level password/passphrase that can be updated via prompts
+            # Session-level password that can be updated via prompts
             session_password = saved_password
-            session_passphrase = saved_passphrase
+            # Passphrase will be handled by SSH_ASKPASS (either from storage or GUI prompt)
             
             if hasattr(self, 'connection_manager') and self.connection_manager:
                 known_hosts_path = getattr(self.connection_manager, 'known_hosts_path', None)
@@ -5344,44 +5346,50 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if profile.prefer_password:
                 use_publickey_with_password = False
 
-            # Set up askpass environment if identity agent is disabled
-            # Only use askpass for passphrase-protected keys, not for password authentication
+            # Set up askpass environment for passphrase-protected keys
+            # SSH_ASKPASS will handle passphrase retrieval from storage or show GUI dialog if needed
             logger.debug(f"SCP Download: Checking identity_agent_disabled={profile.identity_agent_disabled}")
             logger.debug(f"SCP Download: Initial ssh_extra_opts={ssh_extra_opts}")
-            if profile.identity_agent_disabled and not profile.prefer_password:
-                # Only set up askpass if we're not using password authentication
-                # (askpass is for passphrases, not passwords)
-                from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
-                base_env = get_ssh_env_with_forced_askpass()
+            base_env = os.environ.copy()
+            
+            # Set up askpass if we have a keyfile and not using password authentication
+            if profile.keyfile_ok and not profile.prefer_password:
+                from .askpass_utils import get_ssh_env_with_askpass, get_ssh_env_with_forced_askpass, get_scp_ssh_options
                 
-                # Add SSH options to force publickey authentication only
-                scp_ssh_opts = get_scp_ssh_options()
-                logger.debug(f"SCP: Current ssh_extra_opts before adding: {ssh_extra_opts}")
+                # Use forced askpass if identity agent is disabled, otherwise use regular askpass
+                if profile.identity_agent_disabled:
+                    base_env = get_ssh_env_with_forced_askpass()
+                    logger.debug("SCP: Using forced askpass environment (identity agent disabled)")
+                else:
+                    base_env = get_ssh_env_with_askpass()
+                    logger.debug("SCP: Using askpass environment (identity agent enabled)")
                 
-                # Add options in pairs, checking for duplicates properly
-                for i in range(0, len(scp_ssh_opts), 2):
-                    if i + 1 < len(scp_ssh_opts):
-                        flag = scp_ssh_opts[i]
-                        value = scp_ssh_opts[i + 1]
-                        # Check if this exact option pair is already present
-                        already_present = False
-                        for j in range(0, len(ssh_extra_opts) - 1, 2):
-                            if ssh_extra_opts[j] == flag and ssh_extra_opts[j + 1] == value:
-                                already_present = True
-                                break
-                        if not already_present:
-                            ssh_extra_opts.extend([flag, value])
-                            logger.debug(f"SCP: Added option pair: {flag} {value}")
-                
-                logger.debug("SCP: Using forced askpass environment (identity agent disabled)")
-                logger.debug(f"SCP: Final ssh_extra_opts: {ssh_extra_opts}")
-            else:
-                base_env = os.environ.copy()
+                # Add SSH options to force publickey authentication only (when identity agent disabled)
+                if profile.identity_agent_disabled:
+                    scp_ssh_opts = get_scp_ssh_options()
+                    logger.debug(f"SCP: Current ssh_extra_opts before adding: {ssh_extra_opts}")
+                    
+                    # Add options in pairs, checking for duplicates properly
+                    for i in range(0, len(scp_ssh_opts), 2):
+                        if i + 1 < len(scp_ssh_opts):
+                            flag = scp_ssh_opts[i]
+                            value = scp_ssh_opts[i + 1]
+                            # Check if this exact option pair is already present
+                            already_present = False
+                            for j in range(0, len(ssh_extra_opts) - 1, 2):
+                                if ssh_extra_opts[j] == flag and ssh_extra_opts[j + 1] == value:
+                                    already_present = True
+                                    break
+                            if not already_present:
+                                ssh_extra_opts.extend([flag, value])
+                                logger.debug(f"SCP: Added option pair: {flag} {value}")
+                    
+                    logger.debug(f"SCP: Final ssh_extra_opts: {ssh_extra_opts}")
+            elif profile.prefer_password:
                 # If using password authentication, ensure askpass vars are not set
-                if profile.prefer_password:
-                    base_env.pop('SSH_ASKPASS', None)
-                    base_env.pop('SSH_ASKPASS_REQUIRE', None)
-                    logger.debug("SCP Download: Using password auth - removed askpass environment")
+                base_env.pop('SSH_ASKPASS', None)
+                base_env.pop('SSH_ASKPASS_REQUIRE', None)
+                logger.debug("SCP Download: Using password auth - removed askpass environment")
 
             dialog = Adw.Window()
             dialog.set_transient_for(self)
@@ -5411,83 +5419,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 # Store password for this session (but don't persist it)
                 logger.debug("SCP Download: Using prompted password for session")
             
-            # Check if passphrase is needed but not available (for passphrase-protected keys)
-            # First, check if the key actually requires a passphrase
-            key_requires_passphrase = False
-            if profile.keyfile_ok and profile.keyfile_expanded:
-                # Use ssh-keygen to check if the key is protected
-                # Try to extract public key without passphrase
-                # If it fails with passphrase-related error, key is protected
-                try:
-                    result = subprocess.run(
-                        ['ssh-keygen', '-y', '-f', profile.keyfile_expanded, '-P', ''],
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                    )
-                    stderr_lower = (result.stderr or '').lower()
-                    passphrase_hints = (
-                        'incorrect passphrase',
-                        'passphrase is required',
-                        'passphrase required',
-                        'no passphrase supplied',
-                        'bad passphrase',
-                    )
-                    if result.returncode != 0 and any(hint in stderr_lower for hint in passphrase_hints):
-                        key_requires_passphrase = True
-                        logger.debug(f"SCP Download: Key {profile.keyfile_expanded} requires passphrase")
-                except Exception as exc:
-                    logger.debug(f"SCP Download: Could not check if key requires passphrase: {exc}")
-                    # If we can't check, don't assume it needs a passphrase
-            
-            # Prompt if:
-            # 1. Key actually requires a passphrase
-            # 2. Key file is valid (keyfile_ok)
-            # 3. No passphrase in session (not session_passphrase)
-            # 4. Either:
-            #    a. Identity agent is NOT disabled (normal case), OR
-            #    b. Identity agent IS disabled BUT no passphrase is stored (askpass can't get it)
-            should_prompt_for_passphrase = False
-            if key_requires_passphrase and profile.keyfile_ok and not session_passphrase:
-                if not profile.identity_agent_disabled:
-                    # Normal case: identity agent enabled, prompt if no passphrase
-                    should_prompt_for_passphrase = True
-                else:
-                    # Identity agent disabled: check if passphrase is available in storage
-                    # If not available, we need to prompt for it
-                    from .askpass_utils import lookup_passphrase
-                    stored_passphrase = ""
-                    if profile.keyfile_expanded:
-                        try:
-                            stored_passphrase = lookup_passphrase(profile.keyfile_expanded)
-                        except Exception:
-                            pass
-                    if not stored_passphrase:
-                        # No passphrase in storage - need to prompt
-                        should_prompt_for_passphrase = True
-                        logger.debug("SCP Download: Identity agent disabled but no stored passphrase - will prompt")
-            
-            if should_prompt_for_passphrase:
-                passphrase = _show_password_passphrase_dialog(
-                    dialog,
-                    prompt_type="passphrase",
-                    display_name=display_name,
-                    key_path=profile.keyfile_expanded,
-                )
-                if not passphrase:
-                    # User cancelled - close dialog and return
-                    dialog.close()
-                    return
-                session_passphrase = passphrase
-                # Try to store the passphrase for this session
-                if hasattr(self, 'connection_manager') and self.connection_manager:
-                    try:
-                        self.connection_manager.store_key_passphrase(
-                            profile.keyfile_expanded, passphrase
-                        )
-                        logger.debug("SCP Download: Stored passphrase for session")
-                    except Exception:
-                        pass
+            # Don't pre-prompt for passphrase - let SSH_ASKPASS handle it
+            # The askpass script will show a GUI dialog if no passphrase is found in storage
+            # This matches the standard SSH_ASKPASS behavior
+            logger.debug("SCP Download: Passphrase will be handled by SSH_ASKPASS if needed")
 
             header = Adw.HeaderBar()
             title_label = Gtk.Label(label=_('Download files'))
@@ -5738,6 +5673,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         env_for_download.pop('SSH_ASKPASS_REQUIRE', None)
                         logger.debug("SCP Download: Using password - removed askpass from environment")
                     
+                    # SSH_ASKPASS will handle passphrase retrieval from storage or GUI dialog if needed
                     success = download_file(
                         host_value,
                         username,
@@ -5750,7 +5686,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         extra_ssh_opts=ssh_extra_opts,
                         use_publickey=use_publickey_with_password,
                         inherit_env=env_for_download,
-                        saved_passphrase=session_passphrase,
+                        saved_passphrase=None,  # Let askpass handle retrieval/prompting
                         keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
                         key_mode=profile.key_mode,
                     )
@@ -5842,6 +5778,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         env_for_list.pop('SSH_ASKPASS_REQUIRE', None)
                         logger.debug("SCP Download: Using password - removed askpass from environment")
                     
+                    # SSH_ASKPASS will handle passphrase retrieval from storage or GUI dialog if needed
                     files, error_message = list_remote_files(
                         host_value,
                         username,
@@ -5852,7 +5789,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         extra_ssh_opts=ssh_extra_opts,
                         use_publickey=use_publickey_with_password,
                         inherit_env=env_for_list,
-                        saved_passphrase=session_passphrase,
+                        saved_passphrase=None,  # Let askpass handle retrieval/prompting
                         keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
                         key_mode=profile.key_mode,
                     )

@@ -418,6 +418,14 @@ try:
     import keyring
 except Exception:
     keyring = None
+try:
+    gi.require_version('Gtk', '4.0')
+    gi.require_version('Adw', '1')
+    gi.require_version('Gio', '2.0')
+    from gi.repository import Gtk, Adw, GLib, Gio
+    GTK_AVAILABLE = True
+except Exception:
+    GTK_AVAILABLE = False
 
 
 # Log availability of keyring and libsecret
@@ -597,6 +605,40 @@ if __name__ == "__main__":
                     seen.add(original)
                     yield original
 
+            # First check for session passphrase in secure temp file (temporary, not stored)
+            # This is more secure than environment variables which are visible to all processes
+            session_passphrase_file = os.environ.get("SSHPILOT_SESSION_PASSPHRASE_FILE", "")
+            if session_passphrase_file and os.path.exists(session_passphrase_file):
+                try:
+                    # Read from secure temp file (mode 0600, in private dir mode 0700)
+                    with open(session_passphrase_file, "r", encoding="utf-8") as f:
+                        session_passphrase = f.read().strip()
+                    if session_passphrase:
+                        try:
+                            with open(LOG_PATH, "a") as f:
+                                f.write("ASKPASS: Found session passphrase from secure temp file\n")
+                        except Exception:
+                            pass
+                        print(session_passphrase)
+                        try:
+                            with open(LOG_PATH, "a") as f:
+                                f.write("ASKPASS: Returning session passphrase and exiting with code 0\n")
+                        except Exception:
+                            pass
+                        # Clean up the temp file immediately after reading
+                        try:
+                            os.unlink(session_passphrase_file)
+                        except Exception:
+                            pass
+                        sys.exit(0)
+                except Exception as e:
+                    try:
+                        with open(LOG_PATH, "a") as f:
+                            f.write(f"ASKPASS: Error reading session passphrase file: {e}\n")
+                    except Exception:
+                        pass
+            
+            # Then check stored passphrases in keyring/libsecret
             for candidate in _iter_candidates(key_path):
                 passphrase = get_passphrase(candidate)
                 if passphrase:
@@ -618,6 +660,86 @@ if __name__ == "__main__":
                             f.write(f"ASKPASS: No passphrase found for {candidate}\n")
                     except Exception:
                         pass
+            
+            # No passphrase found in storage - show GUI dialog
+            if GTK_AVAILABLE:
+                try:
+                    with open(LOG_PATH, "a") as f:
+                        f.write("ASKPASS: No stored passphrase found, showing GUI dialog\n")
+                except Exception:
+                    pass
+                
+                passphrase_result = [None]
+                main_loop = None
+                
+                def show_dialog():
+                    key_name = os.path.basename(key_path) if key_path else "key"
+                    
+                    dialog = Adw.MessageDialog(
+                        modal=True,
+                        heading="Passphrase Required",
+                        body=f"Please enter the passphrase for key {key_name}:",
+                    )
+                    
+                    password_entry = Gtk.PasswordEntry()
+                    password_entry.set_property("placeholder-text", "Passphrase")
+                    password_entry.set_margin_top(12)
+                    password_entry.set_margin_bottom(12)
+                    password_entry.set_margin_start(12)
+                    password_entry.set_margin_end(12)
+                    dialog.set_extra_child(password_entry)
+                    
+                    dialog.add_response("cancel", "Cancel")
+                    dialog.add_response("ok", "OK")
+                    dialog.set_default_response("ok")
+                    dialog.set_close_response("cancel")
+                    
+                    def on_response(dialog, response_id):
+                        if response_id == "ok":
+                            passphrase_result[0] = password_entry.get_text()
+                        if main_loop:
+                            main_loop.quit()
+                    
+                    dialog.connect("response", on_response)
+                    dialog.present()
+                    password_entry.grab_focus()
+                
+                # Initialize GTK application
+                app = Gtk.Application.new("io.github.mfat.sshpilot.askpass", Gio.ApplicationFlags.FLAGS_NONE)
+                
+                def on_activate(app):
+                    show_dialog()
+                
+                app.connect("activate", on_activate)
+                
+                # Register and activate the application
+                app.register()
+                app.activate()
+                
+                # Run main loop to show dialog
+                main_loop = GLib.MainLoop()
+                main_loop.run()
+                
+                if passphrase_result[0]:
+                    try:
+                        with open(LOG_PATH, "a") as f:
+                            f.write("ASKPASS: User entered passphrase in GUI dialog\n")
+                    except Exception:
+                        pass
+                    print(passphrase_result[0])
+                    try:
+                        with open(LOG_PATH, "a") as f:
+                            f.write("ASKPASS: Returning GUI-entered passphrase and exiting with code 0\n")
+                    except Exception:
+                        pass
+                    sys.exit(0)
+                else:
+                    try:
+                        with open(LOG_PATH, "a") as f:
+                            f.write("ASKPASS: User cancelled GUI dialog\n")
+                    except Exception:
+                        pass
+                    sys.exit(1)
     
     # Not a passphrase prompt or not found
     try:
