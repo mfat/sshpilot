@@ -44,6 +44,15 @@
 
 
 
+
+    <release version="4.7.0" date="2025-12-08">
+
+      <description>
+        <p>- Make terminal fullscreen with F11</p>
+        <p>- Added xterm.js as an alternative terminal backend</p>
+        <p>- Added graphical prompts for passwords/passphrases</p>
+      </description>
+    </release>
     <release version="4.6.4" date="2025-12-02">
 
       <description>

@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:4.6.4}
+Version:        %{?version}%{!?version:4.7.0}
 Release:        1%{?dist}
 Summary:        SSH connection manager with integrated terminal
 
@@ -74,6 +74,11 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Mon Dec 08 2025 mFat <newmfat@gmail.com> - 4.7.0
+- - Make terminal fullscreen with F11
+- - Added xterm.js as an alternative terminal backend
+- - Added graphical prompts for passwords/passphrases
+
 * Tue Dec 02 2025 mFat <newmfat@gmail.com> - 4.6.4
 - - Bug fixes
 
