@@ -45,11 +45,12 @@
 
 
 
-    <release version="4.6.5" date="2025-12-05">
+    <release version="4.7.0" date="2025-12-08">
 
       <description>
-        <p>- Unified look across GNOME and KDE Plasma</p>
-        <p>- Minor UI fixes</p>
+        <p>- Make terminal fullscreen with F11</p>
+        <p>- Added xterm.js as an alternative terminal backend</p>
+        <p>- Added graphical prompts for passwords/passphrases</p>
       </description>
     </release>
     <release version="4.6.4" date="2025-12-02">

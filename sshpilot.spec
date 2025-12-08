@@ -34,6 +34,8 @@ gtk_libs_patterns = [
     "libvte-2.91.*.dylib",
     "libvte-2.91-gtk4.*.dylib",
     "libgtksourceview-5.*.dylib",
+    "libwebkitgtk-6.*.dylib",
+    "libjavascriptcoregtk-6.*.dylib",
     "libgraphene-1.0.*.dylib",
     "libpango-1.*.dylib",
     "libpangocairo-1.*.dylib",

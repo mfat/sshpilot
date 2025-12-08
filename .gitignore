@@ -24,3 +24,4 @@ flatpak/io.github.mfat.sshpilot.yaml
 /flatpak
 *.pyc
 whip.md
+sshpilot/vendor/pyxtermjs/index.html

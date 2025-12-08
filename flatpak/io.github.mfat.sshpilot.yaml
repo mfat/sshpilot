@@ -3,6 +3,7 @@ runtime: org.gnome.Platform
 runtime-version: '49'
 sdk: org.gnome.Sdk
 command: sshpilot
+# WebKit 6.0 is required for PyXterm.js backend and should be available in GNOME Platform 49
 finish-args:
   - --share=network
   - --share=ipc

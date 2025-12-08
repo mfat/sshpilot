@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Optional, List
 from .port_utils import get_port_checker
 from .platform_utils import is_flatpak, is_macos
+from .terminal_backends import BaseTerminalBackend, VTETerminalBackend, PyXtermTerminalBackend
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
@@ -231,6 +232,22 @@ class TerminalWidget(Gtk.Box):
         self._job_status = "UNKNOWN"  # IDLE, RUNNING, PROMPT, UNKNOWN
         self._shell_pgid = None  # Store shell process group ID for shell-agnostic detection
         
+        # Backend system
+        self._backend_name = "vte"
+        self.backend = None
+        self.terminal_widget = None
+        self._is_local_shell = False
+        
+        # Fullscreen state
+        self._is_fullscreen = False
+        self._fullscreen_sidebar_visible = None
+        self._fullscreen_header_visible = None
+        self._fullscreen_tab_bar_visible = None
+        self._fullscreen_css_provider = None
+        self._was_maximized = False
+        self._fullscreen_banner_container = None
+        self._fullscreen_banner_dismiss_button = None
+        
         # Register with process manager
         process_manager.register_terminal(self)
         
@@ -245,8 +262,7 @@ class TerminalWidget(Gtk.Box):
         self.scrolled_window = Gtk.ScrolledWindow()
         self.scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         
-        # Set up the terminal
-        self.vte = Vte.Terminal()
+        # Create backend first before setup
         self._shortcut_controller = None
         self._scroll_controller = None
         self._search_key_controller = None
@@ -267,6 +283,11 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 self._config_handler = None
 
+        # Create the backend before calling setup_terminal
+        self.backend = self._create_backend()
+        self.vte = getattr(self.backend, 'vte', None)
+        self.terminal_widget = getattr(self.backend, 'widget', None)
+
         # Initialize terminal with basic settings and apply configured theme early
         self.setup_terminal()
         try:
@@ -275,7 +296,8 @@ class TerminalWidget(Gtk.Box):
             pass
         
         # Add terminal to scrolled window and to the box via an overlay with a connecting view
-        self.scrolled_window.set_child(self.vte)
+        if self.terminal_widget is not None:
+            self.scrolled_window.set_child(self.terminal_widget)
         self.overlay = Gtk.Overlay()
         self.overlay.set_child(self.scrolled_window)
 
@@ -405,6 +427,9 @@ class TerminalWidget(Gtk.Box):
         self.terminal_stack.append(self.search_revealer)
         self.terminal_stack.append(self.overlay)
 
+        # Set up drag and drop for SCP upload
+        self._setup_drag_and_drop()
+
         # Disconnected banner with reconnect button at the bottom (separate panel below terminal)
         # Install CSS for a solid red background banner once
         try:
@@ -507,33 +532,201 @@ class TerminalWidget(Gtk.Box):
         # Set expansion properties
         self.scrolled_window.set_hexpand(True)
         self.scrolled_window.set_vexpand(True)
-        self.vte.set_hexpand(True)
-        self.vte.set_vexpand(True)
+        if self.terminal_widget is not None:
+            self.terminal_widget.set_hexpand(True)
+            self.terminal_widget.set_vexpand(True)
 
         # Connect terminal signals and store handler IDs for cleanup
-        self._child_exited_handler = self.vte.connect('child-exited', self.on_child_exited)
-        self._title_changed_handler = self.vte.connect('window-title-changed', self.on_title_changed)
-        
-        # Connect termprops-changed signal if available (VTE 0.78+)
-        # This signal is used for job detection in local terminals
+        self._child_exited_handler = None
+        self._title_changed_handler = None
         self._termprops_changed_handler = None
-        try:
-            self._termprops_changed_handler = self.vte.connect('termprops-changed', self._on_termprops_changed)
-            logger.debug("Connected termprops-changed signal (VTE 0.78+ feature)")
-        except Exception as e:
-            logger.debug(f"termprops-changed signal not available (older VTE version): {e}")
-            # Job detection will be disabled for local terminals on older VTE versions
+        self._connect_backend_signals()
         
         # Apply theme
         self.force_style_refresh()
         
         # Set visibility of child widgets (GTK4 style)
         self.scrolled_window.set_visible(True)
-        self.vte.set_visible(True)
+        if self.terminal_widget is not None:
+            self.terminal_widget.set_visible(True)
         
         # Show overlay initially
         self._set_connecting_overlay_visible(True)
+        
+        # Setup fullscreen keyboard shortcut (F11)
+        self._setup_fullscreen_shortcut()
+        
         logger.debug("Terminal widget initialized")
+
+    def _create_backend(self, preferred: Optional[str] = None) -> BaseTerminalBackend:
+        """Create the terminal backend based on configuration."""
+        backend_name = preferred or "vte"
+        if preferred is None and self.config:
+            try:
+                backend_name = self.config.get_setting("terminal.backend", backend_name)
+            except Exception:
+                backend_name = "vte"
+
+        backend_name = (backend_name or "vte").lower()
+
+        if backend_name == "pyxterm":
+            try:
+                backend = PyXtermTerminalBackend(self)
+                if getattr(backend, "available", False):
+                    logger.info("Using PyXterm terminal backend")
+                    self._backend_name = "pyxterm"
+                    return backend
+                logger.warning("PyXterm backend unavailable, falling back to VTE")
+            except Exception as e:
+                logger.error(f"Failed to create PyXterm backend: {e}")
+                logger.warning("PyXterm backend creation failed, falling back to VTE")
+
+        logger.debug("Using VTE terminal backend")
+        self._backend_name = "vte"
+        return VTETerminalBackend(self)
+
+    def _connect_backend_signals(self):
+        """Connect to backend signals and store handler IDs."""
+        backend = getattr(self, 'backend', None)
+        if backend is None:
+            return
+        try:
+            self._child_exited_handler = backend.connect_child_exited(self.on_child_exited)
+        except Exception:
+            self._child_exited_handler = None
+        try:
+            self._title_changed_handler = backend.connect_title_changed(self.on_title_changed)
+        except Exception:
+            self._title_changed_handler = None
+        try:
+            self._termprops_changed_handler = backend.connect_termprops_changed(self._on_termprops_changed)
+        except Exception:
+            self._termprops_changed_handler = None
+
+    def _disconnect_backend_signals(self, backend: Optional[BaseTerminalBackend] = None):
+        """Disconnect previously connected backend signals."""
+        if backend is None:
+            backend = getattr(self, 'backend', None)
+        if backend is None:
+            return
+        try:
+            if self._child_exited_handler is not None:
+                backend.disconnect(self._child_exited_handler)
+                self._child_exited_handler = None
+        except Exception:
+            pass
+        try:
+            if self._title_changed_handler is not None:
+                backend.disconnect(self._title_changed_handler)
+                self._title_changed_handler = None
+        except Exception:
+            pass
+        try:
+            if self._termprops_changed_handler is not None:
+                backend.disconnect(self._termprops_changed_handler)
+                self._termprops_changed_handler = None
+        except Exception:
+            pass
+
+    def get_backend_name(self) -> str:
+        """Get the name of the current backend."""
+        return getattr(self, '_backend_name', 'vte')
+
+    def ensure_backend(self, backend_name: Optional[str] = None) -> None:
+        """Switch to the specified backend if different from current."""
+        if backend_name is None:
+            if self.config:
+                try:
+                    backend_name = self.config.get_setting("terminal.backend", "vte")
+                except Exception:
+                    backend_name = "vte"
+            else:
+                backend_name = "vte"
+
+        backend_name = (backend_name or "vte").lower()
+        current_name = self.get_backend_name()
+
+        if current_name.lower() == backend_name.lower():
+            return  # Already using the requested backend
+
+        logger.info(f"Switching terminal backend from {current_name} to {backend_name}")
+
+        # Disconnect old backend signals
+        self._disconnect_backend_signals()
+
+        # Clean up context menu popover and gesture before destroying backend
+        # This prevents GTK warnings about children left when finalizing widgets
+        if hasattr(self, '_menu_popover') and self._menu_popover is not None:
+            try:
+                # Popdown the menu if it's open
+                if hasattr(self._menu_popover, 'popdown'):
+                    self._menu_popover.popdown()
+                # Detach from parent widget
+                if hasattr(self._menu_popover, 'set_parent'):
+                    self._menu_popover.set_parent(None)
+                # Unparent the popover
+                if hasattr(self._menu_popover, 'unparent'):
+                    self._menu_popover.unparent()
+                logger.debug("Detached context menu popover before backend switch")
+            except Exception as e:
+                logger.debug(f"Error detaching popover: {e}", exc_info=True)
+        
+        # Remove gesture controller from old backend widget
+        # Try all possible widget locations where gesture might be attached
+        if hasattr(self, '_menu_gesture') and self._menu_gesture is not None:
+            widgets_to_check = []
+            if hasattr(self, 'backend') and self.backend and hasattr(self.backend, 'widget'):
+                widgets_to_check.append(self.backend.widget)
+            if hasattr(self, 'terminal_widget') and self.terminal_widget:
+                widgets_to_check.append(self.terminal_widget)
+            if hasattr(self, 'vte') and self.vte:
+                widgets_to_check.append(self.vte)
+            
+            for widget in widgets_to_check:
+                try:
+                    if hasattr(widget, 'remove_controller'):
+                        widget.remove_controller(self._menu_gesture)
+                        logger.debug(f"Removed context menu gesture from {type(widget).__name__}")
+                        break  # Only need to remove once
+                except Exception as e:
+                    logger.debug(f"Error removing gesture from {type(widget).__name__}: {e}", exc_info=True)
+
+        # Destroy old backend
+        old_backend = getattr(self, 'backend', None)
+        if old_backend is not None:
+            try:
+                old_backend.destroy()
+            except Exception:
+                pass
+
+        # Remove old widget from scrolled window
+        if self.terminal_widget is not None:
+            try:
+                self.scrolled_window.set_child(None)
+            except Exception:
+                pass
+
+        # Create new backend
+        self.backend = self._create_backend(backend_name)
+        self.vte = getattr(self.backend, 'vte', None)
+        self.terminal_widget = getattr(self.backend, 'widget', None)
+
+        # Add new widget to scrolled window
+        if self.terminal_widget is not None:
+            self.scrolled_window.set_child(self.terminal_widget)
+            self.terminal_widget.set_hexpand(True)
+            self.terminal_widget.set_vexpand(True)
+            self.terminal_widget.set_visible(True)
+
+        # Reconnect signals
+        self._connect_backend_signals()
+
+        # Reapply theme and settings
+        try:
+            self.setup_terminal()
+            self.apply_theme()
+        except Exception:
+            pass
 
     def _set_disconnected_banner_visible(self, visible: bool, message: str = None):
         try:
@@ -649,9 +842,9 @@ class TerminalWidget(Gtk.Box):
             logger.error("No connection configured")
             return False
             
-        # Ensure VTE terminal is properly initialized
-        if not hasattr(self, 'vte') or self.vte is None:
-            logger.error("VTE terminal not initialized")
+        # Ensure terminal backend is properly initialized
+        if not hasattr(self, 'backend') or self.backend is None:
+            logger.error("Terminal backend not initialized")
             return False
         
         try:
@@ -1534,22 +1727,33 @@ class TerminalWidget(Gtk.Box):
             logger.debug(f"Spawning SSH command: {ssh_cmd}")
             logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
             
-            # Create a new PTY for the terminal
-            pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
+            # Create a new PTY for the terminal (VTE-specific, but backend may handle this)
+            pty = None
+            if hasattr(self.backend, 'get_pty') and callable(self.backend.get_pty):
+                pty = self.backend.get_pty()
+            if pty is None and self.vte is not None:
+                try:
+                    pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
+                except Exception:
+                    pass
+            
+            # Convert env_list to dict for backend
+            env_dict = {}
+            if env_list:
+                for env_item in env_list:
+                    if '=' in env_item:
+                        key, value = env_item.split('=', 1)
+                        env_dict[key] = value
             
             try:
-                self.vte.spawn_async(
-                    Vte.PtyFlags.DEFAULT,
-                    os.path.expanduser('~') or '/',
-                    ssh_cmd,
-                    env_list,  # Use environment list for Flatpak
-                    GLib.SpawnFlags.DEFAULT,
-                    None,  # Child setup function
-                    None,  # Child setup data
-                    -1,    # Timeout (-1 = default)
-                    None,  # Cancellable
-                    self._on_spawn_complete,
-                    ()     # User data - empty tuple for Flatpak VTE compatibility
+                self.backend.spawn_async(
+                    argv=ssh_cmd,
+                    env=env_dict if env_dict else None,
+                    cwd=os.path.expanduser('~') or '/',
+                    flags=0,
+                    child_setup=None,
+                    callback=self._on_spawn_complete,
+                    user_data=()
                 )
             except GLib.Error as e:
                 logger.error(f"VTE spawn failed with GLib error: {e}")
@@ -1584,7 +1788,8 @@ class TerminalWidget(Gtk.Box):
             self.apply_theme()
             
             # Focus the terminal
-            self.vte.grab_focus()
+            if self.backend:
+                self.backend.grab_focus()
 
             # Add fallback timer to hide spinner if spawn completion doesn't fire
             self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
@@ -1610,19 +1815,23 @@ class TerminalWidget(Gtk.Box):
 
             logger.debug(f"Fallback SSH command: {ssh_cmd}")
 
+            # Convert env_list to dict for backend
+            env_dict = {}
+            if env_list:
+                for env_item in env_list:
+                    if '=' in env_item:
+                        key, value = env_item.split('=', 1)
+                        env_dict[key] = value
+            
             # Try spawning again without askpass
-            self.vte.spawn_async(
-                Vte.PtyFlags.DEFAULT,
-                os.path.expanduser('~') or '/',
-                ssh_cmd,
-                env_list,
-                GLib.SpawnFlags.DEFAULT,
-                None,
-                None,
-                -1,
-                None,
-                self._on_spawn_complete,
-                ()
+            self.backend.spawn_async(
+                argv=ssh_cmd,
+                env=env_dict if env_dict else None,
+                cwd=os.path.expanduser('~') or '/',
+                flags=0,
+                child_setup=None,
+                callback=self._on_spawn_complete,
+                user_data=()
             )
         except Exception as e:
             logger.error(f"Fallback to interactive prompt failed: {e}")
@@ -1640,8 +1849,27 @@ class TerminalWidget(Gtk.Box):
         ensure_askpass_log_forwarder()
         forward_askpass_log_to_logger(logger, include_existing=include_existing)
 
-    def _on_spawn_complete(self, terminal, pid, error, user_data=None):
-        """Called when terminal spawn is complete"""
+    def _on_spawn_complete(self, terminal_or_widget, pid_or_error=None, error=None, user_data=None):
+        """Called when terminal spawn is complete
+        
+        Handles both VTE callback signature (terminal, pid, error, user_data)
+        and backend callback signature (widget, exception).
+        """
+        # Handle backend callback signature (widget, exception)
+        if error is None and pid_or_error is not None and isinstance(pid_or_error, Exception):
+            error = pid_or_error
+            pid = None
+        elif isinstance(pid_or_error, int):
+            pid = pid_or_error
+        else:
+            pid = pid_or_error
+        
+        # For backend callbacks, we might not get a pid
+        if pid is None and hasattr(self.backend, 'get_child_pid'):
+            try:
+                pid = self.backend.get_child_pid()
+            except Exception:
+                pass
         # Skip if terminal is quitting
         if getattr(self, '_is_quitting', False):
             logger.debug("Terminal is quitting, skipping spawn complete handler")
@@ -1695,7 +1923,8 @@ class TerminalWidget(Gtk.Box):
                 }
             
             # Grab focus and apply theme
-            self.vte.grab_focus()
+            if self.backend:
+                self.backend.grab_focus()
             self.apply_theme()
 
             # Spawn succeeded; mark as connected and hide overlay
@@ -1934,11 +2163,16 @@ class TerminalWidget(Gtk.Box):
                     palette_colors.append(fallback)
                 palette_colors = palette_colors[:16]  # Limit to 16 colors
             
-            # Apply colors to terminal
-            self.vte.set_colors(fg_color, bg_color, palette_colors)
-            self.vte.set_color_cursor(cursor_color)
-            self.vte.set_color_highlight(highlight_bg)
-            self.vte.set_color_highlight_foreground(highlight_fg)
+            # Apply colors to terminal (VTE-specific, but backend.apply_theme should handle this)
+            # For VTE backend, apply directly; for other backends, use apply_theme
+            if self.vte is not None:
+                self.vte.set_colors(fg_color, bg_color, palette_colors)
+                self.vte.set_color_cursor(cursor_color)
+                self.vte.set_color_highlight(highlight_bg)
+                self.vte.set_color_highlight_foreground(highlight_fg)
+            elif self.backend:
+                # For non-VTE backends, use apply_theme which should handle colors
+                self.backend.apply_theme(theme_name)
 
             self._applied_foreground_color = self._clone_rgba(fg_color)
             self._applied_background_color = self._clone_rgba(bg_color)
@@ -1985,10 +2219,12 @@ class TerminalWidget(Gtk.Box):
             
             # Set font
             font_desc = Pango.FontDescription.from_string(profile['font'])
-            self.vte.set_font(font_desc)
+            if self.backend:
+                self.backend.set_font(font_desc)
             
             # Force a redraw
-            self.vte.queue_draw()
+            if self.backend:
+                self.backend.queue_draw()
             
             logger.debug(f"Applied terminal theme: {theme_name or 'default'}")
             
@@ -2107,60 +2343,71 @@ class TerminalWidget(Gtk.Box):
             font_desc = Pango.FontDescription()
             font_desc.set_family("Monospace")
             font_desc.set_size(12 * Pango.SCALE)  # Slightly larger default font
-            self.vte.set_font(font_desc)
+            if self.backend:
+                self.backend.set_font(font_desc)
             
             # Do not force a light default; theme will define colors
             self.apply_theme()
             
-            # Set cursor properties
-            self.vte.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)
-            self.vte.set_cursor_shape(Vte.CursorShape.BLOCK)
-            
-            # Set scrollback lines
-            self.vte.set_scrollback_lines(10000)
-            
-            # Set word char exceptions (for double-click selection)
-            try:
-                # Try the newer API first (VTE 0.60+)
-                if hasattr(self.vte, 'set_word_char_exceptions'):
-                    self.vte.set_word_char_exceptions("@-./_~")
-                    logger.debug("Set word char exceptions using VTE 0.60+ API")
-                # Fall back to the older API if needed
-                elif hasattr(self.vte, 'set_word_char_options'):
-                    self.vte.set_word_char_options("@-./_~")
-                    logger.debug("Set word char exceptions using older VTE API")
-            except Exception as e:
-                logger.warning(f"Could not set word char options: {e}")
-            
-            self._apply_cursor_and_selection_colors()
-            
-            # Enable mouse reporting if available
-            if hasattr(self.vte, 'set_mouse_autohide'):
-                self.vte.set_mouse_autohide(True)
-                logger.debug("Enabled mouse autohide")
+            # Set VTE-specific properties (only if using VTE backend)
+            if self.vte is not None:
+                # Set cursor properties
+                try:
+                    self.vte.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)
+                    self.vte.set_cursor_shape(Vte.CursorShape.BLOCK)
+                except Exception as e:
+                    logger.warning(f"Could not set cursor properties: {e}")
                 
-            encoding_value = 'UTF-8'
-            try:
-                encoding_value = self.config.get_setting('terminal.encoding', 'UTF-8')
-            except Exception:
+                # Set scrollback lines
+                try:
+                    self.vte.set_scrollback_lines(10000)
+                except Exception as e:
+                    logger.warning(f"Could not set scrollback lines: {e}")
+                
+                # Set word char exceptions (for double-click selection)
+                try:
+                    # Try the newer API first (VTE 0.60+)
+                    if hasattr(self.vte, 'set_word_char_exceptions'):
+                        self.vte.set_word_char_exceptions("@-./_~")
+                        logger.debug("Set word char exceptions using VTE 0.60+ API")
+                    # Fall back to the older API if needed
+                    elif hasattr(self.vte, 'set_word_char_options'):
+                        self.vte.set_word_char_options("@-./_~")
+                        logger.debug("Set word char exceptions using older VTE API")
+                except Exception as e:
+                    logger.warning(f"Could not set word char options: {e}")
+                
+                self._apply_cursor_and_selection_colors()
+                
+                # Enable mouse reporting if available
+                try:
+                    if hasattr(self.vte, 'set_mouse_autohide'):
+                        self.vte.set_mouse_autohide(True)
+                        logger.debug("Enabled mouse autohide")
+                except Exception as e:
+                    logger.warning(f"Could not set mouse autohide: {e}")
+                    
                 encoding_value = 'UTF-8'
-            self._apply_terminal_encoding(encoding_value, update_config_on_fallback=True)
+                try:
+                    encoding_value = self.config.get_setting('terminal.encoding', 'UTF-8')
+                except Exception:
+                    encoding_value = 'UTF-8'
+                self._apply_terminal_encoding(encoding_value, update_config_on_fallback=True)
+                    
+                # Enable bold text
+                try:
+                    if hasattr(self.vte, 'set_allow_bold'):
+                        self.vte.set_allow_bold(True)
+                        logger.debug("Enabled bold text")
+                except Exception as e:
+                    logger.warning(f"Could not enable bold text: {e}")
                 
-            # Enable bold text
-            try:
-                if hasattr(self.vte, 'set_allow_bold'):
-                    self.vte.set_allow_bold(True)
-                    logger.debug("Enabled bold text")
-            except Exception as e:
-                logger.warning(f"Could not enable bold text: {e}")
+                # Show the terminal
+                try:
+                    self.vte.show()
+                except Exception as e:
+                    logger.warning(f"Could not show terminal: {e}")
                 
-            logger.info("Terminal setup complete")
-            
-            # Enable bold text
-            self.vte.set_allow_bold(True)
-            
-            # Show the terminal
-            self.vte.show()
             logger.info("Terminal setup complete")
             
         except Exception as e:
@@ -2202,6 +2449,19 @@ class TerminalWidget(Gtk.Box):
         return False
 
     def _apply_terminal_encoding(self, encoding_value, update_config_on_fallback=True):
+        # For PyXterm.js backend, encoding is handled at PTY bridge level (via luit)
+        # No need to validate against VTE's supported encodings
+        if self.backend and hasattr(self.backend, '__class__'):
+            backend_name = self.backend.__class__.__name__
+            if backend_name == 'PyXtermTerminalBackend':
+                # PyXterm.js handles encoding via luit at PTY bridge level
+                # Accept any encoding - it will be wrapped with luit if needed
+                requested = encoding_value.strip() if isinstance(encoding_value, str) else ''
+                if requested:
+                    logger.debug("Encoding '%s' will be handled at PTY bridge level for PyXterm.js backend", requested)
+                return False
+        
+        # For VTE backend, validate encoding against VTE's supported list
         supported = self._get_supported_encodings()
         fallback = supported[0] if supported else 'UTF-8'
 
@@ -2227,8 +2487,12 @@ class TerminalWidget(Gtk.Box):
         update_needed = update_config_on_fallback and target != requested
 
         try:
-            self.vte.set_encoding(target)
-            logger.debug("Set terminal encoding to %s", target)
+            if self.vte is not None:
+                self.vte.set_encoding(target)
+                logger.debug("Set terminal encoding to %s", target)
+            else:
+                # Encoding setting is VTE-specific; other backends handle encoding differently
+                logger.debug("Encoding setting skipped for non-VTE backend")
         except Exception as exc:
             logger.warning("Could not set terminal encoding to %s: %s", target, exc)
             return False
@@ -2305,9 +2569,21 @@ class TerminalWidget(Gtk.Box):
             # Create agent client
             client = AgentClient()
             
-            # Get terminal size
-            cols = self.vte.get_column_count()
-            rows = self.vte.get_row_count()
+            # Get terminal size (fallback to sensible defaults if backend lacks VTE)
+            cols = 80
+            rows = 24
+            try:
+                if getattr(self, 'vte', None) is not None:
+                    cols = self.vte.get_column_count()
+                    rows = self.vte.get_row_count()
+                elif getattr(self, 'backend', None) is not None:
+                    # Some backends may expose a widget with geometry hints
+                    widget = getattr(self.backend, 'widget', None)
+                    if widget and hasattr(widget, 'get_width_chars') and hasattr(widget, 'get_height_rows'):
+                        cols = widget.get_width_chars() or cols
+                        rows = widget.get_height_rows() or rows
+            except Exception as e:
+                logger.debug(f"Failed to determine terminal size from backend: {e}")
             
             # Working directory
             cwd = os.path.expanduser('~')
@@ -2338,20 +2614,24 @@ class TerminalWidget(Gtk.Box):
             # Convert to list for VTE
             env_list = [f"{k}={v}" for k, v in env.items()]
             
-            # Spawn the agent via VTE
+            # Convert env_list to dict for backend
+            env_dict = {}
+            if env_list:
+                for env_item in env_list:
+                    if '=' in env_item:
+                        key, value = env_item.split('=', 1)
+                        env_dict[key] = value
+            
+            # Spawn the agent via backend
             # Agent code is embedded in the command via base64 encoding
-            self.vte.spawn_async(
-                Vte.PtyFlags.DEFAULT,
-                cwd,
-                command,
-                env_list,
-                GLib.SpawnFlags.DEFAULT,
-                None,
-                None,
-                -1,
-                None,
-                self._on_agent_spawn_complete,
-                None
+            self.backend.spawn_async(
+                argv=command,
+                env=env_dict if env_dict else None,
+                cwd=cwd,
+                flags=0,
+                child_setup=None,
+                callback=self._on_agent_spawn_complete,
+                user_data=None
             )
             
             # Add fallback timer
@@ -2426,18 +2706,22 @@ class TerminalWidget(Gtk.Box):
         else:
             command = [shell, '-l']
 
-        self.vte.spawn_async(
-            Vte.PtyFlags.DEFAULT,
-            os.path.expanduser('~') or '/',
-            command,
-            env_list,
-            GLib.SpawnFlags.DEFAULT,
-            None,
-            None,
-            -1,
-            None,
-            self._on_spawn_complete,
-            ()
+        # Convert env_list to dict for backend
+        env_dict = {}
+        if env_list:
+            for env_item in env_list:
+                if '=' in env_item:
+                    key, value = env_item.split('=', 1)
+                    env_dict[key] = value
+        
+        self.backend.spawn_async(
+            argv=command,
+            env=env_dict if env_dict else None,
+            cwd=os.path.expanduser('~') or '/',
+            flags=0,
+            child_setup=None,
+            callback=self._on_spawn_complete,
+            user_data=()
         )
 
         # Add fallback timer to hide spinner if spawn completion doesn't fire
@@ -2522,8 +2806,10 @@ class TerminalWidget(Gtk.Box):
             # Popover - set parent to the terminal widget
             self._menu_popover = Gtk.PopoverMenu.new_from_model(self._menu_model)
             self._menu_popover.set_has_arrow(True)
-            # Set parent to the terminal widget
-            self._menu_popover.set_parent(self.vte)
+            # Set parent to the terminal widget (use backend widget if vte is None)
+            parent_widget = self.vte if self.vte is not None else (self.backend.widget if self.backend else self.terminal_widget)
+            if parent_widget:
+                self._menu_popover.set_parent(parent_widget)
 
             # Right-click gesture to open popover
             gesture = Gtk.GestureClick()
@@ -2539,9 +2825,12 @@ class TerminalWidget(Gtk.Box):
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         logger.debug(f"Not a right-click button: {btn}")
                         return
+                    # Stop event propagation to prevent other context menus
+                    gest.set_state(Gtk.EventSequenceState.CLAIMED)
                     # Focus terminal first for reliable copy/paste
                     try:
-                        self.vte.grab_focus()
+                        if self.backend:
+                            self.backend.grab_focus()
                     except Exception:
                         pass
                     # Position popover near click
@@ -2559,7 +2848,18 @@ class TerminalWidget(Gtk.Box):
                 except Exception as e:
                     logger.error(f"Context menu popup failed: {e}")
             gesture.connect('pressed', _on_pressed)
-            self.vte.add_controller(gesture)
+            # Store gesture reference for cleanup
+            self._menu_gesture = gesture
+            # Add gesture to the backend widget (VTE or WebView)
+            if self.backend and self.backend.widget:
+                self.backend.widget.add_controller(gesture)
+                logger.debug(f"Added context menu gesture to backend widget: {type(self.backend).__name__}")
+            elif self.vte is not None:
+                self.vte.add_controller(gesture)
+                logger.debug("Added context menu gesture to VTE widget")
+            elif self.terminal_widget is not None:
+                self.terminal_widget.add_controller(gesture)
+                logger.debug("Added context menu gesture to terminal widget")
             logger.debug("Terminal context menu setup completed successfully")
         except Exception as e:
             logger.error(f"Context menu setup failed: {e}")
@@ -2589,15 +2889,27 @@ class TerminalWidget(Gtk.Box):
                     return True
 
                 def _cb_copy(widget, *args):
-                    if not self.vte.get_has_selection():
-                        return False
-                    return _schedule_vte_action(self.vte.copy_clipboard_format, Vte.Format.TEXT)
+                    if self.backend:
+                        return _schedule_vte_action(self.backend.copy_clipboard)
+                    elif self.vte is not None:
+                        if not self.vte.get_has_selection():
+                            return False
+                        return _schedule_vte_action(self.vte.copy_clipboard_format, Vte.Format.TEXT)
+                    return False
 
                 def _cb_paste(widget, *args):
-                    return _schedule_vte_action(self.vte.paste_clipboard)
+                    if self.backend:
+                        return _schedule_vte_action(self.backend.paste_clipboard)
+                    elif self.vte is not None:
+                        return _schedule_vte_action(self.vte.paste_clipboard)
+                    return False
 
                 def _cb_select_all(widget, *args):
-                    return _schedule_vte_action(self.vte.select_all)
+                    if self.backend:
+                        return _schedule_vte_action(self.backend.select_all)
+                    elif self.vte is not None:
+                        return _schedule_vte_action(self.vte.select_all)
+                    return False
 
                 if is_macos():
                     # macOS: Use standard Cmd+C/V for copy/paste, Cmd+Shift+C/V for terminal-specific operations
@@ -2679,7 +2991,10 @@ class TerminalWidget(Gtk.Box):
                     Gtk.CallbackAction.new(_cb_reset_zoom)
                 ))
 
-                self.vte.add_controller(controller)
+                if self.vte is not None:
+                    self.vte.add_controller(controller)
+                elif self.terminal_widget is not None:
+                    self.terminal_widget.add_controller(controller)
                 self._shortcut_controller = controller
 
             if getattr(self, '_shortcut_controller', None) is not None:
@@ -2729,7 +3044,10 @@ class TerminalWidget(Gtk.Box):
                 return False  # Don't consume the event if modifier not pressed
             
             scroll_controller.connect('scroll', _on_scroll)
-            self.vte.add_controller(scroll_controller)
+            if self.vte is not None:
+                self.vte.add_controller(scroll_controller)
+            elif self.terminal_widget is not None:
+                self.terminal_widget.add_controller(scroll_controller)
             self._scroll_controller = scroll_controller
             logger.debug("Mouse wheel zoom functionality installed")
 
@@ -2744,7 +3062,10 @@ class TerminalWidget(Gtk.Box):
         try:
             controller = Gtk.EventControllerKey()
             controller.connect('key-pressed', self._on_vte_search_key_pressed)
-            self.vte.add_controller(controller)
+            if self.vte is not None:
+                self.vte.add_controller(controller)
+            elif self.terminal_widget is not None:
+                self.terminal_widget.add_controller(controller)
             self._search_key_controller = controller
             logger.debug("Search key controller installed")
         except Exception as exc:
@@ -2954,7 +3275,14 @@ class TerminalWidget(Gtk.Box):
             # Prefer PID recorded at spawn complete
             if getattr(self, 'process_pid', None):
                 return self.process_pid
-            pty = self.vte.get_pty()
+            pty = None
+            if self.backend:
+                pty = self.backend.get_pty()
+            if pty is None and self.vte is not None:
+                try:
+                    pty = self.vte.get_pty()
+                except Exception:
+                    pass
             if pty and hasattr(pty, 'get_pid'):
                 pid = pty.get_pid()
                 if pid:
@@ -2969,8 +3297,13 @@ class TerminalWidget(Gtk.Box):
         """Handle widget destruction"""
         logger.debug(f"Terminal widget {self.session_id} being destroyed")
 
-        # Disconnect VTE signal handlers first to prevent callbacks on destroyed objects
-        if hasattr(self, 'vte') and self.vte:
+        # Disconnect backend signal handlers first to prevent callbacks on destroyed objects
+        if hasattr(self, 'backend') and self.backend is not None:
+            try:
+                self._disconnect_backend_signals()
+            except Exception as e:
+                logger.error(f"Error disconnecting backend signals: {e}")
+        elif hasattr(self, 'vte') and self.vte:
             try:
                 if hasattr(self, '_child_exited_handler'):
                     self.vte.disconnect(self._child_exited_handler)
@@ -3242,7 +3575,10 @@ class TerminalWidget(Gtk.Box):
         try:
             # Show raw error in terminal
             error_msg = f"\r\n\x1b[31m{error_message}\x1b[0m\r\n"
-            self.vte.feed(error_msg.encode('utf-8'))
+            if self.backend:
+                self.backend.feed(error_msg.encode('utf-8'))
+            elif self.vte is not None:
+                self.vte.feed(error_msg.encode('utf-8'))
 
             self.is_connected = False
 
@@ -3425,23 +3761,35 @@ class TerminalWidget(Gtk.Box):
 
     def copy_text(self):
         """Copy selected text to clipboard"""
-        if self.vte.get_has_selection():
-            self.vte.copy_clipboard_format(Vte.Format.TEXT)
+        if self.backend:
+            self.backend.copy_clipboard()
+        elif self.vte is not None:
+            if self.vte.get_has_selection():
+                self.vte.copy_clipboard_format(Vte.Format.TEXT)
 
     def paste_text(self):
         """Paste text from clipboard"""
-        self.vte.paste_clipboard()
+        if self.backend:
+            self.backend.paste_clipboard()
+        elif self.vte is not None:
+            self.vte.paste_clipboard()
 
     def select_all(self):
         """Select all text in terminal"""
-        self.vte.select_all()
+        if self.backend:
+            self.backend.select_all()
+        elif self.vte is not None:
+            self.vte.select_all()
 
     def zoom_in(self):
         """Zoom in the terminal font"""
         try:
-            current_scale = self.vte.get_font_scale()
+            current_scale = 1.0
+            if self.backend:
+                current_scale = self.backend.get_font_scale()
             new_scale = min(current_scale + 0.1, 5.0)  # Max zoom 5x
-            self.vte.set_font_scale(new_scale)
+            if self.backend:
+                self.backend.set_font_scale(new_scale)
             logger.debug(f"Terminal zoomed in to {new_scale:.1f}x")
         except Exception as e:
             logger.error(f"Failed to zoom in terminal: {e}")
@@ -3449,9 +3797,12 @@ class TerminalWidget(Gtk.Box):
     def zoom_out(self):
         """Zoom out the terminal font"""
         try:
-            current_scale = self.vte.get_font_scale()
+            current_scale = 1.0
+            if self.backend:
+                current_scale = self.backend.get_font_scale()
             new_scale = max(current_scale - 0.1, 0.5)  # Min zoom 0.5x
-            self.vte.set_font_scale(new_scale)
+            if self.backend:
+                self.backend.set_font_scale(new_scale)
             logger.debug(f"Terminal zoomed out to {new_scale:.1f}x")
         except Exception as e:
             logger.error(f"Failed to zoom out terminal: {e}")
@@ -3459,18 +3810,25 @@ class TerminalWidget(Gtk.Box):
     def reset_zoom(self):
         """Reset terminal zoom to default (1.0x)"""
         try:
-            self.vte.set_font_scale(1.0)
+            if self.backend:
+                self.backend.set_font_scale(1.0)
             logger.debug("Terminal zoom reset to 1.0x")
         except Exception as e:
             logger.error(f"Failed to reset terminal zoom: {e}")
 
     def reset_terminal(self):
         """Reset terminal"""
-        self.vte.reset(True, True)
+        if self.backend:
+            self.backend.reset(True, True)
+        elif self.vte is not None:
+            self.vte.reset(True, True)
 
     def reset_and_clear(self):
         """Reset and clear terminal"""
-        self.vte.reset(True, False)
+        if self.backend:
+            self.backend.reset(True, False)
+        elif self.vte is not None:
+            self.vte.reset(True, False)
 
     def _show_search_overlay(self, select_all: bool = False):
         """Reveal the terminal search overlay and focus the search entry."""
@@ -3496,7 +3854,8 @@ class TerminalWidget(Gtk.Box):
                 self.search_revealer.set_reveal_child(False)
             self._set_search_error_state(False)
             if hasattr(self, 'vte') and self.vte:
-                self.vte.grab_focus()
+                if self.backend:
+                    self.backend.grab_focus()
         except Exception as exc:
             logger.debug("Failed to hide search overlay: %s", exc)
 
@@ -3530,7 +3889,8 @@ class TerminalWidget(Gtk.Box):
         self._set_search_navigation_sensitive(False)
         self._set_search_error_state(False)
         try:
-            self.vte.search_set_regex(None, 0)
+            if self.backend:
+                self.backend.search_set_regex(None)
         except Exception:
             pass
 
@@ -3553,9 +3913,19 @@ class TerminalWidget(Gtk.Box):
                 # Use inline case-insensitive flag to avoid Vte.RegexFlags dependency
                 if not case_sensitive and not pattern.startswith("(?i)"):
                     pattern = "(?i)" + pattern
-                search_regex = Vte.Regex.new_for_search(pattern, -1, 0)
-                self.vte.search_set_regex(search_regex, 0)
-                self.vte.search_set_wrap_around(True)
+                
+                # Use backend abstraction for search
+                if self.backend:
+                    # For VTE backend, create Vte.Regex
+                    if hasattr(self.backend, 'vte') and self.backend.vte:
+                        search_regex = Vte.Regex.new_for_search(pattern, -1, 0)
+                        self.backend.search_set_regex(search_regex)
+                        if hasattr(self.backend.vte, 'search_set_wrap_around'):
+                            self.backend.vte.search_set_wrap_around(True)
+                    else:
+                        # For PyXterm backend, pass the pattern as string
+                        self.backend.search_set_regex(pattern)
+                
                 self._last_search_text = text
                 self._last_search_case_sensitive = case_sensitive
                 self._last_search_regex = regex
@@ -3578,7 +3948,10 @@ class TerminalWidget(Gtk.Box):
     def _run_search(self, forward: bool = True, *, update_entry: bool = False) -> bool:
         """Execute search navigation in the requested direction."""
         try:
-            found = self.vte.search_find_next() if forward else self.vte.search_find_previous()
+            if self.backend:
+                found = self.backend.search_find_next() if forward else self.backend.search_find_previous()
+            else:
+                found = False
         except Exception as exc:
             logger.error(f"Search navigation failed: {exc}")
             found = False
@@ -3786,7 +4159,14 @@ class TerminalWidget(Gtk.Box):
             if not hasattr(self, 'vte') or not self.vte:
                 return False
                 
-            pty = self.vte.get_pty()
+            pty = None
+            if self.backend:
+                pty = self.backend.get_pty()
+            if pty is None and self.vte is not None:
+                try:
+                    pty = self.vte.get_pty()
+                except Exception:
+                    pass
             if not pty:
                 return False
                 
@@ -3822,6 +4202,574 @@ class TerminalWidget(Gtk.Box):
         if not self._is_local_terminal():
             return "SSH_TERMINAL"
         return self._job_status
+
+    def _setup_fullscreen_shortcut(self):
+        """Setup F11 keyboard shortcut for fullscreen toggle."""
+        try:
+            from gi.repository import Gdk
+            
+            # Create keyboard controller for F11
+            key_controller = Gtk.EventControllerKey()
+            key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            
+            def on_key_pressed(controller, keyval, keycode, state):
+                # F11 key
+                if keyval == Gdk.KEY_F11:
+                    self.toggle_fullscreen()
+                    return True
+                return False
+            
+            key_controller.connect('key-pressed', on_key_pressed)
+            self.add_controller(key_controller)
+            logger.debug("Fullscreen shortcut (F11) registered")
+        except Exception as e:
+            logger.debug(f"Failed to setup fullscreen shortcut: {e}", exc_info=True)
+    
+    def toggle_fullscreen(self):
+        """Toggle fullscreen mode for the terminal widget."""
+        if self._is_fullscreen:
+            self._exit_fullscreen()
+        else:
+            self._enter_fullscreen()
+    
+    def _enter_fullscreen(self):
+        """Enter fullscreen mode - hide sidebar, header bar, and tab bar."""
+        if self._is_fullscreen:
+            return
+        
+        try:
+            root = self.get_root()
+            if not root:
+                logger.debug("Cannot enter fullscreen: window not found")
+                return
+            
+            # Store current state
+            self._fullscreen_sidebar_visible = None
+            self._fullscreen_header_visible = None
+            self._fullscreen_tab_bar_visible = None
+            self._fullscreen_update_banner_visible = None
+            self._fullscreen_broadcast_banner_visible = None
+            
+            # Store window state before going fullscreen
+            try:
+                # Check if window is maximized
+                if hasattr(root, 'is_maximized'):
+                    self._was_maximized = root.is_maximized()
+                elif hasattr(root, 'get_maximized'):
+                    self._was_maximized = root.get_maximized()
+            except Exception:
+                self._was_maximized = False
+            
+            # Hide sidebar if it exists
+            if hasattr(root, 'split_view'):
+                try:
+                    if hasattr(root.split_view, 'get_show_sidebar'):
+                        self._fullscreen_sidebar_visible = root.split_view.get_show_sidebar()
+                        root.split_view.set_show_sidebar(False)
+                    elif hasattr(root.split_view, 'get_sidebar_visible'):
+                        self._fullscreen_sidebar_visible = root.split_view.get_sidebar_visible()
+                        root.split_view.set_sidebar_visible(False)
+                except Exception as e:
+                    logger.debug(f"Failed to hide sidebar: {e}")
+            
+            # Hide header bar - it's added to ToolbarView via add_top_bar()
+            # Try multiple methods to ensure it's hidden
+            if hasattr(root, 'header_bar'):
+                try:
+                    self._fullscreen_header_visible = root.header_bar.get_visible()
+                    # Method 1: Direct visibility
+                    root.header_bar.set_visible(False)
+                    # Method 2: Also try hide() method
+                    if hasattr(root.header_bar, 'hide'):
+                        root.header_bar.hide()
+                    logger.debug("Header bar hidden for fullscreen")
+                except Exception as e:
+                    logger.debug(f"Failed to hide header bar: {e}", exc_info=True)
+            else:
+                logger.debug("header_bar attribute not found on root window")
+            
+            # Hide tab bar if it exists
+            if hasattr(root, 'tab_bar'):
+                try:
+                    self._fullscreen_tab_bar_visible = root.tab_bar.get_visible()
+                    root.tab_bar.set_visible(False)
+                    # Also try hide() method
+                    if hasattr(root.tab_bar, 'hide'):
+                        root.tab_bar.hide()
+                    logger.debug("Tab bar hidden for fullscreen")
+                except Exception as e:
+                    logger.debug(f"Failed to hide tab bar: {e}", exc_info=True)
+            else:
+                logger.debug("tab_bar attribute not found on root window")
+            
+            # Hide update banner if it exists
+            if hasattr(root, 'update_banner_container'):
+                try:
+                    self._fullscreen_update_banner_visible = root.update_banner_container.get_visible()
+                    root.update_banner_container.set_visible(False)
+                    logger.debug("Update banner hidden for fullscreen")
+                except Exception as e:
+                    logger.debug(f"Failed to hide update banner: {e}", exc_info=True)
+            
+            # Hide broadcast banner if it exists
+            if hasattr(root, 'broadcast_banner'):
+                try:
+                    self._fullscreen_broadcast_banner_visible = root.broadcast_banner.get_visible()
+                    root.broadcast_banner.set_visible(False)
+                    logger.debug("Broadcast banner hidden for fullscreen")
+                except Exception as e:
+                    logger.debug(f"Failed to hide broadcast banner: {e}", exc_info=True)
+            
+            # Add CSS class to window for targeted hiding of header bar and tab bar
+            try:
+                root.add_css_class('terminal-fullscreen-mode')
+                logger.debug("Added terminal-fullscreen-mode CSS class to window")
+            except Exception as e:
+                logger.debug(f"Failed to add CSS class: {e}")
+            
+            # Use CSS as a fallback to hide header bar and tab bar
+            try:
+                from gi.repository import Gdk
+                display = Gdk.Display.get_default()
+                if display:
+                    css_provider = Gtk.CssProvider()
+                    css = """
+                    .terminal-fullscreen-mode headerbar {
+                        opacity: 0 !important;
+                        min-height: 0 !important;
+                        max-height: 0 !important;
+                        margin: 0 !important;
+                        padding: 0 !important;
+                    }
+                    .terminal-fullscreen-mode tabbar {
+                        opacity: 0 !important;
+                        min-height: 0 !important;
+                        max-height: 0 !important;
+                        margin: 0 !important;
+                        padding: 0 !important;
+                    }
+                    """
+                    css_provider.load_from_data(css.encode('utf-8'))
+                    Gtk.StyleContext.add_provider_for_display(
+                        display, css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                    )
+                    self._fullscreen_css_provider = css_provider
+                    logger.debug("Applied CSS to hide header bar and tab bar")
+            except Exception as e:
+                logger.debug(f"Failed to apply CSS for fullscreen: {e}")
+            
+            # Make the window fullscreen (takes up entire screen)
+            try:
+                if hasattr(root, 'fullscreen'):
+                    root.fullscreen()
+                elif hasattr(root, 'set_fullscreen'):
+                    root.set_fullscreen(True)
+                logger.debug("Window set to fullscreen")
+            except Exception as e:
+                logger.debug(f"Failed to set window fullscreen: {e}", exc_info=True)
+            
+            # Create fullscreen banner container if it doesn't exist (but don't show it yet)
+            if self._fullscreen_banner_container is None:
+                self._create_fullscreen_banner()
+            
+            # Add banner to window level (above terminal) if not already added
+            if self._fullscreen_banner_container and self._fullscreen_banner_container.get_parent() is None:
+                # Find the content wrapper that contains banners and content_stack
+                try:
+                    if hasattr(root, 'content_stack'):
+                        parent = root.content_stack.get_parent()
+                        if parent:
+                            # Prepend banner at the beginning to appear above everything
+                            parent.prepend(self._fullscreen_banner_container)
+                            logger.debug("Fullscreen banner added to window content area")
+                except Exception as e:
+                    logger.debug(f"Failed to add fullscreen banner to window: {e}", exc_info=True)
+            
+            # Show fullscreen banner with help text
+            self._show_fullscreen_banner()
+            
+            self._is_fullscreen = True
+            logger.debug("Entered terminal fullscreen mode")
+        except Exception as e:
+            logger.error(f"Failed to enter fullscreen: {e}", exc_info=True)
+    
+    def _exit_fullscreen(self):
+        """Exit fullscreen mode - restore sidebar, header bar, and tab bar."""
+        if not self._is_fullscreen:
+            return
+        
+        try:
+            root = self.get_root()
+            if not root:
+                logger.debug("Cannot exit fullscreen: window not found")
+                self._is_fullscreen = False
+                return
+            
+            # Restore sidebar
+            if hasattr(root, 'split_view') and self._fullscreen_sidebar_visible is not None:
+                try:
+                    if hasattr(root.split_view, 'set_show_sidebar'):
+                        root.split_view.set_show_sidebar(self._fullscreen_sidebar_visible)
+                    elif hasattr(root.split_view, 'set_sidebar_visible'):
+                        root.split_view.set_sidebar_visible(self._fullscreen_sidebar_visible)
+                except Exception as e:
+                    logger.debug(f"Failed to restore sidebar: {e}")
+            
+            # Remove CSS class from window
+            try:
+                root.remove_css_class('terminal-fullscreen-mode')
+                logger.debug("Removed terminal-fullscreen-mode CSS class from window")
+            except Exception as e:
+                logger.debug(f"Failed to remove CSS class: {e}")
+            
+            # Remove CSS provider if it was added
+            if self._fullscreen_css_provider:
+                try:
+                    from gi.repository import Gdk
+                    display = Gdk.Display.get_default()
+                    if display:
+                        Gtk.StyleContext.remove_provider_for_display(
+                            display, self._fullscreen_css_provider
+                        )
+                    self._fullscreen_css_provider = None
+                    logger.debug("Removed fullscreen CSS provider")
+                except Exception as e:
+                    logger.debug(f"Failed to remove CSS provider: {e}")
+            
+            # Restore header bar
+            if hasattr(root, 'header_bar') and self._fullscreen_header_visible is not None:
+                try:
+                    root.header_bar.set_visible(self._fullscreen_header_visible)
+                    # Also try show() method
+                    if hasattr(root.header_bar, 'show'):
+                        root.header_bar.show()
+                except Exception as e:
+                    logger.debug(f"Failed to restore header bar: {e}")
+            
+            # Restore tab bar
+            if hasattr(root, 'tab_bar') and self._fullscreen_tab_bar_visible is not None:
+                try:
+                    root.tab_bar.set_visible(self._fullscreen_tab_bar_visible)
+                    # Also try show() method
+                    if hasattr(root.tab_bar, 'show'):
+                        root.tab_bar.show()
+                except Exception as e:
+                    logger.debug(f"Failed to restore tab bar: {e}")
+            
+            # Restore update banner
+            if hasattr(root, 'update_banner_container') and self._fullscreen_update_banner_visible is not None:
+                try:
+                    root.update_banner_container.set_visible(self._fullscreen_update_banner_visible)
+                except Exception as e:
+                    logger.debug(f"Failed to restore update banner: {e}")
+            
+            # Restore broadcast banner
+            if hasattr(root, 'broadcast_banner') and self._fullscreen_broadcast_banner_visible is not None:
+                try:
+                    root.broadcast_banner.set_visible(self._fullscreen_broadcast_banner_visible)
+                except Exception as e:
+                    logger.debug(f"Failed to restore broadcast banner: {e}")
+            
+            # Unfullscreen the window
+            try:
+                if hasattr(root, 'unfullscreen'):
+                    root.unfullscreen()
+                elif hasattr(root, 'set_fullscreen'):
+                    root.set_fullscreen(False)
+                logger.debug("Window unfullscreen")
+            except Exception as e:
+                logger.debug(f"Failed to unfullscreen window: {e}", exc_info=True)
+            
+            # Restore maximized state if it was maximized before
+            if self._was_maximized:
+                try:
+                    if hasattr(root, 'maximize'):
+                        root.maximize()
+                    elif hasattr(root, 'set_maximized'):
+                        root.set_maximized(True)
+                except Exception as e:
+                    logger.debug(f"Failed to restore maximized state: {e}")
+            
+            # Hide fullscreen banner
+            self._hide_fullscreen_banner()
+            
+            # Remove banner from window when exiting fullscreen
+            if self._fullscreen_banner_container:
+                try:
+                    parent = self._fullscreen_banner_container.get_parent()
+                    if parent:
+                        parent.remove(self._fullscreen_banner_container)
+                        logger.debug("Fullscreen banner removed from window")
+                except Exception as e:
+                    logger.debug(f"Failed to remove fullscreen banner from window: {e}", exc_info=True)
+            
+            self._is_fullscreen = False
+            logger.debug("Exited terminal fullscreen mode")
+        except Exception as e:
+            logger.error(f"Failed to exit fullscreen: {e}", exc_info=True)
+            self._is_fullscreen = False
+    
+    def _create_fullscreen_banner(self):
+        """Create fullscreen banner container (but don't show it yet)."""
+        try:
+            # Create banner container if it doesn't exist (matching update banner style)
+            if self._fullscreen_banner_container is None:
+                # Use overlay to position dismiss button on top of banner (same as update banner)
+                banner_overlay = Gtk.Overlay()
+                # Make overlay expand to full width
+                banner_overlay.set_hexpand(True)
+                
+                fullscreen_banner = Adw.Banner()
+                fullscreen_banner.set_title(_("Press F11 to exit fullscreen mode"))
+                fullscreen_banner.set_button_label(_("Exit Fullscreen"))
+                
+                # Set button style to "suggested" and connect click handler
+                try:
+                    # Use set_button_style if available (Adw 1.7+)
+                    if hasattr(fullscreen_banner, 'set_button_style'):
+                        # Use enum value for suggested style
+                        fullscreen_banner.set_button_style(Adw.BannerButtonStyle.SUGGESTED)
+                    else:
+                        # Fallback: Apply suggested style via CSS
+                        from gi.repository import Gdk
+                        display = Gdk.Display.get_default()
+                        if display:
+                            css_provider = Gtk.CssProvider()
+                            css = """
+                            banner.fullscreen-banner button {
+                                background-color: @suggested_bg_color;
+                                color: @suggested_fg_color;
+                            }
+                            banner.fullscreen-banner button:hover {
+                                background-color: @suggested_hover_bg_color;
+                            }
+                            banner.fullscreen-banner button:active {
+                                background-color: @suggested_active_bg_color;
+                            }
+                            """
+                            css_provider.load_from_data(css.encode('utf-8'))
+                            Gtk.StyleContext.add_provider_for_display(
+                                display, css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+                            )
+                            fullscreen_banner.add_css_class('fullscreen-banner')
+                    
+                    # Connect button click handler
+                    def on_banner_button_clicked(banner):
+                        self.toggle_fullscreen()
+                    
+                    fullscreen_banner.connect('button-clicked', on_banner_button_clicked)
+                except Exception as e:
+                    logger.debug(f"Failed to style fullscreen banner button: {e}", exc_info=True)
+                
+                # Make banner expand to fill available width (Adw.Banner supports hexpand per docs)
+                fullscreen_banner.set_hexpand(True)
+                banner_overlay.set_child(fullscreen_banner)
+                
+                # Create dismiss button with text, positioned at the left (same as update banner)
+                dismiss_button = Gtk.Button()
+                dismiss_button.set_label(_('Dismiss'))
+                dismiss_button.set_halign(Gtk.Align.START)
+                dismiss_button.set_valign(Gtk.Align.CENTER)
+                dismiss_button.set_margin_start(12)
+                dismiss_button.connect('clicked', self._on_fullscreen_banner_dismiss)
+                banner_overlay.add_overlay(dismiss_button)
+                
+                self._fullscreen_banner_container = banner_overlay
+                self._fullscreen_banner_dismiss_button = dismiss_button
+                
+                # Make banner container expand to fill full width
+                self._fullscreen_banner_container.set_hexpand(True)
+                self._fullscreen_banner_container.set_vexpand(False)
+                
+                # Banner will be added to window level when entering fullscreen
+                # Store reference but don't add to any container yet
+                self._fullscreen_banner_container.set_visible(False)  # Hidden by default
+                
+                # Configure banner positioning for full width
+                self._fullscreen_banner_container.set_halign(Gtk.Align.FILL)
+                self._fullscreen_banner_container.set_valign(Gtk.Align.START)
+                # Remove margins to make it truly full width
+                self._fullscreen_banner_container.set_margin_start(0)
+                self._fullscreen_banner_container.set_margin_end(0)
+                self._fullscreen_banner_container.set_margin_top(0)
+                
+                logger.debug("Fullscreen banner container created")
+        except Exception as e:
+            logger.error(f"Failed to create fullscreen banner: {e}", exc_info=True)
+    
+    def _show_fullscreen_banner(self):
+        """Show fullscreen banner with help text and exit button."""
+        try:
+            # Ensure banner container exists
+            if self._fullscreen_banner_container is None:
+                self._create_fullscreen_banner()
+            
+            # Show the banner
+            if self._fullscreen_banner_container:
+                banner = self._fullscreen_banner_container.get_child()
+                if banner and isinstance(banner, Adw.Banner):
+                    banner.set_revealed(True)
+                self._fullscreen_banner_container.set_visible(True)
+            
+            logger.debug("Fullscreen banner shown")
+        except Exception as e:
+            logger.debug(f"Failed to show fullscreen banner: {e}", exc_info=True)
+    
+    def _on_fullscreen_banner_dismiss(self, button):
+        """Handle dismiss button click on fullscreen banner."""
+        logger.debug("Fullscreen banner dismissed by user")
+        self._hide_fullscreen_banner()
+    
+    def _hide_fullscreen_banner(self):
+        """Hide fullscreen banner."""
+        try:
+            if self._fullscreen_banner_container:
+                banner = self._fullscreen_banner_container.get_child()
+                if banner and isinstance(banner, Adw.Banner):
+                    banner.set_revealed(False)
+                self._fullscreen_banner_container.set_visible(False)
+            
+            logger.debug("Fullscreen banner hidden")
+        except Exception as e:
+            logger.debug(f"Failed to hide fullscreen banner: {e}", exc_info=True)
+    
+    def _setup_drag_and_drop(self):
+        """Set up drag and drop for SCP upload from filesystem."""
+        try:
+            # Create drop target for file drops from filesystem
+            # According to GTK4 docs, filesystem drops come as Gdk.FileList
+            # Use GObject.TYPE_NONE and set_gtypes to support multiple types
+            drop_target = Gtk.DropTarget.new(type=GObject.TYPE_NONE, actions=Gdk.DragAction.COPY)
+            drop_target.set_gtypes([Gdk.FileList, Gio.File])
+            drop_target.connect("drop", self._on_file_drop)
+            drop_target.connect("enter", self._on_drop_enter)
+            drop_target.connect("leave", self._on_drop_leave)
+            
+            # Add drop target to the overlay (works for VTE backend)
+            self.overlay.add_controller(drop_target)
+            
+            # Also add to backend widget for PyXterm (WebView)
+            if self.backend and hasattr(self.backend, 'widget'):
+                backend_widget = self.backend.widget
+                if backend_widget and backend_widget != self.overlay:
+                    # Create a separate drop target for the backend widget
+                    backend_drop_target = Gtk.DropTarget.new(type=GObject.TYPE_NONE, actions=Gdk.DragAction.COPY)
+                    backend_drop_target.set_gtypes([Gdk.FileList, Gio.File])
+                    backend_drop_target.connect("drop", self._on_file_drop)
+                    backend_drop_target.connect("enter", self._on_drop_enter)
+                    backend_drop_target.connect("leave", self._on_drop_leave)
+                    backend_widget.add_controller(backend_drop_target)
+                    logger.debug("Drag and drop support added to backend widget (PyXterm)")
+            
+            logger.debug("Drag and drop support added to terminal")
+        except Exception as e:
+            logger.error(f"Failed to set up drag and drop: {e}", exc_info=True)
+    
+    def _on_drop_enter(self, drop_target, x, y):
+        """Handle drag enter event - show visual feedback."""
+        try:
+            # Check if we have a valid connection
+            if not self.connection or not self.is_connected:
+                return Gdk.DragAction.NONE
+            
+            # Only accept drops if we have a remote connection (not local shell)
+            if self._is_local_terminal():
+                return Gdk.DragAction.NONE
+            
+            return Gdk.DragAction.COPY
+        except Exception as e:
+            logger.debug(f"Error in drop enter: {e}", exc_info=True)
+            return Gdk.DragAction.NONE
+    
+    def _on_drop_leave(self, drop_target):
+        """Handle drag leave event."""
+        pass
+    
+    def _on_file_drop(self, drop_target, value, x, y):
+        """Handle file drop event - initiate SCP upload."""
+        try:
+            # Check if we have a valid connection
+            if not self.connection or not self.is_connected:
+                logger.debug("Drop rejected: no active connection")
+                return False
+            
+            # Only accept drops for remote connections (not local shell)
+            if self._is_local_terminal():
+                logger.debug("Drop rejected: local terminal")
+                return False
+            
+            # Extract file paths from the drop value
+            file_paths = []
+            
+            # Handle GObject.Value wrapper (GTK4 may wrap the value)
+            if isinstance(value, GObject.Value):
+                # Try different methods to extract the actual value
+                extracted = None
+                for getter in ("get_object", "get_boxed", "get"):
+                    try:
+                        extracted = getattr(value, getter)()
+                        if extracted is not None:
+                            break
+                    except Exception:
+                        continue
+                if extracted is not None:
+                    value = extracted
+            
+            # Handle Gdk.FileList (standard format for filesystem drops in GTK4)
+            if isinstance(value, Gdk.FileList):
+                files = value.get_files()
+                for file in files:
+                    if isinstance(file, Gio.File):
+                        path = file.get_path()
+                        if path:
+                            file_paths.append(path)
+            # Handle single Gio.File (fallback)
+            elif isinstance(value, Gio.File):
+                path = value.get_path()
+                if path:
+                    file_paths.append(path)
+            # Handle list of Gio.File objects (fallback)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, Gio.File):
+                        path = item.get_path()
+                        if path:
+                            file_paths.append(path)
+            # Try to get path directly (might be a GFile-like object)
+            elif hasattr(value, 'get_path'):
+                try:
+                    path = value.get_path()
+                    if path:
+                        file_paths.append(path)
+                except Exception:
+                    pass
+            
+            if not file_paths:
+                logger.debug("Drop rejected: no valid file paths extracted from value type: %s", type(value))
+                return False
+            
+            # Get MainWindow instance to call SCP upload
+            root = self.get_root()
+            if not root or not hasattr(root, '_start_scp_transfer'):
+                logger.debug("Drop rejected: MainWindow not found")
+                return False
+            
+            # Use current directory (.) as destination - scp will interpret this correctly
+            destination = "."
+            
+            # Initiate SCP upload
+            logger.info(f"Initiating SCP upload for {len(file_paths)} file(s) to {destination}")
+            root._start_scp_transfer(
+                self.connection,
+                file_paths,
+                destination,
+                direction='upload'
+            )
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error handling file drop: {e}", exc_info=True)
+            return False
 
     def has_active_job(self):
         """

@@ -4,7 +4,10 @@ import os
 import logging
 import subprocess
 import shutil
+import importlib
+import importlib.util
 from typing import Any, Dict, List, Optional
+from gettext import gettext as _
 
 from .platform_utils import get_config_dir, is_flatpak, is_macos
 from .file_manager_integration import (
@@ -515,6 +518,7 @@ class PreferencesWindow(Gtk.Window):
         self._encoding_options = []
         self._encoding_codes = []
         self._suppress_encoding_config_handler = False
+        self._user_initiated_encoding_change = False
         self._updating_connection_switches = False
         self.native_connect_row = None
         self.legacy_connect_row = None
@@ -780,6 +784,40 @@ class PreferencesWindow(Gtk.Window):
             preview_group.add(preview_container)
             appearance_group.add(preview_group)
             terminal_page.add(appearance_group)
+
+            # Terminal backend selection group
+            backend_group = Adw.PreferencesGroup(title="Backend")
+            
+            # Build backend choices
+            self._backend_choice_data = self._build_backend_choices()
+            
+            # Create combo row for backend selection
+            self.backend_row = Adw.ComboRow()
+            self.backend_row.set_title("Terminal Backend")
+            self.backend_row.set_subtitle("Choose the terminal rendering backend")
+            
+            # Create model from choices
+            backend_model = Gtk.StringList()
+            for choice in self._backend_choice_data:
+                backend_model.append(choice['label'])
+            self.backend_row.set_model(backend_model)
+            
+            # Set current backend
+            current_backend = self.config.get_setting('terminal.backend', 'vte')
+            current_index = 0
+            for i, choice in enumerate(self._backend_choice_data):
+                if choice['id'] == current_backend:
+                    current_index = i
+                    break
+            self.backend_row.set_selected(current_index)
+            self._backend_last_valid_index = current_index
+            self._update_backend_row_subtitle(current_index)
+            
+            # Connect change handler
+            self.backend_row.connect('notify::selected', self._on_backend_row_changed)
+            
+            backend_group.add(self.backend_row)
+            terminal_page.add(backend_group)
 
             keyboard_group = Adw.PreferencesGroup(title="Keyboard")
 
@@ -1778,7 +1816,11 @@ class PreferencesWindow(Gtk.Window):
                 count = 0
                 for terms in parent_window.connection_to_terminals.values():
                     for terminal in terms:
-                        if hasattr(terminal, 'vte'):
+                        # Use backend abstraction instead of direct vte access
+                        if hasattr(terminal, 'backend') and terminal.backend:
+                            terminal.backend.set_font(font_desc)
+                            count += 1
+                        elif hasattr(terminal, 'vte') and terminal.vte:
                             terminal.vte.set_font(font_desc)
                             count += 1
                 logger.info(f"Applied font {font_string} to {count} terminals")
@@ -2165,7 +2207,10 @@ class PreferencesWindow(Gtk.Window):
         elif key == 'terminal.encoding':
             if self._suppress_encoding_config_handler:
                 return
-            GLib.idle_add(self._sync_encoding_row_selection, value or '', True)
+            # Don't show toast if the change was initiated by user selection
+            notify_user = not self._user_initiated_encoding_change
+            self._user_initiated_encoding_change = False  # Reset flag
+            GLib.idle_add(self._sync_encoding_row_selection, value or '', notify_user)
 
     def _sync_use_group_color_in_tab(self, value):
         if not hasattr(self, 'tab_group_color_row') or self.tab_group_color_row is None:
@@ -2646,8 +2691,44 @@ class PreferencesWindow(Gtk.Window):
 
         current_encoding = self.config.get_setting('terminal.encoding', 'UTF-8')
         self._sync_encoding_row_selection(current_encoding, notify_user=True)
+        
+        # Update visibility based on current backend
+        self._update_encoding_row_visibility()
 
     def _collect_supported_encodings(self):
+        """Collect supported encodings based on current backend"""
+        current_backend = self.config.get_setting('terminal.backend', 'vte').lower()
+        
+        # For PyXterm.js backend, provide xterm.js compatible encodings
+        # According to https://xtermjs.org/docs/guides/encoding/
+        # xterm.js uses UTF-8/UTF-16 natively, legacy encodings via luit/iconv
+        if current_backend == 'pyxterm':
+            # xterm.js native encodings
+            options = [
+                ('UTF-8', 'Unicode (UTF-8)'),
+                ('UTF-16', 'Unicode (UTF-16)'),
+            ]
+            
+            # Add common legacy encodings that can be handled via luit/iconv
+            # These will be transcoded at the PTY bridge level
+            legacy_encodings = [
+                ('ISO-8859-1', 'Latin-1 (ISO-8859-1)'),
+                ('ISO-8859-15', 'Latin-9 (ISO-8859-15)'),
+                ('Windows-1252', 'Western European (Windows-1252)'),
+                ('GB2312', 'Simplified Chinese (GB2312)'),
+                ('GBK', 'Chinese (GBK)'),
+                ('GB18030', 'Chinese (GB18030)'),
+                ('Big5', 'Traditional Chinese (Big5)'),
+                ('Shift_JIS', 'Japanese (Shift_JIS)'),
+                ('EUC-JP', 'Japanese (EUC-JP)'),
+                ('EUC-KR', 'Korean (EUC-KR)'),
+                ('KOI8-R', 'Cyrillic (KOI8-R)'),
+                ('KOI8-U', 'Ukrainian (KOI8-U)'),
+            ]
+            options.extend(legacy_encodings)
+            return options
+        
+        # For VTE backend, use VTE's native encoding support
         options = []
         try:
             terminal = Vte.Terminal()
@@ -2760,6 +2841,41 @@ class PreferencesWindow(Gtk.Window):
         finally:
             self._suppress_encoding_config_handler = False
 
+    def _update_encoding_row_visibility(self):
+        """Update encoding row visibility based on current backend"""
+        if not hasattr(self, 'encoding_row') or self.encoding_row is None:
+            return
+        
+        current_backend = self.config.get_setting('terminal.backend', 'vte').lower()
+        
+        # Hide encoding dropdown for VTE backend (VTE handles encoding internally)
+        # Show encoding dropdown for PyXterm.js backend (encoding handled at PTY bridge level)
+        if current_backend == 'vte':
+            self.encoding_row.set_visible(False)
+            logger.debug("Hiding encoding dropdown for VTE backend")
+        elif current_backend == 'pyxterm':
+            self.encoding_row.set_visible(True)
+            # Refresh encoding options for PyXterm.js
+            self._encoding_options = self._collect_supported_encodings()
+            self._encoding_codes = [code for code, _ in self._encoding_options]
+            
+            # Update the model
+            encoding_list = Gtk.StringList()
+            for code, description in self._encoding_options:
+                display_label = description or code
+                if description and description != code:
+                    display_label = f"{code} — {description}"
+                encoding_list.append(display_label)
+            self.encoding_row.set_model(encoding_list)
+            
+            # Sync selection
+            current_encoding = self.config.get_setting('terminal.encoding', 'UTF-8')
+            self._sync_encoding_row_selection(current_encoding, notify_user=False)
+            logger.debug("Showing encoding dropdown for PyXterm.js backend")
+        else:
+            # Default: show for unknown backends
+            self.encoding_row.set_visible(True)
+
     def on_encoding_selection_changed(self, combo_row, _param):
         if self._encoding_selection_sync:
             return
@@ -2769,7 +2885,188 @@ class PreferencesWindow(Gtk.Window):
             return
 
         target_code = self._encoding_codes[index]
+        # Mark this as a user-initiated change to suppress toast
+        self._user_initiated_encoding_change = True
         self._update_encoding_config_if_needed(target_code)
+
+    def _detect_pyxterm_backend(self):
+        external_error: Optional[str] = None
+
+        try:
+            spec = importlib.util.find_spec('pyxtermjs')
+            if spec is None:
+                external_error = 'pyxtermjs module not found'
+            else:
+                __import__('pyxtermjs')
+                return True, None
+        except Exception as exc:
+            external_error = str(exc)
+
+        vendored_error: Optional[str] = None
+
+        try:
+            vendored_spec = importlib.util.find_spec('sshpilot.vendor.pyxtermjs')
+            if vendored_spec is not None:
+                return True, None
+            vendored_error = 'vendored pyxtermjs module not found'
+        except Exception as vendored_exc:
+            vendored_error = str(vendored_exc)
+
+        message_parts = [part for part in (external_error, vendored_error) if part]
+        if not message_parts:
+            message_parts.append('pyxtermjs backend unavailable')
+
+        return False, '; '.join(message_parts)
+
+    def _build_backend_choices(self):
+        choices = [
+            {
+                'id': 'vte',
+                'label': 'VTE (default)',
+                'description': 'Native VTE-based terminal',
+                'available': True,
+                'error': None,
+            }
+        ]
+        pyxterm_available, pyxterm_error = self._detect_pyxterm_backend()
+        if pyxterm_available:
+            choices.append(
+                {
+                    'id': 'pyxterm',
+                    'label': 'PyXterm.js',
+                    'description': 'Web-based terminal (pyxtermjs)',
+                    'available': True,
+                    'error': None,
+                }
+            )
+        else:
+            choices.append(
+                {
+                    'id': 'pyxterm',
+                    'label': 'PyXterm.js (requires pyxtermjs)',
+                    'description': 'pyxtermjs package not available',
+                    'available': False,
+                    'error': pyxterm_error,
+                }
+            )
+        return choices
+
+    def _update_backend_row_subtitle(self, index: int):
+        if not hasattr(self, 'backend_row'):
+            return
+        if 0 <= index < len(self._backend_choice_data):
+            desc = self._backend_choice_data[index].get('description')
+            if desc:
+                self.backend_row.set_subtitle(desc)
+
+    def _on_backend_row_changed(self, combo_row, _param):
+        index = combo_row.get_selected()
+        if index < 0 or index >= len(self._backend_choice_data):
+            return
+        option = self._backend_choice_data[index]
+        if not option.get('available'):
+            combo_row.set_selected(self._backend_last_valid_index)
+            logger.warning("PyXterm backend unavailable: %s", option.get('error'))
+            return
+        
+        backend_id = option.get('id', 'vte')
+        current_backend = self.config.get_setting('terminal.backend', 'vte')
+        
+        # If backend hasn't actually changed, do nothing
+        if backend_id.lower() == current_backend.lower():
+            return
+        
+        # Check if there are any open terminal tabs
+        open_terminals = self._get_open_terminals()
+        
+        if open_terminals:
+            # Show info dialog explaining the change only applies to new terminals
+            self._show_backend_change_info(backend_id, open_terminals, index)
+        else:
+            # No open terminals, proceed with backend switch
+            self._apply_backend_change(index, backend_id)
+    
+    def _get_open_terminals(self):
+        """Get all currently open terminal tabs (connected or not)"""
+        terminals = []
+        if not self.parent_window:
+            return terminals
+        
+        # Check active_terminals
+        active_terminals = getattr(self.parent_window, 'active_terminals', {})
+        for connection, terminal in active_terminals.items():
+            if terminal:
+                terminals.append((connection, terminal))
+        
+        # Also check connection_to_terminals for any other terminals
+        connection_to_terminals = getattr(self.parent_window, 'connection_to_terminals', {})
+        for connection, terminal_list in connection_to_terminals.items():
+            for terminal in terminal_list:
+                if terminal:
+                    # Avoid duplicates
+                    if (connection, terminal) not in terminals:
+                        terminals.append((connection, terminal))
+        
+        # Check tab_view for any terminal pages
+        tab_view = getattr(self.parent_window, 'tab_view', None)
+        if tab_view is not None and hasattr(tab_view, 'get_n_pages'):
+            try:
+                for page_idx in range(tab_view.get_n_pages()):
+                    page = tab_view.get_nth_page(page_idx)
+                    if page is None:
+                        continue
+                    terminal = page.get_child()
+                    if terminal and terminal not in [t for _, t in terminals]:
+                        # Try to find the connection for this terminal
+                        terminal_to_connection = getattr(self.parent_window, 'terminal_to_connection', {})
+                        connection = terminal_to_connection.get(terminal)
+                        if connection:
+                            terminals.append((connection, terminal))
+                        else:
+                            # Terminal without connection (e.g., local terminal)
+                            terminals.append((None, terminal))
+            except Exception:
+                pass
+        
+        return terminals
+    
+    def _show_backend_change_info(self, backend_id, open_terminals, index):
+        """Show an info dialog explaining that backend change only applies to new terminals"""
+        backend_name = 'PyXterm.js' if backend_id.lower() == 'pyxterm' else 'VTE'
+        num_terminals = len(open_terminals)
+        
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text=_("Terminal Backend Change"),
+            secondary_text=_(
+                f"The terminal backend has been changed to {backend_name}.\n\n"
+                f"This change will only apply to new terminal tabs.\n"
+                f"Existing {num_terminals} terminal tab{'s' if num_terminals > 1 else ''} will continue using their current backend.\n\n"
+                "To use the new backend for existing terminals, close and reopen those tabs."
+            )
+        )
+        def _on_info_response(d, response_id):
+            d.destroy()
+            self._apply_backend_change(index, backend_id)
+        dialog.connect("response", _on_info_response)
+        dialog.present()
+    
+    def _apply_backend_change(self, index, backend_id):
+        """Apply the backend change (only affects new terminals, not existing ones)"""
+        self._backend_last_valid_index = index
+        self.config.set_setting('terminal.backend', backend_id)
+        self._update_backend_row_subtitle(index)
+        
+        # Update encoding row visibility when backend changes
+        self._update_encoding_row_visibility()
+        
+        # Note: We do NOT call refresh_backends() here
+        # This ensures existing terminals keep their current backend
+        # Only new terminals will use the new backend setting
+        logger.info(f"Terminal backend changed to {backend_id} (will apply to new terminals only)")
 
     def on_color_scheme_changed(self, combo_row, param):
         """Handle terminal color scheme change"""

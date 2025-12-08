@@ -16,6 +16,7 @@
 - [Runtime Dependencies](#runtime-dependencies)
 - [Documentation](#documentation)
 - [Telegram Channel](#telegram-channel)
+- [Third-Party Libraries](#third-party-libraries)
 - [Special Thanks](#special-thanks)
 - [Support Development](#support-development)
 
@@ -149,6 +150,8 @@ Download the dmg file from the releases section https://github.com/mfat/sshpilot
 brew install gtk4 libadwaita pygobject3 py3cairo vte3 gobject-introspection adwaita-icon-theme pkg-config glib graphene icu4c sshpass gtksourceview5
 ```
 
+**Note:** `webkitgtk` is Linux-only and not available on macOS via Homebrew. The PyXterm.js backend will not be available on macOS; the application will use the VTE backend instead.
+
 
 
 ---
@@ -198,8 +201,10 @@ sudo apt install \
   libgtk-4-1 gir1.2-gtk-4.0 \
   libadwaita-1-0 gir1.2-adw-1 \
   libvte-2.91-gtk4-0 gir1.2-vte-3.91 \
+  libgtksourceview-5-0 gir1.2-gtksource-5 \
   libsecret-1-0 gir1.2-secret-1 \
-  python3-paramiko python3-cryptography sshpass ssh-askpass
+  python3-paramiko python3-cryptography sshpass ssh-askpass \
+  gir1.2-webkit-6.0
 
 ```
 
@@ -211,8 +216,10 @@ sudo dnf install \
   python3 python3-gobject \
   gtk4 libadwaita \
   vte291-gtk4 \
+  gtksourceview5 \
   libsecret \
-  python3-paramiko python3-cryptography sshpass openssh-askpass
+  python3-paramiko python3-cryptography sshpass openssh-askpass \
+  webkitgtk6
 ```
 
 libsecret handles secure credential storage on Linux via the Secret Service API.
@@ -235,6 +242,12 @@ https://github.com/mfat/sshpilot/wiki
 
 ## Telegram Channel
 https://t.me/sshpilot
+
+## Third-Party Libraries
+
+SSH Pilot uses the following third-party libraries:
+
+- **[pyxtermjs](https://github.com/cs01/pyxtermjs)** - A fully functional terminal in your browser, used as an alternative terminal backend (MIT License)
 
 ## Special Thanks
 

@@ -1,0 +1,177 @@
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>sshPilot Terminal</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        font-family: arial;
+        background-color: #1e1e1e;
+        color: #ffffff;
+      }
+      #terminal {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+      .xterm-viewport {
+        height: 100% !important;
+      }
+      .xterm-screen {
+        height: 100% !important;
+      }
+    </style>
+    
+      <style id="sshpilot-terminal-font">
+        .xterm {
+          font-family: 'Liberation Mono', monospace !important;
+          font-size: 16.0pt !important;
+        }
+        .xterm .xterm-screen {
+          font-family: 'Liberation Mono', monospace !important;
+          font-size: 16.0pt !important;
+        }
+      </style>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css"
+    />
+  </head>
+  <body>
+    <div id="terminal"></div>
+
+    <!-- xterm -->
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-search@0.15.0/lib/addon-search.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
+
+    <script>
+      const term = new Terminal({
+        cursorBlink: true,
+        fontFamily: 'Noto Mono',
+        fontSize: 16,
+        macOptionIsMeta: true,
+        scrollback: 1000,
+        theme: {
+                  "background": "#272822",
+                  "foreground": "#F8F8F2",
+                  "cursor": "#F8F8F0",
+                  "selectionBackground": "#49483E",
+                  "selectionForeground": "#F8F8F2",
+                  "black": "#272822",
+                  "red": "#F92672",
+                  "green": "#A6E22E",
+                  "yellow": "#F4BF75",
+                  "blue": "#66D9EF",
+                  "magenta": "#AE81FF",
+                  "cyan": "#A1EFE4",
+                  "white": "#F8F8F2",
+                  "brightBlack": "#75715E",
+                  "brightRed": "#F92672",
+                  "brightGreen": "#A6E22E",
+                  "brightYellow": "#F4BF75",
+                  "brightBlue": "#66D9EF",
+                  "brightMagenta": "#AE81FF",
+                  "brightCyan": "#A1EFE4",
+                  "brightWhite": "#F9F8F5"
+        }
+      });
+      term.attachCustomKeyEventHandler(customKeyEventHandler);
+      
+      const fit = new FitAddon.FitAddon();
+      term.loadAddon(fit);
+      term.loadAddon(new WebLinksAddon.WebLinksAddon());
+      const searchAddon = new SearchAddon.SearchAddon();
+      term.loadAddon(searchAddon);
+      term.searchAddon = searchAddon;  // Store reference for external access
+
+      // Expose terminal and fit addon globally for debugging and automated testing hooks
+      window.term = term;
+      window.fit = fit;  // Expose fit addon so we can call fit.fit() after font size changes
+
+      term.open(document.getElementById("terminal"));
+      fit.fit();
+      term.resize(15, 50);
+      console.log(`size: ${term.cols} columns, ${term.rows} rows`);
+      fit.fit();
+      
+      // Auto-focus the terminal when it's ready
+      setTimeout(() => {
+        term.focus();
+        console.log('Terminal auto-focused');
+      }, 100);
+      
+      const socket = io.connect("/pty");
+      
+      // Expose socket globally so it can be accessed for programmatic input (e.g., broadcast commands)
+      window.socket = socket;
+      
+      term.onData((data) => {
+        console.log("browser terminal received new data:", data);
+        socket.emit("pty-input", { input: data });
+      });
+
+      socket.on("pty-output", function (data) {
+        console.log("new output received from server:", data.output);
+        term.write(data.output);
+      });
+
+      socket.on("connect", () => {
+        fitToscreen();
+      });
+
+      socket.on("disconnect", () => {
+        // Handle disconnect if needed
+      });
+
+      function fitToscreen() {
+        fit.fit();
+        const dims = { cols: term.cols, rows: term.rows };
+        console.log("sending new dimensions to server's pty", dims);
+        socket.emit("resize", dims);
+      }
+
+      function debounce(func, wait_ms) {
+        let timeout;
+        return function (...args) {
+          const context = this;
+          clearTimeout(timeout);
+          timeout = setTimeout(() => func.apply(context, args), wait_ms);
+        };
+      }
+
+      /**
+       * Handle copy and paste events
+       */
+      function customKeyEventHandler(e) {
+        if (e.type !== "keydown") {
+          return true;
+        }
+        if (e.ctrlKey && e.shiftKey) {
+          const key = e.key.toLowerCase();
+          if (key === "v") {
+            // ctrl+shift+v: paste whatever is in the clipboard
+            navigator.clipboard.readText().then((toPaste) => {
+              term.paste(toPaste);
+            });
+            return false;
+          } else if (key === "c" || key === "x") {
+            // ctrl+shift+x: copy whatever is highlighted to clipboard
+            const toCopy = term.getSelection();
+            navigator.clipboard.writeText(toCopy);
+            term.focus();
+            return false;
+          }
+        }
+        return true;
+      }
+
+      const wait_ms = 50;
+      window.onresize = debounce(fitToscreen, wait_ms);
+    </script>
+  </body>
+</html>

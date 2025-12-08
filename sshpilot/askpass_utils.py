@@ -397,7 +397,7 @@ def ensure_passphrase_askpass() -> str:
     logger.debug(f"Generating askpass script at {path}")
 
     script_body = r'''#!/usr/bin/env python3
-import sys, re, os, platform, tempfile
+import sys, re, os, platform, tempfile, json
 LOG_DIR = (
     os.environ.get("SSHPILOT_ASKPASS_LOG_DIR")
     or os.environ.get("XDG_RUNTIME_DIR")
@@ -418,6 +418,17 @@ try:
     import keyring
 except Exception:
     keyring = None
+try:
+    gi.require_version('Gtk', '4.0')
+    gi.require_version('Adw', '1')
+    gi.require_version('Gio', '2.0')
+    gi.require_version('Gdk', '4.0')
+    gi.require_version('GLib', '2.0')
+    from gi.repository import Gtk, Adw, GLib, Gio, Gdk
+    GTK_AVAILABLE = True
+except Exception:
+    GTK_AVAILABLE = False
+
 
 # Log availability of keyring and libsecret
 try:
@@ -596,6 +607,40 @@ if __name__ == "__main__":
                     seen.add(original)
                     yield original
 
+            # First check for session passphrase in secure temp file (temporary, not stored)
+            # This is more secure than environment variables which are visible to all processes
+            session_passphrase_file = os.environ.get("SSHPILOT_SESSION_PASSPHRASE_FILE", "")
+            if session_passphrase_file and os.path.exists(session_passphrase_file):
+                try:
+                    # Read from secure temp file (mode 0600, in private dir mode 0700)
+                    with open(session_passphrase_file, "r", encoding="utf-8") as f:
+                        session_passphrase = f.read().strip()
+                    if session_passphrase:
+                        try:
+                            with open(LOG_PATH, "a") as f:
+                                f.write("ASKPASS: Found session passphrase from secure temp file\n")
+                        except Exception:
+                            pass
+                        print(session_passphrase)
+                        try:
+                            with open(LOG_PATH, "a") as f:
+                                f.write("ASKPASS: Returning session passphrase and exiting with code 0\n")
+                        except Exception:
+                            pass
+                        # Clean up the temp file immediately after reading
+                        try:
+                            os.unlink(session_passphrase_file)
+                        except Exception:
+                            pass
+                        sys.exit(0)
+                except Exception as e:
+                    try:
+                        with open(LOG_PATH, "a") as f:
+                            f.write(f"ASKPASS: Error reading session passphrase file: {e}\n")
+                    except Exception:
+                        pass
+            
+            # Then check stored passphrases in keyring/libsecret
             for candidate in _iter_candidates(key_path):
                 passphrase = get_passphrase(candidate)
                 if passphrase:
@@ -617,6 +662,201 @@ if __name__ == "__main__":
                             f.write(f"ASKPASS: No passphrase found for {candidate}\n")
                     except Exception:
                         pass
+            
+            # No passphrase found in storage - show GUI dialog
+            if GTK_AVAILABLE:
+                try:
+                    with open(LOG_PATH, "a") as f:
+                        f.write("ASKPASS: No stored passphrase found, showing GUI dialog\n")
+                except Exception:
+                    pass
+                
+                passphrase_result = [None]
+                
+                # Initialize Adwaita
+                Adw.init()
+                
+                # Apply theme from config file
+                try:
+                    # Get config directory (same logic as platform_utils.get_config_dir)
+                    try:
+                        config_dir = os.path.join(GLib.get_user_config_dir(), "sshpilot")
+                    except Exception:
+                        config_dir = os.path.join(os.path.expanduser("~"), ".config", "sshpilot")
+                    config_file = os.path.join(config_dir, "config.json")
+                    
+                    saved_theme = 'default'
+                    if os.path.exists(config_file):
+                        try:
+                            with open(config_file, 'r') as f:
+                                config_data = json.load(f)
+                                saved_theme = str(config_data.get('app-theme', 'default'))
+                        except Exception:
+                            pass
+                    
+                    style_manager = Adw.StyleManager.get_default()
+                    if saved_theme == 'light':
+                        style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
+                    elif saved_theme == 'dark':
+                        style_manager.set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+                    else:
+                        style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+                except Exception:
+                    # If config can't be loaded, use system default
+                    style_manager = Adw.StyleManager.get_default()
+                    style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
+                
+                # Initialize GTK application with Adwaita
+                app = Adw.Application.new("io.github.mfat.sshpilot.askpass", Gio.ApplicationFlags.FLAGS_NONE)
+                
+                def on_activate(app):
+                    key_name = os.path.basename(key_path) if key_path else "key"
+                    
+                    # Create a proper Adwaita window for styling (needed as parent for dialog)
+                    # We don't show it - just use it as a reference for proper dialog styling
+                    window = Adw.ApplicationWindow()
+                    window.set_application(app)
+                    window.set_title("SSH Pilot")
+                    # Don't call present() - window stays hidden but can be used as parent
+                    
+                    dialog = Adw.MessageDialog(
+                        transient_for=window,
+                        modal=True,
+                        heading="Passphrase Required",
+                        body=f"Please enter the passphrase for key {key_name}:",
+                    )
+                    
+                    # Create a container box for entry and checkbox
+                    content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+                    content_box.set_margin_top(12)
+                    content_box.set_margin_bottom(12)
+                    content_box.set_margin_start(12)
+                    content_box.set_margin_end(12)
+                    
+                    password_entry = Gtk.PasswordEntry()
+                    password_entry.set_property("placeholder-text", "Passphrase")
+                    content_box.append(password_entry)
+                    
+                    # Add checkbox to store passphrase
+                    store_checkbox = Gtk.CheckButton(label="Store passphrase")
+                    store_checkbox.set_active(False)
+                    content_box.append(store_checkbox)
+                    
+                    dialog.set_extra_child(content_box)
+                    
+                    dialog.add_response("cancel", "Cancel")
+                    dialog.add_response("ok", "OK")
+                    dialog.set_default_response("ok")
+                    dialog.set_close_response("cancel")
+                    
+                    # Handle Enter key - connect activate signal
+                    def on_entry_activate(_entry):
+                        dialog.emit("response", "ok")
+                    
+                    # Set activates-default property
+                    try:
+                        password_entry.set_property("activates-default", True)
+                    except (TypeError, AttributeError):
+                        pass
+                    
+                    # Connect activate signal
+                    try:
+                        password_entry.connect("activate", on_entry_activate)
+                    except (TypeError, AttributeError):
+                        # Fallback to key controller if activate signal is not available
+                        try:
+                            key_controller = Gtk.EventControllerKey()
+                            def on_key_pressed(_controller, keyval, _keycode, _state):
+                                if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+                                    dialog.emit("response", "ok")
+                                    return True
+                                return False
+                            key_controller.connect("key-pressed", on_key_pressed)
+                            password_entry.add_controller(key_controller)
+                        except Exception:
+                            pass
+                    
+                    def on_response(dialog, response_id):
+                        if response_id == "ok":
+                            passphrase_result[0] = password_entry.get_text()
+                            
+                            # Store passphrase if checkbox is checked
+                            if store_checkbox.get_active() and key_path:
+                                try:
+                                    # Normalize key path for storage
+                                    expanded = os.path.expanduser(key_path)
+                                    try:
+                                        canonical = os.path.realpath(expanded)
+                                    except Exception:
+                                        canonical = os.path.abspath(expanded)
+                                    
+                                    # Try keyring first (macOS)
+                                    if keyring and platform.system() == 'Darwin':
+                                        try:
+                                            keyring.set_password('sshPilot', canonical, passphrase_result[0])
+                                        except Exception:
+                                            pass
+                                    # Fall back to libsecret (Linux)
+                                    elif Secret is not None:
+                                        try:
+                                            schema = Secret.Schema.new("io.github.mfat.sshpilot", Secret.SchemaFlags.NONE, {
+                                                "application": Secret.SchemaAttributeType.STRING,
+                                                "type": Secret.SchemaAttributeType.STRING,
+                                                "key_path": Secret.SchemaAttributeType.STRING,
+                                                "host": Secret.SchemaAttributeType.STRING,
+                                                "username": Secret.SchemaAttributeType.STRING,
+                                            })
+                                            attributes = {
+                                                "application": "sshPilot",
+                                                "type": "key_passphrase",
+                                                "key_path": canonical,
+                                            }
+                                            Secret.password_store_sync(
+                                                schema,
+                                                attributes,
+                                                Secret.COLLECTION_DEFAULT,
+                                                f"SSH Key Passphrase: {os.path.basename(canonical)}",
+                                                passphrase_result[0],
+                                                None,
+                                            )
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
+                        window.close()
+                        app.quit()
+                    
+                    dialog.connect("response", on_response)
+                    
+                    # Show dialog
+                    dialog.present()
+                    password_entry.grab_focus()
+                
+                app.connect("activate", on_activate)
+                
+                # Run the application (this handles registration and activation)
+                app.run(None)
+                
+                if passphrase_result[0]:
+                    try:
+                        with open(LOG_PATH, "a") as f:
+                            f.write("ASKPASS: User entered passphrase in GUI dialog\n")
+                    except Exception:
+                        pass
+                    print(passphrase_result[0])
+                    try:
+                        with open(LOG_PATH, "a") as f:
+                            f.write("ASKPASS: Returning GUI-entered passphrase and exiting with code 0\n")
+                    except Exception:
+                        pass
+                    sys.exit(0)
+                else:
+                    try:
+                        with open(LOG_PATH, "a") as f:
+                            f.write("ASKPASS: User cancelled GUI dialog\n")
+                    except Exception:
+                        pass
+                    sys.exit(1)
     
     # Not a passphrase prompt or not found
     try:

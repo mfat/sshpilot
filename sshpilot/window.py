@@ -319,6 +319,9 @@ def list_remote_files(
     extra_ssh_opts: Optional[List[str]] = None,
     use_publickey: bool = False,
     inherit_env: Optional[Dict[str, str]] = None,
+    saved_passphrase: Optional[str] = None,
+    keyfile: Optional[str] = None,
+    key_mode: Optional[int] = None,
 ) -> Tuple[List[Tuple[str, bool]], Optional[str]]:
     """List remote files via SSH for the provided path.
 
@@ -344,8 +347,61 @@ def list_remote_files(
 
     env = (inherit_env or os.environ).copy()
     
-    # Only remove askpass environment if it wasn't inherited (e.g., when identity agent is disabled)
-    if not (inherit_env and inherit_env.get('SSH_ASKPASS_REQUIRE')):
+    # Set up askpass environment if we have a keyfile (askpass will handle passphrase retrieval/prompting)
+    # Check if askpass is already set up (inherited from caller)
+    has_inherited_askpass = bool(inherit_env and inherit_env.get('SSH_ASKPASS_REQUIRE'))
+    
+    # Set up askpass if we have a keyfile and not using password auth
+    # The askpass script will retrieve from storage or show GUI dialog if needed
+    if keyfile and not password and not has_inherited_askpass:
+        try:
+            from .askpass_utils import (
+                get_ssh_env_with_forced_askpass,
+                get_scp_ssh_options,
+            )
+        except Exception:
+            get_ssh_env_with_forced_askpass = None  # type: ignore
+            get_scp_ssh_options = None  # type: ignore
+
+        if get_ssh_env_with_forced_askpass is not None:
+            try:
+                askpass_env = get_ssh_env_with_forced_askpass()
+                if isinstance(askpass_env, dict):
+                    env.update(askpass_env)
+            except Exception:
+                logger.debug('SCP: Unable to initialize askpass environment', exc_info=True)
+
+        if keyfile and '-i' not in (extra_ssh_opts or []):
+            if extra_ssh_opts is None:
+                extra_ssh_opts = []
+            extra_ssh_opts.extend(['-i', keyfile])
+
+        if key_mode == 1 and extra_ssh_opts and 'IdentitiesOnly=yes' not in ' '.join(extra_ssh_opts):
+            if extra_ssh_opts is None:
+                extra_ssh_opts = []
+            extra_ssh_opts.extend(['-o', 'IdentitiesOnly=yes'])
+
+        if get_scp_ssh_options is not None:
+            try:
+                passphrase_opts = list(get_scp_ssh_options())
+            except Exception:
+                passphrase_opts = []
+            if extra_ssh_opts is None:
+                extra_ssh_opts = []
+            for idx in range(0, len(passphrase_opts) - 1, 2):
+                flag = passphrase_opts[idx]
+                value = passphrase_opts[idx + 1]
+                if not flag or not value:
+                    continue
+                already = False
+                for opt_idx in range(0, len(extra_ssh_opts) - 1, 2):
+                    if extra_ssh_opts[opt_idx] == flag and extra_ssh_opts[opt_idx + 1] == value:
+                        already = True
+                        break
+                if not already:
+                    extra_ssh_opts.extend([flag, value])
+    elif not has_inherited_askpass:
+        # Only remove askpass environment if it wasn't inherited (e.g., when identity agent is disabled)
         env.pop('SSH_ASKPASS', None)
         env.pop('SSH_ASKPASS_REQUIRE', None)
 
@@ -442,12 +498,13 @@ def download_file(
     env = (inherit_env or os.environ).copy()
 
     ssh_extra_opts: List[str] = list(extra_ssh_opts or [])
-    passphrase_auth = bool(saved_passphrase) and not password
-
+    
     # Check if the inherited environment has askpass configured (e.g., when identity agent is disabled)
     has_inherited_askpass = bool(inherit_env and inherit_env.get('SSH_ASKPASS_REQUIRE'))
 
-    if passphrase_auth:
+    # Set up askpass if we have a keyfile and not using password auth
+    # The askpass script will retrieve from storage or show GUI dialog if needed
+    if keyfile and not password and not has_inherited_askpass:
         try:
             from .askpass_utils import (
                 get_ssh_env_with_forced_askpass,
@@ -548,6 +605,165 @@ def download_file(
     except Exception as exc:
         logger.error('SCP: Download failed for %s: %s', remote_file, exc)
         return False
+
+
+def _show_password_passphrase_dialog(
+    parent_window,
+    prompt_type: str = "password",
+    display_name: str = "",
+    key_path: Optional[str] = None,
+    host: Optional[str] = None,
+    username: Optional[str] = None,
+    connection_manager: Optional[Any] = None,
+) -> Optional[str]:
+    """Show a graphical password or passphrase dialog.
+    
+    Parameters
+    ----------
+    parent_window : Gtk.Window
+        Parent window for the dialog
+    prompt_type : str
+        Either "password" or "passphrase"
+    display_name : str
+        Display name for the connection (e.g., "user@host")
+    key_path : Optional[str]
+        Path to the key file (for passphrase prompts)
+    host : Optional[str]
+        Host name for storing password (for password prompts)
+    username : Optional[str]
+        Username for storing password (for password prompts)
+    connection_manager : Optional[Any]
+        Connection manager instance for storing passwords
+    
+    Returns
+    -------
+    Optional[str]
+        The entered password/passphrase, or None if cancelled
+    """
+    password_result = [None]  # Use list to allow modification in nested function
+    store_checked = [False]  # Use list to allow modification in nested function
+    main_loop = GLib.MainLoop()
+    
+    # Determine dialog heading and body text
+    if prompt_type == "passphrase":
+        heading = _("Passphrase Required")
+        if key_path:
+            key_name = os.path.basename(key_path)
+            body = _("Please enter the passphrase for key {key_name}:").format(key_name=key_name)
+        else:
+            body = _("Please enter your passphrase:")
+        placeholder = _("Passphrase")
+        store_label = _("Store passphrase")
+    else:
+        heading = _("Password Required")
+        if display_name:
+            body = _("Please enter your password for {display_name}:").format(display_name=display_name)
+        else:
+            body = _("Please enter your password:")
+        placeholder = _("Password")
+        store_label = _("Store password")
+    
+    # Create password/passphrase dialog
+    dialog = Adw.MessageDialog(
+        transient_for=parent_window,
+        modal=True,
+        heading=heading,
+        body=body,
+    )
+    
+    # Create a container box for entry and checkbox
+    content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+    content_box.set_margin_top(12)
+    content_box.set_margin_bottom(12)
+    content_box.set_margin_start(12)
+    content_box.set_margin_end(12)
+    
+    # Add password entry
+    password_entry = Gtk.PasswordEntry()
+    password_entry.set_property("placeholder-text", placeholder)
+    content_box.append(password_entry)
+    
+    # Add checkbox to store password/passphrase
+    store_checkbox = Gtk.CheckButton(label=store_label)
+    store_checkbox.set_active(False)
+    content_box.append(store_checkbox)
+    
+    # Add container to dialog's extra child area
+    dialog.set_extra_child(content_box)
+    
+    # Add responses
+    dialog.add_response("cancel", _("Cancel"))
+    dialog.add_response("ok", _("OK"))
+    dialog.set_default_response("ok")
+    dialog.set_close_response("cancel")
+    
+    # Handle Enter key - try multiple approaches for maximum compatibility
+    def on_entry_activate(_entry):
+        """Handle Enter key press in password entry"""
+        dialog.emit("response", "ok")
+    
+    # Try to set activates-default property (works for Gtk.Entry)
+    try:
+        password_entry.set_property("activates-default", True)
+    except (TypeError, AttributeError):
+        pass
+    
+    # Also connect to activate signal as fallback
+    try:
+        password_entry.connect("activate", on_entry_activate)
+    except (TypeError, AttributeError):
+        # Fallback to key controller if activate signal is not available
+        key_controller = Gtk.EventControllerKey()
+        def on_key_pressed(_controller, keyval, _keycode, _state):
+            if keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+                dialog.emit("response", "ok")
+                return True
+            return False
+        key_controller.connect("key-pressed", on_key_pressed)
+        password_entry.add_controller(key_controller)
+    
+    # Focus password entry when dialog is shown
+    def on_dialog_shown(_dialog):
+        password_entry.grab_focus()
+    dialog.connect("notify::visible", lambda d, _: on_dialog_shown(d) if d.get_visible() else None)
+    
+    def on_response(_dialog, response: str) -> None:
+        if response == "ok":
+            entered_password = password_entry.get_text()
+            if entered_password:
+                password_result[0] = entered_password
+                store_checked[0] = store_checkbox.get_active()
+                
+                # Store password/passphrase if checkbox is checked
+                if store_checked[0]:
+                    if prompt_type == "passphrase" and key_path:
+                        # Store passphrase
+                        try:
+                            from .askpass_utils import store_passphrase
+                            store_passphrase(key_path, entered_password)
+                        except Exception as e:
+                            logger.debug(f"Failed to store passphrase: {e}")
+                    elif prompt_type == "password" and host and username and connection_manager:
+                        # Store password
+                        try:
+                            connection_manager.store_password(host, username, entered_password)
+                        except Exception as e:
+                            logger.debug(f"Failed to store password: {e}")
+            else:
+                password_result[0] = None  # Empty password treated as cancel
+        else:
+            password_result[0] = None  # User cancelled
+        dialog.destroy()
+        main_loop.quit()
+    
+    dialog.connect("response", on_response)
+    dialog.present()
+    
+    # Run main loop to wait for dialog response
+    # This blocks until the dialog is closed
+    main_loop.run()
+    
+    return password_result[0]
 
 
 def maybe_set_native_controls(header_bar: Gtk.HeaderBar, value: bool = False) -> None:
@@ -1241,7 +1457,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         self.update_banner_container = banner_overlay
         self.update_banner_dismiss_button = dismiss_button
-        main_box.append(banner_overlay)
+        # Note: Update banner will be added to content area in setup_content_area()
+        # to ensure it appears below the header bar
         
         # Create header bar
         self.header_bar = Gtk.HeaderBar()
@@ -2701,26 +2918,35 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if HAS_OVERLAY_SPLIT:
             content_box = Adw.ToolbarView()
             content_box.add_top_bar(self.header_bar)
-            content_box.set_content(self.content_stack)
-            # Add banner to the main content area instead of toolbar view
+            # Create content wrapper with banner below header bar
+            content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            content_wrapper.append(self.update_banner_container)
+            content_wrapper.append(self.broadcast_banner)
+            content_wrapper.append(self.content_stack)
+            content_box.set_content(content_wrapper)
+            # Add banners to the main content area instead of toolbar view
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            main_box.append(self.broadcast_banner)
             main_box.append(content_box)
             self._set_content_widget(main_box)
             logger.debug("Set content widget for OverlaySplitView")
         elif HAS_NAV_SPLIT:
             content_box = Adw.ToolbarView()
             content_box.add_top_bar(self.header_bar)
-            content_box.set_content(self.content_stack)
-            # Add banner to the main content area instead of toolbar view
+            # Create content wrapper with banner below header bar
+            content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            content_wrapper.append(self.update_banner_container)
+            content_wrapper.append(self.broadcast_banner)
+            content_wrapper.append(self.content_stack)
+            content_box.set_content(content_wrapper)
+            # Add banners to the main content area instead of toolbar view
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            main_box.append(self.broadcast_banner)
             main_box.append(content_box)
             self._set_content_widget(main_box)
             logger.debug("Set content widget for NavigationSplitView")
         else:
-            # For non-split views, create a vertical box to contain banner and content
+            # For non-split views, create a vertical box to contain banners and content
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            main_box.append(self.update_banner_container)
             main_box.append(self.broadcast_banner)
             main_box.append(self.content_stack)
             self._set_content_widget(main_box)
@@ -4562,22 +4788,32 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if terminal is None:
             return
 
-        vte_widget = getattr(terminal, 'vte', None)
-        if vte_widget is None:
-            return
-
         def _focus_attempt(_source=None) -> bool:
             try:
-                vte_widget.grab_focus()
+                # Use backend's grab_focus method if available (works for both VTE and PyXterm.js)
+                if hasattr(terminal, 'backend') and terminal.backend:
+                    terminal.backend.grab_focus()
+                # Fallback to vte for backwards compatibility
+                elif hasattr(terminal, 'vte') and terminal.vte:
+                    terminal.vte.grab_focus()
+                elif hasattr(terminal, 'grab_focus'):
+                    terminal.grab_focus()
             except Exception as focus_error:
                 logger.debug(f"Deferred terminal focus failed: {focus_error}")
             return GLib.SOURCE_REMOVE
 
+        # Try immediate focus
         try:
-            vte_widget.grab_focus()
+            if hasattr(terminal, 'backend') and terminal.backend:
+                terminal.backend.grab_focus()
+            elif hasattr(terminal, 'vte') and terminal.vte:
+                terminal.vte.grab_focus()
+            elif hasattr(terminal, 'grab_focus'):
+                terminal.grab_focus()
         except Exception:
             pass
 
+        # Schedule retries for delayed focus (useful when widget is still being created)
         GLib.idle_add(_focus_attempt, priority=GLib.PRIORITY_DEFAULT_IDLE)
         GLib.timeout_add(150, _focus_attempt)
         GLib.timeout_add(350, _focus_attempt)
@@ -4633,6 +4869,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             child = page.get_child() if hasattr(page, 'get_child') else None
             if child is None:
                 return
+            
+            # Focus the terminal when tab is selected
+            if isinstance(child, TerminalWidget):
+                # Use a small delay to ensure the widget is fully visible
+                def _focus_on_tab_switch():
+                    try:
+                        self._focus_terminal_widget(child)
+                    except Exception as e:
+                        logger.debug(f"Failed to focus terminal on tab switch: {e}")
+                GLib.timeout_add(50, _focus_on_tab_switch)
             connection = self.terminal_to_connection.get(child)
             if connection:
                 # Check if this is a local terminal
@@ -5096,10 +5342,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             port = profile.port
 
             known_hosts_path = None
-            saved_password = None
+            saved_password = profile.saved_password
+            # Session-level password that can be updated via prompts
+            session_password = saved_password
+            # Passphrase will be handled by SSH_ASKPASS (either from storage or GUI prompt)
+            
             if hasattr(self, 'connection_manager') and self.connection_manager:
                 known_hosts_path = getattr(self.connection_manager, 'known_hosts_path', None)
-                saved_password = profile.saved_password
                 try:
                     if (
                         profile.key_mode in (1, 2)
@@ -5116,6 +5365,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                             )
                 except Exception:
                     pass
+            
+            # Get display name for password prompts
+            display_name = profile.alias or f"{username}@{host_value}"
 
             try:
                 default_download_dir = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD)
@@ -5132,36 +5384,50 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             if profile.prefer_password:
                 use_publickey_with_password = False
 
-            # Set up askpass environment if identity agent is disabled
+            # Set up askpass environment for passphrase-protected keys
+            # SSH_ASKPASS will handle passphrase retrieval from storage or show GUI dialog if needed
             logger.debug(f"SCP Download: Checking identity_agent_disabled={profile.identity_agent_disabled}")
             logger.debug(f"SCP Download: Initial ssh_extra_opts={ssh_extra_opts}")
-            if profile.identity_agent_disabled:
-                from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
-                base_env = get_ssh_env_with_forced_askpass()
+            base_env = os.environ.copy()
+            
+            # Set up askpass if we have a keyfile and not using password authentication
+            if profile.keyfile_ok and not profile.prefer_password:
+                from .askpass_utils import get_ssh_env_with_askpass, get_ssh_env_with_forced_askpass, get_scp_ssh_options
                 
-                # Add SSH options to force publickey authentication only
-                scp_ssh_opts = get_scp_ssh_options()
-                logger.debug(f"SCP: Current ssh_extra_opts before adding: {ssh_extra_opts}")
+                # Use forced askpass if identity agent is disabled, otherwise use regular askpass
+                if profile.identity_agent_disabled:
+                    base_env = get_ssh_env_with_forced_askpass()
+                    logger.debug("SCP: Using forced askpass environment (identity agent disabled)")
+                else:
+                    base_env = get_ssh_env_with_askpass()
+                    logger.debug("SCP: Using askpass environment (identity agent enabled)")
                 
-                # Add options in pairs, checking for duplicates properly
-                for i in range(0, len(scp_ssh_opts), 2):
-                    if i + 1 < len(scp_ssh_opts):
-                        flag = scp_ssh_opts[i]
-                        value = scp_ssh_opts[i + 1]
-                        # Check if this exact option pair is already present
-                        already_present = False
-                        for j in range(0, len(ssh_extra_opts) - 1, 2):
-                            if ssh_extra_opts[j] == flag and ssh_extra_opts[j + 1] == value:
-                                already_present = True
-                                break
-                        if not already_present:
-                            ssh_extra_opts.extend([flag, value])
-                            logger.debug(f"SCP: Added option pair: {flag} {value}")
-                
-                logger.debug("SCP: Using forced askpass environment (identity agent disabled)")
-                logger.debug(f"SCP: Final ssh_extra_opts: {ssh_extra_opts}")
-            else:
-                base_env = os.environ.copy()
+                # Add SSH options to force publickey authentication only (when identity agent disabled)
+                if profile.identity_agent_disabled:
+                    scp_ssh_opts = get_scp_ssh_options()
+                    logger.debug(f"SCP: Current ssh_extra_opts before adding: {ssh_extra_opts}")
+                    
+                    # Add options in pairs, checking for duplicates properly
+                    for i in range(0, len(scp_ssh_opts), 2):
+                        if i + 1 < len(scp_ssh_opts):
+                            flag = scp_ssh_opts[i]
+                            value = scp_ssh_opts[i + 1]
+                            # Check if this exact option pair is already present
+                            already_present = False
+                            for j in range(0, len(ssh_extra_opts) - 1, 2):
+                                if ssh_extra_opts[j] == flag and ssh_extra_opts[j + 1] == value:
+                                    already_present = True
+                                    break
+                            if not already_present:
+                                ssh_extra_opts.extend([flag, value])
+                                logger.debug(f"SCP: Added option pair: {flag} {value}")
+                    
+                    logger.debug(f"SCP: Final ssh_extra_opts: {ssh_extra_opts}")
+            elif profile.prefer_password:
+                # If using password authentication, ensure askpass vars are not set
+                base_env.pop('SSH_ASKPASS', None)
+                base_env.pop('SSH_ASKPASS_REQUIRE', None)
+                logger.debug("SCP Download: Using password auth - removed askpass environment")
 
             dialog = Adw.Window()
             dialog.set_transient_for(self)
@@ -5174,6 +5440,30 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 dialog.set_title(_('Download files from server'))
             except Exception:
                 pass
+            
+            # Prompt for password/passphrase if needed (similar to SCP upload flow)
+            # Check if password is needed but not available
+            if profile.prefer_password and not session_password:
+                password = _show_password_passphrase_dialog(
+                    dialog,
+                    prompt_type="password",
+                    display_name=display_name,
+                    host=host_value,
+                    username=username,
+                    connection_manager=self.connection_manager if hasattr(self, 'connection_manager') else None,
+                )
+                if not password:
+                    # User cancelled - close dialog and return
+                    dialog.close()
+                    return
+                session_password = password
+                # Password storage is handled in the dialog if checkbox was checked
+                logger.debug("SCP Download: Using prompted password for session")
+            
+            # Don't pre-prompt for passphrase - let SSH_ASKPASS handle it
+            # The askpass script will show a GUI dialog if no passphrase is found in storage
+            # This matches the standard SSH_ASKPASS behavior
+            logger.debug("SCP Download: Passphrase will be handled by SSH_ASKPASS if needed")
 
             header = Adw.HeaderBar()
             title_label = Gtk.Label(label=_('Download files'))
@@ -5416,6 +5706,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 is_directory = bool(getattr(selected_row, 'remote_is_dir', False))
 
                 def _worker():
+                    # If using password authentication, strip askpass environment
+                    # (askpass is only for passphrases, not passwords)
+                    env_for_download = base_env.copy()
+                    if session_password:
+                        env_for_download.pop('SSH_ASKPASS', None)
+                        env_for_download.pop('SSH_ASKPASS_REQUIRE', None)
+                        logger.debug("SCP Download: Using password - removed askpass from environment")
+                    
+                    # SSH_ASKPASS will handle passphrase retrieval from storage or GUI dialog if needed
                     success = download_file(
                         host_value,
                         username,
@@ -5423,12 +5722,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         str(destination_dir),
                         recursive=is_directory,
                         port=port,
-                        password=saved_password,
+                        password=session_password,
                         known_hosts_path=known_hosts_path,
                         extra_ssh_opts=ssh_extra_opts,
                         use_publickey=use_publickey_with_password,
-                        inherit_env=base_env,
-                        saved_passphrase=profile.saved_passphrase,
+                        inherit_env=env_for_download,
+                        saved_passphrase=None,  # Let askpass handle retrieval/prompting
                         keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
                         key_mode=profile.key_mode,
                     )
@@ -5512,16 +5811,28 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 download_button.set_sensitive(False)
 
                 def _worker():
+                    # If using password authentication, strip askpass environment
+                    # (askpass is only for passphrases, not passwords)
+                    env_for_list = base_env.copy()
+                    if session_password:
+                        env_for_list.pop('SSH_ASKPASS', None)
+                        env_for_list.pop('SSH_ASKPASS_REQUIRE', None)
+                        logger.debug("SCP Download: Using password - removed askpass from environment")
+                    
+                    # SSH_ASKPASS will handle passphrase retrieval from storage or GUI dialog if needed
                     files, error_message = list_remote_files(
                         host_value,
                         username,
                         directory,
                         port=port,
-                        password=saved_password,
+                        password=session_password,
                         known_hosts_path=known_hosts_path,
                         extra_ssh_opts=ssh_extra_opts,
                         use_publickey=use_publickey_with_password,
-                        inherit_env=base_env,
+                        inherit_env=env_for_list,
+                        saved_passphrase=None,  # Let askpass handle retrieval/prompting
+                        keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
+                        key_mode=profile.key_mode,
                     )
 
                     def _update():
@@ -5741,7 +6052,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 }
                 prefix = colors.get(color, '')
                 try:
-                    term_widget.vte.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
+                    if hasattr(term_widget, 'backend') and term_widget.backend:
+                        term_widget.backend.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
+                    elif hasattr(term_widget, 'vte') and term_widget.vte:
+                        term_widget.vte.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
                 except Exception:
                     pass
 
@@ -5883,26 +6197,45 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.debug(f"Main window: Environment variables count: {len(envv)}")
 
             try:
-                logger.debug("Main window: Spawning ssh-copy-id process in VTE terminal")
+                logger.debug("Main window: Spawning ssh-copy-id process in terminal")
                 logger.debug(f"Main window: Working directory: {os.path.expanduser('~') or '/'}")
                 logger.debug(f"Main window: Command: ['bash', '-lc', '{cmdline}']")
 
-                term_widget.vte.spawn_async(
-                    Vte.PtyFlags.DEFAULT,
-                    os.path.expanduser('~') or '/',
-                    ['bash', '-lc', cmdline],
-                    envv,  # <— use merged env
-                    GLib.SpawnFlags.DEFAULT,
-                    None,
-                    None,
-                    -1,
-                    None,
-                    None
-                )
+                # Convert envv to dict for backend
+                env_dict = {}
+                if envv:
+                    for env_item in envv:
+                        if '=' in env_item:
+                            key, value = env_item.split('=', 1)
+                            env_dict[key] = value
+
+                if hasattr(term_widget, 'backend') and term_widget.backend:
+                    term_widget.backend.spawn_async(
+                        argv=['bash', '-lc', cmdline],
+                        env=env_dict if env_dict else None,
+                        cwd=os.path.expanduser('~') or '/',
+                        flags=0,
+                        child_setup=None,
+                        callback=None,
+                        user_data=None
+                    )
+                elif hasattr(term_widget, 'vte') and term_widget.vte:
+                    term_widget.vte.spawn_async(
+                        Vte.PtyFlags.DEFAULT,
+                        os.path.expanduser('~') or '/',
+                        ['bash', '-lc', cmdline],
+                        envv,  # <— use merged env
+                        GLib.SpawnFlags.DEFAULT,
+                        None,
+                        None,
+                        -1,
+                        None,
+                        None
+                    )
                 logger.debug("Main window: ssh-copy-id process spawned successfully")
 
                 # Show result modal when the command finishes
-                def _on_copyid_exited(vte, status):
+                def _on_copyid_exited(widget, status):
                     logger.debug(f"Main window: ssh-copy-id process exited with raw status: {status}")
                     # Normalize exit code
                     exit_code = None
@@ -5931,14 +6264,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     error_details = None
                     if not ok:
                         try:
-                            content_result = term_widget.vte.get_text_range(
-                                0,
-                                0,
-                                -1,
-                                -1,
-                                lambda *args: True,
-                            )
-                            content = content_result[0] if content_result else None
+                            content = None
+                            backend = getattr(term_widget, 'backend', None)
+                            if backend and hasattr(backend, 'get_content'):
+                                content = backend.get_content()
+                            if content is None and hasattr(term_widget, 'vte') and term_widget.vte:
+                                content_result = term_widget.vte.get_text_range(
+                                    0,
+                                    0,
+                                    -1,
+                                    -1,
+                                    lambda *args: True,
+                                )
+                                content = content_result[0] if content_result else None
                             if content:
                                 # Look for common error patterns in the output
                                 content_lower = content.lower()
@@ -5991,7 +6329,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     GLib.idle_add(_present_result_dialog)
 
                 try:
-                    term_widget.vte.connect('child-exited', _on_copyid_exited)
+                    # Connect child-exited signal using backend
+                    if hasattr(term_widget, 'backend') and term_widget.backend:
+                        term_widget.backend.connect_child_exited(_on_copyid_exited)
+                    elif hasattr(term_widget, 'vte') and term_widget.vte:
+                        term_widget.vte.connect('child-exited', _on_copyid_exited)
                 except Exception:
                     pass
             except Exception as e:
@@ -6370,6 +6712,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             envv = [f"{k}={v}" for k, v in env.items()]
             logger.debug(f"SCP: Final environment variables: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}")
             logger.debug(f"SCP: Command line: {cmdline}")
+            env_dict = dict(env)
 
             def _feed_colored_line(text: str, color: str):
                 colors = {
@@ -6380,27 +6723,41 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 }
                 prefix = colors.get(color, '')
                 try:
-                    term_widget.vte.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
+                    if hasattr(term_widget, 'backend') and term_widget.backend:
+                        term_widget.backend.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
+                    elif hasattr(term_widget, 'vte') and term_widget.vte:
+                        term_widget.vte.feed(("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8'))
                 except Exception:
                     pass
 
             _feed_colored_line(start_message, 'yellow')
 
             try:
-                term_widget.vte.spawn_async(
-                    Vte.PtyFlags.DEFAULT,
-                    os.path.expanduser('~') or '/',
-                    ['bash', '-lc', cmdline],
-                    envv,
-                    GLib.SpawnFlags.DEFAULT,
-                    None,
-                    None,
-                    -1,
-                    None,
-                    None
-                )
+                if hasattr(term_widget, 'backend') and term_widget.backend:
+                    term_widget.backend.spawn_async(
+                        argv=['bash', '-lc', cmdline],
+                        env=env_dict if env_dict else None,
+                        cwd=os.path.expanduser('~') or '/',
+                        flags=0,
+                        child_setup=None,
+                        callback=None,
+                        user_data=None,
+                    )
+                elif hasattr(term_widget, 'vte') and term_widget.vte:
+                    term_widget.vte.spawn_async(
+                        Vte.PtyFlags.DEFAULT,
+                        os.path.expanduser('~') or '/',
+                        ['bash', '-lc', cmdline],
+                        envv,
+                        GLib.SpawnFlags.DEFAULT,
+                        None,
+                        None,
+                        -1,
+                        None,
+                        None
+                    )
 
-                def _on_scp_exited(vte, status):
+                def _on_scp_exited(widget, status):
                     exit_code = None
                     try:
                         if os.WIFEXITED(status):
@@ -6445,7 +6802,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     GLib.idle_add(_present_result_dialog)
 
                 try:
-                    term_widget.vte.connect('child-exited', _on_scp_exited)
+                    if hasattr(term_widget, 'backend') and term_widget.backend:
+                        term_widget.backend.connect_child_exited(_on_scp_exited)
+                    elif hasattr(term_widget, 'vte') and term_widget.vte:
+                        term_widget.vte.connect('child-exited', _on_scp_exited)
                 except Exception:
                     pass
             except Exception as e:
@@ -6502,7 +6862,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         ssh_extra_opts = list(profile.ssh_options)
 
         # Set up askpass environment for passphrase-protected keys
-        if saved_passphrase or profile.identity_agent_disabled:
+        # Only use get_scp_ssh_options() when we have a passphrase-protected key,
+        # NOT when password authentication is preferred (it would disable password auth)
+        # Only set up askpass if we have a saved passphrase - this allows the askpass
+        # script to retrieve it from storage. If no saved passphrase, don't set SSH_ASKPASS
+        # so SSH will prompt interactively in the terminal.
+        if saved_passphrase:
             from .askpass_utils import get_ssh_env_with_forced_askpass, get_scp_ssh_options
 
             askpass_env = get_ssh_env_with_forced_askpass()
@@ -6510,16 +6875,22 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self._scp_askpass_env = {}
             self._scp_askpass_env.update(askpass_env)
             
-            if saved_passphrase:
-                logger.debug(f"SCP: Stored askpass environment for saved key passphrase: {list(askpass_env.keys())}")
-            else:
-                logger.debug(f"SCP: Stored askpass environment (identity agent disabled): {list(askpass_env.keys())}")
+            logger.debug(f"SCP: Stored askpass environment for saved key passphrase: {list(askpass_env.keys())}")
 
-            passphrase_opts = get_scp_ssh_options()
-            for idx in range(0, len(passphrase_opts), 2):
-                flag = passphrase_opts[idx]
-                value = passphrase_opts[idx + 1] if idx + 1 < len(passphrase_opts) else None
-                self._append_scp_option_pair(ssh_extra_opts, flag, value)
+            # Only add publickey-only options if we're not using password authentication
+            # get_scp_ssh_options() forces publickey-only and disables password auth
+            if not profile.prefer_password:
+                passphrase_opts = get_scp_ssh_options()
+                for idx in range(0, len(passphrase_opts), 2):
+                    flag = passphrase_opts[idx]
+                    value = passphrase_opts[idx + 1] if idx + 1 < len(passphrase_opts) else None
+                    self._append_scp_option_pair(ssh_extra_opts, flag, value)
+        else:
+            # No saved passphrase - don't set SSH_ASKPASS so SSH will prompt in terminal
+            logger.debug("SCP: No saved passphrase - SSH will prompt in terminal if needed")
+            # Ensure SSH_ASKPASS is not set (strip it if it was inherited)
+            if not hasattr(self, '_scp_askpass_env'):
+                self._scp_askpass_env = {}
 
         if known_hosts_path:
             ssh_extra_opts += ['-o', f'UserKnownHostsFile={known_hosts_path}']
@@ -6530,6 +6901,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         argv += ssh_extra_opts
 
         self._scp_strip_askpass = False
+        # If no saved passphrase, strip SSH_ASKPASS so SSH will prompt in terminal
+        if not saved_passphrase:
+            self._scp_strip_askpass = True
+            logger.debug("SCP: No saved passphrase - will strip SSH_ASKPASS for terminal prompt")
+        
         if profile.prefer_password or profile.combined_auth:
             if saved_password:
                 import shutil

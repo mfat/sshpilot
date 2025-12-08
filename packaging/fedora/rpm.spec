@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:4.6.5}
+Version:        %{?version}%{!?version:4.7.0}
 Release:        1%{?dist}
 Summary:        SSH connection manager with integrated terminal
 
@@ -28,6 +28,7 @@ Requires:       python3-secretstorage
 Requires:       libsecret
 Requires:       sshpass
 Requires:       openssh-askpass
+Requires:       webkitgtk6
 
 %description
 SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed terminal, remote file management, key transfer, port forwarding and more. It's an alternative to Putty, Termius and Mobaxterm.
@@ -73,9 +74,10 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
 
 %changelog
-* Fri Dec 05 2025 mFat <newmfat@gmail.com> - 4.6.5
-- - Unified look across GNOME and KDE Plasma
-- - Minor UI fixes
+* Mon Dec 08 2025 mFat <newmfat@gmail.com> - 4.7.0
+- - Make terminal fullscreen with F11
+- - Added xterm.js as an alternative terminal backend
+- - Added graphical prompts for passwords/passphrases
 
 * Tue Dec 02 2025 mFat <newmfat@gmail.com> - 4.6.4
 - - Bug fixes

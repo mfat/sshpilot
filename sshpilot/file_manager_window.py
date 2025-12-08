@@ -5858,16 +5858,25 @@ class FileManagerWindow(Adw.Window):
             except Exception:
                 pass
         
+        # Create a container box for entry and checkbox
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        content_box.set_margin_top(12)
+        content_box.set_margin_bottom(12)
+        content_box.set_margin_start(12)
+        content_box.set_margin_end(12)
+        
         # Add password entry
         password_entry = Gtk.PasswordEntry()
         password_entry.set_property("placeholder-text", "Password")
-        password_entry.set_margin_top(12)
-        password_entry.set_margin_bottom(12)
-        password_entry.set_margin_start(12)
-        password_entry.set_margin_end(12)
+        content_box.append(password_entry)
         
-        # Add entry to dialog's extra child area
-        dialog.set_extra_child(password_entry)
+        # Add checkbox to store password
+        store_checkbox = Gtk.CheckButton(label="Store password")
+        store_checkbox.set_active(False)
+        content_box.append(store_checkbox)
+        
+        # Add container to dialog's extra child area
+        dialog.set_extra_child(content_box)
         
         # Add responses
         dialog.add_response("cancel", "Cancel")
@@ -5910,6 +5919,13 @@ class FileManagerWindow(Adw.Window):
                 entered_password = password_entry.get_text()
                 if entered_password:
                     password_result[0] = entered_password
+                    
+                    # Store password if checkbox is checked
+                    if store_checkbox.get_active() and hasattr(self, '_connection_manager') and self._connection_manager:
+                        try:
+                            self._connection_manager.store_password(host, user, entered_password)
+                        except Exception as e:
+                            logger.debug(f"Failed to store password: {e}")
                 else:
                     password_result[0] = None  # Empty password treated as cancel
             else:
@@ -6022,16 +6038,25 @@ class FileManagerWindow(Adw.Window):
                     except Exception:
                         pass
                 
+                # Create a container box for entry and checkbox
+                content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+                content_box.set_margin_top(12)
+                content_box.set_margin_bottom(12)
+                content_box.set_margin_start(12)
+                content_box.set_margin_end(12)
+                
                 # Add password entry
                 password_entry = Gtk.PasswordEntry()
                 password_entry.set_property("placeholder-text", "Password")
-                password_entry.set_margin_top(12)
-                password_entry.set_margin_bottom(12)
-                password_entry.set_margin_start(12)
-                password_entry.set_margin_end(12)
+                content_box.append(password_entry)
                 
-                # Add entry to dialog's extra child area
-                dialog.set_extra_child(password_entry)
+                # Add checkbox to store password
+                store_checkbox = Gtk.CheckButton(label="Store password")
+                store_checkbox.set_active(False)
+                content_box.append(store_checkbox)
+                
+                # Add container to dialog's extra child area
+                dialog.set_extra_child(content_box)
                 
                 # Add responses
                 dialog.add_response("cancel", "Cancel")
@@ -6070,8 +6095,9 @@ class FileManagerWindow(Adw.Window):
                 dialog.connect("notify::visible", lambda d, _: on_dialog_shown(d) if d.get_visible() else None)
                 
                 def on_response(_dialog, response: str) -> None:
-                    # Get password before destroying dialog
+                    # Get password and checkbox state before destroying dialog
                     entered_password = password_entry.get_text() if response == "connect" else None
+                    should_store = store_checkbox.get_active() if response == "connect" else False
                     
                     # Destroy dialog first
                     dialog.destroy()
@@ -6085,8 +6111,8 @@ class FileManagerWindow(Adw.Window):
                     def handle_response():
                         if response == "connect":
                             if entered_password:
-                                # Store password in connection manager if available
-                                if self._connection_manager is not None:
+                                # Store password in connection manager if checkbox is checked
+                                if should_store and self._connection_manager is not None:
                                     try:
                                         lookup_host = host
                                         if self._connection is not None:
@@ -6099,8 +6125,8 @@ class FileManagerWindow(Adw.Window):
                                         if self._connection is not None:
                                             lookup_user = getattr(self._connection, "username", None) or lookup_user
                                         
-                                        # Optionally save password (user can choose in future)
-                                        # For now, just use it for this connection
+                                        # Store password if checkbox was checked
+                                        self._connection_manager.store_password(lookup_host, lookup_user, entered_password)
                                         logger.debug("Using password from dialog for connection")
                                     except Exception as exc:
                                         logger.debug(f"Failed to process password: {exc}")
