@@ -1695,8 +1695,41 @@ class PyXtermTerminalBackend:
         return
 
     def feed_child(self, data: bytes) -> None:
-        # pyxterm.js handles user input via websocket.
-        return
+        """Feed raw bytes to the child process input via pyxtermjs WebSocket socket.emit('pty-input')"""
+        if not self.available:
+            return
+        
+        try:
+            # Convert bytes to string for JavaScript
+            # pyxtermjs expects string input and will encode it to bytes for the PTY
+            data_str = data.decode('utf-8', errors='replace')
+            
+            # Use JSON.stringify to safely escape the string for JavaScript
+            # This handles all special characters including quotes, backslashes, newlines, etc.
+            import json
+            data_str_json = json.dumps(data_str)
+            
+            # Send data to PTY via WebSocket using socket.emit('pty-input')
+            # According to pyxtermjs implementation, user input is sent via:
+            # socket.emit("pty-input", { input: data })
+            # The socket is exposed globally as window.socket in the HTML template
+            write_js = f"""
+            (function() {{
+                // Access the socket from global scope (exposed as window.socket in HTML template)
+                if (typeof window.socket !== 'undefined' && typeof window.socket.emit === 'function') {{
+                    var data = {data_str_json};
+                    window.socket.emit("pty-input", {{ input: data }});
+                    return true;
+                }} else {{
+                    console.error("PyXterm: window.socket not available for feed_child");
+                    return false;
+                }}
+            }})();
+            """
+            self._run_javascript(write_js)
+            logger.debug(f"Sent {len(data)} bytes to PyXterm terminal via socket.emit('pty-input')")
+        except Exception as e:
+            logger.error(f"Failed to feed child data to PyXterm backend: {e}", exc_info=True)
 
     def get_content(self, max_chars: Optional[int] = None) -> Optional[str]:
         # pyxterm.js does not currently expose scrollback; return None for compatibility

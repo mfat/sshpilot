@@ -105,12 +105,15 @@
         console.log('Terminal auto-focused');
       }, 100);
       
+      const socket = io.connect("/pty");
+      
+      // Expose socket globally so it can be accessed for programmatic input (e.g., broadcast commands)
+      window.socket = socket;
+      
       term.onData((data) => {
         console.log("browser terminal received new data:", data);
         socket.emit("pty-input", { input: data });
       });
-
-      const socket = io.connect("/pty");
 
       socket.on("pty-output", function (data) {
         console.log("new output received from server:", data.output);
