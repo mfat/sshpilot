@@ -8647,7 +8647,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             else:
                 terminal_basename = os.path.basename(terminal_command[0])
                 if terminal_basename == 'ptyxis':
-                    cmd = terminal_command + ['--new-window', '--', 'bash', '-c', f'{ssh_command}; exec bash']
+                    # Use --standalone with -- to start fresh instance with only our command
+                    # This prevents opening a default window when ptyxis isn't running
+                    cmd = terminal_command + ['--standalone', '--', 'bash', '-c', f'{ssh_command}; exec bash']
                 elif terminal_basename in ['gnome-terminal', 'tilix', 'xfce4-terminal', 'foot', 'blackbox']:
                     cmd = terminal_command + ['--', 'bash', '-c', f'{ssh_command}; exec bash']
                 elif terminal_basename in ['konsole', 'terminator', 'guake']:
