@@ -1411,6 +1411,10 @@ class AsyncSFTPManager(GObject.GObject):
                     logger.debug(
                         "File manager: IdentityAgent disabled; skipping key preparation"
                     )
+                elif not getattr(connection, "add_keys_to_agent_enabled", False):
+                    logger.debug(
+                        "File manager: AddKeysToAgent not enabled; skipping key preparation"
+                    )
                 elif (
                     self._connection_manager is not None
                     and hasattr(self._connection_manager, "prepare_key_for_connection")
@@ -1418,9 +1422,13 @@ class AsyncSFTPManager(GObject.GObject):
                     try:
                         key_prepared = self._connection_manager.prepare_key_for_connection(keyfile)
                         if key_prepared:
-                            logger.debug("Successfully prepared key for file manager: %s", keyfile)
+                            logger.debug(
+                                "Successfully prepared key for file manager: %s", keyfile
+                            )
                         else:
-                            logger.warning("Failed to prepare key for file manager: %s", keyfile)
+                            logger.warning(
+                                "Failed to prepare key for file manager: %s", keyfile
+                            )
                     except Exception as exc:  # pragma: no cover - defensive
                         logger.warning("Error preparing key for file manager %s: %s", keyfile, exc)
                         key_prepared = False

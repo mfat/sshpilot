@@ -92,7 +92,9 @@ def test_prepare_key_native_mode_falls_back(monkeypatch, tmp_path, caplog):
             return False
 
     terminal.connection_manager = DummyManager()
-    terminal.connection = types.SimpleNamespace(key_select_mode=0)
+    terminal.connection = types.SimpleNamespace(
+        key_select_mode=0, add_keys_to_agent_enabled=True
+    )
     terminal._resolve_native_identity_candidates = lambda: [
         str(first_key),
         str(second_key),

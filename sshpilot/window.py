@@ -165,6 +165,7 @@ class SCPConnectionProfile:
     keyfile_ok: bool
     keyfile_expanded: str
     identity_agent_disabled: bool = False
+    add_keys_to_agent_enabled: bool = False
 
 
 def _quote_remote_path_for_shell(path: str) -> str:
@@ -5296,6 +5297,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         identity_agent_disabled = bool(
             getattr(connection, 'identity_agent_disabled', False)
         )
+
+        add_keys_to_agent_enabled = bool(
+            getattr(connection, 'add_keys_to_agent_enabled', False)
+        )
         
         # Also check if 'identityagent none' is in the SSH options
         if not identity_agent_disabled and ssh_options:
@@ -5321,6 +5326,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             keyfile_ok=keyfile_ok,
             keyfile_expanded=expanded_keyfile if keyfile_ok else '',
             identity_agent_disabled=identity_agent_disabled,
+            add_keys_to_agent_enabled=add_keys_to_agent_enabled,
         )
 
     def _prompt_scp_download(self, connection):
@@ -6855,6 +6861,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     if profile.identity_agent_disabled:
                         logger.debug(
                             "SCP: IdentityAgent disabled; skipping key preload"
+                        )
+                    elif not profile.add_keys_to_agent_enabled:
+                        logger.debug(
+                            "SCP: AddKeysToAgent not enabled; skipping key preload"
                         )
                     else:
                         self.connection_manager.prepare_key_for_connection(
