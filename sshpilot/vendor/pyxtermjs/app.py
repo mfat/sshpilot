@@ -147,7 +147,20 @@ def main():
     logging.info(f"serving on http://{args.host}:{args.port}")
     # allow_unsafe_werkzeug=True is needed when running from desktop launcher
     # This is safe as the server only runs on localhost for local terminal emulation
-    socketio.run(app, debug=args.debug, port=args.port, host=args.host, allow_unsafe_werkzeug=True)
+    # Try with allow_unsafe_werkzeug first (for newer Flask-SocketIO), fallback if not supported
+    try:
+        socketio.run(app, debug=args.debug, port=args.port, host=args.host, allow_unsafe_werkzeug=True)
+    except TypeError as e:
+        # Fallback for Flask-SocketIO versions that incorrectly pass allow_unsafe_werkzeug to Werkzeug
+        # Set environment variable to bypass Werkzeug's production check
+        # This is safe as the server only runs on localhost
+        if 'allow_unsafe_werkzeug' in str(e):
+            import os
+            # Set environment variable to bypass Werkzeug production warning
+            os.environ['WERKZEUG_RUN_MAIN'] = 'true'
+            socketio.run(app, debug=args.debug, port=args.port, host=args.host)
+        else:
+            raise
 
 
 if __name__ == "__main__":
