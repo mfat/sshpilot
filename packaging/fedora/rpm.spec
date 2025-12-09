@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:4.7.0}
+Version:        %{?version}%{!?version:4.7.1}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -92,6 +92,12 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.mfat
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Tue Dec 09 2025 mFat <newmfat@gmail.com> - 4.7.1
+- - Make terminal fillscreen with F11
+- - Improvements for SCP file transfers
+- - Drag & drop files and folders directly on terminal widget
+- - Updated password/passphrase prompts with option to store secrets
+
 * Mon Dec 08 2025 mFat <newmfat@gmail.com> - 4.7.0
 - - Make terminal fullscreen with F11
 - - Added xterm.js as an alternative terminal backend

@@ -45,6 +45,16 @@
 
 
 
+
+    <release version="4.7.1" date="2025-12-09">
+
+      <description>
+        <p>- Make terminal fillscreen with F11</p>
+        <p>- Improvements for SCP file transfers</p>
+        <p>- Drag & drop files and folders directly on terminal widget</p>
+        <p>- Updated password/passphrase prompts with option to store secrets</p>
+      </description>
+    </release>
     <release version="4.7.0" date="2025-12-08">
 
       <description>
