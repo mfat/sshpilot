@@ -17,6 +17,9 @@ BuildRequires:  desktop-file-utils
 # Exclude automatic Python ABI dependency to allow compatibility across Python 3.x versions
 %global __requires_exclude ^python\\(abi\\)
 
+# Define _metainfodir for openSUSE compatibility (not defined by default on openSUSE)
+%{!?_metainfodir:%global _metainfodir %{_datadir}/metainfo}
+
 Requires:       python3
 Requires:       python3-gobject
 Requires:       gtk4 >= 4.6
