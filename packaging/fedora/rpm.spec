@@ -14,6 +14,7 @@ BuildRequires:  python3-devel
 BuildRequires:  desktop-file-utils
 BuildRequires:  appstream-glib
 
+
 # Exclude automatic Python ABI dependency to allow compatibility across Python 3.x versions
 %global __requires_exclude ^python\\(abi\\)
 
@@ -77,6 +78,7 @@ install -D -m 644 sshpilot/resources/sshpilot.svg %{buildroot}%{_datadir}/pixmap
 # Validate desktop file
 desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
 appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
+
 
 %files
 %license LICENSE*
