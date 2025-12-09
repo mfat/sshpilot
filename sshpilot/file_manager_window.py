@@ -52,6 +52,8 @@ except (ImportError, ValueError, AttributeError):
 
 from .platform_utils import is_flatpak, is_macos
 from .text_editor import RemoteFileEditorWindow
+from .qt_concurrency import QtTaskRunner
+from .qt_compat import dispatch_to_ui
 
 import logging
 
@@ -705,11 +707,16 @@ class FileEntry:
 
 
 class _MainThreadDispatcher:
-    """Helper that marshals callbacks back to the GTK main loop."""
+    """Helper that marshals callbacks back to the active UI loop.
+
+    When Qt bindings are available we bounce work through the Qt event loop so
+    no GTK/GLib assumptions leak into the worker-side code paths. Otherwise we
+    retain the original ``GLib.idle_add`` behaviour.
+    """
 
     @staticmethod
     def dispatch(func: Callable, *args, **kwargs) -> None:
-        GLib.idle_add(lambda: func(*args, **kwargs))
+        dispatch_to_ui(func, args, kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -772,6 +779,7 @@ class AsyncSFTPManager(GObject.GObject):
         # Use single worker to serialize SFTP operations - SFTP connections are not thread-safe
         # Operations will be queued and executed one at a time
         self._executor = ThreadPoolExecutor(max_workers=1)
+        self._qt_runner = QtTaskRunner()
         self._dispatcher = dispatcher or (
             lambda cb, args=(), kwargs=None: _MainThreadDispatcher.dispatch(
                 cb, *args, **(kwargs or {})
@@ -953,6 +961,15 @@ class AsyncSFTPManager(GObject.GObject):
         on_success: Optional[Callable[[object], None]] = None,
         on_error: Optional[Callable[[Exception], None]] = None,
     ) -> Future:
+        if self._qt_runner.available:
+            return self._qt_runner.submit(
+                func,
+                on_success=lambda result: on_success(result) if on_success else None,
+                on_error=lambda exc: on_error(exc) if on_error else self.emit(
+                    "operation-error", str(exc)
+                ),
+            )
+
         future = self._executor.submit(func)
 
         def _done(fut: Future) -> None:
