@@ -50,6 +50,13 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION"
 
+      - name: Generate changelog date
+        id: changelog_date
+        run: |
+          CHANGELOG_DATE=$(date "+%a %b %d %Y")
+          echo "date=$CHANGELOG_DATE" >> $GITHUB_OUTPUT
+          echo "Changelog date: $CHANGELOG_DATE"
+
       - name: Create source tarball
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -72,7 +79,7 @@ jobs:
           Name:           sshpilot
           Version:        ${{ steps.version.outputs.version }}
           Release:        1
-          Summary:        SSH connection manager with integrated terminal
+          Summary:        Manage your servers with ease
           
           License:        GPL-3.0-or-later
           URL:            https://github.com/mfat/sshpilot
@@ -166,7 +173,7 @@ jobs:
           %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
           
           %changelog
-          * $(date "+%a %b %d %Y") mFat <newmfat@gmail.com> - ${{ steps.version.outputs.version }}-1
+          * ${{ steps.changelog_date.outputs.date }} mFat <newmfat@gmail.com> - ${{ steps.version.outputs.version }}-1
           - Automated build from GitHub Actions
           EOF
 

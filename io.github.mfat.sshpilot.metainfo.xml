@@ -51,7 +51,7 @@
       <description>
         <p>- Make terminal fillscreen with F11</p>
         <p>- Improvements for SCP file transfers</p>
-        <p>- Drag & drop files and folders directly on terminal widget</p>
+        <p>- Drag &amp; drop files and folders directly on terminal widget</p>
         <p>- Updated password/passphrase prompts with option to store secrets</p>
       </description>
     </release>
