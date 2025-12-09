@@ -5,7 +5,7 @@ Summary:        Manage your servers with ease
 
 License:        GPL-3.0-or-later
 URL:            https://github.com/mfat/sshpilot
-
+Source0:        %name-%version.tar.gz
 
 
 BuildArch:      noarch
@@ -36,6 +36,8 @@ Requires:       webkitgtk6.0
 %description
 SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed terminal, remote file management, key transfer, port forwarding and more. It's an alternative to Putty, Termius and Mobaxterm.
 
+%prep
+%autosetup -n sshpilot-%{version}
 
 %build
 # No build step needed - standalone Python application
@@ -85,3 +87,5 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.mfat
 %{_datadir}/applications/io.github.mfat.sshpilot.desktop
 %{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
+
+%changelog
