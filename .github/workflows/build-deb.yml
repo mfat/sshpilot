@@ -28,7 +28,10 @@ jobs:
             python3 \
             python3-dev \
             fakeroot \
-            lintian
+            lintian \
+            desktop-file-utils \
+            appstream \
+            appstream-util
 
       - name: Extract version
         id: version
@@ -177,7 +180,11 @@ jobs:
           ls -la io.github.mfat.sshpilot.desktop || echo "desktop file missing"
           ls -la io.github.mfat.sshpilot.metainfo.xml || echo "metainfo file missing"
           ls -la sshpilot/resources/sshpilot.svg || echo "icon missing"
-          
+
+          echo "=== Validating desktop and AppStream metadata ==="
+          desktop-file-validate io.github.mfat.sshpilot.desktop
+          appstream-util validate-relax --nonet io.github.mfat.sshpilot.metainfo.xml
+
           echo "=== Debian packaging files created ==="
           ls -la debian/
           
