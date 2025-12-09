@@ -37,10 +37,6 @@ Requires:       webkitgtk6.0
 SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed terminal, remote file management, key transfer, port forwarding and more. It's an alternative to Putty, Termius and Mobaxterm.
 
 
-%prep
-%autosetup -n sshpilot-%{version}
-
-
 %build
 # No build step needed - standalone Python application
 
