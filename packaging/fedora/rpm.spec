@@ -5,7 +5,7 @@ Summary:        Manage your servers with ease
 
 License:        GPL-3.0-or-later
 URL:            https://github.com/mfat/sshpilot
-Source0:        %name-%version.tar.gz
+Source0:        v%{version}.tar.gz
 
 
 BuildArch:      noarch
