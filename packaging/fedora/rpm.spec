@@ -12,7 +12,7 @@ Source0:        https://github.com/mfat/sshpilot/archive/refs/tags/v%{version}.t
 BuildArch:      noarch
 BuildRequires:  python3-devel
 BuildRequires:  desktop-file-utils
-BuildRequires:  appstream-glib
+BuildRequires:  libappstream-glib
 
 
 # Exclude automatic Python ABI dependency to allow compatibility across Python 3.x versions

@@ -29,7 +29,7 @@ jobs:
             python3-devel \
             desktop-file-utils \
             appstream \
-            appstream-glib \
+            libappstream-glib \
             git \
             which
 
@@ -81,7 +81,7 @@ jobs:
           BuildArch:      noarch
           BuildRequires:  python3-devel
           BuildRequires:  desktop-file-utils
-          BuildRequires:  appstream-glib
+          BuildRequires:  libappstream-glib
 
           
           # Exclude automatic Python ABI dependency to allow compatibility across Python 3.x versions
