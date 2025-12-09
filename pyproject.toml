@@ -34,6 +34,7 @@ dependencies = [
 where = ["", "src"]
 include = ["sshpilot*", "sshpilot_dnd*"]
 exclude = ["packaging*", "screenshots*"]
+
 [project.urls]
 Homepage = "https://github.com/mfat/sshpilot"
 Issues = "https://github.com/mfat/sshpilot/issues"

@@ -92,6 +92,8 @@ jobs:
           Requires:       python3-paramiko
           Requires:       python3-cryptography
           Requires:       python3-secretstorage 
+          Requires:       python3-flask
+          Requires:       python3-flask-socketio
           Requires:       libsecret
           Requires:       sshpass
           Requires:       openssh-askpass
@@ -114,6 +116,14 @@ jobs:
           # Install resources
           install -d %{buildroot}%{_datadir}/sshpilot/sshpilot/resources
           cp -a sshpilot/resources/* %{buildroot}%{_datadir}/sshpilot/sshpilot/resources/
+          
+          # Install vendored pyxtermjs module
+          install -d %{buildroot}%{_datadir}/sshpilot/sshpilot/vendor
+          cp -a sshpilot/vendor/__init__.py %{buildroot}%{_datadir}/sshpilot/sshpilot/vendor/
+          install -d %{buildroot}%{_datadir}/sshpilot/sshpilot/vendor/pyxtermjs
+          cp -a sshpilot/vendor/pyxtermjs/*.py %{buildroot}%{_datadir}/sshpilot/sshpilot/vendor/pyxtermjs/
+          cp -a sshpilot/vendor/pyxtermjs/*.html %{buildroot}%{_datadir}/sshpilot/sshpilot/vendor/pyxtermjs/ 2>/dev/null || true
+          cp -a sshpilot/vendor/pyxtermjs/LICENSE %{buildroot}%{_datadir}/sshpilot/sshpilot/vendor/pyxtermjs/ 2>/dev/null || true
           
           # Create wrapper script that sets PYTHONPATH
           cat > sshpilot-wrapper << 'WRAPPER_EOF'
@@ -157,6 +167,7 @@ jobs:
           ls -la sshpilot/ || echo "sshpilot/ missing"
           ls -la io.github.mfat.sshpilot.desktop || echo "desktop file missing"
           ls -la sshpilot/resources/sshpilot.svg || echo "icon missing"
+          ls -la sshpilot/vendor/pyxtermjs/ || echo "vendor/pyxtermjs/ missing"
           
           echo "=== RPM build tree ==="
           ls -la ~/rpmbuild/
