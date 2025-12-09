@@ -7,6 +7,6 @@ Comment=SSH connection manager with integrated terminal, tunneling, and SFTP
 Exec=sshpilot
 Icon=io.github.mfat.sshpilot
 Terminal=false
-Categories=Network;System;Utility;
+Categories=Network;
 StartupNotify=true
 
