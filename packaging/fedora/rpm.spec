@@ -25,10 +25,12 @@ Requires:       gtksourceview5 >= 5.0
 Requires:       python3-paramiko
 Requires:       python3-cryptography
 Requires:       python3-secretstorage 
+Requires:       python3-flask
+Requires:       python3-flask-socketio
 Requires:       libsecret
 Requires:       sshpass
 Requires:       openssh-askpass
-Requires:       webkitgtk6
+Requires:       webkitgtk6.0
 
 %description
 SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed terminal, remote file management, key transfer, port forwarding and more. It's an alternative to Putty, Termius and Mobaxterm.
@@ -56,6 +58,14 @@ cp -a sshpilot/*.py %{buildroot}%{python3_sitelib}/sshpilot/
 # Install resources
 install -d %{buildroot}%{python3_sitelib}/sshpilot/resources
 cp -a sshpilot/resources/* %{buildroot}%{python3_sitelib}/sshpilot/resources/
+
+# Install vendored pyxtermjs module
+install -d %{buildroot}%{python3_sitelib}/sshpilot/vendor
+cp -a sshpilot/vendor/__init__.py %{buildroot}%{python3_sitelib}/sshpilot/vendor/
+install -d %{buildroot}%{python3_sitelib}/sshpilot/vendor/pyxtermjs
+cp -a sshpilot/vendor/pyxtermjs/*.py %{buildroot}%{python3_sitelib}/sshpilot/vendor/pyxtermjs/
+cp -a sshpilot/vendor/pyxtermjs/*.html %{buildroot}%{python3_sitelib}/sshpilot/vendor/pyxtermjs/ 2>/dev/null || true
+cp -a sshpilot/vendor/pyxtermjs/LICENSE %{buildroot}%{python3_sitelib}/sshpilot/vendor/pyxtermjs/ 2>/dev/null || true
 
 # Install desktop file and icon
 install -D -m 644 io.github.mfat.sshpilot.desktop %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
