@@ -1,3 +1,4 @@
+import os
 import sys
 import types
 from types import SimpleNamespace
@@ -152,6 +153,38 @@ def test_build_scp_argv_prefers_alias_and_proxy(monkeypatch, tmp_path):
     assert argv[argv.index('-F') + 1] == str(config_path)
     assert 'ProxyJump=bastion.example.org' in argv
     assert argv[-1] == 'alice@testbox:/remote/path'
+
+
+def test_build_scp_argv_adds_recursive_for_directories(monkeypatch, tmp_path):
+    monkeypatch.setattr(window, 'Config', _DummyConfig)
+
+    key_path = tmp_path / 'id_test_key'
+    key_path.write_text('dummy')
+
+    source_dir = tmp_path / 'folder'
+    source_dir.mkdir()
+
+    connection = SimpleNamespace(
+        hostname='example.com',
+        username='alice',
+        keyfile=str(key_path),
+        key_select_mode=1,
+        auth_method=2,
+        port=22,
+    )
+
+    dummy_window = _DummyWindow()
+
+    argv = window.MainWindow._build_scp_argv(
+        dummy_window,
+        connection,
+        [str(source_dir)],
+        '/remote/path',
+        direction='upload',
+    )
+
+    assert '-r' in argv
+    assert any(arg.endswith('/remote/path') for arg in argv)
 
 
 def test_download_file_with_passphrase_merges_env_and_opts(monkeypatch, tmp_path):
