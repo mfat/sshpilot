@@ -25,3 +25,9 @@ flatpak/io.github.mfat.sshpilot.yaml
 *.pyc
 whip.md
 sshpilot/vendor/pyxtermjs/index.html
+/artifacts
+build-deb-local.sh
+/debian
+/sshpilot/vendor/__pycache__
+/sshpilot/vendor/__pycache__
+*.pyc
