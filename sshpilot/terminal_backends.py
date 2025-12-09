@@ -15,7 +15,7 @@ gi.require_version("Gtk", "4.0")
 
 from gi.repository import GObject, Gtk
 
-from .platform_utils import is_flatpak
+from .platform_utils import is_flatpak, get_data_dir
 
 logger = logging.getLogger(__name__)
 
@@ -576,6 +576,7 @@ class PyXtermTerminalBackend:
         self._child_exited_callback: Optional[Callable] = None
         self._template_backed_up = False
         self._temp_script_path: Optional[str] = None
+        self._writable_template_path: Optional[str] = None
         self._font_scale: float = 1.0
         self._base_font_size: Optional[int] = None  # Store base font size for zoom calculations
         self._search_addon_loaded = False  # Track if search addon is loaded
@@ -808,16 +809,24 @@ class PyXtermTerminalBackend:
             pyxtermjs_path = Path(module.__file__).resolve().parent
             original_template = pyxtermjs_path / "index.html"
             
-            # Skip template modification if in Flatpak or if the directory is read-only
-            # The JavaScript methods (apply_theme, set_font) will apply settings after page loads
-            if is_flatpak():
-                logger.debug("Skipping pyxtermjs template modification in Flatpak (read-only filesystem). Theme/font will be applied via JavaScript after page loads.")
-                return
+            # Determine where to write the modified template
+            # In Flatpak or read-only environments, use writable XDG data directory
+            use_writable_location = False
+            writable_template_path = None
             
-            # Check if we can write to the directory
-            if not os.access(pyxtermjs_path, os.W_OK):
-                logger.debug(f"Skipping pyxtermjs template modification: directory is read-only: {pyxtermjs_path}. Theme/font will be applied via JavaScript after page loads.")
-                return
+            if is_flatpak() or not os.access(pyxtermjs_path, os.W_OK):
+                use_writable_location = True
+                # Use XDG data directory for writable template storage
+                data_dir = get_data_dir()
+                template_dir = Path(data_dir) / "pyxtermjs_templates"
+                template_dir.mkdir(parents=True, exist_ok=True)
+                writable_template_path = template_dir / "index.html"
+                logger.debug(f"Using writable location for template: {writable_template_path}")
+            else:
+                writable_template_path = original_template
+            
+            # Store the writable template path for later use in spawn_async
+            self._writable_template_path = str(writable_template_path) if use_writable_location else None
             
             # Get theme and font settings from config
             owner = self.owner
@@ -880,6 +889,11 @@ class PyXtermTerminalBackend:
             if original_template.exists():
                 template_content = original_template.read_text(encoding='utf-8')
                 
+                # If using writable location, copy original first
+                if use_writable_location:
+                    shutil.copy2(original_template, writable_template_path)
+                    logger.debug(f"Copied original template to writable location: {writable_template_path}")
+                
                 # Replace the hardcoded theme in the Terminal constructor
                 theme_json = json.dumps(theme_obj, indent=10).replace('\n', '\n        ')
                 font_family_escaped = font_family.replace("'", "\\'").replace('"', '\\"')
@@ -934,9 +948,12 @@ class PyXtermTerminalBackend:
                         css_insertion + '    <link\n      rel="stylesheet"\n      href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css"\n    />'
                     )
                 
-                # Write the modified template
-                original_template.write_text(template_content, encoding='utf-8')
-                logger.debug(f"Modified pyxtermjs template with theme {theme_name} and font {font_family} {font_size}pt")
+                # Write the modified template to the appropriate location
+                writable_template_path.write_text(template_content, encoding='utf-8')
+                if use_writable_location:
+                    logger.debug(f"Modified pyxtermjs template in writable location with theme {theme_name} and font {font_family} {font_size}pt")
+                else:
+                    logger.debug(f"Modified pyxtermjs template with theme {theme_name} and font {font_family} {font_size}pt")
             else:
                 logger.warning(f"Template file not found: {original_template}")
         except Exception as e:
@@ -1374,6 +1391,13 @@ class PyXtermTerminalBackend:
                     subprocess_env['PYTHONPATH'] = f"{project_root}:{current_pythonpath}"
                 else:
                     subprocess_env['PYTHONPATH'] = project_root
+            
+            # Set template folder environment variable if using writable location
+            if hasattr(self, '_writable_template_path') and self._writable_template_path:
+                template_dir = str(Path(self._writable_template_path).parent)
+                subprocess_env['PYXTERMJS_TEMPLATE_FOLDER'] = template_dir
+                subprocess_env['PYXTERMJS_STATIC_FOLDER'] = template_dir
+                logger.debug(f"Set PYXTERMJS_TEMPLATE_FOLDER to {template_dir}")
             
             popen_kwargs: dict[str, Any] = {
                 "stdout": subprocess.DEVNULL,

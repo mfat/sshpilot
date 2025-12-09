@@ -17,7 +17,11 @@ logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
 __version__ = "0.5.0.2"
 
-app = Flask(__name__, template_folder=".", static_folder=".", static_url_path="")
+# Allow template folder to be overridden via environment variable (for Flatpak writable locations)
+template_folder = os.environ.get("PYXTERMJS_TEMPLATE_FOLDER", ".")
+static_folder = os.environ.get("PYXTERMJS_STATIC_FOLDER", ".")
+
+app = Flask(__name__, template_folder=template_folder, static_folder=static_folder, static_url_path="")
 app.config["SECRET_KEY"] = "secret!"
 app.config["fd"] = None
 app.config["child_pid"] = None
