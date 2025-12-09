@@ -39,6 +39,7 @@ from .askpass_utils import (
     lookup_passphrase,
     store_passphrase,
 )
+from sshpilot.ssh.session import SessionEventEmitter
 
 if Secret is not None:
     _SECRET_SCHEMA = get_secret_schema()
@@ -1165,6 +1166,7 @@ class ConnectionManager(GObject.Object):
         self._active_connection_keys: Dict[int, str] = {}
         self.ssh_config_path = ''
         self.known_hosts_path = ''
+        self.session_events = SessionEventEmitter(self.emit, loop=self.loop)
         try:
             self.native_connect_enabled = bool(self.config.get_setting('ssh.native_connect', True))
         except Exception:
@@ -2733,7 +2735,7 @@ class ConnectionManager(GObject.Object):
                     if connection.is_connected:
                         await connection.disconnect()
                     connection.is_connected = False
-                    self.emit('connection-status-changed', connection, False)
+                    self.session_events.emit_status(connection, False)
                     logger.info(f"Disconnected from {connection}")
             
             # Start the keepalive task
@@ -2743,7 +2745,7 @@ class ConnectionManager(GObject.Object):
             
             # Update the connection state and emit status change
             connection.is_connected = True
-            GLib.idle_add(self.emit, 'connection-status-changed', connection, True)
+            self.session_events.emit_status(connection, True)
             logger.info(f"Connected to {connection}")
             
             return True
@@ -2777,7 +2779,7 @@ class ConnectionManager(GObject.Object):
             
             # Update the connection state and emit status change signal
             connection.is_connected = False
-            GLib.idle_add(self.emit, 'connection-status-changed', connection, False)
+            self.session_events.emit_status(connection, False)
             logger.info(f"Disconnected from {connection}")
             
         except Exception as e:
@@ -2796,7 +2798,7 @@ class ConnectionManager(GObject.Object):
             
             # For terminal-based connections (not async), we don't use active_connections
             # but we still need to emit the status change signal
-            GLib.idle_add(self.emit, 'connection-status-changed', connection, is_connected)
+            self.session_events.emit_status(connection, is_connected)
             
             logger.debug(f"Connection manager updated status for {connection.nickname}: {'Connected' if is_connected else 'Disconnected'}")
             
