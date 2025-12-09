@@ -15,6 +15,8 @@ gi.require_version("Gtk", "4.0")
 
 from gi.repository import GObject, Gtk
 
+from .platform_utils import is_flatpak
+
 logger = logging.getLogger(__name__)
 
 
@@ -772,6 +774,18 @@ class PyXtermTerminalBackend:
             original_template = pyxtermjs_path / "index.html"
             backup_template = pyxtermjs_path / "index.html.backup"
 
+            # Skip backup if in Flatpak or if the directory is read-only
+            if is_flatpak():
+                logger.debug("Skipping pyxtermjs template backup in Flatpak (read-only filesystem)")
+                self._template_backed_up = False
+                return
+
+            # Check if we can write to the directory
+            if not os.access(pyxtermjs_path, os.W_OK):
+                logger.debug(f"Skipping pyxtermjs template backup: directory is read-only: {pyxtermjs_path}")
+                self._template_backed_up = False
+                return
+
             if original_template.exists() and not backup_template.exists():
                 shutil.copy2(original_template, backup_template)
                 self._template_backed_up = True
@@ -793,6 +807,17 @@ class PyXtermTerminalBackend:
 
             pyxtermjs_path = Path(module.__file__).resolve().parent
             original_template = pyxtermjs_path / "index.html"
+            
+            # Skip template modification if in Flatpak or if the directory is read-only
+            # The JavaScript methods (apply_theme, set_font) will apply settings after page loads
+            if is_flatpak():
+                logger.debug("Skipping pyxtermjs template modification in Flatpak (read-only filesystem). Theme/font will be applied via JavaScript after page loads.")
+                return
+            
+            # Check if we can write to the directory
+            if not os.access(pyxtermjs_path, os.W_OK):
+                logger.debug(f"Skipping pyxtermjs template modification: directory is read-only: {pyxtermjs_path}. Theme/font will be applied via JavaScript after page loads.")
+                return
             
             # Get theme and font settings from config
             owner = self.owner
@@ -929,6 +954,16 @@ class PyXtermTerminalBackend:
             pyxtermjs_path = Path(module.__file__).resolve().parent
             original_template = pyxtermjs_path / "index.html"
             backup_template = pyxtermjs_path / "index.html.backup"
+
+            # Skip restore if in Flatpak or if the directory is read-only
+            if is_flatpak():
+                logger.debug("Skipping pyxtermjs template restore in Flatpak (read-only filesystem)")
+                return
+            
+            # Check if we can write to the directory
+            if not os.access(pyxtermjs_path, os.W_OK):
+                logger.debug(f"Skipping pyxtermjs template restore: directory is read-only: {pyxtermjs_path}")
+                return
 
             if self._template_backed_up and backup_template.exists():
                 shutil.copy2(backup_template, original_template)
