@@ -45,6 +45,16 @@
 
 
 
+
+    <release version="4.7.1" date="2025-12-09">
+
+      <description>
+        <p>- Make terminal fillscreen with F11</p>
+        <p>- Improvements for SCP file transfers</p>
+        <p>- Drag & drop files and folders directly on terminal widget</p>
+        <p>- Updated password/passphrase prompts with option to store secrets</p>
+      </description>
+    </release>
     <release version="4.7.0" date="2025-12-08">
 
       <description>
@@ -145,19 +155,19 @@
       <image>https://raw.githubusercontent.com/mfat/sshpilot/c8b8a73186c217a670c4dce8722b79ec3141ba01/screenshots/start-page.png</image>
       <caption>Start Page</caption>
     </screenshot>
-    <screenshot type="default">
+    <screenshot>
       <image>https://raw.githubusercontent.com/mfat/sshpilot/6ef5e5bc618ab6dc563a47aa4470b576d9b25ac8/screenshots/main.png</image>
       <caption>Terminal</caption>
     </screenshot>
-    <screenshot type="default">
+    <screenshot>
       <image>https://raw.githubusercontent.com/mfat/sshpilot/524e9a0d1405d968a6e6e88d31b31b0a480589ab/screenshots/file-manager.png</image>
       <caption>SFTP File Manager</caption>
     </screenshot>
-    <screenshot type="default">
+    <screenshot>
       <image>https://raw.githubusercontent.com/mfat/sshpilot/38e1a8a/screenshots/tab-overview.png</image>
       <caption>Tab Overview</caption>
     </screenshot>
-    <screenshot type="default">
+    <screenshot>
       <image>https://raw.githubusercontent.com/mfat/sshpilot/38e1a8a/screenshots/ssh-copy-id.png</image>
       <caption>ssh-copy-id Window</caption>
     </screenshot>

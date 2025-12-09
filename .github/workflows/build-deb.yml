@@ -28,7 +28,10 @@ jobs:
             python3 \
             python3-dev \
             fakeroot \
-            lintian
+            lintian \
+            desktop-file-utils \
+            appstream \
+            appstream-util
 
       - name: Extract version
         id: version
@@ -76,12 +79,15 @@ jobs:
             echo "         python3-cryptography,"
             echo "         python3-secretstorage,"
             echo "         gir1.2-webkit-6.0,"
+            echo "         python3-flask,"
+            echo "         python3-flask-socketio,"
             echo "         ssh-askpass,"
             echo "         sshpass"
           } >> debian/control
-          echo "Description: SSH connection manager with integrated terminal" >> debian/control
-          echo " sshPilot provides SSH connection management, integrated terminal using VTE," >> debian/control
-          echo " tunneling, key management, and tabbed interface." >> debian/control
+          echo "Description: Manage your servers with ease" >> debian/control
+          echo " SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed" >> debian/control
+          echo " terminal, remote file management, key transfer, port forwarding and more." >> debian/control
+          echo " It's an alternative to Putty, Termius and Mobaxterm." >> debian/control
 
       - name: Create debian/changelog
         run: |
@@ -107,9 +113,20 @@ jobs:
             echo -e "\tcp -a sshpilot/*.py \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/"
             echo -e "\tinstall -d \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources"
             echo -e "\tcp -a sshpilot/resources/* \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/resources/"
-            echo -e "\t# Install desktop file and icon"
-            echo -e "\tinstall -D -m 644 io.github.mfat.sshpilot.desktop \$(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop"
-            echo -e "\tinstall -D -m 644 sshpilot/resources/sshpilot.svg \$(CURDIR)/debian/sshpilot/usr/share/pixmaps/io.github.mfat.sshpilot.svg"
+            echo -e "\t# Install vendored pyxtermjs module"
+            echo -e "\tinstall -d \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/vendor"
+            echo -e "\tcp -a sshpilot/vendor/__init__.py \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/vendor/"
+            echo -e "\tinstall -d \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/vendor/pyxtermjs"
+            echo -e "\tcp -a sshpilot/vendor/pyxtermjs/*.py \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/vendor/pyxtermjs/"
+            echo -e "\tcp -a sshpilot/vendor/pyxtermjs/*.html \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/vendor/pyxtermjs/ 2>/dev/null || true"
+            echo -e "\tcp -a sshpilot/vendor/pyxtermjs/LICENSE \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/vendor/pyxtermjs/ 2>/dev/null || true"
+          echo -e "\t# Install desktop file and icon"
+          echo -e "\tinstall -D -m 644 io.github.mfat.sshpilot.desktop \$(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop"
+          echo -e "\t# Install appstream metadata"
+          echo -e "\tinstall -D -m 644 io.github.mfat.sshpilot.metainfo.xml \$(CURDIR)/debian/sshpilot/usr/share/metainfo/io.github.mfat.sshpilot.metainfo.xml"
+          echo -e "\t# Install icon to hicolor theme (per AppStream guidelines)"
+          echo -e "\tinstall -d \$(CURDIR)/debian/sshpilot/usr/share/icons/hicolor/scalable/apps"
+          echo -e "\tinstall -D -m 644 sshpilot/resources/sshpilot.svg \$(CURDIR)/debian/sshpilot/usr/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg"
             echo "override_dh_auto_test:"
             echo -e "\t# Skip tests for now (can be enabled later)"
             echo "override_dh_auto_clean:"
@@ -136,6 +153,10 @@ jobs:
             echo "Copyright: 2025 mFat <newmfat@gmail.com>"
             echo "License: GPL-3+"
             echo ""
+            echo "Files: sshpilot/vendor/pyxtermjs/*"
+            echo "Copyright: 2018-2022 Chad Smith"
+            echo "License: MIT"
+            echo ""
             echo "License: GPL-3+"
             echo " This program is free software: you can redistribute it and/or modify"
             echo " it under the terms of the GNU General Public License as published by"
@@ -160,8 +181,13 @@ jobs:
           ls -la run.py || echo "run.py missing"
           ls -la sshpilot/ || echo "sshpilot/ missing"
           ls -la io.github.mfat.sshpilot.desktop || echo "desktop file missing"
+          ls -la io.github.mfat.sshpilot.metainfo.xml || echo "metainfo file missing"
           ls -la sshpilot/resources/sshpilot.svg || echo "icon missing"
-          
+
+          echo "=== Validating desktop and AppStream metadata ==="
+          desktop-file-validate io.github.mfat.sshpilot.desktop
+          appstream-util validate-relax --nonet io.github.mfat.sshpilot.metainfo.xml
+
           echo "=== Debian packaging files created ==="
           ls -la debian/
           

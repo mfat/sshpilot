@@ -804,6 +804,10 @@ class PreferencesWindow(Gtk.Window):
             
             # Set current backend
             current_backend = self.config.get_setting('terminal.backend', 'vte')
+            # Reset to VTE if pyxterm is configured on macOS (not supported)
+            if is_macos() and current_backend and current_backend.lower() == 'pyxterm':
+                current_backend = 'vte'
+                self.config.set_setting('terminal.backend', 'vte')
             current_index = 0
             for i, choice in enumerate(self._backend_choice_data):
                 if choice['id'] == current_backend:
@@ -2928,27 +2932,29 @@ class PreferencesWindow(Gtk.Window):
                 'error': None,
             }
         ]
-        pyxterm_available, pyxterm_error = self._detect_pyxterm_backend()
-        if pyxterm_available:
-            choices.append(
-                {
-                    'id': 'pyxterm',
-                    'label': 'PyXterm.js',
-                    'description': 'Web-based terminal (pyxtermjs)',
-                    'available': True,
-                    'error': None,
-                }
-            )
-        else:
-            choices.append(
-                {
-                    'id': 'pyxterm',
-                    'label': 'PyXterm.js (requires pyxtermjs)',
-                    'description': 'pyxtermjs package not available',
-                    'available': False,
-                    'error': pyxterm_error,
-                }
-            )
+        # PyXterm.js is not supported on macOS (webkitgtk is Linux-only)
+        if not is_macos():
+            pyxterm_available, pyxterm_error = self._detect_pyxterm_backend()
+            if pyxterm_available:
+                choices.append(
+                    {
+                        'id': 'pyxterm',
+                        'label': 'PyXterm.js',
+                        'description': 'Web-based terminal (pyxtermjs)',
+                        'available': True,
+                        'error': None,
+                    }
+                )
+            else:
+                choices.append(
+                    {
+                        'id': 'pyxterm',
+                        'label': 'PyXterm.js (requires pyxtermjs)',
+                        'description': 'pyxtermjs package not available',
+                        'available': False,
+                        'error': pyxterm_error,
+                    }
+                )
         return choices
 
     def _update_backend_row_subtitle(self, index: int):

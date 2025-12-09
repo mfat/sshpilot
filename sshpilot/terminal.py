@@ -4754,8 +4754,114 @@ class TerminalWidget(Gtk.Box):
                 logger.debug("Drop rejected: MainWindow not found")
                 return False
             
-            # Use current directory (.) as destination - scp will interpret this correctly
-            destination = "."
+            # Get current directory from the active terminal session
+            # We send pwd to the terminal and write it to a temp file, then read that file
+            destination = None
+            try:
+                import time
+                import random
+                import subprocess
+                import shutil
+                from .ssh_utils import build_connection_ssh_options
+                
+                # Generate unique temp file name using timestamp and random number
+                temp_filename = f"/tmp/sshpilot_pwd_{int(time.time())}_{random.randint(1000, 9999)}.txt"
+                
+                # Send pwd command to active terminal session to write current directory to temp file
+                # Use $$ to get shell PID for uniqueness, or use the generated filename
+                pwd_cmd = f"pwd > {temp_filename}\n"
+                
+                logger.debug(f"Sending pwd command to terminal: {repr(pwd_cmd)}")
+                
+                # Send command to terminal backend
+                if hasattr(self, 'backend') and self.backend and hasattr(self.backend, 'feed_child'):
+                    self.backend.feed_child(pwd_cmd.encode('utf-8'))
+                elif hasattr(self, 'vte') and self.vte:
+                    self.vte.feed_child(pwd_cmd.encode('utf-8'))
+                else:
+                    logger.warning("No terminal backend available to send pwd command")
+                    raise Exception("Terminal backend not available")
+                
+                # Wait a moment for the command to execute
+                time.sleep(0.5)
+                
+                # Now read the temp file via SSH
+                host = self.connection.host
+                user = getattr(self.connection, 'username', None) or ''
+                port = getattr(self.connection, 'port', None) or 22
+                ssh_opts = build_connection_ssh_options(self.connection, self.config)
+                
+                # Add SSH config file path if available
+                config_path = getattr(self.connection, 'config_root', '') or ''
+                if not config_path and hasattr(self, 'connection_manager') and self.connection_manager:
+                    config_path = getattr(self.connection_manager, 'ssh_config_path', '') or ''
+                if config_path and os.path.exists(config_path):
+                    has_config_file = False
+                    for i in range(len(ssh_opts) - 1):
+                        if ssh_opts[i] == '-F' and ssh_opts[i + 1] == config_path:
+                            has_config_file = True
+                            break
+                    if not has_config_file:
+                        ssh_opts = ['-F', config_path] + ssh_opts
+                
+                sshbin = shutil.which("ssh") or "/usr/bin/ssh"
+                ssh_cmd = [sshbin]
+                
+                if port and port != 22:
+                    ssh_cmd.extend(['-p', str(port)])
+                
+                ssh_cmd.extend(ssh_opts)
+                
+                target = f"{user}@{host}" if user else host
+                ssh_cmd.append(target)
+                
+                # Read the temp file
+                ssh_cmd.append(f"cat {temp_filename}")
+                
+                env = os.environ.copy()
+                
+                logger.debug(f"Reading pwd from temp file: {' '.join(ssh_cmd)}")
+                result = subprocess.run(
+                    ssh_cmd,
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    timeout=5,
+                )
+                
+                # Clean up temp file (best effort)
+                try:
+                    cleanup_cmd = [sshbin]
+                    if port and port != 22:
+                        cleanup_cmd.extend(['-p', str(port)])
+                    cleanup_cmd.extend(ssh_opts)
+                    cleanup_cmd.append(target)
+                    cleanup_cmd.append(f"rm -f {temp_filename}")
+                    subprocess.run(cleanup_cmd, env=env, timeout=2, capture_output=True)
+                except Exception:
+                    pass  # Ignore cleanup errors
+                
+                logger.debug(f"pwd file read result: returncode={result.returncode}, stdout={repr(result.stdout)}, stderr={repr(result.stderr)}")
+                
+                if result.returncode == 0:
+                    if result.stdout:
+                        remote_dir = result.stdout.strip()
+                        if remote_dir:
+                            destination = remote_dir
+                            logger.info(f"Remote current directory: {destination}")
+                        else:
+                            logger.warning("pwd file was empty")
+                    else:
+                        logger.warning("pwd file read succeeded but stdout is empty")
+                else:
+                    logger.warning(f"Failed to read pwd file: returncode={result.returncode}, stderr={result.stderr}")
+            except Exception as e:
+                logger.error(f"Failed to get remote current directory: {e}", exc_info=True)
+            
+            # Fallback to home directory if we couldn't get current directory
+            if not destination:
+                destination = "~"
+                logger.warning("Could not determine remote current directory, using home directory (~)")
             
             # Initiate SCP upload
             logger.info(f"Initiating SCP upload for {len(file_paths)} file(s) to {destination}")
@@ -4770,7 +4876,7 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.error(f"Error handling file drop: {e}", exc_info=True)
             return False
-
+    
     def has_active_job(self):
         """
         Check if the terminal has an active job running.
