@@ -84,6 +84,7 @@ jobs:
             echo "         ssh-askpass,"
             echo "         sshpass"
           } >> debian/control
+          echo "Description: Manage your servers with ease" >> debian/control
           echo " SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed" >> debian/control
           echo " terminal, remote file management, key transfer, port forwarding and more." >> debian/control
           echo " It's an alternative to Putty, Termius and Mobaxterm." >> debian/control
@@ -119,11 +120,13 @@ jobs:
             echo -e "\tcp -a sshpilot/vendor/pyxtermjs/*.py \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/vendor/pyxtermjs/"
             echo -e "\tcp -a sshpilot/vendor/pyxtermjs/*.html \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/vendor/pyxtermjs/ 2>/dev/null || true"
             echo -e "\tcp -a sshpilot/vendor/pyxtermjs/LICENSE \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/vendor/pyxtermjs/ 2>/dev/null || true"
-            echo -e "\t# Install desktop file and icon"
-            echo -e "\tinstall -D -m 644 io.github.mfat.sshpilot.desktop \$(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop"
-            echo -e "\t# Install appstream metadata"
-            echo -e "\tinstall -D -m 644 io.github.mfat.sshpilot.metainfo.xml \$(CURDIR)/debian/sshpilot/usr/share/metainfo/io.github.mfat.sshpilot.metainfo.xml"
-            echo -e "\tinstall -D -m 644 sshpilot/resources/sshpilot.svg \$(CURDIR)/debian/sshpilot/usr/share/pixmaps/io.github.mfat.sshpilot.svg"
+          echo -e "\t# Install desktop file and icon"
+          echo -e "\tinstall -D -m 644 io.github.mfat.sshpilot.desktop \$(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop"
+          echo -e "\t# Install appstream metadata"
+          echo -e "\tinstall -D -m 644 io.github.mfat.sshpilot.metainfo.xml \$(CURDIR)/debian/sshpilot/usr/share/metainfo/io.github.mfat.sshpilot.metainfo.xml"
+          echo -e "\t# Install icon to hicolor theme (per AppStream guidelines)"
+          echo -e "\tinstall -d \$(CURDIR)/debian/sshpilot/usr/share/icons/hicolor/scalable/apps"
+          echo -e "\tinstall -D -m 644 sshpilot/resources/sshpilot.svg \$(CURDIR)/debian/sshpilot/usr/share/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg"
             echo "override_dh_auto_test:"
             echo -e "\t# Skip tests for now (can be enabled later)"
             echo "override_dh_auto_clean:"

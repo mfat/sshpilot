@@ -146,7 +146,9 @@ jobs:
           # Install desktop file, appstream metadata and icon
           install -D -m 644 io.github.mfat.sshpilot.desktop %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
           install -D -m 644 io.github.mfat.sshpilot.metainfo.xml %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
-          install -D -m 644 sshpilot/resources/sshpilot.svg %{buildroot}%{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
+          # Install icon to hicolor theme (per AppStream guidelines)
+          install -d %{buildroot}%{_datadir}/icons/hicolor/scalable/apps
+          install -D -m 644 sshpilot/resources/sshpilot.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
           %check
           # Validate desktop file
@@ -161,7 +163,7 @@ jobs:
           %{_datadir}/sshpilot/
           %{_datadir}/applications/io.github.mfat.sshpilot.desktop
           %{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
-          %{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
+          %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
           
           %changelog
           * $(date "+%a %b %d %Y") mFat <newmfat@gmail.com> - ${{ steps.version.outputs.version }}-1
