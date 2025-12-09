@@ -10,9 +10,21 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 ### Class: `WindowActions`
 
+- **`_apply_update_banner_css()`** — Apply CSS styling to update banner
+
+- **`_handle_update_check_result(latest_version)`** — Handle the result of an update check (runs on main thread)
+
+- **`_on_update_banner_clicked(banner)`** — Handle update banner button click
+
+- **`_on_update_banner_dismiss(button)`** — Handle dismiss button click on update banner
+
+- **`_show_update_banner(version)`** — Show the update notification banner
+
 - **`_update_sidebar_accelerators()`** — Apply sidebar accelerators respecting pass-through settings.
 
 - **`on_broadcast_command_action(action, param=None)`** — Handle broadcast command action - shows dialog to input command
+
+- **`on_check_for_updates_action(action, param=None)`** — Handle check for updates action from menu
 
 - **`on_create_group_action(action, param=None)`** — Handle create group action
 
@@ -27,6 +39,10 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`on_edit_group_action(action, param=None)`** — Handle edit group action
 
 - **`on_edit_known_hosts_action(action, param=None)`** — Open the known hosts editor window.
+
+- **`on_export_config_action(action, param=None)`** — Handle export configuration action
+
+- **`on_import_config_action(action, param=None)`** — Handle import configuration action
 
 - **`on_manage_files_action(action, param=None)`** — Handle manage files action from context menu
 
@@ -84,7 +100,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`clear_passphrase(key_path)`** — Remove a stored key passphrase using keyring (macOS) or libsecret (Linux).
 
-- **`connect_ssh_with_key(host, username, key_path, command=None)`** — Connect via SSH with proper key handling
+- **`connect_ssh_with_key(host, username, key_path, command=None)`** — Connect via SSH with proper key handling using ssh_connection_builder
 
 - **`ensure_askpass_log_forwarder()`** — Ensure a background thread is forwarding askpass logs to the logger.
 
@@ -121,6 +137,42 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`stop_askpass_log_forwarder()`** — Stop the background askpass log forwarder thread.
 
 - **`store_passphrase(key_path, passphrase)`** — Store a key passphrase using keyring (macOS) or libsecret (Linux).
+
+
+
+## Module: `sshpilot.backup_manager`
+
+### Class: `BackupManager`
+
+- **`__init__(config, connection_manager=None)`** — Handles init.
+
+- **`_create_auto_backup()`** — Create automatic backup before import
+
+- **`_extract_host_names(config_text)`** — Extract all Host directive names from SSH config
+
+- **`_import_merge(import_data)`** — Merge imported configuration with existing
+
+- **`_import_replace(import_data)`** — Replace all configuration with imported data
+
+- **`_merge_app_config(imported_config)`** — Merge app configuration with existing
+
+- **`_merge_groups(current_groups, imported_groups)`** — Merge group data, preserving existing groups and adding new ones
+
+- **`_merge_known_hosts(target_path, imported_hosts)`** — Merge known_hosts by appending unique entries
+
+- **`_merge_ssh_config(target_path, imported_config)`** — Merge SSH config by appending imported hosts that don't exist
+
+- **`_validate_import_data(data)`** — Validate import data structure
+
+- **`export_configuration(export_path)`** — Export all configuration to a JSON file
+
+- **`get_known_hosts_path()`** — Get the known_hosts path if in isolated mode
+
+- **`get_ssh_config_path()`** — Get the current SSH config path based on mode
+
+- **`import_configuration(import_path, mode='replace', create_backup=True)`** — Import configuration from a JSON file
+
+- **`list_backups()`** — List all available backups
 
 
 
@@ -418,13 +470,13 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`collect_identity_file_candidates(effective_cfg=None)`** — Return resolved identity file paths that exist on disk for this host.
 
-- **`connect()`** — Prepare SSH command for later use (no preflight echo).
+- **`connect()`** — Prepare SSH command for later use using ssh_connection_builder.
 
 - **`disconnect()`** — Close the SSH connection and clean up
 
 - **`get_effective_host()`** — Return the hostname used for operations, falling back to aliases.
 
-- **`native_connect()`** — Prepare a minimal SSH command deferring to the user's SSH configuration.
+- **`native_connect()`** — Prepare a minimal SSH command using ssh_connection_builder in native mode.
 
 - **`resolve_host_identifier()`** — Return the preferred host alias used for launching native SSH commands.
 
@@ -496,7 +548,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`parse_host_config(config, source=None)`** — Parse host configuration from SSH config
 
-- **`prepare_key_for_connection(key_path)`** — Prepare SSH key for connection by adding it to ssh-agent
+- **`prepare_key_for_connection(key_path, connection=None)`** — Prepare SSH key for connection by adding it to ssh-agent.
 
 - **`remove_connection(connection)`** — Remove connection from config and list
 
@@ -594,6 +646,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_lookup_path_from_config(doc_id)`** — Look up the original path from our config.
 
+- **`_mode_to_octal(mode)`** — Convert file mode to octal representation like 755.
+
 - **`_mode_to_str(mode)`** — Convert file mode to string representation like -rw-r--r--.
 
 - **`_portal_doc_path(doc_id)`** — Get the portal mount path for a document ID.
@@ -632,7 +686,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`close()`** — Handles close.
 
-- **`connect_to_server()`** — Connects to server.
+- **`connect_to_server(password=None)`** — Connect to server, optionally with a password for authentication.
 
 - **`download(source, destination)`** — Handles download.
 
@@ -662,6 +716,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_check_file_conflicts(files_to_transfer, operation_type, callback)`** — Check for file conflicts and show resolution dialog if needed.
 
+- **`_cleanup_manager()`** — Close the AsyncSFTPManager and clear UI state.
+
 - **`_clear_clipboard()`** — Handles clear clipboard.
 
 - **`_clear_progress_toast()`** — Clear the progress dialog safely.
@@ -676,17 +732,33 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_force_refresh_pane(pane, highlight_name=None)`** — Force refresh a pane by directly calling listdir and updating UI
 
+- **`_is_password_auth_enabled(connection=None)`** — Check if password authentication is enabled/required for this connection.
+
 - **`_is_remote_descendant(source_path, destination_path)`** — Checks whether remote descendant.
 
 - **`_load_local(path)`** — Load local directory contents into the left pane.
 
 - **`_normalize_local_path(path)`** — Handles normalize local path.
 
+- **`_on_all_deletes_complete(pane, base_dir, errors, total_count)`** — Handle completion of all delete operations.
+
+- **`_on_authentication_required(_manager, error_message)`** — Handle authentication failure by showing password dialog.
+
+- **`_on_close_request(window)`** — Handle window close request - clean up resources.
+
+- **`_on_close_request(window)`** — Handle window close request - clean up resources.
+
+- **`_on_connected(_manager)`** — Handle successful connection - reset password dialog state.
+
 - **`_on_connected(*_args)`** — Handles connected.
+
+- **`_on_connection_error(_manager, error_message)`** — Handle connection error - reset password dialog state if not authentication error.
 
 - **`_on_connection_error(_manager, message)`** — Handle connection error with toast.
 
 - **`_on_content_size_allocate(_widget, allocation)`** — Adjust split position based on the actual allocated width of the content.
+
+- **`_on_destroy(window)`** — Handle window destroy - ensure cleanup happens even if close-request wasn't called.
 
 - **`_on_directory_loaded(_manager, path, entries)`** — Handles directory loaded.
 
@@ -728,9 +800,11 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_set_initial_split_position()`** — Set the initial proportional split position after the widget is realized.
 
+- **`_show_password_dialog_before_connect(user, host, connection=None)`** — Show password dialog before attempting connection.
+
 - **`_show_progress(fraction, message)`** — Update progress dialog if active.
 
-- **`_show_progress_dialog(operation_type, filename, future)`** — Show and manage the progress dialog for a file operation.
+- **`_show_progress_dialog(operation_type, filename, future, total_files=1)`** — Show and manage the progress dialog for a file operation.
 
 - **`_update_paste_targets()`** — Updates paste targets.
 
@@ -750,9 +824,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_attach_shortcuts(view)`** — Handles attach shortcuts.
 
-- **`_build_properties_details(entry)`** — Builds properties details.
-
-- **`_create_context_menu_model()`** — Create context menu model based on current selection state.
+- **`_build_properties_details(entry, is_current_directory=False)`** — Builds properties details.
 
 - **`_create_menu_model()`** — Creates menu model.
 
@@ -780,6 +852,10 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_hide_request_access_button()`** — Hide the Request Access button after access has been granted.
 
+- **`_is_click_on_empty_space(widget, x, y)`** — Check if the click is on empty space (not on an item).
+
+- **`_is_text_file(entry)`** — Check if a file is likely a text file based on name/extension.
+
 - **`_navigate_to_entry(position)`** — Handles navigate to entry.
 
 - **`_on_back_clicked(_button)`** — Handles back clicked.
@@ -804,6 +880,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_on_grid_cell_pressed(gesture, n_press, _x, _y, button)`** — Handles grid cell pressed.
 
+- **`_on_grid_item_right_click(gesture, n_press, x, y, list_item)`** — Handle right-click on a grid item: select it and show context menu.
+
 - **`_on_grid_setup(factory, item)`** — Handles grid setup.
 
 - **`_on_grid_unbind(factory, item)`** — Handles grid unbind.
@@ -812,11 +890,15 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_on_list_bind(factory, item)`** — Handles list bind.
 
+- **`_on_list_item_right_click(gesture, n_press, x, y, list_item)`** — Handle right-click on a list item: select it and show context menu.
+
 - **`_on_list_setup(factory, item)`** — Handles list setup.
 
 - **`_on_list_unbind(factory, item)`** — Handles list unbind.
 
 - **`_on_menu_download()`** — Handles menu download.
+
+- **`_on_menu_edit()`** — Handle Edit menu action - open file in editor.
 
 - **`_on_menu_properties()`** — Handles menu properties.
 
@@ -866,15 +948,13 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_show_folder_picker()`** — Show a portal-aware folder picker for Flatpak with persistent access.
 
-- **`_show_properties_dialog(entry, details)`** — Show modern properties dialog.
+- **`_show_properties_dialog(entry, details, properties_path=None)`** — Show modern properties dialog.
 
 - **`_sort_entries(entries)`** — Handles sort entries.
 
 - **`_update_grid_selection_for_press(position, gesture)`** — Updates grid selection for press.
 
 - **`_update_menu_state()`** — Updates menu state.
-
-- **`_update_selection_for_menu(widget, x, y)`** — Updates selection for menu.
 
 - **`_update_sort_direction_states()`** — Update the radio button states for sort direction.
 
@@ -932,7 +1012,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 ### Class: `PropertiesDialog`
 
-- **`__init__(entry, current_path, parent)`** — Handles init.
+- **`__init__(entry, current_path, parent, sftp_manager=None)`** — Handles init.
 
 - **`_build_dialog()`** — Build the Nautilus-style properties dialog content.
 
@@ -958,6 +1038,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_update_folder_size_ui(total_size)`** — Updates the size row with the final folder size.
 
+- **`_update_permissions_row(text)`** — Update the permissions row subtitle.
+
 ### Class: `SFTPProgressDialog`
 
 - **`__init__(parent=None, operation_type='transfer')`** — Handles init.
@@ -972,7 +1054,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_on_response(dialog, response)`** — Handle dialog response
 
-- **`_show_completion_ui(success, error_message)`** — Update UI to show completion state
+- **`_show_completion_ui(success, error_message)`** — Update UI to show completion state (idempotent - safe to call multiple times)
 
 - **`_update_progress_ui(fraction, message, current_file)`** — Update UI elements (must be called from main thread)
 
@@ -1029,6 +1111,24 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`set_group_color(group_id, color)`** — Update a group's color and persist the change.
 
 - **`set_group_expanded(group_id, expanded)`** — Set whether a group is expanded
+
+
+
+## Module: `sshpilot.icon_utils`
+
+### Functions
+
+- **`new_button_from_icon_name(icon_name)`** — Create a Gtk.Button with an icon, preferring bundled icons over system icons.
+
+- **`new_gicon_from_icon_name(icon_name)`** — Create a Gio.Icon from an icon name, using bundled icons when available.
+
+- **`new_image_from_icon_name(icon_name, size=None)`** — Create a Gtk.Image from an icon name, preferring bundled icons over system icons.
+
+- **`patch_gtk_image()`** — Patch Gtk.Image methods to use our helper functions.
+
+- **`set_button_icon(button, icon_name)`** — Set an icon on a button widget (Button, ToggleButton, etc.), preferring bundled icons.
+
+- **`set_icon_from_name(image, icon_name)`** — Set an icon on a Gtk.Image widget, preferring bundled icons over system icons.
 
 
 
@@ -1264,17 +1364,27 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`__init__(parent_window, config)`** — Handles init.
 
+- **`_apply_backend_change(index, backend_id)`** — Apply the backend change (only affects new terminals, not existing ones)
+
 - **`_apply_default_advanced_settings()`** — Restore advanced SSH settings to defaults and update the UI.
 
-- **`_collect_supported_encodings()`** — Handles collect supported encodings.
+- **`_build_backend_choices()`** — Builds backend choices.
+
+- **`_collect_supported_encodings()`** — Collect supported encodings based on current backend
 
 - **`_create_group_display_preview(mode, title)`** — Create a small sample widget that illustrates the layout mode.
+
+- **`_detect_pyxterm_backend()`** — Handles detect pyxterm backend.
+
+- **`_get_open_terminals()`** — Get all currently open terminal tabs (connected or not)
 
 - **`_handle_invalid_encoding_selection(requested, fallback)`** — Handles invalid encoding selection.
 
 - **`_initialize_encoding_selector(appearance_group)`** — Handles initialize encoding selector.
 
 - **`_is_internal_file_manager_enabled()`** — Return ``True`` when the application uses the built-in file manager.
+
+- **`_on_backend_row_changed(combo_row, _param)`** — Handles backend row changed.
 
 - **`_on_config_setting_changed(_config, key, value)`** — Handles config setting changed.
 
@@ -1289,6 +1399,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_set_shortcut_controls_enabled(enabled)`** — Sets shortcut controls enabled.
 
 - **`_set_terminal_dropdown_selection(terminal_name)`** — Set the dropdown selection to the specified terminal
+
+- **`_show_backend_change_info(backend_id, open_terminals, index)`** — Show an info dialog explaining that backend change only applies to new terminals
 
 - **`_show_toast(message)`** — Shows toast.
 
@@ -1310,7 +1422,11 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_trigger_terminal_style_refresh()`** — Handles trigger terminal style refresh.
 
+- **`_update_backend_row_subtitle(index)`** — Updates backend row subtitle.
+
 - **`_update_encoding_config_if_needed(target_code)`** — Updates encoding config if needed.
+
+- **`_update_encoding_row_visibility()`** — Update encoding row visibility based on current backend
 
 - **`_update_external_file_manager_row()`** — Sync the external window preference with the current availability.
 
@@ -1339,6 +1455,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`hex_to_rgba(hex_color)`** — Convert hex color to RGBA values (0-1 range)
 
 - **`on_accent_color_changed(color_button)`** — Handle accent color change
+
+- **`on_check_updates_changed(switch, *args)`** — Handle check for updates on startup setting change
 
 - **`on_close_request(*args)`** — Persist settings when the preferences window closes
 
@@ -1418,13 +1536,13 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 ### Functions
 
-- **`_extract_host(target)`** — Handles extract host.
+- **`_create_connection_for_scp(host, user, port=22, keyfile=None, key_mode=None, auth_method=0, connection_manager=None, known_hosts_path=None, extra_ssh_config=None)`** — Create a minimal connection object for SCP operations.
 
-- **`_normalize_remote_sources(target, sources)`** — Handles normalize remote sources.
+- **`_format_ssh_target(host, user)`** — Format SSH target as user@host.
 
-- **`_strip_brackets(value)`** — Handles strip brackets.
+- **`download_file(host, user, remote_file, local_path, recursive=False, port=22, password=None, known_hosts_path=None, extra_ssh_opts=None, use_publickey=False, inherit_env=None, saved_passphrase=None, keyfile=None, key_mode=None, connection_manager=None, config=None)`** — Download a remote file (or directory when ``recursive``) via SCP using ssh_connection_builder.
 
-- **`assemble_scp_transfer_args(target, sources, destination, direction)`** — Return normalized scp sources and destination arguments for a transfer.
+- **`upload_file(host, user, local_file, remote_path, recursive=False, port=22, password=None, known_hosts_path=None, extra_ssh_opts=None, use_publickey=False, inherit_env=None, saved_passphrase=None, keyfile=None, key_mode=None, connection_manager=None, config=None)`** — Upload a local file (or directory when ``recursive``) via SCP using ssh_connection_builder.
 
 
 
@@ -1446,9 +1564,11 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_gvfs_supports_sftp()`** — Heuristic detection of whether GVFS/GIO can handle SFTP mounts.
 
+- **`_is_password_auth_enabled(connection=None)`** — Check if password authentication is enabled/required for this connection.
+
 - **`_launch_terminal_sftp(user, host, port, error_callback=None)`** — Launch terminal-based SFTP client as last resort
 
-- **`_mount_and_open_sftp(uri, user, host, error_callback=None, progress_dialog=None)`** — Mount SFTP location and open in file manager
+- **`_mount_and_open_sftp(uri, user, host, error_callback=None, progress_dialog=None, connection=None, connection_manager=None, provided_password=None)`** — Mount SFTP location and open in file manager
 
 - **`_mount_and_open_sftp_native(uri, user, host, error_callback, parent_window=None)`** — Original native GVFS mounting method
 
@@ -1459,6 +1579,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_should_use_in_app_file_manager()`** — Return ``True`` when the libadwaita based file manager should be used.
 
 - **`_show_manual_connection_dialog(user, host, port, uri)`** — Show dialog with manual connection instructions
+
+- **`_show_password_dialog_for_mount(user, host, connection=None, parent_window=None)`** — Show password dialog for external file manager mount.
 
 - **`_try_alternative_approaches(uri, user, host)`** — Try alternative approaches when direct URI opening fails
 
@@ -1500,6 +1622,12 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`update_progress(fraction, text)`** — Update progress bar and status
 
+### Class: `PasswordMountOperation`
+
+- **`__init__(password=None, username=None)`** — Handles init.
+
+- **`_on_ask_password(op, message, default_user, default_domain, flags)`** — Handle password requests from GVFS via signal
+
 ### Class: `SftpConnectionDialog`
 
 - **`__init__(user, host, port, uri)`** — Handles init.
@@ -1508,7 +1636,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_create_option_box(title, description, icon_name, callback)`** — Create an option box with icon, text, and button
 
-- **`_open_terminal()`** — Open SFTP in terminal
+- **`_open_terminal()`** — Open SFTP in terminal using ssh_connection_builder
 
 - **`_try_file_manager()`** — Try opening in file manager
 
@@ -1680,7 +1808,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 ### Class: `ConnectionRow`
 
-- **`__init__(connection, group_manager, config)`** — Handles init.
+- **`__init__(connection, group_manager, config, file_manager_callback=None)`** — Handles init.
 
 - **`_apply_group_color_style()`** — Handles apply group color style.
 
@@ -1692,15 +1820,29 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_install_pf_css()`** — Handles install pf css.
 
+- **`_maybe_hide_button()`** — Hide button if not hovering
+
+- **`_on_button_enter(controller, x, y)`** — Keep button visible when hovering over it
+
+- **`_on_button_leave(controller)`** — Handle mouse leaving the button
+
 - **`_on_drag_begin(source, drag)`** — Handles drag begin.
 
 - **`_on_drag_end(source, drag, delete_data)`** — Handles drag end.
 
 - **`_on_drag_prepare(source, x, y)`** — Handles drag prepare.
 
+- **`_on_file_manager_clicked(button)`** — Handle file manager button click
+
+- **`_on_row_enter(controller, x, y)`** — Show file manager button when mouse enters row
+
+- **`_on_row_leave(controller)`** — Hide file manager button when mouse leaves row
+
 - **`_resolve_group_color()`** — Handles resolve group color.
 
 - **`_setup_drag_source()`** — Handles setup drag source.
+
+- **`_setup_file_manager_button_hover()`** — Set up hover events to show/hide file manager button
 
 - **`_update_forwarding_indicators()`** — Updates forwarding indicators.
 
@@ -1782,13 +1924,47 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 
 
+## Module: `sshpilot.ssh_connection_builder`
+
+### Functions
+
+- **`_build_base_ssh_command(connection, config, app_config=None, command_type='ssh')`** — Build base SSH command from SSH config and connection settings.
+
+- **`_get_ssh_config_list(config, key)`** — Get a list value from SSH config.
+
+- **`_get_ssh_config_value(config, key, default=None)`** — Get a value from SSH config, handling both single values and lists.
+
+- **`_get_stored_passphrase(key_path, connection_manager=None)`** — Get stored passphrase for key.
+
+- **`_get_stored_password(connection, connection_manager=None)`** — Get stored password for connection.
+
+- **`_is_identity_agent_disabled(config)`** — Check if IdentityAgent is disabled.
+
+- **`_prepare_key_for_connection(key_path, config, connection_manager=None)`** — Prepare SSH key for connection.
+
+- **`_should_add_keys_to_agent(config)`** — Check if AddKeysToAgent directive requires adding keys to agent.
+
+- **`build_ssh_connection(ctx)`** — Build a complete SSH connection command following the `ssh Host` pattern.
+
+- **`execute_ssh_connection(cmd, **subprocess_kwargs)`** — Execute an SSH connection command.
+
+
+
 ## Module: `sshpilot.ssh_password_exec`
 
 ### Functions
 
+- **`_extract_host(target)`** — Handles extract host.
+
 - **`_mk_priv_dir(prefix='sshpilot-pass-')`** — Handles mk priv dir.
 
+- **`_normalize_remote_sources(target, sources)`** — Handles normalize remote sources.
+
+- **`_strip_brackets(value)`** — Handles strip brackets.
+
 - **`_write_once_fifo(path, secret)`** — Handles write once fifo.
+
+- **`assemble_scp_transfer_args(target, sources, destination, direction)`** — Return normalized scp sources and destination arguments for a transfer.
 
 - **`run_scp_with_password(host, user, password, sources, destination, direction='upload', port=22, known_hosts_path=None, extra_ssh_opts=None, inherit_env=None, use_publickey=False)`** — Handles run scp with password.
 
@@ -1864,6 +2040,38 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 
 
+## Module: `sshpilot.startup_info`
+
+### Functions
+
+- **`print_startup_info(isolated=False, verbose=False)`** — Print startup information to console
+
+### Class: `StartupInfo`
+
+- **`__init__(isolated=False)`** — Handles init.
+
+- **`_gather_info()`** — Gather all system information
+
+- **`_get_config_info()`** — Get configuration information
+
+- **`_get_library_info()`** — Get library version information
+
+- **`_get_platform_info()`** — Get platform information
+
+- **`_get_python_info()`** — Get Python version information
+
+- **`_get_storage_info()`** — Get secure storage information
+
+- **`_get_tools_info()`** — Get information about external tools
+
+- **`_get_version_info()`** — Get application version
+
+- **`log_info()`** — Log startup information to logger
+
+- **`print_info()`** — Print startup information in a clean, formatted way
+
+
+
 ## Module: `sshpilot.terminal`
 
 ### Class: `SSHProcessManager`
@@ -1902,17 +2110,29 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_clone_rgba(rgba)`** — Handles clone rgba.
 
+- **`_connect_backend_signals()`** — Connect to backend signals and store handler IDs.
+
 - **`_connect_ssh()`** — Connect to SSH host
 
 - **`_connect_ssh_thread()`** — SSH connection thread: directly spawn SSH and rely on its output for errors.
 
 - **`_contrast_color(rgba)`** — Handles contrast color.
 
+- **`_create_backend(preferred=None)`** — Create the terminal backend based on configuration.
+
+- **`_create_fullscreen_banner()`** — Create fullscreen banner container (but don't show it yet).
+
+- **`_disconnect_backend_signals(backend=None)`** — Disconnect previously connected backend signals.
+
 - **`_enable_askpass_log_forwarding(include_existing=False)`** — Start forwarding askpass log lines into the application logger.
 
 - **`_ensure_opaque(rgba)`** — Handles ensure opaque.
 
 - **`_ensure_search_key_controller()`** — Attach the search shortcut controller to the terminal if needed.
+
+- **`_enter_fullscreen()`** — Enter fullscreen mode - hide sidebar, header bar, and tab bar.
+
+- **`_exit_fullscreen()`** — Exit fullscreen mode - restore sidebar, header bar, and tab bar.
 
 - **`_fallback_hide_spinner()`** — Fallback method to hide spinner if spawn completion doesn't fire
 
@@ -1927,6 +2147,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_get_terminal_pid()`** — Get the PID of the terminal's child process
 
 - **`_handle_child_exit_cleanup(status)`** — Handle the actual cleanup work for child process exit (called from main thread)
+
+- **`_hide_fullscreen_banner()`** — Hide fullscreen banner.
 
 - **`_hide_search_overlay()`** — Hide the search overlay and return focus to the terminal.
 
@@ -1958,6 +2180,14 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_on_destroy(widget)`** — Handle widget destruction
 
+- **`_on_drop_enter(drop_target, x, y)`** — Handle drag enter event - show visual feedback.
+
+- **`_on_drop_leave(drop_target)`** — Handle drag leave event.
+
+- **`_on_file_drop(drop_target, value, x, y)`** — Handle file drop event - initiate SCP upload.
+
+- **`_on_fullscreen_banner_dismiss(button)`** — Handle dismiss button click on fullscreen banner.
+
 - **`_on_reconnect_clicked(*args)`** — User clicked reconnect on the banner
 
 - **`_on_search_entry_activate(entry)`** — Handle Enter key in the search entry.
@@ -1972,7 +2202,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_on_search_previous(*_args)`** — Navigate to the previous search match.
 
-- **`_on_spawn_complete(terminal, pid, error, user_data=None)`** — Called when terminal spawn is complete
+- **`_on_spawn_complete(terminal_or_widget, pid_or_error=None, error=None, user_data=None)`** — Called when terminal spawn is complete
 
 - **`_on_ssh_disconnected(exc)`** — Called when SSH connection is lost
 
@@ -2008,15 +2238,21 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_setup_context_menu()`** — Set up a robust per-terminal context menu and actions.
 
+- **`_setup_drag_and_drop()`** — Set up drag and drop for SCP upload from filesystem.
+
+- **`_setup_fullscreen_shortcut()`** — Setup F11 keyboard shortcut for fullscreen toggle.
+
 - **`_setup_local_shell_direct()`** — Set up local shell using direct spawn (legacy approach).
 
 - **`_setup_mouse_wheel_zoom()`** — Set up mouse wheel zoom functionality with Cmd+MouseWheel.
 
 - **`_setup_process_group(spawn_data)`** — Setup function called after fork but before exec
 
-- **`_setup_ssh_terminal()`** — Set up terminal with direct SSH command (called from main thread)
+- **`_setup_ssh_terminal()`** — Set up terminal with direct SSH command using ssh_connection_builder (called from main thread)
 
 - **`_show_forwarding_error_dialog(message)`** — Shows forwarding error dialog.
+
+- **`_show_fullscreen_banner()`** — Show fullscreen banner with help text and exit button.
 
 - **`_show_search_overlay(select_all=False)`** — Reveal the terminal search overlay and focus the search entry.
 
@@ -2032,7 +2268,11 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`disconnect()`** — Close the SSH connection and clean up resources
 
+- **`ensure_backend(backend_name=None)`** — Switch to the specified backend if different from current.
+
 - **`force_style_refresh()`** — Force a style refresh of the terminal widget.
+
+- **`get_backend_name()`** — Get the name of the current backend.
 
 - **`get_connection_info()`** — Get connection information
 
@@ -2070,9 +2310,217 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`setup_terminal()`** — Initialize the VTE terminal with appropriate settings.
 
+- **`toggle_fullscreen()`** — Toggle fullscreen mode for the terminal widget.
+
 - **`zoom_in()`** — Zoom in the terminal font
 
 - **`zoom_out()`** — Zoom out the terminal font
+
+
+
+## Module: `sshpilot.terminal_backends`
+
+### Class: `BaseTerminalBackend`
+
+- **`apply_theme(theme_name=None)`** — Apply the current theme to the terminal widget.
+
+- **`connect_child_exited(callback)`** — Connect to the child exited signal for the backend.
+
+- **`connect_termprops_changed(callback)`** — Connect to the termprops-changed signal if supported.
+
+- **`connect_title_changed(callback)`** — Connect to a signal emitted when the terminal title changes.
+
+- **`copy_clipboard()`** — Copy the current terminal selection to the clipboard.
+
+- **`destroy()`** — Release backend resources.
+
+- **`disconnect(handler_id)`** — Disconnect a previously registered signal handler.
+
+- **`feed(data)`** — Feed raw data to the terminal display.
+
+- **`feed_child(data)`** — Feed raw bytes to the child process input if supported.
+
+- **`get_child_pgid()`** — Return the process group id of the running child process if available.
+
+- **`get_child_pid()`** — Return the PID of the running child process if available.
+
+- **`get_content(max_chars=None)`** — Return the terminal contents if the backend can provide it.
+
+- **`get_font_scale()`** — Return the current font scale.
+
+- **`get_pty()`** — Return the PTY instance if the backend exposes one.
+
+- **`grab_focus()`** — Give keyboard focus to the terminal widget.
+
+- **`initialize()`** — Perform backend specific initialisation and register internal state.
+
+- **`paste_clipboard()`** — Paste clipboard contents into the terminal.
+
+- **`queue_draw()`** — Queue a redraw of the backend widget if supported.
+
+- **`reset(clear_scrollback, clear_screen)`** — Reset the terminal content.
+
+- **`search_find_next()`** — Search forward using the configured regex.
+
+- **`search_find_previous()`** — Search backwards using the configured regex.
+
+- **`search_set_regex(regex)`** — Configure the search regex for the backend, if supported.
+
+- **`select_all()`** — Select all content in the terminal.
+
+- **`set_font(font_desc)`** — Set the font for the backend if supported.
+
+- **`set_font_scale(scale)`** — Set the font scale for the terminal.
+
+- **`show()`** — Ensure the backend widget is visible.
+
+- **`spawn_async(argv, env=None, cwd=None, flags=0, child_setup=None, callback=None, user_data=None)`** — Spawn a new process attached to the backend terminal.
+
+- **`supports_feature(feature)`** — Return True if the backend supports the given feature name.
+
+### Class: `PyXtermTerminalBackend`
+
+- **`__init__(owner)`** — Handles init.
+
+- **`_backup_pyxtermjs_template()`** — Backup the original pyxtermjs template
+
+- **`_ensure_search_addon_accessible()`** — Ensure the search addon is accessible via window.term.searchAddon.
+
+- **`_monitor_server_process()`** — Monitor the pyxtermjs server process for exit
+
+- **`_on_webview_load_changed(webview, load_event, *args)`** — Called when the WebView load state changes
+
+- **`_replace_pyxtermjs_template()`** — Replace the pyxtermjs template with our version that includes theme and font settings
+
+- **`_restore_pyxtermjs_template()`** — Restore the original pyxtermjs template
+
+- **`_run_javascript(script)`** — Execute JavaScript in the WebView
+
+- **`_wrap_command_with_encoding(argv, encoding)`** — Wrap command with encoding transcoder if needed.
+
+- **`apply_theme(theme_name=None)`** — Apply theme to xterm.js terminal via JavaScript
+
+- **`connect_child_exited(callback)`** — Connects child exited.
+
+- **`connect_termprops_changed(callback)`** — Connects termprops changed.
+
+- **`connect_title_changed(callback)`** — Connects title changed.
+
+- **`copy_clipboard()`** — Copy selected text from xterm.js to clipboard
+
+- **`destroy()`** — Handles destroy.
+
+- **`disconnect(handler_id)`** — Handles disconnect.
+
+- **`feed(data)`** — Handles feed.
+
+- **`feed_child(data)`** — Feed raw bytes to the child process input via pyxtermjs WebSocket socket.emit('pty-input')
+
+- **`get_child_pgid()`** — Returns child pgid.
+
+- **`get_child_pid()`** — Returns child pid.
+
+- **`get_content(max_chars=None)`** — Returns content.
+
+- **`get_font_scale()`** — Get current font scale
+
+- **`get_pty()`** — Returns pty.
+
+- **`grab_focus()`** — Give keyboard focus to the terminal widget and the xterm.js terminal inside it.
+
+- **`grab_focus_with_js()`** — Special focus method for pyxtermjs - simplified approach
+
+- **`initialize()`** — Handles initialize.
+
+- **`paste_clipboard()`** — Paste clipboard content into xterm.js terminal
+
+- **`queue_draw()`** — Handles queue draw.
+
+- **`reset(clear_scrollback, clear_screen)`** — Handles reset.
+
+- **`search_find_next()`** — Find next occurrence of the search term.
+
+- **`search_find_previous()`** — Find previous occurrence of the search term.
+
+- **`search_set_regex(regex)`** — Set the search pattern for xterm.js search addon.
+
+- **`select_all()`** — Select all text in xterm.js terminal
+
+- **`set_font(font_desc)`** — Set font for xterm.js terminal using xterm.js options API
+
+- **`set_font_scale(scale)`** — Set font scale/zoom for xterm.js terminal by changing fontSize option
+
+- **`show()`** — Handles show.
+
+- **`spawn_async(argv, env=None, cwd=None, flags=0, child_setup=None, callback=None, user_data=None)`** — Handles spawn async.
+
+- **`supports_feature(feature)`** — Handles supports feature.
+
+### Class: `VTETerminalBackend`
+
+- **`__init__(owner)`** — Handles init.
+
+- **`_clone_rgba(rgba)`** — Clone an RGBA color
+
+- **`_get_contrast_color(background)`** — Get a contrasting color for the given background
+
+- **`_relative_luminance(rgba)`** — Calculate relative luminance of a color
+
+- **`apply_theme(theme_name=None)`** — Handles apply theme.
+
+- **`connect_child_exited(callback)`** — Connects child exited.
+
+- **`connect_termprops_changed(callback)`** — Connects termprops changed.
+
+- **`connect_title_changed(callback)`** — Connects title changed.
+
+- **`copy_clipboard()`** — Handles copy clipboard.
+
+- **`destroy()`** — Handles destroy.
+
+- **`disconnect(handler_id)`** — Handles disconnect.
+
+- **`feed(data)`** — Handles feed.
+
+- **`feed_child(data)`** — Handles feed child.
+
+- **`get_child_pgid()`** — Returns child pgid.
+
+- **`get_child_pid()`** — Returns child pid.
+
+- **`get_content(max_chars=None)`** — Returns content.
+
+- **`get_font_scale()`** — Returns font scale.
+
+- **`get_pty()`** — Returns pty.
+
+- **`grab_focus()`** — Handles grab focus.
+
+- **`initialize()`** — Handles initialize.
+
+- **`paste_clipboard()`** — Handles paste clipboard.
+
+- **`queue_draw()`** — Handles queue draw.
+
+- **`reset(clear_scrollback, clear_screen)`** — Handles reset.
+
+- **`search_find_next()`** — Handles search find next.
+
+- **`search_find_previous()`** — Handles search find previous.
+
+- **`search_set_regex(regex)`** — Handles search set regex.
+
+- **`select_all()`** — Handles select all.
+
+- **`set_font(font_desc)`** — Sets font.
+
+- **`set_font_scale(scale)`** — Sets font scale.
+
+- **`show()`** — Handles show.
+
+- **`spawn_async(argv, env=None, cwd=None, flags=0, child_setup=None, callback=None, user_data=None)`** — Handles spawn async.
+
+- **`supports_feature(feature)`** — Handles supports feature.
 
 
 
@@ -2096,6 +2544,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_create_tab_color_icon(rgba)`** — Creates tab color icon.
 
+- **`_ensure_backend_alignment(terminal)`** — Ensure the given terminal uses the configured backend.
+
 - **`_on_disconnect_confirmed(dialog, response_id, connection)`** — Handles disconnect confirmed.
 
 - **`_resolve_group_color(connection)`** — Handles resolve group color.
@@ -2118,9 +2568,139 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`on_terminal_title_changed(terminal, title)`** — Handles terminal title changed.
 
+- **`refresh_backends()`** — Ensure all existing terminals use the configured backend.
+
 - **`restyle_open_terminals()`** — Handles restyle open terminals.
 
 - **`show_local_terminal()`** — Shows local terminal.
+
+
+
+## Module: `sshpilot.text_editor`
+
+### Class: `RemoteFileEditorWindow`
+
+- **`__init__(parent, file_path, file_name, is_local=False, sftp_manager=None, file_manager_window=None)`** — Handles init.
+
+- **`_apply_toast_css()`** — Apply the same toast CSS styling as file manager.
+
+- **`_apply_zoom()`** — Apply current zoom level using CSS
+
+- **`_check_and_close()`** — Check for unsaved changes and close if okay.
+
+- **`_do_close()`** — Actually close the window and clean up.
+
+- **`_download_and_load()`** — Download the remote file and load it into the editor.
+
+- **`_init_source_view()`** — Initialize GtkSourceView if available.
+
+- **`_init_text_view()`** — Initialize a basic Gtk.TextView editor as a fallback.
+
+- **`_load_file_content()`** — Load the file content into the editor (downloaded for remote, direct for local).
+
+- **`_on_buffer_modified_changed(buffer)`** — Handle buffer modification state changes.
+
+- **`_on_close_clicked(_button)`** — Handle close button click.
+
+- **`_on_close_request(_window)`** — Handle window close request.
+
+- **`_on_file_changed(monitor, file, other_file, event_type)`** — Handle file system changes to the temp file.
+
+- **`_on_file_saved_externally()`** — Handle when the file is saved externally (from the editor).
+
+- **`_on_key_pressed(controller, keyval, keycode, state)`** — Handle keyboard shortcuts.
+
+- **`_on_redo_clicked(button)`** — Handle redo button click.
+
+- **`_on_redo_state_changed(buffer, pspec)`** — Handle redo state changes.
+
+- **`_on_replace_all_clicked(button)`** — Replace all matches.
+
+- **`_on_replace_clicked(button)`** — Replace current match and move to next.
+
+- **`_on_save_clicked(_button)`** — Handle save button click - save buffer content locally, upload if remote.
+
+- **`_on_search_activate(entry)`** — Handle Enter key in search entry.
+
+- **`_on_search_button_clicked(button)`** — Handle search button click - toggle search bar visibility.
+
+- **`_on_search_changed(editable)`** — Handle search entry text change.
+
+- **`_on_search_next_clicked(button)`** — Handle search next button click.
+
+- **`_on_search_prev_clicked(button)`** — Handle search previous button click.
+
+- **`_on_undo_clicked(button)`** — Handle undo button click.
+
+- **`_on_undo_state_changed(buffer, pspec)`** — Handle undo state changes.
+
+- **`_on_upload_error(error)`** — Handle upload error.
+
+- **`_on_upload_success()`** — Handle successful upload.
+
+- **`_search_next()`** — Search for next occurrence.
+
+- **`_search_prev()`** — Search for previous occurrence.
+
+- **`_setup_file_monitoring()`** — Set up file monitoring to detect external saves.
+
+- **`_setup_ui()`** — Set up the editor UI.
+
+- **`_show_error(message)`** — Show an error dialog.
+
+- **`_show_toast(text, timeout=3)`** — Show a toast message safely (same style as FilePane).
+
+- **`_update_search_settings()`** — Update search settings from search entry.
+
+- **`_update_title(modified=None)`** — Update the headerbar title to show modified state.
+
+- **`_upload_file()`** — Upload the modified file back to the remote server.
+
+- **`reset_zoom()`** — Reset editor zoom to default (1.0x)
+
+- **`zoom_in()`** — Zoom in the editor font
+
+- **`zoom_out()`** — Zoom out the editor font
+
+
+
+## Module: `sshpilot.update_checker`
+
+### Functions
+
+- **`check_for_updates()`** — Check if a newer version is available.
+
+- **`check_for_updates_async(callback)`** — Check for updates in background thread.
+
+- **`compare_versions(current, latest)`** — Compare two version strings.
+
+- **`get_latest_version()`** — Fetch the latest version from GitHub releases.
+
+- **`get_platform_install_method()`** — Get human-readable install method string.
+
+- **`get_update_url()`** — Get platform-appropriate update URL.
+
+- **`parse_version(version_str)`** — Parse version string into tuple of integers for comparison.
+
+
+
+## Module: `sshpilot.vendor.pyxtermjs.app`
+
+### Functions
+
+- **`connect()`** — new client connected
+
+- **`index()`** — Handles index.
+
+- **`main()`** — Handles main.
+
+- **`pty_input(data)`** — write to the child pty. The pty sees this as if you are typing in a real
+
+- **`read_and_forward_pty_output()`** — Handles read and forward pty output.
+
+- **`resize(data)`** — Handles resize.
+
+- **`set_winsize(fd, row, col, xpix=0, ypix=0)`** — Sets winsize.
 
 
 
@@ -2140,19 +2720,25 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`__init__(window)`** — Handles init.
 
+- **`_build_action_rows_layout(current_shortcuts)`** — Build the action rows layout
+
+- **`_build_cards_layout(current_shortcuts)`** — Build the cards grid layout
+
 - **`_format_accelerator_display(accel)`** — Convert a GTK accelerator like '<primary><Shift>comma' to a
 
 - **`_get_action_accel_display(shortcuts, action_name)`** — Get the first accelerator for an action and format it for display.
 
 - **`_get_safe_current_shortcuts()`** — Safely get current shortcuts including user customizations from the app.
 
-- **`_parse_ssh_command(command_text)`** — Parse SSH command text and extract connection parameters
+- **`_on_layout_toggle_changed(toggle)`** — Handle layout toggle change
 
-- **`create_card(title, tooltip_text, icon_name, callback)`** — Create an activatable card with icon and title
+- **`_parse_ssh_command(command_text)`** — Parse SSH command text and extract connection parameters
 
 - **`on_quick_connect_clicked(button)`** — Open quick connect dialog
 
 - **`open_online_help()`** — Open online help documentation
+
+- **`show_sidebar_hint()`** — Show a hint about using the sidebar to manage connections
 
 
 
@@ -2172,9 +2758,9 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_resolve_ssh_copy_id_askpass_env(connection, ssh_key, connection_manager)`** — Return askpass environment and force status for ssh-copy-id launches.
 
-- **`download_file(host, user, remote_file, local_path, recursive=False, port=22, password=None, known_hosts_path=None, extra_ssh_opts=None, use_publickey=False, inherit_env=None, saved_passphrase=None, keyfile=None, key_mode=None)`** — Download a remote file (or directory when ``recursive``) via SCP.
+- **`_show_password_passphrase_dialog(parent_window, prompt_type='password', display_name='', key_path=None, host=None, username=None, connection_manager=None)`** — Show a graphical password or passphrase dialog.
 
-- **`list_remote_files(host, user, remote_path, port=22, password=None, known_hosts_path=None, extra_ssh_opts=None, use_publickey=False, inherit_env=None)`** — List remote files via SSH for the provided path.
+- **`list_remote_files(host, user, remote_path, port=22, password=None, known_hosts_path=None, extra_ssh_opts=None, use_publickey=False, inherit_env=None, saved_passphrase=None, keyfile=None, key_mode=None)`** — List remote files via SSH for the provided path.
 
 - **`maybe_set_native_controls(header_bar, value=False)`** — Safely set native controls on header bar, with fallback for older GTK versions.
 
@@ -2189,6 +2775,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_append_scp_option_pair(options, flag, value)`** — Append a flag/value pair to ``options`` if it is not already present.
 
 - **`_build_grouped_list(hierarchy, connections_dict, level)`** — Recursively build the grouped connection list
+
+- **`_build_preferences_button()`** — Builds preferences button.
 
 - **`_build_scp_argv(connection, sources, destination, direction, known_hosts_path=None)`** — Builds scp argv.
 
@@ -2292,6 +2880,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`_open_system_terminal(terminal_command, ssh_command)`** — Launch a terminal command with an SSH command.
 
+- **`_perform_import(import_path, mode)`** — Perform the actual import operation
+
 - **`_prompt_delete_connections(connections, neighbor_row=None)`** — Show a confirmation dialog for deleting one or more connections.
 
 - **`_prompt_group_edit_options(connection, block_info)`** — Present options when editing a grouped host
@@ -2331,6 +2921,8 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`_set_sidebar_widget(widget)`** — Sets sidebar widget.
 
 - **`_show_duplicate_connection_error(connection, error)`** — Display an error dialog when duplication fails.
+
+- **`_show_import_mode_dialog(import_path)`** — Show dialog to select import mode (replace or merge)
 
 - **`_show_manage_files_error(connection_name, error_message)`** — Show error dialog for manage files failure
 
@@ -2484,7 +3076,7 @@ This document enumerates the functions and methods available in the `sshpilot` p
 
 - **`open_help_url()`** — Open the SSH Pilot wiki using a portal-friendly launcher.
 
-- **`open_in_system_terminal(connection)`** — Open the connection in the system's default terminal
+- **`open_in_system_terminal(connection)`** — Open the connection in the system's default terminal using ssh_connection_builder
 
 - **`rebuild_connection_list()`** — Rebuild the connection list with groups
 
@@ -2507,6 +3099,10 @@ This document enumerates the functions and methods available in the `sshpilot` p
 - **`show_connection_dialog(connection=None, skip_group_warning=False, force_split_from_group=False, split_group_source=None, split_original_nickname=None)`** — Show connection dialog for adding/editing connections
 
 - **`show_connection_selection_for_ssh_copy()`** — Show a dialog to select a connection for SSH key copy
+
+- **`show_export_dialog()`** — Show export configuration dialog
+
+- **`show_import_dialog()`** — Show import configuration dialog
 
 - **`show_key_dialog(on_success=None)`** — Single key generation dialog (Adw). Optional passphrase.
 

@@ -19,6 +19,7 @@ from typing import Dict, List, Optional, Any, Tuple, Union, Set
 from .ssh_config_utils import resolve_ssh_config_files, get_effective_ssh_config
 from .platform_utils import is_macos, get_config_dir, get_ssh_dir
 from .key_utils import _is_private_key
+from .ssh_connection_builder import build_ssh_connection, ConnectionContext
 
 try:
     import gi
@@ -387,242 +388,76 @@ class Connection:
         return self.source
         
     async def connect(self):
-        """Prepare SSH command for later use (no preflight echo)."""
+        """Prepare SSH command for later use using ssh_connection_builder."""
         try:
             self._update_identity_agent_state(None)
             # Reset resolved identity cache on every connect preparation
             self.resolved_identity_files = []
 
-            quick_cmd = getattr(self, 'quick_connect_command', '')
-            if isinstance(quick_cmd, str) and quick_cmd.strip():
-                try:
-                    ssh_cmd = shlex.split(quick_cmd)
-                except ValueError:
-                    ssh_cmd = quick_cmd.split()
-                logger.debug("Using quick connect command without modification")
-                self.ssh_cmd = ssh_cmd
-                self.is_connected = True
-                return True
-
-            ssh_cmd = ['ssh']
-
-            # Pull advanced SSH defaults from config when available
+            # Get config for ssh_connection_builder
             try:
                 from .config import Config  # avoid circular import at top level
                 cfg = Config()
-                ssh_cfg = cfg.get_ssh_config()
             except Exception:
-                ssh_cfg = {}
-            def _coerce_int(value, default=None):
-                try:
-                    coerced = int(str(value))
-                    if coerced <= 0:
-                        return default
-                    return coerced
-                except (TypeError, ValueError):
-                    return default
+                cfg = None
 
-            connect_timeout = _coerce_int(ssh_cfg.get('connection_timeout'), None)
-            connection_attempts = _coerce_int(ssh_cfg.get('connection_attempts'), None)
-            keepalive_interval = _coerce_int(ssh_cfg.get('keepalive_interval'), None)
-            keepalive_count = _coerce_int(ssh_cfg.get('keepalive_count_max'), None)
-            strict_host = str(ssh_cfg.get('strict_host_key_checking', '') or '').strip()
-            batch_mode = bool(ssh_cfg.get('batch_mode', False))
-            compression = bool(ssh_cfg.get('compression', False))
-            verbosity = int(ssh_cfg.get('verbosity', 0))
-            debug_enabled = bool(ssh_cfg.get('debug_enabled', False))
-            auto_add_host_keys = bool(ssh_cfg.get('auto_add_host_keys', True))
+            # Get connection manager (self is a Connection, need to find manager)
+            # Connection objects don't have direct reference to manager, so we pass None
+            # ssh_connection_builder can still work without it (passwords/passphrases may be on Connection object)
+            connection_manager = None
 
-            password_auth_selected = False
-            has_saved_password = False
+            # Get known hosts path if available (try to get from global connection manager if possible)
+            known_hosts_path = None
             try:
-                password_auth_selected = int(getattr(self, 'auth_method', 0) or 0) == 1
-            except Exception:
-                password_auth_selected = False
-            try:
-                has_saved_password = bool(getattr(self, 'password', '') or '')
-            except Exception:
-                has_saved_password = False
-            using_password = password_auth_selected or has_saved_password
-
-            if batch_mode and not using_password:
-                ssh_cmd.extend(['-o', 'BatchMode=yes'])
-            if connect_timeout is not None:
-                ssh_cmd.extend(['-o', f'ConnectTimeout={connect_timeout}'])
-            if connection_attempts is not None:
-                ssh_cmd.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
-            if keepalive_interval is not None:
-                ssh_cmd.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
-            if keepalive_count is not None:
-                ssh_cmd.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
-            if strict_host:
-                ssh_cmd.extend(['-o', f'StrictHostKeyChecking={strict_host}'])
-            if compression:
-                ssh_cmd.append('-C')
-            ssh_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
-            ssh_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
-
-            # Apply default host key behavior when not explicitly set
-            try:
-                if (not strict_host) and auto_add_host_keys:
-                    ssh_cmd.extend(['-o', 'StrictHostKeyChecking=accept-new'])
+                # Try to get from a global connection manager instance if available
+                # This is a best-effort approach
+                pass
             except Exception:
                 pass
 
-            # Apply verbosity flags
-            try:
-                v = max(0, min(3, int(verbosity)))
-                for _ in range(v):
-                    ssh_cmd.append('-v')
-                if v == 1:
-                    ssh_cmd.extend(['-o', 'LogLevel=VERBOSE'])
-                elif v == 2:
-                    ssh_cmd.extend(['-o', 'LogLevel=DEBUG2'])
-                elif v >= 3:
-                    ssh_cmd.extend(['-o', 'LogLevel=DEBUG3'])
-                elif debug_enabled:
-                    ssh_cmd.extend(['-o', 'LogLevel=DEBUG'])
-            except Exception:
-                pass
-
-            # Resolve effective SSH configuration for this nickname/host
-            effective_cfg: Dict[str, Union[str, List[str]]] = {}
-            target_alias = self.nickname or self.hostname
-            stored_alias = ""
-            if isinstance(self.data, dict):
-                stored_alias = str(self.data.get('host') or '')
-            alias_fallback = (
-                stored_alias
-                or self.nickname
-                or self.host
-                or self.hostname
+            # Build connection context
+            ctx = ConnectionContext(
+                connection=self,
+                connection_manager=connection_manager,
+                config=cfg,
+                command_type='ssh',
+                extra_args=[],
+                port_forwarding_rules=getattr(self, 'forwarding_rules', None),
+                remote_command=None,
+                local_command=None,
+                extra_ssh_config=getattr(self, 'extra_ssh_config', '') or None,
+                known_hosts_path=known_hosts_path,
+                native_mode=False,
+                quick_connect_mode=bool(getattr(self, 'quick_connect_command', '')),
+                quick_connect_command=getattr(self, 'quick_connect_command', None) or None,
             )
-            config_override = self._resolve_config_override_path()
-            if target_alias:
-                if config_override:
-                    effective_cfg = get_effective_ssh_config(
-                        target_alias, config_file=config_override
-                    )
-                else:
-                    effective_cfg = get_effective_ssh_config(target_alias)
 
+            # Build SSH connection command using ssh_connection_builder
+            ssh_conn_cmd = build_ssh_connection(ctx)
+            ssh_cmd = ssh_conn_cmd.command
 
-            self._update_identity_agent_state(effective_cfg.get('identityagent'))
-
-            # Determine final parameters, falling back to resolved config when needed
-            existing_hostname = self.hostname or ''
-
-            resolved_host_cfg = effective_cfg.get('hostname')
-            if isinstance(resolved_host_cfg, str):
-                resolved_host_cfg = resolved_host_cfg.strip()
-            effective_hostname = str(resolved_host_cfg) if resolved_host_cfg else ''
-            if effective_hostname:
-                alias_candidates = {
-                    alias_fallback or '',
-                    self.host or '',
-                    target_alias or '',
-                }
-                if existing_hostname or effective_hostname not in alias_candidates:
-                    self.hostname = effective_hostname
-
-            alias_value = alias_fallback or self.host or ''
-            if alias_value:
-                self.host = alias_value
-
-            resolved_user = self.username or str(effective_cfg.get('user', ''))
+            # Store resolved identity files if available
             try:
-                resolved_port = int(effective_cfg.get('port', self.port))
-            except Exception:
-                resolved_port = self.port
-            self.port = resolved_port
-
-            try:
-                resolved_host = (
-                    self.hostname
-                    or alias_fallback
-                    or target_alias
-                    or self.get_effective_host()
-                )
-            except Exception:
-                resolved_host = self.hostname or alias_fallback or target_alias or ''
-
-            if resolved_user:
-                self.username = resolved_user
-
-            # Add key and certificate options
-            try:
-                if int(getattr(self, 'auth_method', 0) or 0) == 0:
-                    identity_files: List[str] = []
-                    key_mode = int(getattr(self, 'key_select_mode', 0) or 0)
-                    if key_mode in (1, 2):
-                        if self.keyfile and os.path.exists(self.keyfile):
-                            identity_files.append(self.keyfile)
+                # Try to extract identity files from command
+                identity_files = []
+                i = 0
+                while i < len(ssh_cmd):
+                    if ssh_cmd[i] == '-i' and i + 1 < len(ssh_cmd):
+                        identity_files.append(ssh_cmd[i + 1])
+                        i += 2
                     else:
-                        cfg_ids = effective_cfg.get('identityfile')
-                        if cfg_ids:
-                            if isinstance(cfg_ids, list):
-                                identity_files.extend(cfg_ids)
-                            else:
-                                identity_files.append(cfg_ids)
-                        if self.keyfile and os.path.exists(self.keyfile):
-                            identity_files.append(self.keyfile)
-                    resolved_identity_paths: List[str] = []
-                    seen_identity_paths: Set[str] = set()
-
-                    for key_path in identity_files:
-                        # Only add identity files that actually exist
-                        expanded_path = os.path.expanduser(key_path)
-                        if os.path.exists(expanded_path):
-                            ssh_cmd.extend(['-i', key_path])
-                            if expanded_path not in seen_identity_paths:
-                                resolved_identity_paths.append(expanded_path)
-                                seen_identity_paths.add(expanded_path)
-                        else:
-                            logger.debug(f"Skipping non-existent identity file: {key_path}")
-                        if key_mode == 1:
-                            ssh_cmd.extend(['-o', 'IdentitiesOnly=yes'])
-                        if self.key_passphrase:
-                            logger.warning("Passphrase-protected keys may require additional setup")
-                    self.resolved_identity_files = resolved_identity_paths
-                    cert_files: List[str] = []
-                    if self.certificate:
-                        cert_files.append(self.certificate)
-                    cfg_cert = effective_cfg.get('certificatefile')
-                    if cfg_cert:
-                        if isinstance(cfg_cert, list):
-                            cert_files.extend(cfg_cert)
-                        else:
-                            cert_files.append(cfg_cert)
-                    for cert_path in cert_files:
-                        ssh_cmd.extend(['-o', f'CertificateFile={cert_path}'])
+                        i += 1
+                if identity_files:
+                    self.resolved_identity_files = identity_files
             except Exception:
                 pass
 
-            # Proxy directives
-            proxy_jump = self.proxy_jump or effective_cfg.get('proxyjump', [])
-            if isinstance(proxy_jump, str):
-                proxy_jump = [h.strip() for h in re.split(r'[\s,]+', proxy_jump) if h.strip()]
-            if proxy_jump:
-                ssh_cmd.extend(['-o', f"ProxyJump={','.join(proxy_jump)}"])
-            proxy_command = self.proxy_command or effective_cfg.get('proxycommand', '')
-            if proxy_command:
-                ssh_cmd.extend(['-o', f'ProxyCommand={proxy_command}'])
-
-            forward_agent = self.forward_agent or str(effective_cfg.get('forwardagent', '')).strip().lower() in ('yes', 'true', '1', 'on')
-            if forward_agent:
-                ssh_cmd.append('-A')
-                ssh_cmd.extend(['-o', 'ForwardAgent=yes'])
-
-            # Port and user/host
-            if resolved_port != 22:
-                ssh_cmd.extend(['-p', str(resolved_port)])
-
-            host_for_cmd = resolved_host or alias_fallback or target_alias or self.resolve_host_identifier()
-
-            ssh_cmd.append(f"{resolved_user}@{host_for_cmd}" if resolved_user else host_for_cmd)
-
-            # Store command for later use
+            # Store command and environment for later use
             self.ssh_cmd = ssh_cmd
+            # Store environment so terminal can use it (especially SSH_ASKPASS)
+            if not hasattr(self, 'ssh_env') or self.ssh_env is None:
+                self.ssh_env = {}
+            self.ssh_env.update(ssh_conn_cmd.env)
             self.is_connected = True
             return True
                 
@@ -632,73 +467,51 @@ class Connection:
             return False
 
     async def native_connect(self):
-        """Prepare a minimal SSH command deferring to the user's SSH configuration."""
+        """Prepare a minimal SSH command using ssh_connection_builder in native mode."""
         try:
             self._update_identity_agent_state(None)
             # Reset resolved identity cache when preparing native command
             self.resolved_identity_files = []
 
-            quick_cmd = getattr(self, 'quick_connect_command', '')
-            if isinstance(quick_cmd, str) and quick_cmd.strip():
-                try:
-                    ssh_cmd = shlex.split(quick_cmd)
-                except ValueError:
-                    ssh_cmd = quick_cmd.split()
-                self.ssh_cmd = ssh_cmd
-                self.is_connected = True
-                return True
-
-            host_label = self.resolve_host_identifier()
-            if not host_label:
-                logger.error(f"Unable to determine host identifier for {self}")
-                self.is_connected = False
-                return False
-
-            ssh_cmd = ['ssh']
-
-            config_override = self._resolve_config_override_path()
-            if config_override:
-                ssh_cmd.extend(['-F', config_override])
-
-            effective_cfg: Dict[str, Union[str, List[str]]] = {}
-            try:
-                if config_override:
-                    effective_cfg = get_effective_ssh_config(
-                        host_label, config_file=config_override
-                    )
-                else:
-                    effective_cfg = get_effective_ssh_config(host_label)
-            except Exception:
-                effective_cfg = {}
-
-            self._update_identity_agent_state(effective_cfg.get('identityagent'))
-
+            # Get config for ssh_connection_builder
             try:
                 from .config import Config  # avoid circular import at top level
                 cfg = Config()
-                ssh_cfg = cfg.get_ssh_config()
             except Exception:
-                ssh_cfg = {}
+                cfg = None
 
-            overrides = ssh_cfg.get('ssh_overrides', [])
-            sanitized_overrides: List[str] = []
-            if isinstance(overrides, (list, tuple)):
-                for entry in overrides:
-                    if entry is None:
-                        continue
-                    flag = str(entry)
-                    if flag:
-                        sanitized_overrides.append(flag)
-
-            if sanitized_overrides:
-                ssh_cmd.extend(sanitized_overrides)
-
-            ssh_cmd.append(host_label)
-
+            # Get connection manager
+            connection_manager = None
             try:
-                self.resolved_identity_files = self.collect_identity_file_candidates(
-                    effective_cfg=effective_cfg
-                )
+                if hasattr(self, '_connection_manager'):
+                    connection_manager = self._connection_manager
+            except Exception:
+                pass
+
+            # Build connection context with native_mode=True
+            ctx = ConnectionContext(
+                connection=self,
+                connection_manager=connection_manager,
+                config=cfg,
+                command_type='ssh',
+                extra_args=[],
+                port_forwarding_rules=None,
+                remote_command=None,
+                local_command=None,
+                extra_ssh_config=None,
+                known_hosts_path=None,
+                native_mode=True,  # Use native mode
+                quick_connect_mode=bool(getattr(self, 'quick_connect_command', '')),
+                quick_connect_command=getattr(self, 'quick_connect_command', None) or None,
+            )
+
+            # Build SSH connection command using ssh_connection_builder
+            ssh_conn_cmd = build_ssh_connection(ctx)
+            ssh_cmd = ssh_conn_cmd.command
+
+            # Store resolved identity files if available
+            try:
+                self.resolved_identity_files = self.collect_identity_file_candidates()
             except Exception:
                 self.resolved_identity_files = []
 
@@ -2074,10 +1887,89 @@ class ConnectionManager(GObject.Object):
         from .askpass_utils import ensure_key_in_agent
         return ensure_key_in_agent(key_path)
 
-    def prepare_key_for_connection(self, key_path: str) -> bool:
-        """Prepare SSH key for connection by adding it to ssh-agent"""
-        from .askpass_utils import prepare_key_for_connection
-        return prepare_key_for_connection(key_path)
+    def prepare_key_for_connection(self, key_path: str, connection: Optional[Connection] = None) -> bool:
+        """
+        Prepare SSH key for connection by adding it to ssh-agent.
+        Only adds to agent if AddKeysToAgent is enabled in SSH config.
+        
+        Args:
+            key_path: Path to the SSH key file
+            connection: Optional connection object to check SSH config settings
+        
+        Returns:
+            True if key was added to agent or already present, False otherwise
+        """
+        if not key_path or not os.path.isfile(key_path):
+            return False
+        
+        # If no connection is provided, we can't check SSH config, so default to not adding keys
+        # (matching SSH's default behavior)
+        if not connection:
+            logger.debug(f"No connection provided; skipping key preparation (default SSH behavior): {key_path}")
+            return False
+        
+        # Check SSH config settings
+        try:
+            # Get host identifier for SSH config lookup
+            host_label = getattr(connection, 'nickname', '') or \
+                        getattr(connection, 'host', '') or \
+                        getattr(connection, 'hostname', '')
+            
+            if not host_label:
+                logger.debug(f"No host identifier found; skipping key preparation: {key_path}")
+                return False
+            
+            # Check for config override (isolated mode, etc.)
+            config_override = None
+            if hasattr(connection, '_resolve_config_override_path'):
+                try:
+                    config_override = connection._resolve_config_override_path()
+                except Exception:
+                    pass
+            
+            # Get effective SSH config
+            try:
+                if config_override:
+                    effective_config = get_effective_ssh_config(host_label, config_file=config_override)
+                else:
+                    effective_config = get_effective_ssh_config(host_label)
+            except Exception as e:
+                logger.warning(f"Failed to get effective SSH config for key preparation: {e}")
+                effective_config = {}
+            
+            # Check if IdentityAgent is disabled
+            identity_agent_value = effective_config.get('identityagent', '')
+            if identity_agent_value:
+                if isinstance(identity_agent_value, list):
+                    identity_agent = identity_agent_value[-1].lower() if identity_agent_value else ''
+                else:
+                    identity_agent = str(identity_agent_value).lower()
+                if identity_agent == 'none':
+                    logger.debug(f"IdentityAgent disabled; skipping key preparation: {key_path}")
+                    return False
+            
+            # Check if AddKeysToAgent requires adding to agent
+            add_keys_value = effective_config.get('addkeystoagent', '')
+            if add_keys_value:
+                if isinstance(add_keys_value, list):
+                    add_keys = add_keys_value[-1].lower() if add_keys_value else ''
+                else:
+                    add_keys = str(add_keys_value).lower()
+                if add_keys not in ('yes', 'ask', 'confirm'):
+                    logger.debug(f"AddKeysToAgent not enabled; skipping key preparation (default SSH behavior): {key_path}")
+                    return False
+            else:
+                # AddKeysToAgent not set - default SSH behavior is to not add keys
+                logger.debug(f"AddKeysToAgent not set; skipping key preparation (default SSH behavior): {key_path}")
+                return False
+        except Exception as e:
+            logger.warning(f"Error checking SSH config for key preparation: {e}")
+            # On error, default to not adding keys (safer)
+            return False
+        
+        # All checks passed - add key to agent
+        from .askpass_utils import ensure_key_in_agent
+        return ensure_key_in_agent(key_path)
 
     def invalidate_cached_commands(self):
         """Clear cached SSH commands so future launches pick up new settings."""

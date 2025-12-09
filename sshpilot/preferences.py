@@ -1300,15 +1300,23 @@ class PreferencesWindow(Gtk.Window):
                             if callable(remove_child):
                                 remove_child(notice_widget)
 
-                    notice_row = Gtk.ListBoxRow()
-                    if hasattr(notice_row, 'set_selectable'):
-                        notice_row.set_selectable(False)
-                    if hasattr(notice_row, 'set_activatable'):
-                        notice_row.set_activatable(False)
-                    notice_row.set_child(notice_widget)
-
+                    # Create a preferences group for the notice widget
+                    # Adw.PreferencesGroup accepts Adw.ActionRow, so we need to wrap it
                     notice_group = Adw.PreferencesGroup()
-                    notice_group.add(notice_row)
+                    
+                    # Try to add the widget directly first (works for some widget types)
+                    try:
+                        notice_group.add(notice_widget)
+                    except (TypeError, AttributeError):
+                        # If direct add fails, wrap in an ActionRow
+                        # For Banner/Label widgets, we'll create a simple row
+                        notice_row = Adw.ActionRow()
+                        notice_row.set_activatable(False)
+                        notice_row.set_selectable(False)
+                        # Set the notice widget as the child of the row
+                        notice_row.set_child(notice_widget)
+                        notice_group.add(notice_row)
+                    
                     shortcuts_page.add(notice_group)
 
                 for group in self.shortcuts_editor_page.iter_groups():

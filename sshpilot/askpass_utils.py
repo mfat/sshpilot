@@ -990,20 +990,63 @@ def get_scp_ssh_options() -> list:
     ]
 
 def connect_ssh_with_key(host: str, username: str, key_path: str, command: str = None) -> subprocess.CompletedProcess:
-    """Connect via SSH with proper key handling"""
+    """Connect via SSH with proper key handling using ssh_connection_builder"""
     # Ensure key is loaded in ssh-agent
     if not ensure_key_in_agent(key_path):
         raise Exception(f"Failed to load key {key_path} into SSH agent")
     
-    # Get SSH environment with askpass
-    env = get_ssh_env_with_askpass("force")
-    
-    # Build SSH command
-    ssh_cmd = ["ssh", "-o", "PreferredAuthentications=publickey", "-o", "PasswordAuthentication=no"]
-    
-    if command:
-        ssh_cmd.extend([f"{username}@{host}", command])
-    else:
-        ssh_cmd.append(f"{username}@{host}")
-    
-    return subprocess.run(ssh_cmd, env=env, capture_output=True, text=True)
+    try:
+        from .ssh_connection_builder import build_ssh_connection, ConnectionContext
+        
+        # Create a minimal connection object
+        class SSHConnection:
+            def __init__(self, host, username, key_path):
+                self.hostname = host
+                self.host = host
+                self.nickname = host
+                self.username = username
+                self.port = 22
+                self.keyfile = key_path
+                self.key_select_mode = 1  # Use specific key
+                self.auth_method = 0  # Key-based
+                self.extra_ssh_config = None
+                self.identity_agent_disabled = False
+        
+        connection = SSHConnection(host, username, key_path)
+        
+        # Build SSH connection command using ssh_connection_builder
+        ctx = ConnectionContext(
+            connection=connection,
+            connection_manager=None,
+            config=None,
+            command_type='ssh',
+            extra_args=[],
+            port_forwarding_rules=None,
+            remote_command=command,
+            local_command=None,
+            extra_ssh_config=None,
+            known_hosts_path=None,
+            native_mode=False,
+            quick_connect_mode=False,
+            quick_connect_command=None,
+        )
+        
+        ssh_conn_cmd = build_ssh_connection(ctx)
+        ssh_cmd = ssh_conn_cmd.command
+        env = ssh_conn_cmd.env.copy()
+        
+        # Ensure askpass is set for passphrase handling
+        askpass_env = get_ssh_env_with_askpass("force")
+        env.update(askpass_env)
+        
+        return subprocess.run(ssh_cmd, env=env, capture_output=True, text=True)
+    except Exception as e:
+        # Fallback to original implementation
+        logger.warning(f"Failed to use ssh_connection_builder, falling back: {e}")
+        env = get_ssh_env_with_askpass("force")
+        ssh_cmd = ["ssh", "-o", "PreferredAuthentications=publickey", "-o", "PasswordAuthentication=no"]
+        if command:
+            ssh_cmd.extend([f"{username}@{host}", command])
+        else:
+            ssh_cmd.append(f"{username}@{host}")
+        return subprocess.run(ssh_cmd, env=env, capture_output=True, text=True)
