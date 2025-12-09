@@ -40,6 +40,15 @@ class ConnectionContext:
     config: Optional[any] = None  # Config instance
     command_type: str = 'ssh'  # 'ssh', 'scp', 'sftp', 'ssh-copy-id'
     extra_args: List[str] = None  # Extra arguments to append
+    # Advanced features
+    port_forwarding_rules: Optional[List[Dict]] = None  # Port forwarding rules
+    remote_command: Optional[str] = None  # Remote command to execute
+    local_command: Optional[str] = None  # Local command to execute
+    extra_ssh_config: Optional[str] = None  # Extra SSH config options (from advanced tab)
+    known_hosts_path: Optional[str] = None  # Custom known hosts file
+    native_mode: bool = False  # Use native SSH mode (minimal command)
+    quick_connect_mode: bool = False  # Use quick connect command
+    quick_connect_command: Optional[str] = None  # Quick connect command string
 
 
 def _get_ssh_config_value(
@@ -118,7 +127,21 @@ def _get_stored_password(
     connection: any,
     connection_manager: Optional[any] = None
 ) -> Optional[str]:
-    """Get stored password for connection."""
+    """Get stored password for connection.
+    
+    Checks in this order:
+    1. Connection object's password attribute (in-memory, from dialog)
+    2. Connection manager's stored password (libsecret/keyring/keychain)
+    """
+    # First check connection object for in-memory password
+    try:
+        in_memory_password = getattr(connection, 'password', None)
+        if in_memory_password:
+            return in_memory_password
+    except Exception:
+        pass
+    
+    # Then check connection manager storage
     if not connection_manager:
         return None
     
@@ -126,7 +149,9 @@ def _get_stored_password(
         host = getattr(connection, 'hostname', '') or getattr(connection, 'host', '')
         username = getattr(connection, 'username', '')
         if host and username:
-            return connection_manager.get_password(host, username)
+            stored = connection_manager.get_password(host, username)
+            if stored:
+                return stored
     except Exception:
         pass
     return None
@@ -137,18 +162,24 @@ def _get_stored_passphrase(
     connection_manager: Optional[any] = None
 ) -> Optional[str]:
     """Get stored passphrase for key."""
-    if not key_path or not connection_manager:
+    if not key_path:
         return None
     
-    try:
-        if hasattr(connection_manager, 'get_key_passphrase'):
-            return connection_manager.get_key_passphrase(key_path)
-    except Exception:
-        pass
+    # Try connection_manager first if available
+    if connection_manager:
+        try:
+            if hasattr(connection_manager, 'get_key_passphrase'):
+                result = connection_manager.get_key_passphrase(key_path)
+                if result:
+                    return result
+        except Exception:
+            pass
     
-    # Fallback to direct lookup
+    # Fallback to direct lookup (works even without connection_manager)
     try:
-        return lookup_passphrase(key_path)
+        result = lookup_passphrase(key_path)
+        if result:
+            return result
     except Exception:
         pass
     
@@ -292,13 +323,24 @@ def build_ssh_connection(
     ctx: ConnectionContext
 ) -> SSHConnectionCommand:
     """
-    Build a complete SSH connection command.
+    Build a complete SSH connection command following the `ssh Host` pattern.
     
     This is the unified entry point for all SSH operations:
     - Terminal connections
     - SCP transfers
     - SFTP connections
     - ssh-copy-id operations
+    
+    Features:
+    - Gets effective config from the right SSH config file (supports isolated mode)
+    - Builds SSH command following `ssh Host` pattern (uses host identifier from SSH config)
+    - Supports password and key-based authentication
+    - Retrieves passwords from libsecret/keyring/keychain
+    - Retrieves passphrases from libsecret/keyring/keychain
+    - Automatic password authentication with sshpass
+    - Automatic key-based authentication with askpass for passphrase-protected keys
+    - Supports appending extra SSH options
+    - Shows graphical prompts for passwords and passphrases via askpass
     
     Args:
         ctx: Connection context with connection, manager, config, etc.
@@ -312,13 +354,23 @@ def build_ssh_connection(
     command_type = ctx.command_type
     extra_args = ctx.extra_args or []
     
-    # Get effective SSH config for this connection (primary source of truth)
+    logger.debug(f"build_ssh_connection called: native_mode={ctx.native_mode}, quick_connect={ctx.quick_connect_mode}, connection_manager={'present' if connection_manager else 'None'}")
+    
+    # 1. Get effective SSH config from the right SSH config file
+    # Try to get host identifier from connection
     host_label = getattr(connection, 'nickname', '') or \
                  getattr(connection, 'host', '') or \
                  getattr(connection, 'hostname', '')
     
+    # If connection has resolve_host_identifier method, use it
+    if not host_label and hasattr(connection, 'resolve_host_identifier'):
+        try:
+            host_label = connection.resolve_host_identifier()
+        except Exception:
+            pass
+    
     if not host_label:
-        raise ValueError("Connection must have a host identifier")
+        raise ValueError("Connection must have a host identifier (nickname, host, or hostname)")
     
     # Check for config override (isolated mode, etc.)
     config_override = None
@@ -328,32 +380,94 @@ def build_ssh_connection(
         except Exception:
             pass
     
-    # Get effective SSH config
+    # Handle native mode early - minimal SSH command
+    if ctx.native_mode:
+        # Native mode: just use ssh with host_label, let SSH config handle everything
+        base_cmd = ['ssh']
+        config_override = None
+        if hasattr(connection, '_resolve_config_override_path'):
+            try:
+                config_override = connection._resolve_config_override_path()
+            except Exception:
+                pass
+        if config_override:
+            base_cmd.extend(['-F', config_override])
+        # Add any SSH overrides from app config
+        if app_config:
+            try:
+                app_ssh_config = app_config.get_ssh_config() if hasattr(app_config, 'get_ssh_config') else {}
+                overrides = app_ssh_config.get('ssh_overrides', [])
+                if isinstance(overrides, (list, tuple)):
+                    for entry in overrides:
+                        if entry:
+                            base_cmd.append(str(entry))
+            except Exception:
+                pass
+        base_cmd.append(host_label)
+        # Use default environment (no askpass, no sshpass)
+        env = os.environ.copy()
+        env.pop('SSH_ASKPASS', None)
+        env.pop('SSH_ASKPASS_REQUIRE', None)
+        return SSHConnectionCommand(
+            command=base_cmd,
+            env=env,
+            use_sshpass=False,
+            password=None,
+            use_askpass=False
+        )
+    
+    # Handle quick connect mode early
+    if ctx.quick_connect_mode and ctx.quick_connect_command:
+        import shlex
+        try:
+            base_cmd = shlex.split(ctx.quick_connect_command)
+        except ValueError:
+            base_cmd = ctx.quick_connect_command.split()
+        # Use default environment
+        env = os.environ.copy()
+        env.pop('SSH_ASKPASS', None)
+        env.pop('SSH_ASKPASS_REQUIRE', None)
+        return SSHConnectionCommand(
+            command=base_cmd,
+            env=env,
+            use_sshpass=False,
+            password=None,
+            use_askpass=False
+        )
+    
+    # Get effective SSH config for the host identifier
     try:
         if config_override:
             effective_config = get_effective_ssh_config(host_label, config_file=config_override)
+            logger.debug(f"Using SSH config override: {config_override}")
         else:
             effective_config = get_effective_ssh_config(host_label)
+            logger.debug(f"Using default SSH config for host: {host_label}")
     except Exception as e:
-        logger.warning(f"Failed to get effective SSH config: {e}")
+        logger.warning(f"Failed to get effective SSH config for {host_label}: {e}")
         effective_config = {}
     
-    # Build base command
+    # 2. Build base SSH command following `ssh Host` pattern
     base_cmd = _build_base_ssh_command(connection, effective_config, app_config, command_type)
     
-    # Determine authentication method
+    # 3. Determine authentication method (password vs key-based)
     auth_method = int(getattr(connection, 'auth_method', 0) or 0)
     password_auth_selected = (auth_method == 1)
     
-    # Check for stored password
+    # 4. Check for stored password (retrieved from libsecret/keyring/keychain)
     stored_password = _get_stored_password(connection, connection_manager)
     has_stored_password = bool(stored_password)
+    if has_stored_password:
+        logger.debug(f"Found stored password for {host_label}")
     
     # Determine if we need password authentication
     use_password_auth = password_auth_selected or (has_stored_password and not password_auth_selected)
     
     # Handle key-based authentication
     use_askpass = False
+    has_saved_passphrase = False
+    key_path = None
+    
     if not password_auth_selected:
         # Get key file from connection (if explicitly set) or SSH config
         key_file = getattr(connection, 'keyfile', '') or ''
@@ -362,23 +476,42 @@ def build_ssh_connection(
         # Determine if we need askpass based on IdentityAgent and key preparation
         identity_agent_disabled = _is_identity_agent_disabled(effective_config)
         key_prepared = False
-        key_path = None
         
         # If connection has explicit key file and key_select_mode is set, use it
         if key_file and not key_file.startswith('Select key file') and key_select_mode in (1, 2):
             # Connection explicitly specifies a key - add it to command if not already there
             key_path = os.path.expanduser(key_file)
-            if os.path.isfile(key_path) and f'-i {key_path}' not in ' '.join(base_cmd):
-                # Key will be added by _build_base_ssh_command from SSH config
-                # But if it's not in SSH config, we need to add it here
+            if os.path.isfile(key_path):
+                # Check if key is already in base_cmd from SSH config
                 identity_files = _get_ssh_config_list(effective_config, 'identityfile')
-                if not any(os.path.samefile(os.path.expanduser(f), key_path) if os.path.exists(os.path.expanduser(f)) else False for f in identity_files):
+                key_already_added = any(
+                    os.path.samefile(os.path.expanduser(f), key_path) 
+                    if os.path.exists(os.path.expanduser(f)) else False 
+                    for f in identity_files
+                )
+                
+                if not key_already_added:
                     base_cmd.extend(['-i', key_path])
                     if key_select_mode == 1:
                         base_cmd.extend(['-o', 'IdentitiesOnly=yes'])
-            
-            # Prepare key (add to agent if AddKeysToAgent is set)
-            if os.path.isfile(key_path):
+                
+                # 5. Check for stored passphrase (retrieved from libsecret/keyring/keychain)
+                # First check connection object for in-memory passphrase
+                in_memory_passphrase = getattr(connection, 'key_passphrase', '') or ''
+                if in_memory_passphrase:
+                    has_saved_passphrase = True
+                    logger.info(f"Found in-memory passphrase for key: {key_path}")
+                else:
+                    # Then check storage
+                    logger.debug(f"Checking for stored passphrase for key: {key_path}, connection_manager: {connection_manager is not None}")
+                    stored_passphrase = _get_stored_passphrase(key_path, connection_manager)
+                    has_saved_passphrase = bool(stored_passphrase)
+                    if has_saved_passphrase:
+                        logger.info(f"Found stored passphrase for key: {key_path}")
+                    else:
+                        logger.debug(f"No stored passphrase found for key: {key_path}")
+                
+                # Prepare key (add to agent if AddKeysToAgent is set)
                 key_prepared = _prepare_key_for_connection(key_path, effective_config, connection_manager)
         else:
             # Use SSH config keys or default behavior
@@ -388,24 +521,88 @@ def build_ssh_connection(
                 first_key = os.path.expanduser(identity_files[0])
                 if os.path.isfile(first_key):
                     key_path = first_key
+                    # 5. Check for stored passphrase (retrieved from libsecret/keyring/keychain)
+                    # First check connection object for in-memory passphrase
+                    in_memory_passphrase = getattr(connection, 'key_passphrase', '') or ''
+                    if in_memory_passphrase:
+                        has_saved_passphrase = True
+                        logger.info(f"Found in-memory passphrase for key: {key_path}")
+                    else:
+                        # Then check storage
+                        logger.debug(f"Checking for stored passphrase for SSH config key: {key_path}, connection_manager: {connection_manager is not None}")
+                        stored_passphrase = _get_stored_passphrase(key_path, connection_manager)
+                        has_saved_passphrase = bool(stored_passphrase)
+                        if has_saved_passphrase:
+                            logger.info(f"Found stored passphrase for SSH config key: {key_path}")
+                        else:
+                            logger.debug(f"No stored passphrase found for SSH config key: {key_path}")
                     key_prepared = _prepare_key_for_connection(first_key, effective_config, connection_manager)
         
-        # Set up askpass based on whether IdentityAgent is disabled or key needs passphrase
-        # If IdentityAgent is disabled, we MUST use askpass (force mode)
-        # If key was prepared (added to agent), we can use prefer mode (SSH will use agent first)
-        # If key was not prepared but exists, use prefer mode (SSH will ask if needed)
+        # 7. Set up askpass for automatic key-based authentication with passphrase-protected keys
+        # The askpass script will:
+        # - First try to retrieve passphrase from storage (libsecret/keyring/keychain)
+        # - If not found, show graphical prompt for passphrase
+        
+        # Check for passphrases in all possible keys (even if key_path isn't explicitly set)
+        # This handles cases where SSH config specifies keys or default keys are used
+        if not has_saved_passphrase and not password_auth_selected:
+            # Try to find passphrases for keys that might be used
+            identity_files = _get_ssh_config_list(effective_config, 'identityfile')
+            if identity_files:
+                for identity_file in identity_files:
+                    expanded_identity = os.path.expanduser(identity_file)
+                    if os.path.isfile(expanded_identity):
+                        logger.debug(f"Checking for stored passphrase for SSH config identity file: {expanded_identity}")
+                        stored_passphrase = _get_stored_passphrase(expanded_identity, connection_manager)
+                        if stored_passphrase:
+                            has_saved_passphrase = True
+                            logger.info(f"Found stored passphrase for SSH config key: {expanded_identity}")
+                            break
+            # Also check default key locations if no explicit keys found
+            if not has_saved_passphrase:
+                default_keys = [
+                    os.path.expanduser('~/.ssh/id_rsa'),
+                    os.path.expanduser('~/.ssh/id_ed25519'),
+                    os.path.expanduser('~/.ssh/id_ecdsa'),
+                    os.path.expanduser('~/.ssh/id_dsa'),
+                ]
+                for default_key in default_keys:
+                    if os.path.isfile(default_key):
+                        logger.debug(f"Checking for stored passphrase for default key: {default_key}")
+                        stored_passphrase = _get_stored_passphrase(default_key, connection_manager)
+                        if stored_passphrase:
+                            has_saved_passphrase = True
+                            logger.info(f"Found stored passphrase for default key: {default_key}")
+                            break
+        
         if identity_agent_disabled:
             # IdentityAgent disabled - must use askpass to supply passphrase
             env = get_ssh_env_with_askpass(require="force")
             use_askpass = True
+            logger.debug("IdentityAgent disabled - using forced askpass for passphrase")
         elif key_path and os.path.isfile(key_path):
-            # Key exists - use askpass in prefer mode (SSH will use agent if key is there, askpass if not)
-            # This allows SSH to use the agent if the key was added, or askpass if it needs the passphrase
+            # Key exists - use askpass in prefer mode
+            # SSH will use agent if key is there, askpass if it needs the passphrase
+            # The askpass script will retrieve from storage or show GUI dialog
             env = get_ssh_env_with_askpass(require="prefer")
             use_askpass = True
+            logger.debug(f"Key-based auth with askpass support for key: {key_path}")
+        elif has_saved_passphrase:
+            # We have a saved passphrase but no explicit key - still set up askpass
+            # This handles cases where SSH config specifies keys
+            env = get_ssh_env_with_askpass(require="prefer")
+            use_askpass = True
+            logger.debug("Saved passphrase found - using askpass")
+        elif not password_auth_selected:
+            # Key-based auth but no explicit passphrase found - still use askpass
+            # The askpass script will show GUI dialog if needed
+            env = get_ssh_env_with_askpass(require="prefer")
+            use_askpass = True
+            logger.info("Key-based auth - using askpass for potential passphrase prompts")
         else:
-            # No specific key - use default SSH behavior
+            # Password authentication selected - use default SSH behavior
             env = os.environ.copy()
+            logger.debug("Password authentication selected - not using askpass")
     else:
         # Password authentication selected
         env = os.environ.copy()
@@ -413,37 +610,160 @@ def build_ssh_connection(
         env.pop('SSH_ASKPASS', None)
         env.pop('SSH_ASKPASS_REQUIRE', None)
     
-    # Add host to command
+    # 2. Add host to command following `ssh Host` pattern
+    # Use host_label (from SSH config) as the target, which follows the `ssh Host` pattern
+    # SSH will resolve the actual hostname, user, port, etc. from the SSH config
     username = getattr(connection, 'username', '')
     hostname = getattr(connection, 'hostname', '') or getattr(connection, 'host', '')
     
     if command_type == 'scp':
-        # SCP command format is handled by caller
+        # SCP command format is handled by caller (they add sources/destinations)
+        # But we can add the host identifier if needed
         pass
     elif command_type == 'ssh-copy-id':
         # ssh-copy-id format: ssh-copy-id [options] user@host
+        # Prefer user@hostname if available, otherwise use host_label
         if username and hostname:
             base_cmd.append(f"{username}@{hostname}")
         else:
             base_cmd.append(host_label)
     else:
-        # SSH/SFTP format: ssh [options] user@host [command]
-        if username and hostname:
+        # SSH/SFTP format: ssh [options] Host
+        # Follow the `ssh Host` pattern - use host_label which SSH will resolve from config
+        # Only use user@hostname format if we have explicit values and they differ from config
+        resolved_user = _get_ssh_config_value(effective_config, 'user')
+        resolved_hostname = _get_ssh_config_value(effective_config, 'hostname')
+        
+        # If SSH config has user/hostname, prefer using host_label (SSH will resolve it)
+        # Otherwise, use explicit user@hostname if provided
+        if resolved_user or resolved_hostname:
+            # SSH config has user/hostname - use host_label pattern
+            base_cmd.append(host_label)
+        elif username and hostname:
+            # No SSH config user/hostname - use explicit values
             base_cmd.append(f"{username}@{hostname}")
         else:
+            # Fallback to host_label
             base_cmd.append(host_label)
     
-    # Add extra arguments
+    # Add remote command after host (if specified)
+    if ctx.remote_command:
+        # Ensure shell remains active
+        final_remote_cmd = ctx.remote_command if 'exec $SHELL' in ctx.remote_command else f"{ctx.remote_command} ; exec $SHELL -l"
+        base_cmd.append(final_remote_cmd)
+        logger.debug(f"Remote command: {final_remote_cmd}")
+    
+    # Force TTY for interactive password prompts if needed
+    if use_password_auth and not has_stored_password:
+        if '-t' not in base_cmd and '-tt' not in base_cmd:
+            base_cmd.append('-t')
+            logger.debug("Forcing TTY for interactive password prompt")
+    
+    # 6. Determine if we need sshpass for automatic password authentication
+    if ctx.port_forwarding_rules:
+        def _format_forward_host(host: str) -> str:
+            host = (host or '').strip()
+            if not host:
+                return host
+            if ':' in host and not (host.startswith('[') and host.endswith(']')):
+                return f"[{host}]"
+            return host
+        
+        for rule in ctx.port_forwarding_rules:
+            if not rule.get('enabled', True):
+                continue
+            
+            rule_type = rule.get('type')
+            listen_addr = (rule.get('listen_addr') or 'localhost').strip()
+            listen_port = rule.get('listen_port')
+            listen_addr_cli = _format_forward_host(listen_addr) or listen_addr or 'localhost'
+            
+            if rule_type == 'dynamic' and listen_port:
+                base_cmd.extend(['-D', f"{listen_addr_cli}:{listen_port}"])
+                logger.debug(f"Added dynamic port forwarding: {listen_addr_cli}:{listen_port}")
+            elif rule_type == 'local' and listen_port and 'remote_host' in rule and 'remote_port' in rule:
+                remote_host = rule.get('remote_host', 'localhost')
+                remote_port = rule.get('remote_port')
+                remote_host_cli = _format_forward_host(remote_host) or remote_host or 'localhost'
+                base_cmd.extend(['-L', f"{listen_addr_cli}:{listen_port}:{remote_host_cli}:{remote_port}"])
+                logger.debug(f"Added local port forwarding: {listen_addr_cli}:{listen_port} -> {remote_host_cli}:{remote_port}")
+            elif rule_type == 'remote' and listen_port:
+                local_host = rule.get('local_host') or rule.get('remote_host', 'localhost')
+                local_port = rule.get('local_port') or rule.get('remote_port')
+                if local_port:
+                    local_host_cli = _format_forward_host(local_host) or local_host or 'localhost'
+                    base_cmd.extend(['-R', f"{listen_addr_cli}:{listen_port}:{local_host_cli}:{local_port}"])
+                    logger.debug(f"Added remote port forwarding: {listen_addr_cli}:{listen_port} -> {local_host_cli}:{local_port}")
+    
+    # Add X11 forwarding if enabled in connection
+    if getattr(connection, 'x11_forwarding', False):
+        base_cmd.append('-X')
+        logger.debug("X11 forwarding enabled")
+    
+    # Add remote command TTY allocation if specified (before host)
+    if ctx.remote_command:
+        base_cmd.extend(['-t', '-t'])  # Force TTY allocation
+    
+    # Add local command if specified
+    if ctx.local_command:
+        base_cmd.extend(['-o', 'PermitLocalCommand=yes'])
+        base_cmd.extend(['-o', f'LocalCommand={ctx.local_command}'])
+        logger.debug(f"Local command enabled: {ctx.local_command}")
+    
+    # Add NumberOfPasswordPrompts
+    base_cmd.extend(['-o', 'NumberOfPasswordPrompts=1'])
+    
+    # Add PreferredAuthentications based on auth method
+    if password_auth_selected:
+        # Force password authentication when user chose password auth
+        base_cmd.extend(['-o', 'PreferredAuthentications=password'])
+        if getattr(connection, 'pubkey_auth_no', False):
+            base_cmd.extend(['-o', 'PubkeyAuthentication=no'])
+    elif has_stored_password:
+        # Allow all standard authentication methods if password exists
+        base_cmd.extend(['-o', 'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'])
+    
+    # Add ExitOnForwardFailure
+    base_cmd.extend(['-o', 'ExitOnForwardFailure=yes'])
+    
+    # 8. Support appending extra SSH options as required
+    if ctx.extra_ssh_config:
+        # Parse extra SSH config options (from advanced tab)
+        for line in ctx.extra_ssh_config.split('\n'):
+            line = line.strip()
+            if line and not line.startswith('#'):  # Skip empty lines and comments
+                # Split on first space to separate option and value
+                parts = line.split(' ', 1)
+                if len(parts) == 2:
+                    option, value = parts
+                    base_cmd.extend(['-o', f"{option}={value}"])
+                    logger.debug(f"Added extra SSH option: {option}={value}")
+                elif len(parts) == 1:
+                    # Option without value (e.g., "Compression yes" becomes "Compression=yes")
+                    option = parts[0]
+                    base_cmd.extend(['-o', f"{option}=yes"])
+                    logger.debug(f"Added extra SSH option: {option}=yes")
+    
+    # Add known hosts file if specified
+    if ctx.known_hosts_path and os.path.exists(ctx.known_hosts_path):
+        base_cmd.extend(['-o', f'UserKnownHostsFile={ctx.known_hosts_path}'])
+        logger.debug(f"Using custom known hosts file: {ctx.known_hosts_path}")
+    
+    # Add extra arguments (before host)
     if extra_args:
         base_cmd.extend(extra_args)
     
-    # Determine if we need sshpass
+    # 6. Determine if we need sshpass for automatic password authentication
     use_sshpass = False
     password_for_sshpass = None
     
     if use_password_auth and stored_password:
         use_sshpass = True
         password_for_sshpass = stored_password
+        logger.debug("Using sshpass for automatic password authentication")
+    
+    # Log final environment state
+    logger.info(f"build_ssh_connection returning: SSH_ASKPASS={env.get('SSH_ASKPASS', 'NOT_SET')}, SSH_ASKPASS_REQUIRE={env.get('SSH_ASKPASS_REQUIRE', 'NOT_SET')}, use_askpass={use_askpass}, has_saved_passphrase={has_saved_passphrase}")
     
     return SSHConnectionCommand(
         command=base_cmd,

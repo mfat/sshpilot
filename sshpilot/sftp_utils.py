@@ -1569,11 +1569,50 @@ class SftpConnectionDialog(Adw.Window):
         clipboard.set_text(self.uri, -1)
 
     def _open_terminal(self):
-        """Open SFTP in terminal"""
-        sftp_cmd = ["sftp"]
-        if self.port:
-            sftp_cmd.extend(["-P", str(self.port)])
-        sftp_cmd.append(f"{self.user}@{self.host}")
+        """Open SFTP in terminal using ssh_connection_builder"""
+        try:
+            from .ssh_connection_builder import build_ssh_connection, ConnectionContext
+            
+            # Create a minimal connection object
+            class SFTPConnection:
+                def __init__(self, user, host, port):
+                    self.username = user
+                    self.hostname = host
+                    self.host = host
+                    self.nickname = host
+                    self.port = port or 22
+                    self.auth_method = 0
+                    self.keyfile = ''
+                    self.key_select_mode = 0
+            
+            connection = SFTPConnection(self.user, self.host, self.port)
+            
+            # Build SFTP command using ssh_connection_builder
+            ctx = ConnectionContext(
+                connection=connection,
+                connection_manager=None,
+                config=None,
+                command_type='sftp',
+                extra_args=[],
+                port_forwarding_rules=None,
+                remote_command=None,
+                local_command=None,
+                extra_ssh_config=None,
+                known_hosts_path=None,
+                native_mode=False,
+                quick_connect_mode=False,
+                quick_connect_command=None,
+            )
+            
+            ssh_conn_cmd = build_ssh_connection(ctx)
+            sftp_cmd = ssh_conn_cmd.command
+        except Exception as e:
+            logger.error(f"Failed to build SFTP command using ssh_connection_builder: {e}")
+            # Fallback to simple command
+            sftp_cmd = ["sftp"]
+            if self.port:
+                sftp_cmd.extend(["-P", str(self.port)])
+            sftp_cmd.append(f"{self.user}@{self.host}")
 
         terminals = ["gnome-terminal", "konsole", "xfce4-terminal", "xterm"]
 

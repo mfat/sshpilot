@@ -82,7 +82,7 @@ from .search_utils import connection_matches
 from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos, get_config_dir
 from .ssh_utils import ensure_writable_ssh_home
-from .scp_utils import assemble_scp_transfer_args
+from .scp_utils import assemble_scp_transfer_args, download_file, upload_file
 from .ssh_password_exec import run_ssh_with_password, run_scp_with_password
 
 logger = logging.getLogger(__name__)
@@ -475,142 +475,8 @@ def list_remote_files(
         return [], str(exc)
 
 
-def download_file(
-    host: str,
-    user: str,
-    remote_file: str,
-    local_path: str,
-    *,
-    recursive: bool = False,
-    port: int = 22,
-    password: Optional[str] = None,
-    known_hosts_path: Optional[str] = None,
-    extra_ssh_opts: Optional[List[str]] = None,
-    use_publickey: bool = False,
-    inherit_env: Optional[Dict[str, str]] = None,
-    saved_passphrase: Optional[str] = None,
-    keyfile: Optional[str] = None,
-    key_mode: Optional[int] = None,
-) -> bool:
-    """Download a remote file (or directory when ``recursive``) via SCP."""
-    if not host or not remote_file or not local_path:
-        return False
-
-    target_user_host = user or ''
-    remote_target_host = host
-    env = (inherit_env or os.environ).copy()
-
-    ssh_extra_opts: List[str] = list(extra_ssh_opts or [])
-    
-    # Check if the inherited environment has askpass configured (e.g., when identity agent is disabled)
-    has_inherited_askpass = bool(
-        inherit_env
-        and str(inherit_env.get('SSH_ASKPASS_REQUIRE') or '').lower() == 'force'
-    )
-
-    # Set up askpass if we have a keyfile and not using password auth
-    # The askpass script will retrieve from storage or show GUI dialog if needed
-    if keyfile and not password and not has_inherited_askpass:
-        try:
-            from .askpass_utils import (
-                get_ssh_env_with_forced_askpass,
-                get_scp_ssh_options,
-            )
-        except Exception:
-            get_ssh_env_with_forced_askpass = None  # type: ignore
-            get_scp_ssh_options = None  # type: ignore
-
-        if get_ssh_env_with_forced_askpass is not None:
-            try:
-                askpass_env = get_ssh_env_with_forced_askpass()
-                if isinstance(askpass_env, dict):
-                    env.update(askpass_env)
-            except Exception:
-                logger.debug('SCP: Unable to initialize askpass environment', exc_info=True)
-
-        if keyfile and '-i' not in ssh_extra_opts:
-            ssh_extra_opts.extend(['-i', keyfile])
-
-        if key_mode == 1 and 'IdentitiesOnly=yes' not in ' '.join(ssh_extra_opts):
-            ssh_extra_opts.extend(['-o', 'IdentitiesOnly=yes'])
-
-        if get_scp_ssh_options is not None:
-            try:
-                passphrase_opts = list(get_scp_ssh_options())
-            except Exception:
-                passphrase_opts = []
-            for idx in range(0, len(passphrase_opts) - 1, 2):
-                flag = passphrase_opts[idx]
-                value = passphrase_opts[idx + 1]
-                if not flag or not value:
-                    continue
-                already = False
-                for opt_idx in range(0, len(ssh_extra_opts) - 1, 2):
-                    if ssh_extra_opts[opt_idx] == flag and ssh_extra_opts[opt_idx + 1] == value:
-                        already = True
-                        break
-                if not already:
-                    ssh_extra_opts.extend([flag, value])
-    elif not has_inherited_askpass:
-        # Only remove askpass environment if it wasn't inherited (e.g., when identity agent is disabled)
-        env.pop('SSH_ASKPASS', None)
-        env.pop('SSH_ASKPASS_REQUIRE', None)
-
-    if password:
-        try:
-            result = run_scp_with_password(
-                remote_target_host,
-                user,
-                password,
-                [remote_file],
-                local_path,
-                direction='download',
-                port=port,
-                known_hosts_path=known_hosts_path,
-                extra_ssh_opts=ssh_extra_opts,
-                inherit_env=env,
-                use_publickey=use_publickey,
-            )
-            return result.returncode == 0
-        except Exception as exc:
-            logger.error('SCP: Download failed for %s: %s', remote_file, exc)
-            return False
-
-    target = _format_ssh_target(remote_target_host, user)
-    try:
-        transfer_sources, transfer_destination = assemble_scp_transfer_args(
-            target,
-            [remote_file],
-            local_path,
-            'download',
-        )
-        argv = ['scp', '-P', str(port)]
-        if recursive:
-            argv.append('-r')
-        if known_hosts_path:
-            argv += ['-o', f'UserKnownHostsFile={known_hosts_path}']
-        else:
-            argv += ['-o', 'StrictHostKeyChecking=accept-new']
-        if ssh_extra_opts:
-            argv.extend(ssh_extra_opts)
-        argv.extend(transfer_sources)
-        argv.append(transfer_destination)
-        completed = subprocess.run(
-            argv,
-            check=False,
-            text=True,
-            capture_output=True,
-            env=env,
-        )
-        if completed.returncode != 0:
-            stderr = (completed.stderr or '').strip()
-            if stderr:
-                logger.error('SCP: Download stderr: %s', stderr)
-            return False
-        return True
-    except Exception as exc:
-        logger.error('SCP: Download failed for %s: %s', remote_file, exc)
-        return False
+# download_file and upload_file are now in scp_utils.py
+# Imported at the top of the file
 
 
 def _show_password_passphrase_dialog(
@@ -5736,6 +5602,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                         saved_passphrase=None,  # Let askpass handle retrieval/prompting
                         keyfile=profile.keyfile_expanded if profile.keyfile_ok else None,
                         key_mode=profile.key_mode,
+                        connection_manager=self.connection_manager if hasattr(self, 'connection_manager') else None,
+                        config=self.config if hasattr(self, 'config') else None,
                     )
                     GLib.idle_add(_finish_download, success, destination_dir, remote_name)
 
@@ -8626,11 +8494,58 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         return self.group_manager.get_all_groups()
 
     def open_in_system_terminal(self, connection):
-        """Open the connection in the system's default terminal"""
+        """Open the connection in the system's default terminal using ssh_connection_builder"""
         try:
-            host_value = _get_connection_host(connection) or _get_connection_alias(connection)
-            port_text = f" -p {connection.port}" if hasattr(connection, 'port') and connection.port != 22 else ""
-            ssh_command = f"ssh{port_text} {connection.username}@{host_value}" if getattr(connection, 'username', '') else f"ssh{port_text} {host_value}"
+            from .ssh_connection_builder import build_ssh_connection, ConnectionContext
+            
+            # Build SSH connection command using ssh_connection_builder
+            ctx = ConnectionContext(
+                connection=connection,
+                connection_manager=self.connection_manager if hasattr(self, 'connection_manager') else None,
+                config=self.config if hasattr(self, 'config') else None,
+                command_type='ssh',
+                extra_args=[],
+                port_forwarding_rules=None,
+                remote_command=None,
+                local_command=None,
+                extra_ssh_config=None,
+                known_hosts_path=None,
+                native_mode=False,
+                quick_connect_mode=False,
+                quick_connect_command=None,
+            )
+            
+            ssh_conn_cmd = build_ssh_connection(ctx)
+            # Convert command list to string for terminal
+            ssh_cmd_parts = ssh_conn_cmd.command
+            # Skip 'ssh' and join the rest, handling options properly
+            ssh_command_parts = []
+            i = 0
+            while i < len(ssh_cmd_parts):
+                if ssh_cmd_parts[i] == 'ssh':
+                    i += 1
+                    continue
+                elif ssh_cmd_parts[i] == '-o' and i + 1 < len(ssh_cmd_parts):
+                    # Quote option values that contain spaces
+                    opt_val = ssh_cmd_parts[i + 1]
+                    if ' ' in opt_val:
+                        ssh_command_parts.append(f"-o '{opt_val}'")
+                    else:
+                        ssh_command_parts.append(f"-o {opt_val}")
+                    i += 2
+                elif ssh_cmd_parts[i].startswith('-'):
+                    ssh_command_parts.append(ssh_cmd_parts[i])
+                    i += 1
+                else:
+                    # Host or command - quote if needed
+                    part = ssh_cmd_parts[i]
+                    if ' ' in part:
+                        ssh_command_parts.append(f"'{part}'")
+                    else:
+                        ssh_command_parts.append(part)
+                    i += 1
+            
+            ssh_command = ' '.join(ssh_command_parts)
 
             use_external = self.config.get_setting('use-external-terminal', False)
             if use_external:
