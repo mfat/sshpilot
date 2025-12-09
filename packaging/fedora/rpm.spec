@@ -95,7 +95,7 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.mfat
 * Tue Dec 09 2025 mFat <newmfat@gmail.com> - 4.7.1
 - - Make terminal fillscreen with F11
 - - Improvements for SCP file transfers
-- - Drag & drop files and folders directly on terminal widget
+- - Drag and drop files and folders directly on terminal widget
 - - Updated password/passphrase prompts with option to store secrets
 
 * Mon Dec 08 2025 mFat <newmfat@gmail.com> - 4.7.0
