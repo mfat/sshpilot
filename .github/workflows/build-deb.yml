@@ -28,7 +28,10 @@ jobs:
             python3 \
             python3-dev \
             fakeroot \
-            lintian
+            lintian \
+            desktop-file-utils \
+            appstream \
+            appstream-util
 
       - name: Extract version
         id: version
@@ -118,6 +121,8 @@ jobs:
             echo -e "\tcp -a sshpilot/vendor/pyxtermjs/LICENSE \$(CURDIR)/debian/sshpilot/usr/lib/python3/dist-packages/sshpilot/vendor/pyxtermjs/ 2>/dev/null || true"
             echo -e "\t# Install desktop file and icon"
             echo -e "\tinstall -D -m 644 io.github.mfat.sshpilot.desktop \$(CURDIR)/debian/sshpilot/usr/share/applications/io.github.mfat.sshpilot.desktop"
+            echo -e "\t# Install appstream metadata"
+            echo -e "\tinstall -D -m 644 io.github.mfat.sshpilot.metainfo.xml \$(CURDIR)/debian/sshpilot/usr/share/metainfo/io.github.mfat.sshpilot.metainfo.xml"
             echo -e "\tinstall -D -m 644 sshpilot/resources/sshpilot.svg \$(CURDIR)/debian/sshpilot/usr/share/pixmaps/io.github.mfat.sshpilot.svg"
             echo "override_dh_auto_test:"
             echo -e "\t# Skip tests for now (can be enabled later)"
@@ -173,8 +178,13 @@ jobs:
           ls -la run.py || echo "run.py missing"
           ls -la sshpilot/ || echo "sshpilot/ missing"
           ls -la io.github.mfat.sshpilot.desktop || echo "desktop file missing"
+          ls -la io.github.mfat.sshpilot.metainfo.xml || echo "metainfo file missing"
           ls -la sshpilot/resources/sshpilot.svg || echo "icon missing"
-          
+
+          echo "=== Validating desktop and AppStream metadata ==="
+          desktop-file-validate io.github.mfat.sshpilot.desktop
+          appstream-util validate-relax --nonet io.github.mfat.sshpilot.metainfo.xml
+
           echo "=== Debian packaging files created ==="
           ls -la debian/
           

@@ -28,6 +28,7 @@ jobs:
             python3 \
             python3-devel \
             desktop-file-utils \
+            appstream-glib \
             git \
             which
 
@@ -79,6 +80,7 @@ jobs:
           BuildArch:      noarch
           BuildRequires:  python3-devel
           BuildRequires:  desktop-file-utils
+          BuildRequires:  appstream-glib
           
           # Exclude automatic Python ABI dependency to allow compatibility across Python 3.x versions
           %global __requires_exclude ^python\\(abi\\)
@@ -98,7 +100,7 @@ jobs:
           Requires:       sshpass
           Requires:       openssh-askpass
           Requires:       webkitgtk6.0
-          
+
           %description
           SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed terminal, remote file management, key transfer, port forwarding and more. It's an alternative to Putty, Termius and Mobaxterm.
           
@@ -124,7 +126,7 @@ jobs:
           cp -a sshpilot/vendor/pyxtermjs/*.py %{buildroot}%{_datadir}/sshpilot/sshpilot/vendor/pyxtermjs/
           cp -a sshpilot/vendor/pyxtermjs/*.html %{buildroot}%{_datadir}/sshpilot/sshpilot/vendor/pyxtermjs/ 2>/dev/null || true
           cp -a sshpilot/vendor/pyxtermjs/LICENSE %{buildroot}%{_datadir}/sshpilot/sshpilot/vendor/pyxtermjs/ 2>/dev/null || true
-          
+
           # Create wrapper script that sets PYTHONPATH
           cat > sshpilot-wrapper << 'WRAPPER_EOF'
           #!/usr/bin/env python3
@@ -138,14 +140,16 @@ jobs:
           
           # Install the wrapper as the main executable
           install -D -m 755 sshpilot-wrapper %{buildroot}%{_bindir}/sshpilot
-          
-          # Install desktop file and icon
+
+          # Install desktop file, appstream metadata and icon
           install -D -m 644 io.github.mfat.sshpilot.desktop %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
+          install -D -m 644 io.github.mfat.sshpilot.metainfo.xml %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
           install -D -m 644 sshpilot/resources/sshpilot.svg %{buildroot}%{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
-          
+
           %check
           # Validate desktop file
-          desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop || true
+          desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
+          appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
           
           %files
           %license LICENSE*
@@ -153,6 +157,7 @@ jobs:
           %{_bindir}/sshpilot
           %{_datadir}/sshpilot/
           %{_datadir}/applications/io.github.mfat.sshpilot.desktop
+          %{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
           %{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
           
           %changelog
@@ -166,6 +171,7 @@ jobs:
           ls -la run.py || echo "run.py missing"
           ls -la sshpilot/ || echo "sshpilot/ missing"
           ls -la io.github.mfat.sshpilot.desktop || echo "desktop file missing"
+          ls -la io.github.mfat.sshpilot.metainfo.xml || echo "metainfo file missing"
           ls -la sshpilot/resources/sshpilot.svg || echo "icon missing"
           ls -la sshpilot/vendor/pyxtermjs/ || echo "vendor/pyxtermjs/ missing"
           

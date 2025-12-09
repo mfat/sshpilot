@@ -12,6 +12,7 @@ Source0:        https://github.com/mfat/sshpilot/archive/refs/tags/v%{version}.t
 BuildArch:      noarch
 BuildRequires:  python3-devel
 BuildRequires:  desktop-file-utils
+BuildRequires:  appstream-glib
 
 # Exclude automatic Python ABI dependency to allow compatibility across Python 3.x versions
 %global __requires_exclude ^python\\(abi\\)
@@ -69,11 +70,13 @@ cp -a sshpilot/vendor/pyxtermjs/LICENSE %{buildroot}%{python3_sitelib}/sshpilot/
 
 # Install desktop file and icon
 install -D -m 644 io.github.mfat.sshpilot.desktop %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
+install -D -m 644 io.github.mfat.sshpilot.metainfo.xml %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
 install -D -m 644 sshpilot/resources/sshpilot.svg %{buildroot}%{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
 
 %check
 # Validate desktop file
-desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop || true
+desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
+appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
 
 %files
 %license LICENSE*
@@ -81,6 +84,7 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_bindir}/sshpilot
 %{python3_sitelib}/sshpilot/
 %{_datadir}/applications/io.github.mfat.sshpilot.desktop
+%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
 %{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
 
 %changelog
