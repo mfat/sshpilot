@@ -233,6 +233,9 @@ class TerminalWidget(Gtk.Box):
         self._job_status = "UNKNOWN"  # IDLE, RUNNING, PROMPT, UNKNOWN
         self._shell_pgid = None  # Store shell process group ID for shell-agnostic detection
         
+        # Current remote directory tracking (from window title)
+        self._current_remote_directory = None  # Stores the current directory parsed from window title
+        
         # Backend system
         self._backend_name = "vte"
         self.backend = None
@@ -3549,6 +3552,14 @@ class TerminalWidget(Gtk.Box):
         """Handle terminal title change"""
         title = terminal.get_window_title()
         if title:
+            # Parse directory from window title (Method 3: VTE Terminal Widget Approach)
+            # The remote shell emits OSC escape sequences to set the window title
+            # Common formats: "user@host: /path/to/dir", "/path/to/dir", "user@host:/path/to/dir"
+            remote_dir = self._parse_directory_from_title(title)
+            if remote_dir:
+                self._current_remote_directory = remote_dir
+                logger.debug(f"Parsed remote directory from window title: {remote_dir}")
+            
             self.emit('title-changed', title)
         # If terminal is connected and a title update occurs (often when prompt is ready),
         # ensure the reconnect banner is hidden
@@ -3557,6 +3568,64 @@ class TerminalWidget(Gtk.Box):
                 self._set_disconnected_banner_visible(False)
         except Exception:
             pass
+    
+    def _parse_directory_from_title(self, title: str) -> Optional[str]:
+        """
+        Parse the current directory from the terminal window title.
+        
+        Common title formats:
+        - "/path/to/dir"
+        - "user@host: /path/to/dir"
+        - "user@host:/path/to/dir"
+        - "SSH: user@host: /path/to/dir"
+        - "user@host: ~/projects"
+        
+        Returns:
+            The directory path if found, None otherwise.
+        """
+        if not title:
+            return None
+        
+        try:
+            # Remove common prefixes
+            title = title.strip()
+            
+            # Try to find a path after ":" (common format: user@host: /path)
+            if ':' in title:
+                # Split by ':' and look for parts that look like paths
+                parts = title.split(':')
+                for part in reversed(parts):  # Check from end (path is usually last)
+                    part = part.strip()
+                    if part.startswith('/') or part.startswith('~'):
+                        # Found something that looks like a path
+                        return part
+            
+            # If title starts with '/' or '~', it might be just the path
+            if title.startswith('/') or title.startswith('~'):
+                return title
+            
+            # Try to extract path patterns
+            # Look for paths that start with / or ~
+            import re
+            # Match paths starting with / or ~
+            path_pattern = r'(?::\s*)?([/~][^\s]*|~\S*)'
+            match = re.search(path_pattern, title)
+            if match:
+                return match.group(1).strip()
+            
+            return None
+        except Exception as e:
+            logger.debug(f"Failed to parse directory from title '{title}': {e}")
+            return None
+    
+    def get_current_remote_directory(self) -> Optional[str]:
+        """
+        Get the current remote directory parsed from the window title.
+        
+        Returns:
+            Current remote directory path, or None if not available.
+        """
+        return getattr(self, '_current_remote_directory', None)
 
     def on_bell(self, terminal):
         """Handle terminal bell"""
@@ -4559,79 +4628,53 @@ class TerminalWidget(Gtk.Box):
                 return False
             
             # Get current directory from the active terminal session
-            # We send pwd to the terminal and write it to a temp file, then read that file
-            destination = None
-            try:
-                import time
-                import random
-                import subprocess
-                import shutil
-                from .ssh_utils import build_connection_ssh_options
-                
-                # Generate unique temp file name using timestamp and random number
-                temp_filename = f"/tmp/sshpilot_pwd_{int(time.time())}_{random.randint(1000, 9999)}.txt"
-                
-                # Send pwd command to active terminal session to write current directory to temp file
-                # Use $$ to get shell PID for uniqueness, or use the generated filename
-                pwd_cmd = f"pwd > {temp_filename}\n"
-                
-                logger.debug(f"Sending pwd command to terminal: {repr(pwd_cmd)}")
-                
-                # Send command to terminal backend
-                if hasattr(self, 'backend') and self.backend and hasattr(self.backend, 'feed_child'):
-                    self.backend.feed_child(pwd_cmd.encode('utf-8'))
-                elif hasattr(self, 'vte') and self.vte:
-                    self.vte.feed_child(pwd_cmd.encode('utf-8'))
-                else:
-                    logger.warning("No terminal backend available to send pwd command")
-                    raise Exception("Terminal backend not available")
-                
-                # Wait a moment for the command to execute
-                time.sleep(0.5)
-                
-                # Now read the temp file via SSH using ssh_connection_builder
-                from .ssh_connection_builder import build_ssh_connection, ConnectionContext
-                
-                # Build SSH connection command using ssh_connection_builder
-                ctx = ConnectionContext(
-                    connection=self.connection,
-                    connection_manager=self.connection_manager,
-                    config=self.config,
-                    command_type='ssh',
-                    extra_args=[f"cat {temp_filename}"],  # Command to run
-                    port_forwarding_rules=None,
-                    remote_command=f"cat {temp_filename}",
-                    local_command=None,
-                    extra_ssh_config=None,
-                    known_hosts_path=None,
-                    native_mode=False,
-                    quick_connect_mode=False,
-                    quick_connect_command=None,
-                )
-                
-                ssh_conn_cmd = build_ssh_connection(ctx)
-                ssh_cmd = ssh_conn_cmd.command
-                env = ssh_conn_cmd.env.copy()
-                
-                logger.debug(f"Reading pwd from temp file: {' '.join(ssh_cmd)}")
-                result = subprocess.run(
-                    ssh_cmd,
-                    env=env,
-                    text=True,
-                    capture_output=True,
-                    timeout=5,
-                )
-                
-                # Clean up temp file (best effort) - build cleanup command
+            # Method 3: Use VTE window-title-changed approach (primary method)
+            # The remote shell emits OSC escape sequences that set the window title with the directory
+            destination = self.get_current_remote_directory()
+            
+            # Fallback: If we don't have directory from window title, use the terminal-based method
+            if not destination:
+                logger.debug("Directory not available from window title, falling back to terminal-based method")
                 try:
-                    cleanup_ctx = ConnectionContext(
+                    import time
+                    import random
+                    import subprocess
+                    import shutil
+                    from .ssh_utils import build_connection_ssh_options
+                    
+                    # Generate unique temp file name using timestamp and random number
+                    temp_filename = f"/tmp/sshpilot_pwd_{int(time.time())}_{random.randint(1000, 9999)}.txt"
+                    
+                    # Send pwd command to active terminal session to write current directory to temp file
+                    # Use $$ to get shell PID for uniqueness, or use the generated filename
+                    pwd_cmd = f"pwd > {temp_filename}\n"
+                    
+                    logger.debug(f"Sending pwd command to terminal: {repr(pwd_cmd)}")
+                    
+                    # Send command to terminal backend
+                    if hasattr(self, 'backend') and self.backend and hasattr(self.backend, 'feed_child'):
+                        self.backend.feed_child(pwd_cmd.encode('utf-8'))
+                    elif hasattr(self, 'vte') and self.vte:
+                        self.vte.feed_child(pwd_cmd.encode('utf-8'))
+                    else:
+                        logger.warning("No terminal backend available to send pwd command")
+                        raise Exception("Terminal backend not available")
+                    
+                    # Wait a moment for the command to execute
+                    time.sleep(0.5)
+                    
+                    # Now read the temp file via SSH using ssh_connection_builder
+                    from .ssh_connection_builder import build_ssh_connection, ConnectionContext
+                    
+                    # Build SSH connection command using ssh_connection_builder
+                    ctx = ConnectionContext(
                         connection=self.connection,
                         connection_manager=self.connection_manager,
                         config=self.config,
                         command_type='ssh',
-                        extra_args=[f"rm -f {temp_filename}"],
+                        extra_args=[f"cat {temp_filename}"],  # Command to run
                         port_forwarding_rules=None,
-                        remote_command=f"rm -f {temp_filename}",
+                        remote_command=f"cat {temp_filename}",
                         local_command=None,
                         extra_ssh_config=None,
                         known_hosts_path=None,
@@ -4639,28 +4682,59 @@ class TerminalWidget(Gtk.Box):
                         quick_connect_mode=False,
                         quick_connect_command=None,
                     )
-                    cleanup_cmd_obj = build_ssh_connection(cleanup_ctx)
-                    cleanup_cmd = cleanup_cmd_obj.command
-                    subprocess.run(cleanup_cmd, env=cleanup_cmd_obj.env, timeout=2, capture_output=True)
-                except Exception:
-                    pass  # Ignore cleanup errors
-                
-                logger.debug(f"pwd file read result: returncode={result.returncode}, stdout={repr(result.stdout)}, stderr={repr(result.stderr)}")
-                
-                if result.returncode == 0:
-                    if result.stdout:
-                        remote_dir = result.stdout.strip()
-                        if remote_dir:
-                            destination = remote_dir
-                            logger.info(f"Remote current directory: {destination}")
+                    
+                    ssh_conn_cmd = build_ssh_connection(ctx)
+                    ssh_cmd = ssh_conn_cmd.command
+                    env = ssh_conn_cmd.env.copy()
+                    
+                    logger.debug(f"Reading pwd from temp file: {' '.join(ssh_cmd)}")
+                    result = subprocess.run(
+                        ssh_cmd,
+                        env=env,
+                        text=True,
+                        capture_output=True,
+                        timeout=5,
+                    )
+                    
+                    # Clean up temp file (best effort) - build cleanup command
+                    try:
+                        cleanup_ctx = ConnectionContext(
+                            connection=self.connection,
+                            connection_manager=self.connection_manager,
+                            config=self.config,
+                            command_type='ssh',
+                            extra_args=[f"rm -f {temp_filename}"],
+                            port_forwarding_rules=None,
+                            remote_command=f"rm -f {temp_filename}",
+                            local_command=None,
+                            extra_ssh_config=None,
+                            known_hosts_path=None,
+                            native_mode=False,
+                            quick_connect_mode=False,
+                            quick_connect_command=None,
+                        )
+                        cleanup_cmd_obj = build_ssh_connection(cleanup_ctx)
+                        cleanup_cmd = cleanup_cmd_obj.command
+                        subprocess.run(cleanup_cmd, env=cleanup_cmd_obj.env, timeout=2, capture_output=True)
+                    except Exception:
+                        pass  # Ignore cleanup errors
+                    
+                    logger.debug(f"pwd file read result: returncode={result.returncode}, stdout={repr(result.stdout)}, stderr={repr(result.stderr)}")
+                    
+                    if result.returncode == 0:
+                        if result.stdout:
+                            remote_dir = result.stdout.strip()
+                            if remote_dir:
+                                destination = remote_dir
+                                logger.info(f"Remote current directory: {destination}")
+                            else:
+                                logger.warning("pwd file was empty")
                         else:
-                            logger.warning("pwd file was empty")
+                            logger.warning("pwd file read succeeded but stdout is empty")
                     else:
-                        logger.warning("pwd file read succeeded but stdout is empty")
-                else:
-                    logger.warning(f"Failed to read pwd file: returncode={result.returncode}, stderr={result.stderr}")
-            except Exception as e:
-                logger.error(f"Failed to get remote current directory: {e}", exc_info=True)
+                        logger.warning(f"Failed to read pwd file: returncode={result.returncode}, stderr={result.stderr}")
+                except Exception as e:
+                    logger.error(f"Failed to get remote current directory: {e}", exc_info=True)
             
             # Fallback to home directory if we couldn't get current directory
             if not destination:
