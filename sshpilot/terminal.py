@@ -3549,18 +3549,30 @@ class TerminalWidget(Gtk.Box):
         GLib.idle_add(_finalize_exit_cleanup)
 
     def on_title_changed(self, terminal):
-        """Handle terminal title change"""
-        title = terminal.get_window_title()
-        if title:
-            # Parse directory from window title (Method 3: VTE Terminal Widget Approach)
-            # The remote shell emits OSC escape sequences to set the window title
-            # Common formats: "user@host: /path/to/dir", "/path/to/dir", "user@host:/path/to/dir"
-            remote_dir = self._parse_directory_from_title(title)
-            if remote_dir:
-                self._current_remote_directory = remote_dir
-                logger.debug(f"Parsed remote directory from window title: {remote_dir}")
-            
-            self.emit('title-changed', title)
+        """
+        Handle terminal title change (fallback for older VTE versions).
+        
+        Note: This uses the deprecated get_window_title() method. On VTE 0.78+,
+        title changes are handled via _on_termprops_changed() using TERMPROP_XTERM_TITLE.
+        This handler is kept for backward compatibility.
+        """
+        try:
+            # Try to use deprecated method as fallback (for VTE < 0.78)
+            title = terminal.get_window_title()
+            if title:
+                # Parse directory from window title (Method 3: VTE Terminal Widget Approach)
+                # The remote shell emits OSC escape sequences to set the window title
+                # Common formats: "user@host: /path/to/dir", "/path/to/dir", "user@host:/path/to/dir"
+                remote_dir = self._parse_directory_from_title(title)
+                if remote_dir:
+                    self._current_remote_directory = remote_dir
+                    logger.debug(f"Parsed remote directory from window title (deprecated API): {remote_dir}")
+                
+                self.emit('title-changed', title)
+        except Exception as e:
+            # get_window_title() might not be available in newer VTE versions
+            logger.debug(f"get_window_title() failed (may be deprecated): {e}")
+        
         # If terminal is connected and a title update occurs (often when prompt is ready),
         # ensure the reconnect banner is hidden
         try:
@@ -3941,11 +3953,7 @@ class TerminalWidget(Gtk.Box):
             return False
 
     def _on_termprops_changed(self, terminal, ids, user_data=None):
-        """Handle terminal properties changes for job detection (local terminals only)"""
-        # Only enable job detection for local terminals
-        if not self._is_local_terminal():
-            return
-            
+        """Handle terminal properties changes for job detection (local terminals only) and window title tracking"""
         # This method should only be called if the signal was successfully connected
         # (i.e., on VTE 0.78+), but add a safety check anyway
         if self._termprops_changed_handler is None:
@@ -3959,6 +3967,37 @@ class TerminalWidget(Gtk.Box):
                 
             # Convert ids to a set for efficient lookup if it's not already
             changed_props = set(ids) if hasattr(ids, '__iter__') else {ids}
+            
+            # Check for window title changes (TERMPROP_XTERM_TITLE) - works for both local and remote terminals
+            # This replaces the deprecated get_window_title() method (VTE 0.78+)
+            # TERMPROP_XTERM_TITLE is a Vte.PropertyType.STRING termprop that stores the xterm window title
+            # as set by OSC 0 and OSC 2 escape sequences. It's a string constant 'xterm.title'.
+            # Note: This termprop is NOT settable via termprop OSC (read-only).
+            # Note: We check for title on any termprops change since checking the specific property ID
+            # requires matching string names to integer IDs, which is complex. The operation is lightweight.
+            if hasattr(Vte, 'TERMPROP_XTERM_TITLE'):
+                try:
+                    # Get the title using the modern termprops API
+                    # Use get_termprop_string() with TERMPROP_XTERM_TITLE instead of deprecated get_window_title()
+                    # Signature: get_termprop_string(prop: str) -> tuple[str | None, int]
+                    # Returns: (title_string_or_none, size)
+                    title, size = terminal.get_termprop_string(Vte.TERMPROP_XTERM_TITLE)
+                    if title:
+                        # Parse directory from window title (Method 3: VTE Terminal Widget Approach)
+                        # The remote shell emits OSC 0 or OSC 2 escape sequences to set the window title
+                        remote_dir = self._parse_directory_from_title(title)
+                        if remote_dir:
+                            self._current_remote_directory = remote_dir
+                            logger.debug(f"Parsed remote directory from TERMPROP_XTERM_TITLE: {remote_dir}")
+                        
+                        # Emit title-changed signal for compatibility
+                        self.emit('title-changed', title)
+                except Exception as e:
+                    logger.debug(f"Failed to get window title from TERMPROP_XTERM_TITLE: {e}")
+            
+            # Job detection is only enabled for local terminals
+            if not self._is_local_terminal():
+                return
             
             # Check if job finished (also gives exit status)
             # These constants are only available in VTE 0.78+
