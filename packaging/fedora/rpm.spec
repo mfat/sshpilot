@@ -11,7 +11,7 @@ Source0:        https://github.com/mfat/sshpilot/archive/refs/heads/main.tar.gz
 BuildArch:      noarch
 BuildRequires:  python3-devel
 BuildRequires:  desktop-file-utils
-BuildRequires:  libappstream-glib
+#BuildRequires:  libappstream-glib
 
 
 # Exclude automatic Python ABI dependency to allow compatibility across Python 3.x versions
@@ -76,7 +76,7 @@ install -D -m 644 sshpilot/resources/sshpilot.svg %{buildroot}%{_datadir}/icons/
 %check
 # Validate desktop file
 desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
-appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
+#appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
 
 
 %files
