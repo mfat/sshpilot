@@ -903,7 +903,7 @@ class TerminalWidget(Gtk.Box):
                 attempted = True
 
                 try:
-                    prepared = manager.prepare_key_for_connection(expanded)
+                    prepared = manager.prepare_key_for_connection(expanded, connection)
                 except Exception as exc:
                     logger.warning(
                         "Failed to prepare key for native SSH connection (%s): %s",
@@ -940,7 +940,7 @@ class TerminalWidget(Gtk.Box):
             return
 
         try:
-            prepared = manager.prepare_key_for_connection(key_path)
+            prepared = manager.prepare_key_for_connection(key_path, connection)
         except Exception as exc:
             logger.warning("Failed to prepare key for native SSH connection: %s", exc)
             return
@@ -1101,7 +1101,52 @@ class TerminalWidget(Gtk.Box):
                 password_auth_selected = False
                 has_saved_password = False
 
+            # Initialize has_saved_passphrase for all code paths
+            has_saved_passphrase = False
+
             using_password = password_auth_selected or has_saved_password
+
+            # Check for saved passphrase early (before mode-specific code paths)
+            # This needs to happen for both native and non-native modes
+            if not password_auth_selected:
+                keyfile_value = getattr(self.connection, 'keyfile', '') or ''
+                if keyfile_value:
+                    # Expand path before checking if file exists
+                    expanded_keyfile = os.path.expanduser(keyfile_value) if keyfile_value else ''
+                    has_explicit_key = bool(
+                        keyfile_value
+                        and not str(keyfile_value).startswith('Select key file')
+                        and (os.path.isfile(keyfile_value) or (expanded_keyfile and os.path.isfile(expanded_keyfile)))
+                    )
+                    # Use expanded path for lookups
+                    lookup_key_path = expanded_keyfile if (expanded_keyfile and os.path.isfile(expanded_keyfile)) else keyfile_value
+
+                    # Check for saved passphrase - try both original and expanded paths
+                    # lookup_passphrase handles path normalization internally, but we try both to be safe
+                    logger.debug(f"Passphrase check: has_explicit_key={has_explicit_key}, keyfile_value={keyfile_value}, lookup_key_path={lookup_key_path}")
+                    if has_explicit_key:
+                        try:
+                            from .askpass_utils import lookup_passphrase
+                            
+                            # Try lookup with the keyfile value (lookup_passphrase handles normalization)
+                            saved_passphrase = lookup_passphrase(lookup_key_path)
+                            logger.debug(f"Direct lookup_passphrase result: {'found' if saved_passphrase else 'not found'}")
+                            
+                            # Also try with connection manager if available
+                            if not saved_passphrase and hasattr(self, 'connection_manager') and self.connection_manager:
+                                if hasattr(self.connection_manager, 'get_key_passphrase'):
+                                    saved_passphrase = self.connection_manager.get_key_passphrase(lookup_key_path)
+                                    logger.debug(f"Connection manager lookup result: {'found' if saved_passphrase else 'not found'}")
+                            
+                            has_saved_passphrase = bool(saved_passphrase)
+                            if has_saved_passphrase:
+                                logger.info(f"Found saved passphrase for key: {keyfile_value}")
+                            else:
+                                logger.debug(f"No saved passphrase found for key: {keyfile_value} (looked up: {lookup_key_path})")
+                        except Exception as e:
+                            logger.warning(f"Could not check for saved passphrase: {e}", exc_info=True)
+                    else:
+                        logger.debug(f"Skipping passphrase check: has_explicit_key={has_explicit_key}, keyfile_value={keyfile_value}")
 
             if not quick_connect_mode:
                 batch_mode_pref = bool(ssh_cfg.get('batch_mode', False))
@@ -1248,13 +1293,16 @@ class TerminalWidget(Gtk.Box):
                         pass
 
                     keyfile_value = getattr(self.connection, 'keyfile', '') or ''
+                    # Expand path before checking if file exists
+                    expanded_keyfile = os.path.expanduser(keyfile_value) if keyfile_value else ''
                     has_explicit_key = bool(
                         keyfile_value
                         and not str(keyfile_value).startswith('Select key file')
-                        and os.path.isfile(keyfile_value)
+                        and (os.path.isfile(keyfile_value) or (expanded_keyfile and os.path.isfile(expanded_keyfile)))
                     )
-
-                    if has_explicit_key and hasattr(self, 'connection_manager') and self.connection_manager:
+                    # Note: Passphrase check was already done earlier for all modes
+                    # This block only handles key preparation (adding to agent)
+                    if has_explicit_key:
                         if getattr(self.connection, 'identity_agent_disabled', False):
                             logger.debug(
                                 "IdentityAgent disabled; skipping key preparation before connection"
@@ -1262,11 +1310,11 @@ class TerminalWidget(Gtk.Box):
                         else:
                             try:
                                 if hasattr(self.connection_manager, 'prepare_key_for_connection'):
-                                    key_prepared = self.connection_manager.prepare_key_for_connection(keyfile_value)
+                                    key_prepared = self.connection_manager.prepare_key_for_connection(keyfile_value, self.connection)
                                     if key_prepared:
                                         logger.debug(f"Key prepared for connection: {keyfile_value}")
                                     else:
-                                        logger.warning(f"Failed to prepare key for connection: {keyfile_value}")
+                                        logger.debug(f"Key not added to agent (AddKeysToAgent not enabled): {keyfile_value}")
                             except Exception as e:
                                 logger.warning(f"Error preparing key for connection: {e}")
 
@@ -1547,9 +1595,10 @@ class TerminalWidget(Gtk.Box):
                 (password_auth_selected or auth_method == 0)
                 and not has_saved_password
                 and not getattr(self.connection, 'identity_agent_disabled', False)
+                and not has_saved_passphrase
             ):
-                # Password may be required but none saved - allow interactive prompt
-                logger.debug("No saved password - using interactive prompt if required")
+                # Password may be required but none saved, and no saved passphrase - allow interactive prompt
+                logger.debug("No saved password or passphrase - using interactive prompt if required")
             else:
                 # Use askpass for passphrase prompts (key-based auth)
                 from .askpass_utils import (

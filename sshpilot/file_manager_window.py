@@ -1399,7 +1399,7 @@ class AsyncSFTPManager(GObject.GObject):
                     and hasattr(self._connection_manager, "prepare_key_for_connection")
                 ):
                     try:
-                        key_prepared = self._connection_manager.prepare_key_for_connection(keyfile)
+                        key_prepared = self._connection_manager.prepare_key_for_connection(keyfile, connection)
                         if key_prepared:
                             logger.debug("Successfully prepared key for file manager: %s", keyfile)
                         else:
