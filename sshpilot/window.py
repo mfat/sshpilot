@@ -8546,6 +8546,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                     i += 1
             
             ssh_command = ' '.join(ssh_command_parts)
+            # Prepend 'ssh' since we skipped it when building the command parts
+            ssh_command = f'ssh {ssh_command}'
 
             use_external = self.config.get_setting('use-external-terminal', False)
             if use_external:
