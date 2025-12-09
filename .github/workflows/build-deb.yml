@@ -84,9 +84,9 @@ jobs:
             echo "         ssh-askpass,"
             echo "         sshpass"
           } >> debian/control
-          echo "Description: SSH connection manager with integrated terminal" >> debian/control
-          echo " sshPilot provides SSH connection management, integrated terminal using VTE," >> debian/control
-          echo " tunneling, key management, and tabbed interface." >> debian/control
+          echo " SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed" >> debian/control
+          echo " terminal, remote file management, key transfer, port forwarding and more." >> debian/control
+          echo " It's an alternative to Putty, Termius and Mobaxterm." >> debian/control
 
       - name: Create debian/changelog
         run: |
