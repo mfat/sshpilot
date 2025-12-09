@@ -349,7 +349,10 @@ def list_remote_files(
     
     # Set up askpass environment if we have a keyfile (askpass will handle passphrase retrieval/prompting)
     # Check if askpass is already set up (inherited from caller)
-    has_inherited_askpass = bool(inherit_env and inherit_env.get('SSH_ASKPASS_REQUIRE'))
+    has_inherited_askpass = bool(
+        inherit_env
+        and str(inherit_env.get('SSH_ASKPASS_REQUIRE') or '').lower() == 'force'
+    )
     
     # Set up askpass if we have a keyfile and not using password auth
     # The askpass script will retrieve from storage or show GUI dialog if needed
@@ -500,7 +503,10 @@ def download_file(
     ssh_extra_opts: List[str] = list(extra_ssh_opts or [])
     
     # Check if the inherited environment has askpass configured (e.g., when identity agent is disabled)
-    has_inherited_askpass = bool(inherit_env and inherit_env.get('SSH_ASKPASS_REQUIRE'))
+    has_inherited_askpass = bool(
+        inherit_env
+        and str(inherit_env.get('SSH_ASKPASS_REQUIRE') or '').lower() == 'force'
+    )
 
     # Set up askpass if we have a keyfile and not using password auth
     # The askpass script will retrieve from storage or show GUI dialog if needed
@@ -6896,6 +6902,12 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             ssh_extra_opts += ['-o', f'UserKnownHostsFile={known_hosts_path}']
 
         argv = ['scp', '-v']
+        try:
+            if direction == 'upload' and any(os.path.isdir(path) for path in transfer_sources):
+                argv.append('-r')
+        except Exception:
+            # If any path check fails (e.g. non-string items), continue without recursion.
+            logger.debug('SCP: Failed to inspect sources for recursion; continuing without -r')
         if port and port != 22:
             argv += ['-P', str(port)]
         argv += ssh_extra_opts
