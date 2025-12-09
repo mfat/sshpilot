@@ -1,7 +1,7 @@
 Name:           sshpilot
 Version:        %{?version}%{!?version:4.7.0}
 Release:        1%{?dist}
-Summary:        SSH connection manager with integrated terminal
+Summary:        Manage your servers with ease
 
 License:        GPL-3.0-or-later
 URL:            https://github.com/mfat/sshpilot
@@ -72,7 +72,9 @@ cp -a sshpilot/vendor/pyxtermjs/LICENSE %{buildroot}%{python3_sitelib}/sshpilot/
 # Install desktop file and icon
 install -D -m 644 io.github.mfat.sshpilot.desktop %{buildroot}%{_datadir}/applications/io.github.mfat.sshpilot.desktop
 install -D -m 644 io.github.mfat.sshpilot.metainfo.xml %{buildroot}%{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
-install -D -m 644 sshpilot/resources/sshpilot.svg %{buildroot}%{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
+# Install icon to hicolor theme (per AppStream guidelines)
+install -d %{buildroot}%{_datadir}/icons/hicolor/scalable/apps
+install -D -m 644 sshpilot/resources/sshpilot.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %check
 # Validate desktop file
@@ -87,7 +89,7 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/io.github.mfat
 %{python3_sitelib}/sshpilot/
 %{_datadir}/applications/io.github.mfat.sshpilot.desktop
 %{_metainfodir}/io.github.mfat.sshpilot.metainfo.xml
-%{_datadir}/pixmaps/io.github.mfat.sshpilot.svg
+%{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
 * Mon Dec 08 2025 mFat <newmfat@gmail.com> - 4.7.0
