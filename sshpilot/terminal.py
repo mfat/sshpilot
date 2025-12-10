@@ -2494,24 +2494,61 @@ class TerminalWidget(Gtk.Box):
                         logger.debug(f"Unexpected error determining host shell: {e}")
 
         if not shell:
-            shell = env.get('SHELL') or pwd.getpwuid(os.getuid()).pw_shell or '/bin/bash'
+            # Prioritize system passwd database over environment variable
+            # The environment variable might not reflect the user's actual default shell
+            try:
+                shell = pwd.getpwuid(os.getuid()).pw_shell
+            except (KeyError, AttributeError):
+                shell = None
+            
+            # Fall back to environment variable if passwd lookup failed
+            if not shell:
+                shell = env.get('SHELL')
+            
+            # Final fallback
+            if not shell:
+                shell = '/bin/bash'
 
         # Ensure we have a proper environment
         env['SHELL'] = shell
         # Set TERM to a proper value only if missing or set to "dumb"
         if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
             env['TERM'] = 'xterm-256color'
+        
+        # Ensure essential environment variables are set from passwd database
+        # This ensures shells like zsh can properly load user configuration
+        try:
+            pw_entry = pwd.getpwuid(os.getuid())
+            if 'USER' not in env or not env.get('USER'):
+                env['USER'] = pw_entry.pw_name
+            if 'LOGNAME' not in env or not env.get('LOGNAME'):
+                env['LOGNAME'] = pw_entry.pw_name
+            if 'HOME' not in env or not env.get('HOME'):
+                env['HOME'] = pw_entry.pw_dir
+        except (KeyError, AttributeError):
+            # If passwd lookup fails, ensure at least USER is set
+            if 'USER' not in env or not env.get('USER'):
+                env['USER'] = os.getenv('USER', 'user')
+            if 'LOGNAME' not in env or not env.get('LOGNAME'):
+                env['LOGNAME'] = env.get('USER', 'user')
+            if 'HOME' not in env or not env.get('HOME'):
+                env['HOME'] = os.path.expanduser('~')
 
         # Convert environment dict to list for VTE compatibility
         env_list = []
         for key, value in env.items():
             env_list.append(f"{key}={value}")
 
-        # Start the user's shell as a login shell
+        # Use interactive shell for all shells to match gnome-terminal and konsole behavior
+        # Interactive shells load user's interactive config directly (.bashrc, .zshrc, etc.)
+        # This is faster and matches what users expect from terminal emulators
+        shell_flags = ['-i']  # Interactive shell (loads interactive config files)
+
+        # Start the user's shell
         if flatpak_spawn:
-            command = [flatpak_spawn, '--host', 'env'] + env_list + [shell, '-l']
+            command = [flatpak_spawn, '--host', 'env'] + env_list + [shell] + shell_flags
         else:
-            command = [shell, '-l']
+            command = [shell] + shell_flags
 
         # Convert env_list to dict for backend
         env_dict = {}

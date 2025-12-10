@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Gdk, GObject, GLib, Adw, Graphene
+from gi.repository import Gtk, Gdk, GObject, GLib, Adw, Graphene, Pango
 
 from gettext import gettext as _
 
@@ -303,11 +303,25 @@ class GroupRow(Gtk.ListBoxRow):
 
         self.name_label = Gtk.Label()
         self.name_label.set_halign(Gtk.Align.START)
+        self.name_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
+        # Ellipsize when text exceeds available width
+        # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
+        # max-width-chars limits natural width. Both help control size allocation.
+        self.name_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.name_label.set_width_chars(20)  # Minimum width
+        self.name_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
         info_box.append(self.name_label)
 
         self.count_label = Gtk.Label()
         self.count_label.set_halign(Gtk.Align.START)
+        self.count_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
         self.count_label.add_css_class("dim-label")
+        # Ellipsize when text exceeds available width
+        # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
+        # max-width-chars limits natural width. Both help control size allocation.
+        self.count_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.count_label.set_width_chars(20)  # Minimum width
+        self.count_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
         info_box.append(self.count_label)
 
         content.append(info_box)
@@ -585,11 +599,25 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.nickname_label = Gtk.Label()
         self.nickname_label.set_markup(f"<b>{connection.nickname}</b>")
         self.nickname_label.set_halign(Gtk.Align.START)
+        self.nickname_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
+        # Ellipsize when text exceeds available width
+        # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
+        # max-width-chars limits natural width. Both help control size allocation.
+        self.nickname_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.nickname_label.set_width_chars(20)  # Minimum width
+        self.nickname_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
         info_box.append(self.nickname_label)
 
         self.host_label = Gtk.Label()
         self.host_label.set_halign(Gtk.Align.START)
+        self.host_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
         self.host_label.add_css_class("dim-label")
+        # Ellipsize when text exceeds available width
+        # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
+        # max-width-chars limits natural width. Both help control size allocation.
+        self.host_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.host_label.set_width_chars(20)  # Minimum width
+        self.host_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
         self._apply_host_label_text()
         info_box.append(self.host_label)
 
@@ -601,13 +629,14 @@ class ConnectionRow(Gtk.ListBoxRow):
         content.append(self.indicator_box)
 
         # File manager button (before status icon) - only visible on hover
+        # Use opacity instead of visibility to reserve space and prevent row resizing
         from sshpilot import icon_utils
         self.file_manager_button = icon_utils.new_button_from_icon_name("folder-symbolic")
         self.file_manager_button.add_css_class("flat")
         self.file_manager_button.add_css_class("file-manager-button")
         self.file_manager_button.set_tooltip_text(_("Manage Files"))
         self.file_manager_button.set_valign(Gtk.Align.CENTER)
-        self.file_manager_button.set_visible(False)  # Hidden by default
+        self.file_manager_button.set_opacity(0.0)  # Hidden by default but reserves space
         if file_manager_callback:
             self.file_manager_button.connect("clicked", self._on_file_manager_clicked)
         content.append(self.file_manager_button)
@@ -667,7 +696,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         """Show file manager button when mouse enters row"""
         self._is_hovering = True
         if self.file_manager_button and self._file_manager_callback:
-            self.file_manager_button.set_visible(True)
+            self.file_manager_button.set_opacity(1.0)
 
     def _on_row_leave(self, controller):
         """Hide file manager button when mouse leaves row"""
@@ -679,7 +708,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         """Keep button visible when hovering over it"""
         self._is_hovering = True
         if self.file_manager_button:
-            self.file_manager_button.set_visible(True)
+            self.file_manager_button.set_opacity(1.0)
 
     def _on_button_leave(self, controller):
         """Handle mouse leaving the button"""
@@ -689,7 +718,7 @@ class ConnectionRow(Gtk.ListBoxRow):
     def _maybe_hide_button(self):
         """Hide button if not hovering"""
         if not self._is_hovering and self.file_manager_button:
-            self.file_manager_button.set_visible(False)
+            self.file_manager_button.set_opacity(0.0)
         return False  # Don't repeat
 
     def show_drop_indicator(self, top: bool):

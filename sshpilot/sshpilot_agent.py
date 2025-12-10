@@ -142,6 +142,25 @@ class PTYAgent:
                 env['TERM'] = 'xterm-256color'
             env['SHELL'] = shell
             
+            # Ensure essential environment variables are set from passwd database
+            # This ensures shells like zsh can properly load user configuration
+            try:
+                pw_entry = pwd.getpwuid(os.getuid())
+                if 'USER' not in env or not env.get('USER'):
+                    env['USER'] = pw_entry.pw_name
+                if 'LOGNAME' not in env or not env.get('LOGNAME'):
+                    env['LOGNAME'] = pw_entry.pw_name
+                if 'HOME' not in env or not env.get('HOME'):
+                    env['HOME'] = pw_entry.pw_dir
+            except (KeyError, AttributeError):
+                # If passwd lookup fails, ensure at least USER is set
+                if 'USER' not in env or not env.get('USER'):
+                    env['USER'] = os.getenv('USER', 'user')
+                if 'LOGNAME' not in env or not env.get('LOGNAME'):
+                    env['LOGNAME'] = env.get('USER', 'user')
+                if 'HOME' not in env or not env.get('HOME'):
+                    env['HOME'] = os.path.expanduser('~')
+            
             # Set working directory
             if cwd is None:
                 cwd = os.path.expanduser('~')
@@ -174,8 +193,13 @@ class PTYAgent:
                     # Change to working directory
                     os.chdir(cwd)
                     
-                    # Execute the shell as a login shell
-                    os.execvpe(shell, [shell, '-l'], env)
+                    # Use interactive shell for all shells to match gnome-terminal and konsole behavior
+                    # Interactive shells load user's interactive config directly (.bashrc, .zshrc, etc.)
+                    # This is faster and matches what users expect from terminal emulators
+                    shell_flags = ['-i']  # Interactive shell (loads interactive config files)
+                    
+                    # Execute the shell
+                    os.execvpe(shell, [shell] + shell_flags, env)
                     
                 except Exception as e:
                     logger.error(f"Child process failed: {e}")

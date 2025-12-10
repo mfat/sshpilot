@@ -776,6 +776,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 pass
             return
 
+        if key == 'ui.max-sidebar-width':
+            try:
+                max_width = int(value)
+                self.update_sidebar_max_width(max_width)
+            except (ValueError, TypeError) as e:
+                logger.error(f"Invalid max-sidebar-width value: {e}")
+            return
+
         if key != 'ssh.native_connect':
             return
 
@@ -1308,6 +1316,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Set up the user interface"""
         # Create main container
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        main_box.set_hexpand(True)
+        main_box.set_vexpand(True)
         
         # Create update notification banner (hidden by default)
         # Use overlay to position dismiss button on top of banner
@@ -1374,29 +1384,49 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             main_box.append(self.header_bar)
         
         # Create main layout (fallback if split view widgets are unavailable)
-        # Try OverlaySplitView first as it's more reliable
-        if HAS_OVERLAY_SPLIT:
-            self.split_view = Adw.OverlaySplitView()
-            try:
-                self.split_view.set_sidebar_width_fraction(0.25)
-                self.split_view.set_min_sidebar_width(200)
-                self.split_view.set_max_sidebar_width(400)
-            except Exception:
-                pass
-            self.split_view.set_vexpand(True)
-            self._split_variant = 'overlay'
-            logger.debug("Using OverlaySplitView")
-        elif HAS_NAV_SPLIT:
+        # Load saved max-sidebar-width or use defaults
+        saved_max_width = self.config.get_setting('ui.max-sidebar-width', None)
+        default_nav_max = 280
+        default_overlay_max = 280
+        if saved_max_width is not None:
+            max_width = int(saved_max_width)
+        else:
+            max_width = None
+        
+        # Try NavigationSplitView first
+        if HAS_NAV_SPLIT:
             self.split_view = Adw.NavigationSplitView()
             try:
                 self.split_view.set_sidebar_width_fraction(0.25)
-                self.split_view.set_min_sidebar_width(200)
-                self.split_view.set_max_sidebar_width(400)
+                # Use default min (180sp) and set high max to allow 25% width on wider windows
+                # Ellipsize on labels will prevent extremely wide rows from expanding sidebar
+                self.split_view.set_min_sidebar_width(180)
+                if max_width is not None:
+                    self.split_view.set_max_sidebar_width(max_width)
+                else:
+                    self.split_view.set_max_sidebar_width(default_nav_max)  # High max to allow 25% on wide screens
             except Exception:
                 pass
             self.split_view.set_vexpand(True)
+            self.split_view.set_hexpand(True)
             self._split_variant = 'navigation'
             logger.debug("Using NavigationSplitView")
+        elif HAS_OVERLAY_SPLIT:
+            self.split_view = Adw.OverlaySplitView()
+            try:
+                self.split_view.set_sidebar_width_fraction(0.25)
+                # Use recommended 180sp min (matching NavigationSplitView defaults)
+                self.split_view.set_min_sidebar_width(180)
+                if max_width is not None:
+                    self.split_view.set_max_sidebar_width(max_width)
+                else:
+                    self.split_view.set_max_sidebar_width(default_overlay_max)
+            except Exception:
+                pass
+            self.split_view.set_vexpand(True)
+            self.split_view.set_hexpand(True)
+            self._split_variant = 'overlay'
+            logger.debug("Using OverlaySplitView")
         else:
             self.split_view = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
             self.split_view.set_wide_handle(True)
@@ -1406,16 +1436,19 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Sidebar always starts visible
         sidebar_visible = True
+        # Track sidebar visibility state for NavigationSplitView (which doesn't have get_show_sidebar)
+        self._sidebar_visible = True
         
-        # For OverlaySplitView, we need to explicitly show the sidebar
-        if HAS_OVERLAY_SPLIT:
+        # For NavigationSplitView, sidebar will be shown when content is set
+        if HAS_NAV_SPLIT:
+            logger.debug("NavigationSplitView sidebar will be shown when content is set")
+        elif HAS_OVERLAY_SPLIT:
+            # For OverlaySplitView, we need to explicitly show the sidebar
             try:
                 self.split_view.set_show_sidebar(True)
                 logger.debug("Set OverlaySplitView sidebar to visible")
             except Exception as e:
                 logger.error(f"Failed to show OverlaySplitView sidebar: {e}")
-        elif HAS_NAV_SPLIT:
-            logger.debug("NavigationSplitView sidebar will be shown when content is set")
         
         # Create sidebar
         self.setup_sidebar()
@@ -1434,7 +1467,16 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.set_content(self.toast_overlay)
 
     def _set_sidebar_widget(self, widget: Gtk.Widget) -> None:
-        if HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT:
+        if HAS_NAV_SPLIT:
+            try:
+                # NavigationSplitView requires the sidebar to be a NavigationPage
+                # According to docs: https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1.2/class.NavigationSplitView.html
+                sidebar_page = Adw.NavigationPage.new(widget, _("Connections"))
+                self.split_view.set_sidebar(sidebar_page)
+                return
+            except Exception:
+                pass
+        elif HAS_OVERLAY_SPLIT:
             try:
                 self.split_view.set_sidebar(widget)
                 return
@@ -1449,11 +1491,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
     def _set_content_widget(self, widget: Gtk.Widget) -> None:
         if HAS_NAV_SPLIT:
             try:
-                if not hasattr(self, "_nav_view"):
-                    self._nav_view = Adw.NavigationView()
-                    self.split_view.set_content(self._nav_view)
-                page = Adw.NavigationPage.new(widget, "")
-                self._nav_view.push(page)
+                # NavigationSplitView content should be a NavigationPage directly
+                # According to docs: https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1.2/class.NavigationSplitView.html
+                # Both sidebar and content must be AdwNavigationPage objects
+                content_page = Adw.NavigationPage.new(widget, _("Terminal"))
+                self.split_view.set_content(content_page)
                 return
             except Exception:
                 pass
@@ -1484,6 +1526,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
         return 0
+
+    def update_sidebar_max_width(self, max_width: int):
+        """Update the maximum sidebar width for both NavigationSplitView and OverlaySplitView."""
+        try:
+            if HAS_NAV_SPLIT and hasattr(self.split_view, 'set_max_sidebar_width'):
+                self.split_view.set_max_sidebar_width(max_width)
+                logger.debug(f"Updated NavigationSplitView max-sidebar-width to {max_width} sp")
+            elif HAS_OVERLAY_SPLIT and hasattr(self.split_view, 'set_max_sidebar_width'):
+                self.split_view.set_max_sidebar_width(max_width)
+                logger.debug(f"Updated OverlaySplitView max-sidebar-width to {max_width} sp")
+        except Exception as e:
+            logger.error(f"Failed to update max-sidebar-width: {e}")
 
 
     
@@ -1711,6 +1765,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Set up the sidebar with connection list"""
         sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         sidebar_box.add_css_class('sidebar')
+        # Ensure sidebar box expands to use full allocated width from NavigationSplitView
+        sidebar_box.set_hexpand(True)
+        sidebar_box.set_vexpand(True)
         
         # Sidebar header
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -1842,9 +1899,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_scrolled = Gtk.ScrolledWindow()
         self.connection_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.connection_scrolled.set_vexpand(True)
+        self.connection_scrolled.set_hexpand(True)
         
         self.connection_list = Gtk.ListBox()
         self.connection_list.add_css_class("navigation-sidebar")
+        self.connection_list.set_hexpand(True)
         self.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
         try:
             self.connection_list.set_can_focus(True)
@@ -2193,11 +2252,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             self._toolbar_row_height = 36
         
+        # Import icon_utils for toolbar buttons
+        from sshpilot import icon_utils
+        
         # Connection toolbar buttons
         self.connection_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         
         # Edit button
-        from sshpilot import icon_utils
         self.edit_button = icon_utils.new_button_from_icon_name('document-edit-symbolic')
         self.edit_button.set_tooltip_text('Edit Connection')
         self.edit_button.set_sensitive(False)
@@ -2787,21 +2848,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         banner_controller.connect('key-pressed', self.on_broadcast_banner_key_pressed)
         banner_box.add_controller(banner_controller)
 
-        if HAS_OVERLAY_SPLIT:
-            content_box = Adw.ToolbarView()
-            content_box.add_top_bar(self.header_bar)
-            # Create content wrapper with banner below header bar
-            content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            content_wrapper.append(self.update_banner_container)
-            content_wrapper.append(self.broadcast_banner)
-            content_wrapper.append(self.content_stack)
-            content_box.set_content(content_wrapper)
-            # Add banners to the main content area instead of toolbar view
-            main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            main_box.append(content_box)
-            self._set_content_widget(main_box)
-            logger.debug("Set content widget for OverlaySplitView")
-        elif HAS_NAV_SPLIT:
+        if HAS_NAV_SPLIT:
             content_box = Adw.ToolbarView()
             content_box.add_top_bar(self.header_bar)
             # Create content wrapper with banner below header bar
@@ -2815,6 +2862,20 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             main_box.append(content_box)
             self._set_content_widget(main_box)
             logger.debug("Set content widget for NavigationSplitView")
+        elif HAS_OVERLAY_SPLIT:
+            content_box = Adw.ToolbarView()
+            content_box.add_top_bar(self.header_bar)
+            # Create content wrapper with banner below header bar
+            content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            content_wrapper.append(self.update_banner_container)
+            content_wrapper.append(self.broadcast_banner)
+            content_wrapper.append(self.content_stack)
+            content_box.set_content(content_wrapper)
+            # Add banners to the main content area instead of toolbar view
+            main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            main_box.append(content_box)
+            self._set_content_widget(main_box)
+            logger.debug("Set content widget for OverlaySplitView")
         else:
             # For non-split views, create a vertical box to contain banners and content
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -4916,14 +4977,35 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Helper method to toggle sidebar visibility"""
         try:
             logger.debug(f"Toggle sidebar visibility requested: {is_visible}, split variant: {getattr(self, '_split_variant', 'unknown')}")
-            if HAS_OVERLAY_SPLIT and getattr(self, '_split_variant', '') == 'overlay':
+            if HAS_NAV_SPLIT and getattr(self, '_split_variant', '') == 'navigation':
+                # NavigationSplitView doesn't have set_show_sidebar method
+                # Use collapsed property to hide/show sidebar
+                # When collapsed=True and show-content=False, sidebar is visible
+                # When collapsed=True and show-content=True, content is visible
+                # When collapsed=False, both are visible side by side
+                self._sidebar_visible = is_visible
+                if is_visible:
+                    # Show sidebar: un-collapse or show sidebar
+                    try:
+                        self.split_view.set_collapsed(False)
+                    except Exception:
+                        # If un-collapsing fails, try showing sidebar via show-content
+                        try:
+                            self.split_view.set_show_content(False)
+                        except Exception:
+                            pass
+                else:
+                    # Hide sidebar: collapse and show content
+                    try:
+                        self.split_view.set_collapsed(True)
+                        self.split_view.set_show_content(True)
+                    except Exception:
+                        pass
+                logger.debug(f"NavigationSplitView sidebar visibility set to: {is_visible}")
+            elif HAS_OVERLAY_SPLIT and getattr(self, '_split_variant', '') == 'overlay':
                 # For OverlaySplitView
                 self.split_view.set_show_sidebar(is_visible)
                 logger.debug(f"Set OverlaySplitView sidebar visibility to: {is_visible}")
-            elif HAS_NAV_SPLIT and getattr(self, '_split_variant', '') == 'navigation':
-                # NavigationSplitView doesn't have set_show_sidebar method
-                # The sidebar visibility is controlled by the navigation view
-                logger.debug(f"NavigationSplitView sidebar visibility toggle requested: {is_visible}")
             else:
                 # For Gtk.Paned fallback
                 sidebar_widget = self.split_view.get_start_child()

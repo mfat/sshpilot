@@ -230,24 +230,28 @@ def _lookup_document_path(doc_id: str):
             None
         )
         
-        # Call Lookup to get the current path
-        # Lookup(IN s doc_id, OUT ay path, OUT a{s(say)} out_info)
+        # Use GetHostPaths to get the path from doc_id
+        # GetHostPaths(IN as doc_ids, OUT a{say} paths)
+        # This method is available inside the sandbox (version 5+)
         result = proxy.call_sync(
-            "Lookup",
-            GLib.Variant("(s)", (doc_id,)),
+            "GetHostPaths",
+            GLib.Variant("(as)", ([doc_id],)),
             Gio.DBusCallFlags.NONE,
             -1,
             None
         )
         
         if result:
-            path_bytes = result.get_child_value(0).get_bytestring()
-            path = path_bytes.decode('utf-8')
-            logger.debug(f"Document portal lookup for {doc_id}: {path}")
-            return path
+            # Result is a dictionary: {doc_id: path_bytes}
+            paths_dict = result.get_child_value(0).unpack()
+            if doc_id in paths_dict:
+                path_bytes = paths_dict[doc_id]
+                path = path_bytes.decode('utf-8')
+                logger.debug(f"Document portal GetHostPaths for {doc_id}: {path}")
+                return path
         
     except Exception as e:
-        logger.debug(f"Document portal lookup failed for {doc_id}: {e}")
+        logger.debug(f"Document portal GetHostPaths failed for {doc_id}: {e}")
     
     return None
 

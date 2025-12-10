@@ -218,3 +218,5 @@ Host server2
     assert "server1" not in gm.groups[group_id]['connections']
     assert len(gm.groups[group_id]['connections']) == 2
 
+
+

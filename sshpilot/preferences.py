@@ -544,6 +544,10 @@ class PreferencesWindow(Gtk.Window):
         self.set_title(self._base_header_title)
         self.set_default_size(820, 600)  # Ensure wide enough to see the sidebar
         
+        # Ensure window decorations and controls are visible
+        self.set_decorated(True)
+        self.set_resizable(True)
+        
         # Create custom layout with sidebar
         self.setup_navigation_layout()
         
@@ -559,11 +563,13 @@ class PreferencesWindow(Gtk.Window):
     def setup_navigation_layout(self):
         """Configure split view layout mirroring GNOME Settings."""
         # Ensure client-side decorations remain but hide default headerbar
+        # Note: Window decorations are explicitly enabled in __init__ via set_decorated(True)
         if not is_macos():
             hidden_titlebar = Gtk.HeaderBar()
             hidden_titlebar.set_show_title_buttons(False)
             hidden_titlebar.set_visible(False)
-            hidden_titlebar.set_decoration_layout(":")
+            # Don't set decoration_layout as it might interfere with window decorations
+            # The window itself has decorations enabled via set_decorated(True)
             self.set_titlebar(hidden_titlebar)
 
         # Main split view container
@@ -1245,6 +1251,46 @@ class PreferencesWindow(Gtk.Window):
             
             window_group.add(remember_size_switch)
             interface_page.add(window_group)
+
+            # Sidebar group (at bottom of Interface page)
+            sidebar_group = Adw.PreferencesGroup(title="Sidebar")
+            
+            # Maximum width slider
+            max_width_row = Adw.ActionRow()
+            max_width_row.set_title("Maximum Width")
+            
+            # Load saved value or use default
+            saved_max_width = self.config.get_setting('ui.max-sidebar-width', 280)
+            
+            # Create a scale/slider for max width (100-800 sp)
+            max_width_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 100, 800, 10)
+            max_width_scale.set_draw_value(True)
+            max_width_scale.set_value_pos(Gtk.PositionType.RIGHT)
+            max_width_scale.set_size_request(200, -1)
+            max_width_scale.set_valign(Gtk.Align.CENTER)
+            max_width_scale.set_value(float(saved_max_width))
+            
+            # Update subtitle with current value
+            def update_subtitle(value):
+                max_width_row.set_subtitle(f"Adjust the maximum width of the sidebar ({int(value)} sp)")
+            
+            update_subtitle(saved_max_width)
+            
+            # Connect change handler
+            def on_max_width_changed(scale):
+                value = int(scale.get_value())
+                update_subtitle(value)
+                self.config.set_setting('ui.max-sidebar-width', value)
+                # Update main window if available
+                if self.parent_window and hasattr(self.parent_window, 'update_sidebar_max_width'):
+                    self.parent_window.update_sidebar_max_width(value)
+            
+            max_width_scale.connect('value-changed', on_max_width_changed)
+            
+            max_width_row.add_suffix(max_width_scale)
+            sidebar_group.add(max_width_row)
+            
+            interface_page.add(sidebar_group)
 
             # Shortcuts page with inline editor
             shortcuts_page = Adw.PreferencesPage()
