@@ -219,3 +219,4 @@ Host server2
     assert len(gm.groups[group_id]['connections']) == 2
 
 
+

@@ -776,6 +776,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 pass
             return
 
+        if key == 'ui.max-sidebar-width':
+            try:
+                max_width = int(value)
+                self.update_sidebar_max_width(max_width)
+            except (ValueError, TypeError) as e:
+                logger.error(f"Invalid max-sidebar-width value: {e}")
+            return
+
         if key != 'ssh.native_connect':
             return
 
@@ -1376,6 +1384,15 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             main_box.append(self.header_bar)
         
         # Create main layout (fallback if split view widgets are unavailable)
+        # Load saved max-sidebar-width or use defaults
+        saved_max_width = self.config.get_setting('ui.max-sidebar-width', None)
+        default_nav_max = 200
+        default_overlay_max = 400
+        if saved_max_width is not None:
+            max_width = int(saved_max_width)
+        else:
+            max_width = None
+        
         # Try NavigationSplitView first
         if HAS_NAV_SPLIT:
             self.split_view = Adw.NavigationSplitView()
@@ -1384,7 +1401,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 # Use default min (180sp) and set high max to allow 25% width on wider windows
                 # Ellipsize on labels will prevent extremely wide rows from expanding sidebar
                 self.split_view.set_min_sidebar_width(180)
-                self.split_view.set_max_sidebar_width(300)  # High max to allow 25% on wide screens
+                if max_width is not None:
+                    self.split_view.set_max_sidebar_width(max_width)
+                else:
+                    self.split_view.set_max_sidebar_width(default_nav_max)  # High max to allow 25% on wide screens
             except Exception:
                 pass
             self.split_view.set_vexpand(True)
@@ -1397,7 +1417,10 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 self.split_view.set_sidebar_width_fraction(0.25)
                 # Use recommended 180sp min (matching NavigationSplitView defaults)
                 self.split_view.set_min_sidebar_width(180)
-                self.split_view.set_max_sidebar_width(400)
+                if max_width is not None:
+                    self.split_view.set_max_sidebar_width(max_width)
+                else:
+                    self.split_view.set_max_sidebar_width(default_overlay_max)
             except Exception:
                 pass
             self.split_view.set_vexpand(True)
@@ -1503,6 +1526,18 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             pass
         return 0
+
+    def update_sidebar_max_width(self, max_width: int):
+        """Update the maximum sidebar width for both NavigationSplitView and OverlaySplitView."""
+        try:
+            if HAS_NAV_SPLIT and hasattr(self.split_view, 'set_max_sidebar_width'):
+                self.split_view.set_max_sidebar_width(max_width)
+                logger.debug(f"Updated NavigationSplitView max-sidebar-width to {max_width} sp")
+            elif HAS_OVERLAY_SPLIT and hasattr(self.split_view, 'set_max_sidebar_width'):
+                self.split_view.set_max_sidebar_width(max_width)
+                logger.debug(f"Updated OverlaySplitView max-sidebar-width to {max_width} sp")
+        except Exception as e:
+            logger.error(f"Failed to update max-sidebar-width: {e}")
 
 
     
@@ -2217,11 +2252,13 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         except Exception:
             self._toolbar_row_height = 36
         
+        # Import icon_utils for toolbar buttons
+        from sshpilot import icon_utils
+        
         # Connection toolbar buttons
         self.connection_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         
         # Edit button
-        from sshpilot import icon_utils
         self.edit_button = icon_utils.new_button_from_icon_name('document-edit-symbolic')
         self.edit_button.set_tooltip_text('Edit Connection')
         self.edit_button.set_sensitive(False)
