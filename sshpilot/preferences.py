@@ -544,6 +544,10 @@ class PreferencesWindow(Gtk.Window):
         self.set_title(self._base_header_title)
         self.set_default_size(820, 600)  # Ensure wide enough to see the sidebar
         
+        # Ensure window decorations and controls are visible
+        self.set_decorated(True)
+        self.set_resizable(True)
+        
         # Create custom layout with sidebar
         self.setup_navigation_layout()
         
@@ -559,11 +563,13 @@ class PreferencesWindow(Gtk.Window):
     def setup_navigation_layout(self):
         """Configure split view layout mirroring GNOME Settings."""
         # Ensure client-side decorations remain but hide default headerbar
+        # Note: Window decorations are explicitly enabled in __init__ via set_decorated(True)
         if not is_macos():
             hidden_titlebar = Gtk.HeaderBar()
             hidden_titlebar.set_show_title_buttons(False)
             hidden_titlebar.set_visible(False)
-            hidden_titlebar.set_decoration_layout(":")
+            # Don't set decoration_layout as it might interfere with window decorations
+            # The window itself has decorations enabled via set_decorated(True)
             self.set_titlebar(hidden_titlebar)
 
         # Main split view container
