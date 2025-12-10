@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:4.7.2}
+Version:        %{?version}%{!?version:4.7.3}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -92,6 +92,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Wed Dec 10 2025 mFat <newmfat@gmail.com> - 4.7.3
+- - Drag and drop files and folders on terminal to upload via SCP
+
 * Wed Dec 10 2025 mFat <newmfat@gmail.com> - 4.7.2
 - - Bug fixes
 

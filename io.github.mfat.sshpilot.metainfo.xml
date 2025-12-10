@@ -47,6 +47,13 @@
 
 
 
+
+    <release version="4.7.3" date="2025-12-10">
+
+      <description>
+        <p>- Drag and drop files and folders on terminal to upload via SCP</p>
+      </description>
+    </release>
     <release version="4.7.2" date="2025-12-10">
 
       <description>
