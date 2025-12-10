@@ -45,9 +45,16 @@ class WindowActions:
         try:
             # Get current sidebar visibility
             if hasattr(self, 'split_view') and hasattr(self, '_toggle_sidebar_visibility'):
-                if HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT:
+                split_variant = getattr(self, '_split_variant', '')
+                
+                if HAS_NAV_SPLIT and split_variant == 'navigation':
+                    # NavigationSplitView doesn't have get_show_sidebar, use tracked state
+                    current_visible = getattr(self, '_sidebar_visible', True)
+                elif HAS_OVERLAY_SPLIT and split_variant == 'overlay':
+                    # OverlaySplitView has get_show_sidebar
                     current_visible = self.split_view.get_show_sidebar()
                 else:
+                    # Fallback for Gtk.Paned
                     sidebar_widget = self.split_view.get_start_child()
                     current_visible = sidebar_widget.get_visible() if sidebar_widget else True
 

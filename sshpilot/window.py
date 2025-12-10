@@ -1406,6 +1406,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         
         # Sidebar always starts visible
         sidebar_visible = True
+        # Track sidebar visibility state for NavigationSplitView (which doesn't have get_show_sidebar)
+        self._sidebar_visible = True
         
         # For NavigationSplitView, sidebar will be shown when content is set
         if HAS_NAV_SPLIT:
@@ -1438,7 +1440,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if HAS_NAV_SPLIT:
             try:
                 # NavigationSplitView requires the sidebar to be a NavigationPage
-                sidebar_page = Adw.NavigationPage.new(widget, "")
+                # According to docs: https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1.2/class.NavigationSplitView.html
+                sidebar_page = Adw.NavigationPage.new(widget, _("Connections"))
                 self.split_view.set_sidebar(sidebar_page)
                 return
             except Exception:
@@ -1459,8 +1462,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         if HAS_NAV_SPLIT:
             try:
                 # NavigationSplitView content should be a NavigationPage directly
-                # (similar to how preferences window does it)
-                content_page = Adw.NavigationPage.new(widget, "")
+                # According to docs: https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1.2/class.NavigationSplitView.html
+                # Both sidebar and content must be AdwNavigationPage objects
+                content_page = Adw.NavigationPage.new(widget, _("Terminal"))
                 self.split_view.set_content(content_page)
                 return
             except Exception:
@@ -4926,8 +4930,29 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             logger.debug(f"Toggle sidebar visibility requested: {is_visible}, split variant: {getattr(self, '_split_variant', 'unknown')}")
             if HAS_NAV_SPLIT and getattr(self, '_split_variant', '') == 'navigation':
                 # NavigationSplitView doesn't have set_show_sidebar method
-                # The sidebar visibility is controlled by the navigation view
-                logger.debug(f"NavigationSplitView sidebar visibility toggle requested: {is_visible}")
+                # Use collapsed property to hide/show sidebar
+                # When collapsed=True and show-content=False, sidebar is visible
+                # When collapsed=True and show-content=True, content is visible
+                # When collapsed=False, both are visible side by side
+                self._sidebar_visible = is_visible
+                if is_visible:
+                    # Show sidebar: un-collapse or show sidebar
+                    try:
+                        self.split_view.set_collapsed(False)
+                    except Exception:
+                        # If un-collapsing fails, try showing sidebar via show-content
+                        try:
+                            self.split_view.set_show_content(False)
+                        except Exception:
+                            pass
+                else:
+                    # Hide sidebar: collapse and show content
+                    try:
+                        self.split_view.set_collapsed(True)
+                        self.split_view.set_show_content(True)
+                    except Exception:
+                        pass
+                logger.debug(f"NavigationSplitView sidebar visibility set to: {is_visible}")
             elif HAS_OVERLAY_SPLIT and getattr(self, '_split_variant', '') == 'overlay':
                 # For OverlaySplitView
                 self.split_view.set_show_sidebar(is_visible)
