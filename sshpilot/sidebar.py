@@ -300,20 +300,17 @@ class GroupRow(Gtk.ListBoxRow):
 
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_box.set_hexpand(True)
-        # Prevent info_box from expanding beyond container width
-        info_box.set_hexpand_set(True)
 
         self.name_label = Gtk.Label()
         self.name_label.set_halign(Gtk.Align.START)
-        # Ellipsize long group names to prevent sidebar expansion
-        # Ellipsize will automatically constrain based on available width
+        # Ellipsize when text exceeds available width (based on Pango layout width)
         self.name_label.set_ellipsize(Pango.EllipsizeMode.END)
         info_box.append(self.name_label)
 
         self.count_label = Gtk.Label()
         self.count_label.set_halign(Gtk.Align.START)
         self.count_label.add_css_class("dim-label")
-        # Ellipsize count label if needed
+        # Ellipsize when text exceeds available width (based on Pango layout width)
         self.count_label.set_ellipsize(Pango.EllipsizeMode.END)
         info_box.append(self.count_label)
 
@@ -588,22 +585,20 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info_box.set_hexpand(True)
-        # Prevent info_box from expanding beyond container width
-        info_box.set_hexpand_set(True)
 
         self.nickname_label = Gtk.Label()
         self.nickname_label.set_markup(f"<b>{connection.nickname}</b>")
         self.nickname_label.set_halign(Gtk.Align.START)
-        # Ellipsize long nicknames to prevent sidebar expansion
-        # Ellipsize will automatically constrain based on available width
+        # Ellipsize when text exceeds available width (based on Pango layout width)
+        # According to Pango docs: ellipsize works based on allocated width from layout
         self.nickname_label.set_ellipsize(Pango.EllipsizeMode.END)
         info_box.append(self.nickname_label)
 
         self.host_label = Gtk.Label()
         self.host_label.set_halign(Gtk.Align.START)
         self.host_label.add_css_class("dim-label")
-        # Ellipsize long hostnames to prevent sidebar expansion
-        # Ellipsize will automatically constrain based on available width
+        # Ellipsize when text exceeds available width (based on Pango layout width)
+        # According to Pango docs: ellipsize works based on allocated width from layout
         self.host_label.set_ellipsize(Pango.EllipsizeMode.END)
         self._apply_host_label_text()
         info_box.append(self.host_label)

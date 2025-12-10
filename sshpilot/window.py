@@ -1308,6 +1308,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Set up the user interface"""
         # Create main container
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        main_box.set_hexpand(True)
+        main_box.set_vexpand(True)
         
         # Create update notification banner (hidden by default)
         # Use overlay to position dismiss button on top of banner
@@ -1379,14 +1381,14 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.split_view = Adw.NavigationSplitView()
             try:
                 self.split_view.set_sidebar_width_fraction(0.25)
-                # According to docs: default min is 180sp, max is 280sp
-                # Using recommended 180sp min and 300sp max to allow slightly longer hostnames
-                # while still constraining the sidebar width (unit defaults to SP)
+                # Use default min (180sp) and set high max to allow 25% width on wider windows
+                # Ellipsize on labels will prevent extremely wide rows from expanding sidebar
                 self.split_view.set_min_sidebar_width(180)
-                self.split_view.set_max_sidebar_width(300)
+                self.split_view.set_max_sidebar_width(800)  # High max to allow 25% on wide screens
             except Exception:
                 pass
             self.split_view.set_vexpand(True)
+            self.split_view.set_hexpand(True)
             self._split_variant = 'navigation'
             logger.debug("Using NavigationSplitView")
         elif HAS_OVERLAY_SPLIT:
@@ -1399,6 +1401,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             except Exception:
                 pass
             self.split_view.set_vexpand(True)
+            self.split_view.set_hexpand(True)
             self._split_variant = 'overlay'
             logger.debug("Using OverlaySplitView")
         else:
@@ -1727,6 +1730,9 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         """Set up the sidebar with connection list"""
         sidebar_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         sidebar_box.add_css_class('sidebar')
+        # Ensure sidebar box expands to use full allocated width from NavigationSplitView
+        sidebar_box.set_hexpand(True)
+        sidebar_box.set_vexpand(True)
         
         # Sidebar header
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -1858,9 +1864,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         self.connection_scrolled = Gtk.ScrolledWindow()
         self.connection_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.connection_scrolled.set_vexpand(True)
+        self.connection_scrolled.set_hexpand(True)
         
         self.connection_list = Gtk.ListBox()
         self.connection_list.add_css_class("navigation-sidebar")
+        self.connection_list.set_hexpand(True)
         self.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
         try:
             self.connection_list.set_can_focus(True)
