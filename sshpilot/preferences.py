@@ -1260,7 +1260,7 @@ class PreferencesWindow(Gtk.Window):
             max_width_row.set_title("Maximum Width")
             
             # Load saved value or use default
-            saved_max_width = self.config.get_setting('ui.max-sidebar-width', 400)
+            saved_max_width = self.config.get_setting('ui.max-sidebar-width', 280)
             
             # Create a scale/slider for max width (100-800 sp)
             max_width_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 100, 800, 10)

@@ -1386,8 +1386,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
         # Create main layout (fallback if split view widgets are unavailable)
         # Load saved max-sidebar-width or use defaults
         saved_max_width = self.config.get_setting('ui.max-sidebar-width', None)
-        default_nav_max = 200
-        default_overlay_max = 400
+        default_nav_max = 280
+        default_overlay_max = 280
         if saved_max_width is not None:
             max_width = int(saved_max_width)
         else:
