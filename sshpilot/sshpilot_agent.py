@@ -193,15 +193,10 @@ class PTYAgent:
                     # Change to working directory
                     os.chdir(cwd)
                     
-                    # Determine shell flags based on shell type
-                    # For zsh, use -i (interactive) instead of -il to match typical terminal emulator behavior
-                    # This ensures .zshrc is loaded directly without .zprofile interference
-                    # For other shells, use -l (login shell)
-                    shell_basename = os.path.basename(shell)
-                    if shell_basename == 'zsh':
-                        shell_flags = ['-i']  # Interactive shell for zsh (loads .zshrc)
-                    else:
-                        shell_flags = ['-l']  # Login shell for others
+                    # Use interactive shell for all shells to match gnome-terminal and konsole behavior
+                    # Interactive shells load user's interactive config directly (.bashrc, .zshrc, etc.)
+                    # This is faster and matches what users expect from terminal emulators
+                    shell_flags = ['-i']  # Interactive shell (loads interactive config files)
                     
                     # Execute the shell
                     os.execvpe(shell, [shell] + shell_flags, env)
