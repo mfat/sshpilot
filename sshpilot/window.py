@@ -1379,8 +1379,11 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.split_view = Adw.NavigationSplitView()
             try:
                 self.split_view.set_sidebar_width_fraction(0.25)
-                self.split_view.set_min_sidebar_width(200)
-                self.split_view.set_max_sidebar_width(400)
+                # According to docs: default min is 180sp, max is 280sp
+                # Using recommended 180sp min and 300sp max to allow slightly longer hostnames
+                # while still constraining the sidebar width (unit defaults to SP)
+                self.split_view.set_min_sidebar_width(180)
+                self.split_view.set_max_sidebar_width(300)
             except Exception:
                 pass
             self.split_view.set_vexpand(True)
@@ -1390,7 +1393,8 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
             self.split_view = Adw.OverlaySplitView()
             try:
                 self.split_view.set_sidebar_width_fraction(0.25)
-                self.split_view.set_min_sidebar_width(200)
+                # Use recommended 180sp min (matching NavigationSplitView defaults)
+                self.split_view.set_min_sidebar_width(180)
                 self.split_view.set_max_sidebar_width(400)
             except Exception:
                 pass
