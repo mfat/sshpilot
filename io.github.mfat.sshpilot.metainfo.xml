@@ -48,6 +48,15 @@
 
 
 
+
+    <release version="4.7.4" date="2025-12-10">
+
+      <description>
+        <p>- Added option to resize sidebar</p>
+        <p>- Fixed long host values making sidebar too wide</p>
+        <p>- Bug fixes and UI improvements</p>
+      </description>
+    </release>
     <release version="4.7.3" date="2025-12-10">
 
       <description>
