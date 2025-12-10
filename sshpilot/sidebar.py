@@ -303,15 +303,25 @@ class GroupRow(Gtk.ListBoxRow):
 
         self.name_label = Gtk.Label()
         self.name_label.set_halign(Gtk.Align.START)
-        # Ellipsize when text exceeds available width (based on Pango layout width)
+        self.name_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
+        # Ellipsize when text exceeds available width
+        # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
+        # max-width-chars limits natural width. Both help control size allocation.
         self.name_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.name_label.set_width_chars(20)  # Minimum width
+        self.name_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
         info_box.append(self.name_label)
 
         self.count_label = Gtk.Label()
         self.count_label.set_halign(Gtk.Align.START)
+        self.count_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
         self.count_label.add_css_class("dim-label")
-        # Ellipsize when text exceeds available width (based on Pango layout width)
+        # Ellipsize when text exceeds available width
+        # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
+        # max-width-chars limits natural width. Both help control size allocation.
         self.count_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.count_label.set_width_chars(20)  # Minimum width
+        self.count_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
         info_box.append(self.count_label)
 
         content.append(info_box)
@@ -589,17 +599,25 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.nickname_label = Gtk.Label()
         self.nickname_label.set_markup(f"<b>{connection.nickname}</b>")
         self.nickname_label.set_halign(Gtk.Align.START)
-        # Ellipsize when text exceeds available width (based on Pango layout width)
-        # According to Pango docs: ellipsize works based on allocated width from layout
+        self.nickname_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
+        # Ellipsize when text exceeds available width
+        # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
+        # max-width-chars limits natural width. Both help control size allocation.
         self.nickname_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.nickname_label.set_width_chars(20)  # Minimum width
+        self.nickname_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
         info_box.append(self.nickname_label)
 
         self.host_label = Gtk.Label()
         self.host_label.set_halign(Gtk.Align.START)
+        self.host_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
         self.host_label.add_css_class("dim-label")
-        # Ellipsize when text exceeds available width (based on Pango layout width)
-        # According to Pango docs: ellipsize works based on allocated width from layout
+        # Ellipsize when text exceeds available width
+        # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
+        # max-width-chars limits natural width. Both help control size allocation.
         self.host_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.host_label.set_width_chars(20)  # Minimum width
+        self.host_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
         self._apply_host_label_text()
         info_box.append(self.host_label)
 

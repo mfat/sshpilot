@@ -1384,7 +1384,7 @@ class MainWindow(Adw.ApplicationWindow, WindowActions):
                 # Use default min (180sp) and set high max to allow 25% width on wider windows
                 # Ellipsize on labels will prevent extremely wide rows from expanding sidebar
                 self.split_view.set_min_sidebar_width(180)
-                self.split_view.set_max_sidebar_width(800)  # High max to allow 25% on wide screens
+                self.split_view.set_max_sidebar_width(300)  # High max to allow 25% on wide screens
             except Exception:
                 pass
             self.split_view.set_vexpand(True)
