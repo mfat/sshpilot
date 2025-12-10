@@ -251,6 +251,8 @@ class TerminalWidget(Gtk.Box):
         self._was_maximized = False
         self._fullscreen_banner_container = None
         self._fullscreen_banner_dismiss_button = None
+        self._fullscreen_key_controller = None
+        self._fullscreen_sidebar_collapsed = None
         
         # Register with process manager
         process_manager.register_terminal(self)
@@ -4153,24 +4155,28 @@ class TerminalWidget(Gtk.Box):
         return self._job_status
 
     def _setup_fullscreen_shortcut(self):
-        """Setup F11 keyboard shortcut for fullscreen toggle."""
+        """Setup F11 keyboard shortcut for fullscreen toggle and ESC to exit fullscreen."""
         try:
             from gi.repository import Gdk
             
-            # Create keyboard controller for F11
+            # Create keyboard controller for F11 and ESC
             key_controller = Gtk.EventControllerKey()
             key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
             
             def on_key_pressed(controller, keyval, keycode, state):
-                # F11 key
+                # F11 key - toggle fullscreen
                 if keyval == Gdk.KEY_F11:
                     self.toggle_fullscreen()
                     return True
+                # ESC key - exit fullscreen if currently in fullscreen
+                elif keyval == Gdk.KEY_Escape and self._is_fullscreen:
+                    self._exit_fullscreen()
+                    return True  # Consume ESC to prevent NavigationSplitView from showing sidebar
                 return False
             
             key_controller.connect('key-pressed', on_key_pressed)
             self.add_controller(key_controller)
-            logger.debug("Fullscreen shortcut (F11) registered")
+            logger.debug("Fullscreen shortcut (F11) and ESC exit registered")
         except Exception as e:
             logger.debug(f"Failed to setup fullscreen shortcut: {e}", exc_info=True)
     
@@ -4194,6 +4200,7 @@ class TerminalWidget(Gtk.Box):
             
             # Store current state
             self._fullscreen_sidebar_visible = None
+            self._fullscreen_sidebar_show_content = None
             self._fullscreen_header_visible = None
             self._fullscreen_tab_bar_visible = None
             self._fullscreen_update_banner_visible = None
@@ -4212,14 +4219,46 @@ class TerminalWidget(Gtk.Box):
             # Hide sidebar if it exists
             if hasattr(root, 'split_view'):
                 try:
-                    if hasattr(root.split_view, 'get_show_sidebar'):
-                        self._fullscreen_sidebar_visible = root.split_view.get_show_sidebar()
-                        root.split_view.set_show_sidebar(False)
-                    elif hasattr(root.split_view, 'get_sidebar_visible'):
-                        self._fullscreen_sidebar_visible = root.split_view.get_sidebar_visible()
-                        root.split_view.set_sidebar_visible(False)
+                    # Check split view type using _split_variant attribute or method detection
+                    split_variant = getattr(root, '_split_variant', None)
+                    HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
+                    HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
+                    
+                    if HAS_OVERLAY_SPLIT and split_variant == 'overlay':
+                        # OverlaySplitView: use set_show_sidebar (simpler API)
+                        if hasattr(root.split_view, 'get_show_sidebar'):
+                            self._fullscreen_sidebar_visible = root.split_view.get_show_sidebar()
+                            root.split_view.set_show_sidebar(False)
+                            logger.debug("OverlaySplitView sidebar hidden for fullscreen")
+                    elif HAS_NAV_SPLIT and split_variant == 'navigation':
+                        # NavigationSplitView: use collapsed and show_content
+                        try:
+                            # Store original state
+                            self._fullscreen_sidebar_collapsed = root.split_view.get_collapsed()
+                            self._fullscreen_sidebar_show_content = root.split_view.get_show_content()
+                            # Hide sidebar: collapse and show content (content visible, sidebar hidden)
+                            root.split_view.set_collapsed(True)
+                            root.split_view.set_show_content(True)
+                            logger.debug("NavigationSplitView sidebar hidden for fullscreen")
+                        except Exception as e:
+                            logger.debug(f"Failed to hide NavigationSplitView sidebar: {e}")
+                    elif split_variant == 'paned':
+                        # Gtk.Paned: hide the start child widget
+                        sidebar_widget = root.split_view.get_start_child()
+                        if sidebar_widget:
+                            self._fullscreen_sidebar_visible = sidebar_widget.get_visible()
+                            sidebar_widget.set_visible(False)
+                            logger.debug("Gtk.Paned sidebar hidden for fullscreen")
+                    else:
+                        # Fallback: try common methods
+                        if hasattr(root.split_view, 'get_show_sidebar'):
+                            self._fullscreen_sidebar_visible = root.split_view.get_show_sidebar()
+                            root.split_view.set_show_sidebar(False)
+                        elif hasattr(root.split_view, 'get_sidebar_visible'):
+                            self._fullscreen_sidebar_visible = root.split_view.get_sidebar_visible()
+                            root.split_view.set_sidebar_visible(False)
                 except Exception as e:
-                    logger.debug(f"Failed to hide sidebar: {e}")
+                    logger.debug(f"Failed to hide sidebar: {e}", exc_info=True)
             
             # Hide header bar - it's added to ToolbarView via add_top_bar()
             # Try multiple methods to ensure it's hidden
@@ -4317,6 +4356,25 @@ class TerminalWidget(Gtk.Box):
             except Exception as e:
                 logger.debug(f"Failed to set window fullscreen: {e}", exc_info=True)
             
+            # Add window-level key controller to catch ESC before NavigationSplitView handles it
+            try:
+                from gi.repository import Gdk
+                self._fullscreen_key_controller = Gtk.EventControllerKey()
+                self._fullscreen_key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+                
+                def on_fullscreen_key_pressed(controller, keyval, keycode, state):
+                    # ESC key - exit fullscreen
+                    if keyval == Gdk.KEY_Escape and self._is_fullscreen:
+                        self._exit_fullscreen()
+                        return True  # Consume ESC to prevent NavigationSplitView from showing sidebar
+                    return False
+                
+                self._fullscreen_key_controller.connect('key-pressed', on_fullscreen_key_pressed)
+                root.add_controller(self._fullscreen_key_controller)
+                logger.debug("Window-level ESC handler added for fullscreen mode")
+            except Exception as e:
+                logger.debug(f"Failed to add window-level ESC handler: {e}", exc_info=True)
+            
             # Create fullscreen banner container if it doesn't exist (but don't show it yet)
             if self._fullscreen_banner_container is None:
                 self._create_fullscreen_banner()
@@ -4339,6 +4397,20 @@ class TerminalWidget(Gtk.Box):
             
             self._is_fullscreen = True
             logger.debug("Entered terminal fullscreen mode")
+            
+            # Restore focus to terminal after fullscreen operations
+            def restore_focus():
+                try:
+                    if hasattr(self, 'backend') and self.backend:
+                        self.backend.grab_focus()
+                    elif hasattr(self, 'vte') and hasattr(self.vte, 'grab_focus'):
+                        self.vte.grab_focus()
+                    elif hasattr(self, 'grab_focus'):
+                        self.grab_focus()
+                except Exception as e:
+                    logger.debug(f"Failed to restore focus after fullscreen: {e}")
+                return False
+            GLib.idle_add(restore_focus)
         except Exception as e:
             logger.error(f"Failed to enter fullscreen: {e}", exc_info=True)
     
@@ -4357,12 +4429,43 @@ class TerminalWidget(Gtk.Box):
             # Restore sidebar
             if hasattr(root, 'split_view') and self._fullscreen_sidebar_visible is not None:
                 try:
-                    if hasattr(root.split_view, 'set_show_sidebar'):
-                        root.split_view.set_show_sidebar(self._fullscreen_sidebar_visible)
-                    elif hasattr(root.split_view, 'set_sidebar_visible'):
-                        root.split_view.set_sidebar_visible(self._fullscreen_sidebar_visible)
+                    # Check split view type using _split_variant attribute or method detection
+                    split_variant = getattr(root, '_split_variant', None)
+                    HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
+                    HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
+                    
+                    if HAS_OVERLAY_SPLIT and split_variant == 'overlay':
+                        # OverlaySplitView: use set_show_sidebar (simpler API)
+                        if hasattr(root.split_view, 'set_show_sidebar'):
+                            root.split_view.set_show_sidebar(self._fullscreen_sidebar_visible)
+                            logger.debug("OverlaySplitView sidebar restored")
+                    elif HAS_NAV_SPLIT and split_variant == 'navigation':
+                        # NavigationSplitView: restore using collapsed and show_content
+                        try:
+                            if hasattr(self, '_fullscreen_sidebar_collapsed') and hasattr(self, '_fullscreen_sidebar_show_content'):
+                                root.split_view.set_collapsed(self._fullscreen_sidebar_collapsed)
+                                root.split_view.set_show_content(self._fullscreen_sidebar_show_content)
+                                logger.debug(f"NavigationSplitView restored: collapsed={self._fullscreen_sidebar_collapsed}, show_content={self._fullscreen_sidebar_show_content}")
+                            else:
+                                # Fallback: if we don't have stored state, un-collapse to show both
+                                root.split_view.set_collapsed(False)
+                                logger.debug("NavigationSplitView restored to default (un-collapsed)")
+                        except Exception as e:
+                            logger.debug(f"Failed to restore NavigationSplitView sidebar: {e}")
+                    elif split_variant == 'paned':
+                        # Gtk.Paned: show the start child widget
+                        sidebar_widget = root.split_view.get_start_child()
+                        if sidebar_widget:
+                            sidebar_widget.set_visible(self._fullscreen_sidebar_visible)
+                            logger.debug("Gtk.Paned sidebar restored")
+                    else:
+                        # Fallback: try common methods
+                        if hasattr(root.split_view, 'set_show_sidebar'):
+                            root.split_view.set_show_sidebar(self._fullscreen_sidebar_visible)
+                        elif hasattr(root.split_view, 'set_sidebar_visible'):
+                            root.split_view.set_sidebar_visible(self._fullscreen_sidebar_visible)
                 except Exception as e:
-                    logger.debug(f"Failed to restore sidebar: {e}")
+                    logger.debug(f"Failed to restore sidebar: {e}", exc_info=True)
             
             # Remove CSS class from window
             try:
@@ -4439,6 +4542,15 @@ class TerminalWidget(Gtk.Box):
                 except Exception as e:
                     logger.debug(f"Failed to restore maximized state: {e}")
             
+            # Remove window-level key controller
+            if self._fullscreen_key_controller:
+                try:
+                    root.remove_controller(self._fullscreen_key_controller)
+                    self._fullscreen_key_controller = None
+                    logger.debug("Window-level ESC handler removed")
+                except Exception as e:
+                    logger.debug(f"Failed to remove window-level ESC handler: {e}", exc_info=True)
+            
             # Hide fullscreen banner
             self._hide_fullscreen_banner()
             
@@ -4454,6 +4566,20 @@ class TerminalWidget(Gtk.Box):
             
             self._is_fullscreen = False
             logger.debug("Exited terminal fullscreen mode")
+            
+            # Restore focus to terminal after exiting fullscreen
+            def restore_focus():
+                try:
+                    if hasattr(self, 'backend') and self.backend:
+                        self.backend.grab_focus()
+                    elif hasattr(self, 'vte') and hasattr(self.vte, 'grab_focus'):
+                        self.vte.grab_focus()
+                    elif hasattr(self, 'grab_focus'):
+                        self.grab_focus()
+                except Exception as e:
+                    logger.debug(f"Failed to restore focus after exiting fullscreen: {e}")
+                return False
+            GLib.idle_add(restore_focus)
         except Exception as e:
             logger.error(f"Failed to exit fullscreen: {e}", exc_info=True)
             self._is_fullscreen = False
