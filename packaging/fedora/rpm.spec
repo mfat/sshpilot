@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:4.7.4}
+Version:        %{?version}%{!?version:4.7.5}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -92,6 +92,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.mfat.sshpil
 %{_datadir}/icons/hicolor/scalable/apps/io.github.mfat.sshpilot.svg
 
 %changelog
+* Thu Dec 11 2025 mFat <newmfat@gmail.com> - 4.7.5
+- - Bug fixes
+
 * Wed Dec 10 2025 mFat <newmfat@gmail.com> - 4.7.4
 - - Added option to resize sidebar
 - - Fixed long host values making sidebar too wide
