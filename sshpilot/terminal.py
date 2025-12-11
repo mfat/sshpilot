@@ -2636,21 +2636,55 @@ class TerminalWidget(Gtk.Box):
                 # Store client for later use
                 self._pending_agent_client = client
                 # Connect to size-allocate to spawn when terminal is allocated
-                if getattr(self, 'vte', None) is not None:
+                # Use terminal_widget (the actual Gtk.Widget) instead of vte
+                widget_to_connect = getattr(self, 'terminal_widget', None) or getattr(self, 'vte', None)
+                if widget_to_connect is not None:
                     def on_size_allocate(widget, allocation):
                         # Only spawn once
                         if hasattr(self, '_pending_agent_client'):
                             client = self._pending_agent_client
                             delattr(self, '_pending_agent_client')
-                            widget.disconnect_by_func(on_size_allocate)
+                            try:
+                                widget.disconnect_by_func(on_size_allocate)
+                            except Exception:
+                                pass
                             
                             # Get the actual size now
                             cols, rows = self._get_terminal_size()
                             logger.debug(f"Terminal allocated, spawning agent with size {cols}x{rows}")
                             self._spawn_agent_shell(client, cols, rows)
                     
-                    self.vte.connect('size-allocate', on_size_allocate)
-                    return True
+                    # Try to connect to size-allocate signal
+                    # If it fails (e.g., in Flatpak), use realize + idle_add as fallback
+                    try:
+                        widget_to_connect.connect('size-allocate', on_size_allocate)
+                        return True
+                    except (TypeError, AttributeError) as e:
+                        logger.debug(f"size-allocate signal not available, using realize fallback: {e}")
+                        # Fallback: use realize signal and check size with idle_add
+                        def on_realize(widget):
+                            def check_size():
+                                if hasattr(self, '_pending_agent_client'):
+                                    cols, rows = self._get_terminal_size()
+                                    if cols != 80 or rows != 24:
+                                        client = self._pending_agent_client
+                                        delattr(self, '_pending_agent_client')
+                                        logger.debug(f"Terminal realized, spawning agent with size {cols}x{rows}")
+                                        self._spawn_agent_shell(client, cols, rows)
+                                        return False  # Don't repeat
+                                return True  # Keep checking
+                            
+                            # Check immediately and then periodically
+                            GLib.idle_add(check_size)
+                            GLib.timeout_add(100, check_size)  # Check every 100ms
+                        
+                        try:
+                            widget_to_connect.connect('realize', on_realize)
+                            return True
+                        except Exception as e2:
+                            logger.warning(f"Failed to connect realize signal: {e2}")
+                            # Last resort: spawn with default size
+                            return self._spawn_agent_shell(client, 80, 24)
                 else:
                     # For non-VTE backends, try to spawn with current size
                     # They might handle resize differently
