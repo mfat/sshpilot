@@ -589,7 +589,7 @@ class GroupRow(Gtk.ListBoxRow):
             self._color_badge_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
         )
 
-        # Remove any accent classes that might add background colors
+        # Remove any accent classes that might add background color
         for cls in ("accent-red", "accent-blue", "accent-green", "accent-orange", "accent-purple", "accent-cyan", "accent-gray"):
             self.color_badge.remove_css_class(cls)
 
